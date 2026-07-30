@@ -1,6 +1,3 @@
-// Package tui implements the Bubble Tea program for an interactive,
-// multi-turn Claude chat session that streams responses as they're
-// generated.
 package tui
 
 import (
@@ -26,7 +23,11 @@ const (
 	focusOutput
 )
 
-type model struct {
+// chatModel is the streaming Claude chat client — the original spike that
+// proved SDK streaming into Bubble Tea. It is no longer the app's entry
+// screen (see rootModel), but is kept because the coming run monitor will
+// reuse per-step streaming.
+type chatModel struct {
 	textarea textarea.Model
 	spinner  spinner.Model
 	viewport viewport.Model
@@ -53,12 +54,11 @@ type model struct {
 	height int
 }
 
-// New returns the initial state of the TUI as a tea.Model, ready to be
-// passed to tea.NewProgram. ctx governs the lifetime of the Claude
-// connection and every SDK call made on it. darkBackground selects the
-// glamour markdown style and must be detected by the caller before the
-// terminal is put in raw mode (see cmd/jig/main.go).
-func New(ctx context.Context, darkBackground bool) tea.Model {
+// newChatModel returns the initial state of the streaming chat as a tea.Model.
+// ctx governs the lifetime of the Claude connection and every SDK call made on
+// it. darkBackground selects the glamour markdown style and must be detected by
+// the caller before the terminal is put in raw mode (see cmd/jig/main.go).
+func newChatModel(ctx context.Context, darkBackground bool) tea.Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = spinnerStyle
@@ -74,7 +74,7 @@ func New(ctx context.Context, darkBackground bool) tea.Model {
 	ta.BlurredStyle = blurredStyle
 	ta.Focus()
 
-	return model{
+	return chatModel{
 		textarea:       ta,
 		spinner:        s,
 		ctx:            ctx,
@@ -83,11 +83,11 @@ func New(ctx context.Context, darkBackground bool) tea.Model {
 	}
 }
 
-func (m model) Init() tea.Cmd {
+func (m chatModel) Init() tea.Cmd {
 	return tea.Batch(connectClaudeCmd(m.ctx), textarea.Blink)
 }
 
-func (m model) headerView() string {
+func (m chatModel) headerView() string {
 	status := "Connecting to Claude..."
 	switch {
 	case m.fatal:
@@ -98,7 +98,7 @@ func (m model) headerView() string {
 	return titleStyle.Render("jig - Claude chat") + "\n" + questionStyle.Render(status)
 }
 
-func (m model) statusLineView() string {
+func (m chatModel) statusLineView() string {
 	switch {
 	case m.streaming:
 		return statusLineStyle.Render(m.spinner.View() + " Claude is responding...")
@@ -109,7 +109,7 @@ func (m model) statusLineView() string {
 	}
 }
 
-func (m model) footerView() string {
+func (m chatModel) footerView() string {
 	if m.fatal {
 		return footerStyle.Render("ctrl+c quit")
 	}
@@ -122,14 +122,14 @@ func (m model) footerView() string {
 // turnIndicatorView reports which turn is currently displayed, and how to
 // move between turns. It always renders exactly one line so the layout
 // math in handleResize doesn't need to react to the turn count changing.
-func (m model) turnIndicatorView() string {
+func (m chatModel) turnIndicatorView() string {
 	if len(m.turns) == 0 {
 		return turnIndicatorStyle.Render(" ")
 	}
 	return turnIndicatorStyle.Render(fmt.Sprintf("Turn %d of %d (←/→ to switch)", m.activeTurn+1, len(m.turns)))
 }
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.handleResize(msg)
@@ -263,7 +263,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m model) View() string {
+func (m chatModel) View() string {
 	if !m.ready {
 		return "Initializing...\n"
 	}

@@ -22,7 +22,7 @@ import (
 // never through glamour - glamour re-parses whole documents, so
 // re-rendering a growing markdown string on every token is wasteful and
 // flickers as unclosed code fences and other partial syntax resolve.
-func (m *model) renderActiveTurn() {
+func (m *chatModel) renderActiveTurn() {
 	if len(m.turns) == 0 {
 		m.viewport.SetContent("Ask your first question to get started.")
 		return
@@ -68,7 +68,7 @@ func (m *model) renderActiveTurn() {
 
 // handleResize rebuilds the viewport, textarea, and glamour renderer to fit
 // the new terminal dimensions, then re-renders the active turn into them.
-func (m *model) handleResize(msg tea.WindowSizeMsg) {
+func (m *chatModel) handleResize(msg tea.WindowSizeMsg) {
 	m.width, m.height = msg.Width, msg.Height
 
 	headerHeight := lipgloss.Height(m.headerView())

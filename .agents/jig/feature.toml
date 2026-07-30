@@ -1,0 +1,218 @@
+# =============================================================================
+# Kitchen-sink example: an end-to-end feature-delivery pipeline.
+#
+# Exercises every construct jig supports today:
+#   - all three step types: agent / command / review
+#   - parallelism (fan-out) and joins (fan-in), derived purely from depends_on
+#   - producer agents with structured output, two ways:
+#       * schema_file  -> a raw JSON Schema  (intake)
+#       * [step.schema] -> TOML-native schema (research_*, plan, qa)
+#     covering text / number / bool / enum / list / list-of-object / nested enum
+#   - scalar output_type verdicts on review steps
+#   - field references: @step.field inputs, and step.field guards
+#   - two bounded loops (a human revise loop and an automated QA loop)
+#   - deterministic gates ([step.validate]) and on_failure policies
+#   - inline inputs, worktree isolation, and [defaults] inheritance
+#
+# Validate it with:  jig validate examples/feature.toml
+# =============================================================================
+
+[workflow]
+name        = "feature"
+version     = "1"
+description = "Research -> plan -> implement -> verify -> ship, with review gates and loops."
+
+[defaults]
+model           = "claude-opus-4-8"
+max_turns       = 40
+permission_mode = "acceptEdits"
+max_parallel    = 3
+artifacts_dir   = ".jig/artifacts"
+
+# -----------------------------------------------------------------------------
+# 1. Intake — a producer agent whose output shape is a hand-written JSON Schema.
+#    Shows: schema_file, an inline input, a read-only agent (no worktree).
+# -----------------------------------------------------------------------------
+[[step]]
+id            = "intake"
+type          = "agent"
+skill         = "skills/intake"
+inputs        = ["request.md", { path = "conventions.md", inline = true }]
+schema_file   = "schemas/intake.json"
+allowed_tools = ["Read", "Grep", "Glob"]
+
+# -----------------------------------------------------------------------------
+# 2. Research — TWO producer agents fan out in parallel (both depend only on
+#    intake). Each declares its output with a TOML-native [step.schema]. They run
+#    only if intake classified the request as actionable (field-ref guard).
+# -----------------------------------------------------------------------------
+[[step]]
+id            = "research_backend"
+type          = "agent"
+depends_on    = ["intake"]
+when          = "intake.status == 'ready'"
+skill         = "skills/research"
+inputs        = ["@intake.areas"]
+allowed_tools = ["Read", "Grep", "Glob", "WebSearch"]
+
+  # A subtable of the most-recent [[step]] is written [step.schema] — it binds
+  # to the step above, not to a step named "step".
+  [step.schema]
+  summary    = "text"
+  status     = { enum = ["complete", "partial", "blocked"] }
+  confidence = "number"
+  findings   = { list = "text" }
+  sources    = { list = { url = "text", relevance = "number" } }
+
+[[step]]
+id            = "research_frontend"
+type          = "agent"
+depends_on    = ["intake"]
+when          = "intake.status == 'ready'"
+skill         = "skills/research"
+inputs        = ["@intake.areas"]
+allowed_tools = ["Read", "Grep", "Glob", "WebSearch"]
+
+  [step.schema]
+  summary    = "text"
+  status     = { enum = ["complete", "partial", "blocked"] }
+  confidence = "number"
+  findings   = { list = "text" }
+  sources    = { list = { url = "text", relevance = "number" } }
+
+# -----------------------------------------------------------------------------
+# 3. Plan — a join: waits for BOTH research agents, then pulls a field from each
+#    into its inputs. Producer with a richer schema (list-of-object + enum).
+# -----------------------------------------------------------------------------
+[[step]]
+id            = "plan"
+type          = "agent"
+depends_on    = ["research_backend", "research_frontend"]
+skill         = "skills/plan"
+inputs        = ["@research_backend.summary", "@research_frontend.summary"]
+allowed_tools = ["Read", "Grep", "Glob"]
+
+  [step.schema]
+  summary  = "text"
+  approach = "text"
+  risk     = { enum = ["low", "medium", "high"] }
+  tasks    = { list = { title = "text", area = "text", estimate = "number" } }
+
+# -----------------------------------------------------------------------------
+# 4. Plan review — human gate with a scalar enum verdict, plus a bounded loop:
+#    on "revise", re-run `plan` (feeding the reviewer's notes back in), capped at
+#    3 iterations so termination is guaranteed.
+# -----------------------------------------------------------------------------
+[[step]]
+id          = "plan_review"
+type        = "review"
+depends_on  = ["plan"]
+review      = "@plan.summary"
+output_type = { enum = ["approve", "revise"] }
+
+  [step.loop]
+  when           = "plan_review == 'revise'"
+  goto           = "plan"
+  max_iterations = 3
+  feedback       = "@plan_review"
+
+# -----------------------------------------------------------------------------
+# 5. Implement — the only mutating agent: Edit/Write/Bash flip worktree isolation
+#    on by default (stated explicitly here). Runs only once the plan is approved.
+#    Consumes plan fields directly (one inlined).
+# -----------------------------------------------------------------------------
+[[step]]
+id            = "implement"
+type          = "agent"
+depends_on    = ["plan_review", "plan"]     # plan_review orders it; @plan.* refs require plan too
+when          = "plan_review == 'approve'"
+skill         = "skills/implement"
+inputs        = ["@plan.tasks", { ref = "@plan.approach", inline = true }]
+isolation     = "worktree"
+allowed_tools = ["Read", "Grep", "Glob", "Edit", "Write", "Bash"]
+
+# -----------------------------------------------------------------------------
+# 6. Checks — THREE deterministic command steps fan out in parallel off
+#    implement. lint is advisory (on_failure = continue); unit_test is a script
+#    with a gate and a retry policy.
+# -----------------------------------------------------------------------------
+[[step]]
+id         = "lint"
+type       = "command"
+depends_on = ["implement"]
+run        = "golangci-lint run ./..."
+on_failure = "continue"
+
+[[step]]
+id         = "typecheck"
+type       = "command"
+depends_on = ["implement"]
+run        = "go build ./..."
+
+[[step]]
+id          = "unit_test"
+type        = "command"
+depends_on  = ["implement"]
+script      = "scripts/test.sh"
+output      = "test-report.txt"
+on_failure  = "retry"
+max_retries = 2
+
+  [step.validate]
+  command       = "go test ./..."
+  output_exists = true
+
+# -----------------------------------------------------------------------------
+# 7. QA — a producer validation agent joining all three checks. Read-only, so no
+#    worktree. Its bool `passed` field drives an automated loop back to
+#    `implement` (feeding QA's findings in) when the build isn't clean.
+# -----------------------------------------------------------------------------
+[[step]]
+id            = "qa"
+type          = "agent"
+depends_on    = ["lint", "typecheck", "unit_test"]
+skill         = "skills/qa"
+inputs        = ["@unit_test"]
+allowed_tools = ["Read", "Grep", "Glob"]
+
+  [step.schema]
+  summary = "text"
+  passed  = "bool"
+  issues  = { list = { severity = { enum = ["low", "high"] }, detail = "text" } }
+
+  [step.loop]
+  when           = "qa.passed == 'false'"
+  goto           = "implement"
+  max_iterations = 2
+  feedback       = "@qa"
+
+# -----------------------------------------------------------------------------
+# 8. Final review — human reviews the diff, but only if QA passed (bare bool
+#    field guard). Enum verdict chooses the terminal branch.
+# -----------------------------------------------------------------------------
+[[step]]
+id          = "final_review"
+type        = "review"
+depends_on  = ["qa"]
+when        = "qa.passed"
+review      = "diff"
+output_type = { enum = ["ship", "hold"] }
+
+# -----------------------------------------------------------------------------
+# 9. Terminal branches — mutually exclusive commands guarded on the verdict.
+#    ship runs a script; notify is advisory.
+# -----------------------------------------------------------------------------
+[[step]]
+id         = "ship"
+type       = "command"
+depends_on = ["final_review"]
+when       = "final_review == 'ship'"
+script     = "scripts/ship.sh"
+
+[[step]]
+id         = "notify"
+type       = "command"
+depends_on = ["final_review"]
+when       = "final_review == 'hold'"
+run        = "echo 'held for follow-up; notifying owners'"
+on_failure = "continue"
