@@ -33,10 +33,13 @@ func main() {
 	// own package init() already primes this exact cache before main runs.
 	dark := lipgloss.HasDarkBackground()
 
-	// Phase 1: dry-run mode — all steps succeed after a visible delay.
-	// Phase 4 wires in AgentExecutor; Phase 2 wires in CommandExecutor.
-	exec := runner.NewFakeExecutor(nil, runner.FakeOutcome{})
-	mgr := engine.NewManager(exec, ".jig")
+	// Phase 2: route by step type.  CommandExecutor runs real shell commands.
+	// Agent and review steps still use FakeExecutor until Phase 3/4.
+	mux := runner.NewMux()
+	mux.Register(workflow.StepCommand, runner.NewCommandExecutor(""))
+	mux.Register(workflow.StepAgent, runner.NewFakeExecutor(nil, runner.FakeOutcome{}))
+	mux.Register(workflow.StepReview, runner.NewFakeExecutor(nil, runner.FakeOutcome{}))
+	mgr := engine.NewManager(mux, ".jig")
 
 	p := tea.NewProgram(tui.New(ctx, dark, mgr), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {

@@ -8,9 +8,14 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
+	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
+	"jig/internal/datastore"
+	"jig/internal/manifest"
 	"jig/internal/step"
 	"jig/internal/workflow"
 )
@@ -67,7 +72,19 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	copy(subs, m.subs)
 	m.mu.Unlock()
 
-	s := newScheduler(wf, runID, inbox, subs, m.exec)
+	// Phase 2: create the run directory and open a manifest.Writer when root is
+	// configured.  A missing or uncreatable root is non-fatal — runs still work,
+	// they just don't persist.  This avoids breaking existing tests that pass "".
+	var w *manifest.Writer
+	if m.root != "" {
+		if runDir, err := datastore.RunDir(m.root, runID); err == nil {
+			if mw, err := manifest.NewWriter(runDir); err == nil {
+				w = mw
+			}
+		}
+	}
+
+	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w)
 	go s.run(ctx)
 	return run, nil
 }
@@ -172,6 +189,8 @@ type scheduler struct {
 	inbox    chan schedMsg
 	subs     []chan<- Event
 	exec     Executor
+	cancel   context.CancelFunc // cancels the run context; used by abort policy
+	writer   *manifest.Writer   // nil when persistence is disabled (root = "")
 	inFlight int
 	seq      int
 }
@@ -182,6 +201,8 @@ func newScheduler(
 	inbox chan schedMsg,
 	subs []chan<- Event,
 	exec Executor,
+	cancel context.CancelFunc,
+	writer *manifest.Writer,
 ) *scheduler {
 	states := make(map[string]*step.State, len(wf.Steps))
 	for _, s := range wf.Steps {
@@ -194,6 +215,8 @@ func newScheduler(
 		inbox:  inbox,
 		subs:   subs,
 		exec:   exec,
+		cancel: cancel,
+		writer: writer,
 	}
 }
 
@@ -208,6 +231,15 @@ func (s *scheduler) run(ctx context.Context) {
 	if maxPar <= 0 {
 		maxPar = 4
 	}
+
+	defer func() {
+		// Close the journal file after the final RunFinished event has been
+		// appended. Deferring ensures the file is closed even when the run exits
+		// via ctx.Done().
+		if s.writer != nil {
+			_ = s.writer.Close()
+		}
+	}()
 
 	for {
 		// 1. Dispatch every ready step, respecting max_parallel.
@@ -236,39 +268,80 @@ func (s *scheduler) run(ctx context.Context) {
 	}
 }
 
-// nextReady returns the first pending step whose every depends_on is succeeded.
-// Phase 1: no when-guards; failure policy is always abort.
+// nextReady returns the first pending step whose every depends_on is satisfied.
+// A dep is satisfied if it succeeded, or if it failed with on_failure =
+// "continue" (the dep's failure is acknowledged but the workflow continues).
+// Phase 3 adds when-guard evaluation; for now, guards are ignored.
 func (s *scheduler) nextReady() (*workflow.Step, bool) {
 	for i := range s.wf.Steps {
 		st := &s.wf.Steps[i]
 		if s.states[st.ID].Status != step.StatusPending {
 			continue
 		}
-		if s.depsSucceeded(st) {
+		if s.depsReady(st) {
 			return st, true
 		}
 	}
 	return nil, false
 }
 
-func (s *scheduler) depsSucceeded(st *workflow.Step) bool {
-	for _, dep := range st.DependsOn {
-		if s.states[dep].Status != step.StatusSucceeded {
-			return false
+// depsReady reports whether all of st's dependencies have reached a state
+// that allows st to proceed.  A dependency is ready when:
+//   - its status is succeeded, or
+//   - its status is failed and its on_failure policy is "continue" (the dep
+//     explicitly opts in to letting dependents run despite its own failure).
+//
+// All other statuses (pending, running, validating, awaiting_review, skipped)
+// are not ready — the step must wait.
+func (s *scheduler) depsReady(st *workflow.Step) bool {
+	for _, depID := range st.DependsOn {
+		depState := s.states[depID]
+		if depState.Status == step.StatusSucceeded {
+			continue
 		}
+		// A failed dep is only "ready" when it declared on_failure = "continue".
+		if depState.Status == step.StatusFailed {
+			depStep := s.stepByID(depID)
+			if depStep != nil && depStep.OnFailure == workflow.FailContinue {
+				continue
+			}
+		}
+		return false
 	}
 	return true
 }
 
+// stepByID returns a pointer into wf.Steps for the given ID, or nil.
+// O(n) but n is small (workflow steps) and called infrequently.
+func (s *scheduler) stepByID(id string) *workflow.Step {
+	for i := range s.wf.Steps {
+		if s.wf.Steps[i].ID == id {
+			return &s.wf.Steps[i]
+		}
+	}
+	return nil
+}
+
 // anyPendingRunnable reports whether any pending step could eventually become
-// ready. Uses transitive failure propagation so A→B→C where A fails doesn't
-// deadlock the scheduler.
+// ready. Uses transitive failure propagation so A→B→C where A fails (abort
+// policy) doesn't deadlock the scheduler.
+//
+// A failed step with on_failure = "continue" does NOT block its dependents —
+// it is treated as a transparent node for the purposes of reachability.
 func (s *scheduler) anyPendingRunnable() bool {
-	// Seed the permanently-blocked set with terminal-failure statuses.
+	// Seed the permanently-blocked set with abort-failed and skipped steps.
+	// A step that failed with "continue" is NOT in this set — its failure is
+	// known but it doesn't block dependents.
 	blocked := make(map[string]bool, len(s.states))
 	for id, st := range s.states {
-		if st.Status == step.StatusFailed || st.Status == step.StatusSkipped {
+		if st.Status == step.StatusSkipped {
 			blocked[id] = true
+		}
+		if st.Status == step.StatusFailed {
+			wfStep := s.stepByID(id)
+			if wfStep == nil || wfStep.OnFailure != workflow.FailContinue {
+				blocked[id] = true
+			}
 		}
 	}
 	// Propagate through the DAG (terminates because there are no cycles).
@@ -280,6 +353,7 @@ func (s *scheduler) anyPendingRunnable() bool {
 				continue
 			}
 			for _, dep := range st.DependsOn {
+				// Only propagate from hard-blocked nodes, not from continue-failed ones.
 				if blocked[dep] {
 					blocked[st.ID] = true
 					changed = true
@@ -337,22 +411,50 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 }
 
 // handle processes one message from the scheduler's inbox.
-// Phase 1: no retry/validate/loop — just succeed or fail.
 func (s *scheduler) handle(msg schedMsg) {
 	switch m := msg.(type) {
 	case stepDoneMsg:
 		s.inFlight--
-		from := s.states[m.stepID].Status
-		var to step.Status
-		if m.err != nil || (m.result != nil && m.result.Status == step.StatusFailed) {
-			to = step.StatusFailed
-		} else {
-			to = step.StatusSucceeded
-		}
+		// Determine whether the raw execution succeeded or failed.
+		execFailed := m.err != nil || (m.result != nil && m.result.Status == step.StatusFailed)
 		if m.result != nil {
 			s.states[m.stepID].Result = m.result
 		}
-		s.transition(m.stepID, from, to)
+
+		wfStep := s.stepByID(m.stepID)
+
+		if !execFailed && wfStep != nil && wfStep.Validate != nil {
+			// Step executed successfully but has a [step.validate] gate.
+			// Run the gate synchronously in the scheduler goroutine (file checks)
+			// or inline for command gates.  This keeps all state mutation in one
+			// goroutine — the "single writer" invariant — at the cost of blocking
+			// the scheduler loop briefly.  Gate commands are expected to be fast
+			// (e.g. file existence checks, grep, quick test); slow gates belong
+			// in a proper step of type "command".
+			from := s.states[m.stepID].Status
+			s.transition(m.stepID, from, step.StatusValidating)
+
+			passed, detail := s.runGate(wfStep)
+			s.emit(GateResult{
+				RunID:  s.runID,
+				StepID: m.stepID,
+				Passed: passed,
+				Detail: detail,
+			})
+
+			if !passed {
+				execFailed = true
+			}
+		}
+
+		if execFailed {
+			s.applyFailurePolicy(m.stepID, wfStep)
+		} else {
+			// Use the current status as "from" — it may be StatusValidating if a
+			// gate ran, or StatusRunning if there was no gate.
+			curFrom := s.states[m.stepID].Status
+			s.transition(m.stepID, curFrom, step.StatusSucceeded)
+		}
 
 	case verdictMsg:
 		// Phase 3: review step verdict delivery.
@@ -360,6 +462,95 @@ func (s *scheduler) handle(msg schedMsg) {
 	case snapshotReqMsg:
 		m.reply <- s.snapshot()
 	}
+}
+
+// applyFailurePolicy marks the step failed (or retries it) according to its
+// on_failure policy.  Called from handle(stepDoneMsg) after exec or gate failure.
+func (s *scheduler) applyFailurePolicy(stepID string, wfStep *workflow.Step) {
+	policy := workflow.FailAbort // default
+	if wfStep != nil && wfStep.OnFailure != "" {
+		policy = wfStep.OnFailure
+	}
+
+	state := s.states[stepID]
+	from := state.Status
+
+	switch policy {
+	case workflow.FailRetry:
+		maxRetries := 1
+		if wfStep != nil && wfStep.MaxRetries > 0 {
+			maxRetries = wfStep.MaxRetries
+		}
+		if state.Attempt < maxRetries {
+			state.Attempt++
+			// Reset to pending so the main scheduler loop picks it up again and
+			// calls dispatch(), which will increment inFlight.  handle() already
+			// decremented inFlight at its top, so the count stays correct.
+			s.transition(stepID, from, step.StatusPending)
+			return
+		}
+		// Exhausted retries — treat as abort so the run fails.
+		s.transition(stepID, from, step.StatusFailed)
+		s.cancel()
+
+	case workflow.FailContinue:
+		// Mark failed but don't cancel; dependents with depsReady() will treat
+		// this step as a "satisfied" node and proceed.
+		s.transition(stepID, from, step.StatusFailed)
+
+	default: // FailAbort or unrecognised
+		s.transition(stepID, from, step.StatusFailed)
+		// Cancel the run context so in-flight workers unwind.
+		s.cancel()
+	}
+}
+
+// runGate evaluates the [step.validate] block for wfStep synchronously.
+// Returns (true, detail) on pass, (false, detail) on failure.
+// Only OutputExists and OutputContains are implemented in Phase 2; Command
+// gates delegate to the shell; OutputSchema is deferred to Phase 4.
+func (s *scheduler) runGate(wfStep *workflow.Step) (bool, string) {
+	v := wfStep.Validate
+
+	// Command gate: run via sh -c, check exit code 0.
+	if v.Command != "" {
+		cmd := exec.Command("sh", "-c", v.Command)
+		out, err := cmd.CombinedOutput()
+		outStr := strings.TrimSpace(string(out))
+		if err != nil {
+			return false, fmt.Sprintf("gate command failed: %v — %s", err, outStr)
+		}
+		return true, "gate command passed"
+	}
+
+	// OutputExists gate: verify the step's output file was written.
+	if v.OutputExists {
+		outputPath := wfStep.Output
+		if outputPath == "" {
+			return false, "output_exists gate: step has no output field"
+		}
+		if _, err := os.Stat(outputPath); err != nil {
+			return false, fmt.Sprintf("output_exists gate: %v", err)
+		}
+		// Fall through to also check OutputContains if set.
+	}
+
+	// OutputContains gate: check that the output file contains a substring.
+	if v.OutputContains != "" {
+		outputPath := wfStep.Output
+		if outputPath == "" {
+			return false, "output_contains gate: step has no output field"
+		}
+		data, err := os.ReadFile(outputPath)
+		if err != nil {
+			return false, fmt.Sprintf("output_contains gate: read file: %v", err)
+		}
+		if !strings.Contains(string(data), v.OutputContains) {
+			return false, fmt.Sprintf("output_contains gate: %q not found in output", v.OutputContains)
+		}
+	}
+
+	return true, "gate passed"
 }
 
 func (s *scheduler) transition(stepID string, from, to step.Status) {
@@ -375,11 +566,31 @@ func (s *scheduler) transition(stepID string, from, to step.Status) {
 	})
 }
 
-// emit writes an event to the journal (Phase 2+), then fans it out to subscribers.
+// emit writes an event to the journal (if a writer is configured), then fans
+// it out to subscribers.  The journal write is synchronous and happens before
+// any subscriber receives the event, preserving the "journal before fan-out"
+// invariant: in-memory state is always fold(journal).
 // emit is called only from the scheduler goroutine.
 func (s *scheduler) emit(e Event) {
 	s.seq++
-	// Phase 2: journal.Append(s.seq, e) goes here, before fan-out.
+	if s.writer != nil {
+		line, err := MarshalEnvelope(s.seq, e)
+		if err == nil {
+			var term *manifest.StepTerminal
+			if ss, ok := e.(StepStatus); ok {
+				switch ss.To {
+				case step.StatusSucceeded, step.StatusFailed, step.StatusSkipped:
+					state := s.states[ss.StepID]
+					term = &manifest.StepTerminal{
+						StepID:  ss.StepID,
+						Status:  string(ss.To),
+						Attempt: state.Attempt,
+					}
+				}
+			}
+			s.writer.AppendLine(line, term)
+		}
+	}
 	fanOut(s.subs, e)
 }
 
