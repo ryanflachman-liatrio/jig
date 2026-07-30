@@ -1,0 +1,14 @@
+# Compiled binary (produced by `go build ./cmd/jig`)
+/jig
+
+# jig run artifacts & engine records (kept outside the working tree by design)
+.jig/
+
+# Go build/test output
+*.test
+*.out
+coverage.out
+
+# Editor / OS cruft
+.DS_Store
+*.swp
