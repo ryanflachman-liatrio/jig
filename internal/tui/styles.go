@@ -68,4 +68,7 @@ var (
 			Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#fafafa"})
 
 	pathStyle = lipgloss.NewStyle().Faint(true).Italic(true)
+
+	runningStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "#0F5FBF", Dark: "#7AA2F7"})
 )

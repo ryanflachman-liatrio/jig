@@ -10,6 +10,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"jig/internal/engine"
+	"jig/internal/runner"
 	"jig/internal/tui"
 	"jig/internal/workflow"
 )
@@ -31,7 +33,12 @@ func main() {
 	// own package init() already primes this exact cache before main runs.
 	dark := lipgloss.HasDarkBackground()
 
-	p := tea.NewProgram(tui.New(ctx, dark), tea.WithAltScreen())
+	// Phase 1: dry-run mode — all steps succeed after a visible delay.
+	// Phase 4 wires in AgentExecutor; Phase 2 wires in CommandExecutor.
+	exec := runner.NewFakeExecutor(nil, runner.FakeOutcome{})
+	mgr := engine.NewManager(exec, ".jig")
+
+	p := tea.NewProgram(tui.New(ctx, dark, mgr), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running program: %v\n", err)
 		os.Exit(1)

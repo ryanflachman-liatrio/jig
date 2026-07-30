@@ -8,6 +8,9 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"jig/internal/engine"
+	"jig/internal/runner"
 )
 
 // TestSelectToDetailFlow drives the root model without a terminal: discover a
@@ -28,7 +31,9 @@ type = "command"
 run = "echo hi"
 `), 0o644)
 
-	var m tea.Model = New(context.Background(), true)
+	exec := runner.NewFakeExecutor(nil, runner.FakeOutcome{})
+	mgr := engine.NewManager(exec, "")
+	var m tea.Model = New(context.Background(), true, mgr)
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = m.Update(discoverWorkflowsCmd(dir)())
 
