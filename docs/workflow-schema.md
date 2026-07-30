@@ -33,12 +33,16 @@ version = "1"
 description = "…"                    # optional
 
 [defaults]                           # optional; per-step fields override these
-model           = "claude-opus-4-8"
-max_turns       = 20
-cwd             = "."
-permission_mode = "acceptEdits"
-max_parallel    = 4
-artifacts_dir   = ".jig/artifacts"   # run artifacts live outside the working tree
+model               = "claude-opus-4-8"
+fallback_model      = "claude-sonnet-4-6"  # used if the primary is overloaded
+effort              = "high"         # low | medium | high | xhigh | max
+max_turns           = 20
+max_thinking_tokens = 8000
+max_budget_usd      = 5.0            # per-step cost ceiling
+cwd                 = "."
+permission_mode     = "acceptEdits"
+max_parallel        = 4
+artifacts_dir       = ".jig/artifacts"   # run artifacts live outside the working tree
 ```
 
 ---
@@ -79,22 +83,34 @@ Steps are declared with `[[step]]`. Three types: `agent`, `command`, `review`.
 
 ### Agent step
 
-Spins up a **fresh agent context**; instructions come from a **skill directory**.
+Spins up a **fresh agent context**, driven by **either a skill directory or a
+Claude agent file** (exactly one of `skill` / `agent_file`).
 
-| Field           | Type     | Notes                                                       |
-|-----------------|----------|-------------------------------------------------------------|
-| `skill`         | dir path | Required. Directory with `SKILL.md` (+ optional helpers).   |
-| `inputs`        | [string] | `@stepid` / `@stepid.field` refs and/or file paths. See "Data flow". |
-| `allowed_tools` | [string] | Tool allowlist for this context.                            |
-| `isolation`     | string   | `"worktree"` or `"none"`. See "Worktrees".                  |
-| `[step.schema]` | table    | Structured output contract (TOML-native). See "Structured outputs". |
-| `schema_file`   | path     | Alternative to `[step.schema]`: a raw JSON Schema file.     |
-| `model` / `max_turns` / `permission_mode` | | Override `[defaults]`.                     |
+| Field                  | Type     | Notes                                                       |
+|------------------------|----------|-------------------------------------------------------------|
+| `skill`                | dir path | Directory with `SKILL.md` (+ optional helpers). Xor `agent_file`. |
+| `agent_file`           | path     | A Claude agent `.md` file (frontmatter + prompt). Xor `skill`. |
+| `inputs`               | [string] | `@stepid` / `@stepid.field` refs and/or file paths. See "Data flow". |
+| `allowed_tools`        | [string] | Tool allowlist for this context.                            |
+| `disallowed_tools`     | [string] | Tool denylist (complement of the allowlist).                |
+| `append_system_prompt` | string   | Extra per-step instructions appended after the skill/agent prompt. |
+| `isolation`            | string   | `"worktree"` or `"none"`. See "Worktrees".                  |
+| `[step.schema]`        | table    | Structured output contract (TOML-native). See "Structured outputs". |
+| `schema_file`          | path     | Alternative to `[step.schema]`: a raw JSON Schema file.     |
+| `model` / `fallback_model` / `effort` / `max_turns` / `max_thinking_tokens` / `max_budget_usd` / `permission_mode` | | Override `[defaults]`. |
 
 **`SKILL.md` contract.** Agent Skills convention: YAML frontmatter (`name`,
 `description`) + instruction body. At runtime the engine builds the prompt from
 `SKILL.md` and injects the resolved input paths and the required `output` path
 (when one is declared). Keeps prose out of the TOML and makes skills reusable.
+
+**`agent_file` contract.** A Claude Code agent file: YAML frontmatter (`name`,
+`description`, optional `tools`, optional `model`) + a system-prompt body. It is
+just a bundled `(prompt, tools, model)` triple, so at load time jig folds its
+`tools` into `allowed_tools` and its `model` into `model` **when the step leaves
+them unset** (explicit step fields win), and uses the body as the agent's system
+prompt. Everything else — `inputs`, schema, `validate`, `loop`, worktree
+isolation — behaves exactly as for a skill-driven step.
 
 ### Command step
 

@@ -314,6 +314,72 @@ run = "true"
 status = "text"`,
 			want: "only valid on agent steps",
 		},
+		{
+			name: "invalid effort",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "agent"
+skill = "s"
+effort = "turbo"
+allowed_tools = ["Read"]`,
+			want: "invalid effort",
+		},
+		{
+			name: "negative budget",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "agent"
+skill = "s"
+max_budget_usd = -1.0
+allowed_tools = ["Read"]`,
+			want: "max_budget_usd must be >= 0",
+		},
+		{
+			name: "skill and agent_file both set",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "agent"
+skill = "s"
+agent_file = "a.md"`,
+			want: "both `skill` and `agent_file`",
+		},
+		{
+			name: "neither skill nor agent_file",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "agent"
+allowed_tools = ["Read"]`,
+			want: "requires `skill` or `agent_file`",
+		},
+		{
+			name: "agent-only field on command",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "command"
+run = "true"
+append_system_prompt = "be terse"`,
+			want: "belonging to another step type",
+		},
 	}
 
 	for _, tc := range cases {
@@ -465,6 +531,77 @@ allowed_tools = ["Read"]
 	}
 	if f, ok := tr.Schema.lookup([]string{"priority"}); !ok || f.Type != FieldEnum {
 		t.Errorf("priority = %+v, want enum", f)
+	}
+}
+
+// TestDecodeAgentFile covers the agent_file step form: frontmatter tools/model
+// fold into the step, the body is captured as the system prompt, mutating tools
+// flip worktree isolation on, and explicit step fields outrank the file.
+func TestDecodeAgentFile(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "agents/reviewer.md"), `---
+name: reviewer
+description: Reviews the diff for security issues
+tools: Read, Grep, Edit, Bash
+model: opus
+---
+You are a meticulous security reviewer. Flag any risky change.`)
+
+	src := `
+[workflow]
+name = "x"
+version = "1"
+
+[defaults]
+effort         = "high"
+fallback_model = "claude-sonnet-4-6"
+
+[[step]]
+id         = "review"
+type       = "agent"
+agent_file = "agents/reviewer.md"
+
+[[step]]
+id         = "override"
+type       = "agent"
+agent_file = "agents/reviewer.md"
+model      = "claude-haiku-4-5-20251001"
+effort     = "low"
+`
+	wf, err := Decode(src, dir)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+
+	rv := wf.Steps[wf.index["review"]]
+	if got := rv.agentPrompt; !strings.Contains(got, "security reviewer") {
+		t.Errorf("agentPrompt = %q, want the file body", got)
+	}
+	if got, want := strings.Join(rv.AllowedTools, ","), "Read,Grep,Edit,Bash"; got != want {
+		t.Errorf("AllowedTools = %q, want %q", got, want)
+	}
+	if rv.Model != "opus" {
+		t.Errorf("Model = %q, want %q (from agent file)", rv.Model, "opus")
+	}
+	// Edit/Bash are mutating -> worktree isolation defaulted on.
+	if rv.Isolation != IsolationWorktree {
+		t.Errorf("Isolation = %q, want worktree (mutating tools from file)", rv.Isolation)
+	}
+	// Defaults still apply for knobs the file doesn't set.
+	if rv.Effort != EffortHigh {
+		t.Errorf("Effort = %q, want high (from defaults)", rv.Effort)
+	}
+	if rv.FallbackModel != "claude-sonnet-4-6" {
+		t.Errorf("FallbackModel = %q, want inherited from defaults", rv.FallbackModel)
+	}
+
+	// Explicit step fields outrank both the file and defaults.
+	ov := wf.Steps[wf.index["override"]]
+	if ov.Model != "claude-haiku-4-5-20251001" {
+		t.Errorf("override Model = %q, want the explicit step value", ov.Model)
+	}
+	if ov.Effort != EffortLow {
+		t.Errorf("override Effort = %q, want low", ov.Effort)
 	}
 }
 

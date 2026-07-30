@@ -41,6 +41,11 @@ func Decode(data, baseDir string) (*Workflow, error) {
 		return nil, fmt.Errorf("unknown key(s) in workflow: %s", formatKeys(keys))
 	}
 
+	// Resolve agent files before applyDefaults so file-derived tools/model feed
+	// into worktree-isolation and [defaults] inheritance.
+	if err := wf.resolveAgentFiles(baseDir); err != nil {
+		return nil, err
+	}
 	wf.applyDefaults()
 	if err := wf.validate(baseDir); err != nil {
 		return nil, err
@@ -74,12 +79,25 @@ func (wf *Workflow) applyDefaults() {
 			s.OutputType.Kind = OutputText
 		}
 
-		// Agent-step defaults inherited from [defaults].
+		// Agent-step defaults inherited from [defaults]. (Model/AllowedTools may
+		// already be set from a resolved agent_file, which outranks these.)
 		if s.Model == "" {
 			s.Model = wf.Defaults.Model
 		}
+		if s.FallbackModel == "" {
+			s.FallbackModel = wf.Defaults.FallbackModel
+		}
+		if s.Effort == "" {
+			s.Effort = wf.Defaults.Effort
+		}
 		if s.MaxTurns == 0 {
 			s.MaxTurns = wf.Defaults.MaxTurns
+		}
+		if s.MaxThinkingTokens == 0 {
+			s.MaxThinkingTokens = wf.Defaults.MaxThinkingTokens
+		}
+		if s.MaxBudgetUSD == 0 {
+			s.MaxBudgetUSD = wf.Defaults.MaxBudgetUSD
 		}
 		if s.PermissionMode == "" {
 			s.PermissionMode = wf.Defaults.PermissionMode

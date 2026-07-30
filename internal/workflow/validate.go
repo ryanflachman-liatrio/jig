@@ -114,10 +114,36 @@ func (v *validator) checkStep(s *Step) {
 	v.checkInputs(s)
 	v.checkOutputType(s)
 	v.checkSchema(s)
+	v.checkTuning(s)
 	v.checkFailure(s)
 	v.checkWhen(s)
 	v.checkValidate(s)
 	v.checkLoop(s)
+}
+
+// checkTuning validates the model/reasoning knobs. These are inherited onto
+// every step from [defaults] (like model), so they are checked for all step
+// types rather than gated on agent.
+func (v *validator) checkTuning(s *Step) {
+	if s.Effort != "" && !s.Effort.valid() {
+		v.errf("step %q has invalid effort %q (want low|medium|high|xhigh|max)", s.ID, s.Effort)
+	}
+	if s.MaxThinkingTokens < 0 {
+		v.errf("step %q max_thinking_tokens must be >= 0", s.ID)
+	}
+	if s.MaxBudgetUSD < 0 {
+		v.errf("step %q max_budget_usd must be >= 0", s.ID)
+	}
+}
+
+// hasAgentOnlyFields reports whether any explicitly-set, agent-only field is
+// present, so command/review steps can reject them. Model/effort/etc. are
+// excluded: they flow onto every step from [defaults] and are simply ignored by
+// non-agent steps.
+func hasAgentOnlyFields(s *Step) bool {
+	return s.Skill != "" || s.AgentFile != "" ||
+		len(s.AllowedTools) > 0 || len(s.DisallowedTools) > 0 ||
+		s.AppendSystemPrompt != ""
 }
 
 // resolveSchemas loads each step's schema_file into its Schema field so the
@@ -171,9 +197,13 @@ func (v *validator) checkSchema(s *Step) {
 }
 
 func (v *validator) checkAgent(s *Step) {
-	if s.Skill == "" {
-		v.errf("agent step %q requires `skill`", s.ID)
-	} else if v.baseDir != "" {
+	// A step is driven by exactly one of a skill dir or a Claude agent file.
+	switch {
+	case s.Skill == "" && s.AgentFile == "":
+		v.errf("agent step %q requires `skill` or `agent_file`", s.ID)
+	case s.Skill != "" && s.AgentFile != "":
+		v.errf("agent step %q sets both `skill` and `agent_file`; pick one", s.ID)
+	case s.Skill != "" && v.baseDir != "":
 		dir := filepath.Join(v.baseDir, s.Skill)
 		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 			v.errf("agent step %q: skill dir %q not found", s.ID, s.Skill)
@@ -181,6 +211,8 @@ func (v *validator) checkAgent(s *Step) {
 			v.errf("agent step %q: %s/SKILL.md not found", s.ID, s.Skill)
 		}
 	}
+	// A set AgentFile has already been read and parsed by resolveAgentFiles;
+	// any error there aborts the load before we get here.
 	if s.Isolation != IsolationWorktree && s.Isolation != IsolationNone {
 		v.errf("agent step %q has invalid isolation %q (want worktree|none)", s.ID, s.Isolation)
 	}
@@ -201,8 +233,8 @@ func (v *validator) checkCommand(s *Step) {
 			v.errf("command step %q: script %q not found", s.ID, s.Script)
 		}
 	}
-	if s.Skill != "" || s.Review != "" || len(s.AllowedTools) > 0 {
-		v.errf("command step %q sets fields belonging to another step type (skill/review/allowed_tools)", s.ID)
+	if s.Review != "" || hasAgentOnlyFields(s) {
+		v.errf("command step %q sets fields belonging to another step type (agent skill/agent_file/tools or review)", s.ID)
 	}
 }
 
@@ -223,8 +255,8 @@ func (v *validator) checkReview(s *Step) {
 	if s.OutputType.Kind != OutputEnum && s.OutputType.Kind != OutputBool {
 		v.errf("review step %q needs an output_type (bool or enum) to record the verdict", s.ID)
 	}
-	if s.Skill != "" || s.Run != "" || s.Script != "" {
-		v.errf("review step %q sets fields belonging to another step type (skill/run/script)", s.ID)
+	if s.Run != "" || s.Script != "" || hasAgentOnlyFields(s) {
+		v.errf("review step %q sets fields belonging to another step type (agent skill/agent_file/tools or run/script)", s.ID)
 	}
 }
 

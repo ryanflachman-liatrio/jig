@@ -45,6 +45,27 @@ const (
 	IsolationNone     Isolation = "none"
 )
 
+// EffortLevel tunes how much reasoning the model spends per step. It maps
+// straight onto the Claude Agent SDK's WithEffort option.
+type EffortLevel string
+
+const (
+	EffortLow    EffortLevel = "low"
+	EffortMedium EffortLevel = "medium"
+	EffortHigh   EffortLevel = "high"
+	EffortXHigh  EffortLevel = "xhigh"
+	EffortMax    EffortLevel = "max"
+)
+
+// valid reports whether e is one of the known effort levels.
+func (e EffortLevel) valid() bool {
+	switch e {
+	case EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax:
+		return true
+	}
+	return false
+}
+
 // OutputKind is the shape of a step's typed verdict.
 type OutputKind string
 
@@ -84,12 +105,16 @@ type Meta struct {
 
 // Defaults is the [defaults] table. Per-step fields override these.
 type Defaults struct {
-	Model          string `toml:"model"`
-	MaxTurns       int    `toml:"max_turns"`
-	Cwd            string `toml:"cwd"`
-	PermissionMode string `toml:"permission_mode"`
-	MaxParallel    int    `toml:"max_parallel"`
-	ArtifactsDir   string `toml:"artifacts_dir"`
+	Model             string      `toml:"model"`
+	FallbackModel     string      `toml:"fallback_model"`
+	Effort            EffortLevel `toml:"effort"`
+	MaxTurns          int         `toml:"max_turns"`
+	MaxThinkingTokens int         `toml:"max_thinking_tokens"`
+	MaxBudgetUSD      float64     `toml:"max_budget_usd"`
+	Cwd               string      `toml:"cwd"`
+	PermissionMode    string      `toml:"permission_mode"`
+	MaxParallel       int         `toml:"max_parallel"`
+	ArtifactsDir      string      `toml:"artifacts_dir"`
 }
 
 // Step is one node in the workflow graph. Fields are grouped by the step type
@@ -106,13 +131,30 @@ type Step struct {
 	MaxRetries int           `toml:"max_retries"`
 
 	// Agent-only.
-	Skill          string    `toml:"skill"`
-	Inputs         []Input   `toml:"inputs"`
-	AllowedTools   []string  `toml:"allowed_tools"`
-	Isolation      Isolation `toml:"isolation"`
-	Model          string    `toml:"model"`
-	MaxTurns       int       `toml:"max_turns"`
-	PermissionMode string    `toml:"permission_mode"`
+	Skill     string    `toml:"skill"`
+	AgentFile string    `toml:"agent_file"` // xor with Skill: a Claude agent .md file
+	Inputs    []Input   `toml:"inputs"`
+	Isolation Isolation `toml:"isolation"`
+
+	// Tool access: AllowedTools is the allowlist; DisallowedTools is the
+	// complementary denylist (e.g. everything but Bash).
+	AllowedTools    []string `toml:"allowed_tools"`
+	DisallowedTools []string `toml:"disallowed_tools"`
+
+	// Model & reasoning knobs (all overridable from [defaults]).
+	Model             string      `toml:"model"`
+	FallbackModel     string      `toml:"fallback_model"`
+	Effort            EffortLevel `toml:"effort"`
+	MaxTurns          int         `toml:"max_turns"`
+	MaxThinkingTokens int         `toml:"max_thinking_tokens"`
+	MaxBudgetUSD      float64     `toml:"max_budget_usd"`
+	PermissionMode    string      `toml:"permission_mode"`
+
+	// AppendSystemPrompt is injected after the skill/agent-file prompt for
+	// per-step constraints. agentPrompt holds the body of a resolved AgentFile
+	// (the agent's system prompt); it is populated at load time, not decoded.
+	AppendSystemPrompt string `toml:"append_system_prompt"`
+	agentPrompt        string
 
 	// Structured output (producer agents). At most one of these, and neither
 	// alongside a bool/enum output_type. Schema is the TOML-native form parsed
