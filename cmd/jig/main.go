@@ -11,9 +11,15 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"jig/internal/tui"
+	"jig/internal/workflow"
 )
 
 func main() {
+	// Subcommands run and exit before the TUI takes over the terminal.
+	if len(os.Args) > 1 && os.Args[1] == "validate" {
+		os.Exit(runValidate(os.Args[2:]))
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -30,4 +36,20 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error running program: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// runValidate parses and validates a workflow file, printing a summary. It
+// returns a process exit code so main can Exit before the TUI initializes.
+func runValidate(args []string) int {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "usage: jig validate <workflow.toml>")
+		return 2
+	}
+	wf, err := workflow.Load(args[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Printf("ok: %q v%s — %d step(s)\n", wf.Meta.Name, wf.Meta.Version, len(wf.Steps))
+	return 0
 }
