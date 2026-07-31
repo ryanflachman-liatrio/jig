@@ -11,20 +11,21 @@
 // The package is pure data + file I/O: it imports nothing from engine, runner,
 // or tui, mirroring the internal/step and internal/datastore style.
 //
-// # Compatibility contract
+// # Reader tolerance
 //
-// The schema is versioned by SchemaVersion. Readers MUST tolerate unknown block
-// types (rendering them as an "unsupported" placeholder rather than erroring) so
-// a newer writer never breaks an older reader. Retries and loop iterations
-// append to the same file; entries are distinguished by Attempt and Iteration.
+// The format is deliberately unversioned: runs are ephemeral and a `.jig/` dir
+// is not expected to outlive a jig upgrade, so there is no cross-version
+// compatibility contract to maintain. The reader is simply best-effort — it
+// skips lines it cannot parse (including a partial trailing line from a crash or
+// a concurrent write), drops unknown fields (via encoding/json), and preserves
+// unknown block types verbatim for the caller to render as a placeholder. That
+// keeps read-during-write safe and means a stale transcript from a different
+// jig build degrades gracefully rather than crashing; it makes no promise the
+// content renders correctly. Retries and loop iterations append to the same
+// file; entries are distinguished by Attempt and Iteration.
 package transcript
 
 import "encoding/json"
-
-// SchemaVersion is the current transcript schema version, stamped on every
-// Entry as "v". Bump this when the on-disk shape changes; readers stay
-// best-effort compatible across versions (see package doc).
-const SchemaVersion = 1
 
 // Role identifies the source of an Entry's blocks.
 type Role string
@@ -84,7 +85,6 @@ type Block struct {
 // Entry is one line of the transcript: a single message (one model turn, one
 // batch of tool results, or a terminal summary) with its ordered blocks.
 type Entry struct {
-	V         int     `json:"v"`       // schema version (SchemaVersion at write time)
 	Seq       int     `json:"seq"`     // monotonic per file, 1-based
 	Ts        string  `json:"ts"`      // RFC3339 UTC, second precision
 	Iteration int     `json:"iter"`    // loop iteration (step.State.Iteration)

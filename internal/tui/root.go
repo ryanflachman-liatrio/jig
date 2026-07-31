@@ -161,6 +161,11 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// an unnecessary Snapshot() call.
 		if m.monitor.runID != msg.runID {
 			m.monitor = newMonitorModel(msg.runID)
+			// runDir/dark let the monitor read per-step transcripts from disk and
+			// render markdown with the correct terminal style (Phase 5). Set them
+			// before withSnapshot so it preserves them.
+			m.monitor.runDir = m.manager.RunDir(msg.runID)
+			m.monitor.dark = m.dark
 			// Seed with a snapshot so already-completed or in-progress steps
 			// show up immediately. Snapshot() is safe for completed runs.
 			if run, ok := m.handles[msg.runID]; ok {
@@ -196,6 +201,8 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.runs = m.runs.withWorkflow(msg.wf)
 		// Navigate straight to the monitor so prompts and review gates are visible immediately.
 		m.monitor = newMonitorModel(run.ID)
+		m.monitor.runDir = m.manager.RunDir(run.ID)
+		m.monitor.dark = m.dark
 		m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		m.active = screenMonitor
 		return m, nil

@@ -72,6 +72,32 @@ var (
 	runningStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.AdaptiveColor{Light: "#0F5FBF", Dark: "#7AA2F7"})
 
+	// Chat chain rendering (Phase 5): one style per block kind so a step's
+	// transcript reads at a glance.
+
+	// thinkingStyle dims reasoning blocks so they sit behind the model's actual
+	// answer rather than competing with it.
+	thinkingStyle = lipgloss.NewStyle().
+			Faint(true).
+			Italic(true).
+			Foreground(lipgloss.AdaptiveColor{Light: "#6b6b6b", Dark: "#8a8a8a"})
+
+	// toolCallStyle tints a ⚙ tool_use line; toolResultStyle its ↳ result.
+	toolCallStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "#874BFD", Dark: "#7D56F4"})
+
+	toolResultStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "#0F5FBF", Dark: "#7AA2F7"})
+
+	// chatHintStyle renders the collapse affordance ("[N chars]", "… elided").
+	chatHintStyle = lipgloss.NewStyle().Faint(true)
+
+	// blockCursorStyle highlights the collapsible block under the chat cursor so
+	// the expand target (tab to move, enter to toggle) is unambiguous.
+	blockCursorStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(lipgloss.AdaptiveColor{Light: "#1a1a1a", Dark: "#fafafa"})
+
 	// Diff rendering (Phase 5 review = "diff").
 	diffAddStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.AdaptiveColor{Light: "#1A7F37", Dark: "#5FD75F"})

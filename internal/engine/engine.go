@@ -42,6 +42,17 @@ func NewManager(exec Executor, root string) *Manager {
 	}
 }
 
+// RunDir returns the on-disk directory for runID without creating it, or "" when
+// persistence is disabled (root == ""). Readers such as the TUI transcript view
+// use it to locate a run's per-step transcript files; the path mirrors the
+// layout datastore.RunDir builds at run start.
+func (m *Manager) RunDir(runID string) string {
+	if m.root == "" {
+		return ""
+	}
+	return filepath.Join(m.root, "runs", runID)
+}
+
 // RunSnapshot is a point-in-time summary of a run, safe to read from any goroutine.
 type RunSnapshot struct {
 	ID       string

@@ -39,15 +39,16 @@ jig has two halves that meet at the `.toml` workflow file:
 ## Package layout
 
 ```
-cmd/jig/            entry point: `jig validate <file>` subcommand + the TUI
+cmd/jig/            entry point: `jig validate` / `jig prune` subcommands + the TUI
 internal/
   workflow/         schema, loader, validator, guard/condition parser   [DONE]
-  tui/              Bubble Tea app: streaming chat client                [DONE]
-  engine/           DAG executor / orchestrator                         [planned]
-  runner/           runs an individual step to completion               [planned]
-  step/             per-step execution state & result model             [planned]
-  manifest/         run manifest / persisted run records                [planned]
-  datastore/        artifact & metadata persistence under .jig/         [planned]
+  tui/              Bubble Tea app: chat client + navigable run monitor  [DONE]
+  engine/           DAG executor / orchestrator + event bus             [DONE]
+  runner/           concrete executors (agent SDK, shell command)       [DONE]
+  step/             per-step execution state & result model             [DONE]
+  transcript/       per-step transcript.jsonl store (writer + reader)   [DONE]
+  manifest/         journal.jsonl writer + per-step result.json         [DONE]
+  datastore/        run-dir layout, path helpers, retention under .jig/ [DONE]
 examples/           worked workflows, skills, agent files, JSON schemas
 docs/               this file, TESTING.md, workflow-schema.md
 ```
@@ -123,13 +124,72 @@ background after Bubble Tea owns stdin races the input reader and injects the
 terminal's OSC reply as garbled keystrokes. So `main` reads it once up front and
 passes it into `tui.New`.
 
+## `internal/transcript` — the per-step conversation store
+
+Each step's full conversation — assistant text, reasoning, tool calls with
+their inputs, and tool results — is captured to an append-only JSONL file,
+`transcript.jsonl`, beside that step's `result.json`. It is the durable record
+the run monitor renders from. The package is pure data + file I/O (`Entry`,
+`Block`, an append `Writer`, and a windowed `Reader`); it imports nothing from
+engine/runner/tui, mirroring the `internal/step` style.
+
+**File is truth, bus is liveness.** The transcript file — written *directly by
+the runner* — is the source of truth for step output. The engine event bus
+carries only lightweight liveness signals (`StepMessage{Seq}`), never bulk
+content; a dropped signal just means "one seq stale," corrected on the next
+read. The TUI renders from disk, never from the lossy bus. Nothing is lost to a
+dropped channel send, a monitor re-entry, or a run switch. Bulk content never
+rides the bus or `journal.jsonl`.
+
+**Bounded on disk, bounded on screen.** A write-time cap (`MaxBlockBytes`,
+default 256 KiB) truncates a pathological block and flags it `truncated`,
+protecting the write loop and disk. Separately, the monitor collapses large
+blocks to 80 chars with an expand affordance backed by a bounded windowed read —
+the whole file is never slurped into memory.
+
+**Unversioned, best-effort read.** The format carries no schema version. Runs
+are ephemeral and a `.jig/` dir is not expected to outlive a jig upgrade, so
+there is no cross-version compatibility contract to keep (or test, or grow the
+line format for). The reader is simply defensive: it skips lines it cannot parse
+(a partial trailing line from a crash or a concurrent write), `encoding/json`
+drops unknown fields, and unknown block types render as an "unsupported"
+placeholder. A stale transcript from a different jig build therefore degrades
+gracefully rather than crashing — with no promise it renders correctly. Prune
+old runs after upgrading.
+
+**Retention & housekeeping.** Transcripts (and everything else under a run dir)
+persist until pruned. `datastore.Prune` / `jig prune` removes finished run
+directories by age (`--max-age`) and/or count (`--keep-last`); `--dry-run`
+previews via `datastore.Prunable`. Retention is conservative by design: a run is
+a deletion candidate **only** once its journal shows a terminal `run_finished`
+event, so an in-progress or crashed run is never removed. With no flags, prune
+is a no-op.
+
+**Security / PII posture.** Transcripts persist **raw tool output and model
+reasoning** to disk under `.jig/` — command stdout/stderr, file contents read by
+the agent, and thinking blocks can all contain secrets. `.jig/` is git-ignored
+(see `.gitignore`) so it never reaches version control, but it is plaintext on
+the local disk. Treat a run directory as sensitive; `jig prune` is the supported
+way to clear it.
+
 ## Where the engine will plug in (planned)
 
 The schema already specifies the engine's contract; these are the seams to fill:
 
 1. **Run directory.** `.jig/runs/<run-id>/` holds `artifacts/` (where `@stepid`
-   resolves) and `steps/<step-id>/result.json` (engine-owned metadata). Kept
-   outside the working tree so it survives worktree switches.
+   resolves), `journal.jsonl` (the orchestration event log), and
+   `steps/<step-id>/` with `result.json` (engine-owned metadata) plus
+   `transcript.jsonl` (the step's full conversation — see the transcript store
+   below). Kept outside the working tree so it survives worktree switches:
+
+   ```
+   .jig/runs/<run-id>/
+     journal.jsonl                – orchestration events (one Envelope/line)
+     steps/<step-id>/
+       result.json                – terminal step summary
+       transcript.jsonl           – append-only per-step conversation
+     artifacts/                   – producer output (@stepid resolves here)
+   ```
 2. **Traversal.** Topologically order the validated DAG; run ready steps
    concurrently up to `max_parallel`; skip a step whose `when` guard is false.
 3. **Step execution** (`runner`/`step`):

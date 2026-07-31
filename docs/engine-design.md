@@ -155,7 +155,8 @@ type Event interface{ isEvent() }
 type RunStarted    struct{ RunID, Workflow string; Steps []string }
 type RunFinished   struct{ RunID string; Failed bool }
 type StepStatus    struct{ RunID, StepID string; From, To step.Status; Attempt, Iteration int }
-type StepOutput    struct{ RunID, StepID string; Delta string }   // streaming agent text
+type StepOutput    struct{ RunID, StepID string; Delta string }   // live-typing tail only
+type StepMessage   struct{ RunID, StepID string; Seq, Iteration int } // transcript advanced (liveness)
 type StepToolCall  struct{ RunID, StepID, Tool, Detail string }   // observed metadata, live
 type GateResult    struct{ RunID, StepID string; Passed bool; Detail string }
 type LoopFired     struct{ RunID, StepID, Goto string; Iteration, Max int }
@@ -173,6 +174,16 @@ Encode is a type switch; decode uses a `kind → func() Event` registry. Test
 with a round-trip table test. `StepOutput` deltas are high-volume; journaling
 them is optional (decide at Phase 4 — likely journal a truncated form or skip,
 since the artifact carries the full text).
+
+**File is truth, bus is liveness.** Bulk step output never rides the event bus
+or the journal. The runner writes each step's full conversation directly to a
+per-step `transcript.jsonl` (see `internal/transcript` in ARCHITECTURE.md); the
+bus carries only `StepMessage{Seq}` — a lightweight "the transcript advanced to
+this seq" nudge. A dropped `StepMessage` just means the TUI is one seq stale,
+corrected on its next read from disk. This keeps the drop-on-full fan-out safe
+for content and the TUI's memory bounded (windowed reads, not a growing
+in-memory log). `StepOutput` survives only as the ephemeral live-typing tail for
+the currently-streaming bubble; the finalized transcript entry supersedes it.
 
 ### `internal/engine` — Manager and Run
 

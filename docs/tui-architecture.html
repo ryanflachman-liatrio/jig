@@ -1,0 +1,1529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jig — TUI architecture explorer</title>
+<style>
+/* Palette is colourblind-safe (Okabe–Ito derived) and defined per scheme, in the
+   spirit of internal/tui/styles.go, which uses lipgloss.AdaptiveColor throughout. */
+:root {
+  --bg: #fbfbfa;      --bg-raise: #ffffff;  --bg-sunk: #f1f0ee;
+  --fg: #1c1b19;      --fg-dim: #5f5c57;    --fg-faint: #8d8983;
+  --line: #d9d6d1;    --line-soft: #eceae6;
+  --cmd: #6b6862;     --tui: #2f6fb8;       --engine: #b5651d;
+  --runner: #0f7a72;  --disk: #6d4fbe;      --warn: #a4451a;
+  --ok: #22683f;      --drop: #a01f2e;
+  --cmd-bg: #f0efed;  --tui-bg: #e9f1fb;    --engine-bg: #fbf0e6;
+  --runner-bg: #e4f4f2; --disk-bg: #f0eafb; --warn-bg: #fbeee7;
+  --ok-bg: #e6f2ea;   --drop-bg: #fbeaec;
+  --shadow: 0 1px 2px rgba(0,0,0,.06), 0 4px 14px rgba(0,0,0,.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17181a;    --bg-raise: #1f2124;  --bg-sunk: #121315;
+    --fg: #e8e6e3;    --fg-dim: #a5a29c;    --fg-faint: #767370;
+    --line: #33363a;  --line-soft: #26282b;
+    --cmd: #a9a5a0;   --tui: #74aaea;       --engine: #e0a350;
+    --runner: #4cc7bb; --disk: #ab92ee;     --warn: #e8925f;
+    --ok: #6fc98d;    --drop: #ee7b8a;
+    --cmd-bg: #26282b; --tui-bg: #1a2735;   --engine-bg: #2e2415;
+    --runner-bg: #142b29; --disk-bg: #221c33; --warn-bg: #2f2015;
+    --ok-bg: #16281c;  --drop-bg: #2c1619;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 16px rgba(0,0,0,.3);
+  }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 68px; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.62 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px 120px; }
+code, pre, .ref, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+
+/* ── header / nav ─────────────────────────────────────────────── */
+header { padding: 56px 0 28px; }
+h1 { font-size: 30px; letter-spacing: -.02em; margin: 0 0 8px; font-weight: 650; }
+h1 .dim { color: var(--fg-faint); font-weight: 400; }
+.lede { color: var(--fg-dim); max-width: 76ch; margin: 0 0 4px; }
+nav {
+  position: sticky; top: 0; z-index: 50; background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px); border-bottom: 1px solid var(--line);
+  display: flex; gap: 2px; overflow-x: auto; padding: 8px 24px; margin-bottom: 40px;
+}
+nav a {
+  color: var(--fg-dim); text-decoration: none; font-size: 13px; padding: 5px 10px;
+  border-radius: 6px; white-space: nowrap;
+}
+nav a:hover { background: var(--bg-sunk); color: var(--fg); }
+
+section { margin: 0 0 72px; scroll-margin-top: 68px; }
+h2 {
+  font-size: 12px; text-transform: uppercase; letter-spacing: .09em; color: var(--fg-faint);
+  font-weight: 600; margin: 0 0 6px; display: flex; align-items: baseline; gap: 10px;
+}
+h2 .num { font-variant-numeric: tabular-nums; }
+h3 { font-size: 17px; margin: 0 0 10px; font-weight: 600; letter-spacing: -.01em; }
+.sub { color: var(--fg-dim); margin: 0 0 22px; max-width: 80ch; }
+p { max-width: 82ch; }
+
+/* ── shared bits ──────────────────────────────────────────────── */
+.ref {
+  font-size: 11.5px; color: var(--fg-dim); background: var(--bg-sunk);
+  border: 1px solid var(--line-soft); border-radius: 4px; padding: 1px 5px;
+  white-space: nowrap; display: inline-block;
+}
+.card {
+  background: var(--bg-raise); border: 1px solid var(--line); border-radius: 10px;
+  padding: 18px 20px; box-shadow: var(--shadow);
+}
+.grid { display: grid; gap: 14px; }
+.g2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.g3 { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+.badge {
+  display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .03em;
+  padding: 1.5px 7px; border-radius: 20px; text-transform: uppercase;
+}
+.b-ok { background: var(--ok-bg); color: var(--ok); }
+.b-warn { background: var(--warn-bg); color: var(--warn); }
+.b-drop { background: var(--drop-bg); color: var(--drop); }
+.b-dead { background: var(--bg-sunk); color: var(--fg-faint); }
+.b-tui { background: var(--tui-bg); color: var(--tui); }
+.b-engine { background: var(--engine-bg); color: var(--engine); }
+.b-runner { background: var(--runner-bg); color: var(--runner); }
+.b-disk { background: var(--disk-bg); color: var(--disk); }
+.note {
+  border-left: 3px solid var(--warn); background: var(--warn-bg); color: var(--fg);
+  padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 18px 0; font-size: 14px;
+}
+.note strong { color: var(--warn); }
+.note.ok { border-color: var(--ok); background: var(--ok-bg); }
+.note.ok strong { color: var(--ok); }
+pre {
+  background: var(--bg-sunk); border: 1px solid var(--line-soft); border-radius: 8px;
+  padding: 12px 14px; overflow-x: auto; font-size: 12.5px; line-height: 1.6; margin: 0;
+  tab-size: 4;
+}
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th {
+  text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--fg-faint); font-weight: 600; padding: 0 12px 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+td { padding: 9px 12px 9px 0; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+
+/* ── 1. layer map ─────────────────────────────────────────────── */
+.layers { display: grid; gap: 8px; }
+.layer {
+  display: grid; grid-template-columns: 190px 1fr; gap: 18px; align-items: center;
+  border: 1px solid var(--line); border-left: 4px solid var(--lc); border-radius: 8px;
+  background: var(--bg-raise); padding: 13px 18px; cursor: pointer;
+  text-align: left; font: inherit; color: inherit; width: 100%;
+  transition: background .12s, transform .12s, box-shadow .12s;
+}
+.layer:hover { background: var(--lbg); transform: translateX(2px); }
+.layer.lit { background: var(--lbg); box-shadow: 0 0 0 2px var(--lc); }
+.layer .lname { font-family: ui-monospace, Menlo, monospace; font-size: 13px; color: var(--lc); font-weight: 600; }
+.layer .lbody { color: var(--fg-dim); font-size: 13px; }
+.layer[data-layer=cmd]    { --lc: var(--cmd);    --lbg: var(--cmd-bg); }
+.layer[data-layer=tui]    { --lc: var(--tui);    --lbg: var(--tui-bg); }
+.layer[data-layer=engine] { --lc: var(--engine); --lbg: var(--engine-bg); }
+.layer[data-layer=runner] { --lc: var(--runner); --lbg: var(--runner-bg); }
+.layer[data-layer=disk]   { --lc: var(--disk);   --lbg: var(--disk-bg); }
+.arrowcol { text-align: center; color: var(--fg-faint); font-size: 15px; line-height: 1; margin: -3px 0; }
+
+/* ── 2. state machine ─────────────────────────────────────────── */
+.smwrap { display: grid; grid-template-columns: 1fr 330px; gap: 20px; align-items: start; }
+@media (max-width: 940px) { .smwrap { grid-template-columns: 1fr; } }
+svg.sm { width: 100%; height: auto; display: block; }
+.node rect {
+  fill: var(--bg-raise); stroke: var(--tui); stroke-width: 1.5;
+  transition: fill .12s, stroke-width .12s;
+}
+.node { cursor: pointer; }
+.node:hover rect { fill: var(--tui-bg); }
+.node.sel rect { fill: var(--tui-bg); stroke-width: 3; }
+.node.lit rect { fill: var(--tui-bg); stroke-width: 3; }
+.node text.nt { fill: var(--fg); font: 600 13px ui-monospace, Menlo, monospace; }
+.node text.ns { fill: var(--fg-faint); font: 11px ui-sans-serif, sans-serif; }
+.edge { stroke: var(--fg-faint); stroke-width: 1.4; fill: none; }
+.edge.back { stroke-dasharray: 4 3; }
+.edge.shortcut { stroke: var(--engine); stroke-width: 1.6; }
+.elabel { fill: var(--fg-dim); font: 11px ui-monospace, Menlo, monospace; text-anchor: middle; }
+.elabel.sc { fill: var(--engine); }
+.panel { background: var(--bg-raise); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; box-shadow: var(--shadow); }
+.panel h4 { margin: 0 0 3px; font: 600 15px ui-monospace, Menlo, monospace; color: var(--tui); }
+.panel .psub { color: var(--fg-faint); font-size: 12px; margin: 0 0 14px; }
+.panel dl { margin: 0; font-size: 13px; }
+.panel dt {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--fg-faint);
+  font-weight: 600; margin: 14px 0 5px;
+}
+.panel dt:first-child { margin-top: 0; }
+.panel dd { margin: 0; color: var(--fg-dim); }
+.panel dd ul { margin: 0; padding-left: 17px; }
+.panel dd li { margin-bottom: 4px; }
+.prec { counter-reset: p; margin: 0; padding: 0; list-style: none; font-size: 12.5px; }
+.prec li {
+  counter-increment: p; padding: 5px 0 5px 26px; position: relative;
+  border-bottom: 1px dashed var(--line-soft);
+}
+.prec li:last-child { border-bottom: none; }
+.prec li::before {
+  content: counter(p); position: absolute; left: 0; top: 5px;
+  width: 17px; height: 17px; border-radius: 50%; background: var(--tui-bg); color: var(--tui);
+  font: 600 10px ui-monospace, monospace; display: grid; place-items: center;
+}
+
+/* ── 3/4. tables ──────────────────────────────────────────────── */
+tr.msgrow { cursor: default; transition: background .1s; }
+tr.msgrow:hover { background: var(--bg-sunk); }
+tr.dead { opacity: .5; }
+.mtype { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; font-weight: 600; }
+.pathsplit { display: flex; flex-direction: column; gap: 3px; }
+
+/* ── 4. bus diagram ───────────────────────────────────────────── */
+.bus { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 820px) { .bus { grid-template-columns: 1fr; } }
+.buspath { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg-raise); }
+.buspath > header { padding: 12px 16px 10px; border-bottom: 1px solid var(--line); background: var(--bg-sunk); }
+.buspath h4 { margin: 0 0 2px; font: 600 14px ui-monospace, Menlo, monospace; }
+.buspath .bh { font-size: 12px; color: var(--fg-dim); }
+.chain { list-style: none; margin: 0; padding: 14px 16px; font-size: 12.5px; }
+.chain li { position: relative; padding: 0 0 16px 20px; }
+.chain li:last-child { padding-bottom: 0; }
+.chain li::before {
+  content: ""; position: absolute; left: 4px; top: 6px; width: 7px; height: 7px;
+  border-radius: 50%; background: var(--engine);
+}
+.chain li:not(:last-child)::after {
+  content: ""; position: absolute; left: 7px; top: 15px; bottom: 3px; width: 1px;
+  background: var(--line);
+}
+.chain li.drop::before { background: var(--drop); }
+.chain li.journaled::before { background: var(--ok); }
+.chain .cl { font-family: ui-monospace, Menlo, monospace; font-weight: 600; }
+.chain .cd { color: var(--fg-dim); display: block; }
+
+/* ── 5. trace player ──────────────────────────────────────────── */
+.tp { border: 1px solid var(--line); border-radius: 10px; background: var(--bg-raise); box-shadow: var(--shadow); overflow: hidden; }
+.tp > header { display: flex; gap: 8px; flex-wrap: wrap; padding: 12px 16px; border-bottom: 1px solid var(--line); background: var(--bg-sunk); }
+.tbtn {
+  font: 12.5px ui-sans-serif, sans-serif; padding: 5px 11px; border-radius: 20px;
+  border: 1px solid var(--line); background: var(--bg-raise); color: var(--fg-dim); cursor: pointer;
+}
+.tbtn:hover { color: var(--fg); border-color: var(--fg-faint); }
+.tbtn.on { background: var(--tui); border-color: var(--tui); color: #fff; font-weight: 600; }
+@media (prefers-color-scheme: dark) { .tbtn.on { color: #10151b; } }
+.tpbody { display: grid; grid-template-columns: 260px 1fr; }
+@media (max-width: 880px) { .tpbody { grid-template-columns: 1fr; } }
+.tsteps { border-right: 1px solid var(--line); padding: 8px; max-height: 470px; overflow-y: auto; }
+@media (max-width: 880px) { .tsteps { border-right: none; border-bottom: 1px solid var(--line); max-height: 210px; } }
+.tstep {
+  display: grid; grid-template-columns: 22px 1fr; gap: 8px; align-items: start;
+  padding: 7px 9px; border-radius: 7px; cursor: pointer; font-size: 12.5px; color: var(--fg-dim);
+  border: 1px solid transparent; text-align: left; width: 100%; font-family: inherit; background: none;
+}
+.tstep:hover { background: var(--bg-sunk); }
+.tstep.on { background: var(--tui-bg); border-color: var(--tui); color: var(--fg); }
+.tstep .tn { font: 600 10px ui-monospace, monospace; color: var(--fg-faint); padding-top: 2px; }
+.tstep.on .tn { color: var(--tui); }
+.tstage { padding: 16px 18px; }
+.tstage .tmeta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+.tstage h4 { margin: 0 0 10px; font-size: 15px; }
+.tstage .tnote { color: var(--fg-dim); font-size: 13px; margin: 12px 0 0; border-left: 3px solid var(--line); padding-left: 12px; }
+.gor { font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+.progress { height: 2px; background: var(--line-soft); }
+.progress > i { display: block; height: 100%; background: var(--tui); transition: width .2s; }
+
+/* ── 6/7. misc ────────────────────────────────────────────────── */
+.gcard { border: 1px solid var(--line); border-left: 3px solid var(--gc); border-radius: 8px; padding: 14px 16px; background: var(--bg-raise); }
+.gcard h4 { margin: 0 0 6px; font: 600 13px ui-monospace, Menlo, monospace; color: var(--gc); }
+.gcard p { margin: 0; font-size: 13px; color: var(--fg-dim); }
+.gcard .cnt { float: right; font-size: 11px; color: var(--fg-faint); font-weight: 400; }
+.phase { display: grid; grid-template-columns: 30px 1fr auto; gap: 12px; align-items: start; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
+.phase:last-child { border-bottom: none; }
+.phase .pn { font: 600 12px ui-monospace, monospace; color: var(--fg-faint); padding-top: 2px; }
+.phase .pt { font-weight: 600; font-size: 13.5px; }
+.phase .pd { color: var(--fg-dim); font-size: 13px; }
+footer { border-top: 1px solid var(--line); padding-top: 20px; color: var(--fg-faint); font-size: 12.5px; }
+</style>
+</head>
+<body>
+
+<header class="wrap">
+  <h1>jig <span class="dim">— TUI architecture explorer</span></h1>
+  <p class="lede">The full stack, keypress to disk: one <code>tea.Model</code>, four screens, a per-run
+  scheduler goroutine that owns all mutable state, a deliberately lossy event bus, and two
+  append-only files on disk. Click anything.</p>
+  <p class="lede" style="font-size:13px">Every claim carries a <span class="ref">file:line</span> chip and
+  was verified against the tree at commit <code>4a41726</code> <em>plus the uncommitted phase-5 work in
+  <code>internal/tui/monitor.go</code>, <code>root.go</code>, <code>styles.go</code> and
+  <code>engine.go</code></em> — including the claims that contradict <code>CLAUDE.md</code> and
+  <code>docs/ARCHITECTURE.md</code>, which are both out of date. This package is moving fast, so line
+  numbers drift; the anchors named beside them (function names, <code>case</code> labels, constants) are
+  what to actually search for.</p>
+</header>
+
+<nav class="wrap" style="max-width:none">
+  <a href="#layers">1 · Layer map</a>
+  <a href="#screens">2 · Screens</a>
+  <a href="#messages">3 · Messages</a>
+  <a href="#bus">4 · Event bus</a>
+  <a href="#traces">5 · Traces</a>
+  <a href="#concurrency">6 · Concurrency</a>
+  <a href="#disk">7 · Disk &amp; phases</a>
+</nav>
+
+<div class="wrap">
+
+<!-- ══════════════ 1. LAYER MAP ══════════════ -->
+<section id="layers">
+  <h2><span class="num">01</span> Layer map</h2>
+  <p class="sub">Five bands, top to bottom. Each is a click-through to its section; hovering a message
+  or trace frame elsewhere on this page lights the band it belongs to.</p>
+
+  <div class="layers">
+    <button class="layer" data-layer="cmd" data-goto="#layers">
+      <span class="lname">cmd/jig/main.go</span>
+      <span class="lbody">Detects terminal background, builds the executor mux, creates the
+      <code>Manager</code>, hands one model to <code>tea.NewProgram</code>. <span class="ref">main.go:34-45</span></span>
+    </button>
+    <div class="arrowcol">↓</div>
+    <button class="layer" data-layer="tui" data-goto="#screens">
+      <span class="lname">internal/tui</span>
+      <span class="lbody">One <code>rootModel</code> dispatching to four sub-models —
+      selector, detail, runs, monitor. <span class="ref">root.go:65</span></span>
+    </button>
+    <div class="arrowcol">↕</div>
+    <button class="layer" data-layer="engine" data-goto="#bus">
+      <span class="lname">internal/engine</span>
+      <span class="lbody"><code>Manager</code> registry, <code>Run</code> handle, one scheduler
+      goroutine per run, a per-dispatch <code>reporter</code>. <span class="ref">engine.go:27,132,240</span></span>
+    </button>
+    <div class="arrowcol">↓</div>
+    <button class="layer" data-layer="runner" data-goto="#traces">
+      <span class="lname">internal/runner</span>
+      <span class="lbody"><code>Mux</code> routes by step type to <code>AgentExecutor</code> (Claude
+      Agent SDK), <code>CommandExecutor</code> (<code>sh -c</code>), <code>FakeExecutor</code>.
+      <span class="ref">mux.go:1</span></span>
+    </button>
+    <div class="arrowcol">↓</div>
+    <button class="layer" data-layer="disk" data-goto="#disk">
+      <span class="lname">.jig/</span>
+      <span class="lbody"><code>journal.jsonl</code> (every emitted event), <code>result.json</code>,
+      <code>transcript.jsonl</code> (full agent conversation), <code>worktrees/</code>.
+      <span class="ref">datastore.go:1</span></span>
+    </button>
+  </div>
+
+  <div class="note">
+    <strong>Ordering gotcha at the very top.</strong> <code>lipgloss.HasDarkBackground()</code> is called
+    at <span class="ref">main.go:34</span> — <em>before</em> <code>tea.NewProgram</code> takes stdin into
+    raw mode. Querying it later (e.g. from glamour's auto-style on every resize) races Bubble Tea's own
+    input reader and leaks the terminal's OSC response into the app as garbled keystrokes. The detected
+    boolean is threaded down through <code>tui.New(ctx, dark, mgr)</code>.
+  </div>
+</section>
+
+<!-- ══════════════ 2. SCREENS ══════════════ -->
+<section id="screens">
+  <h2><span class="num">02</span> Screen state machine</h2>
+  <p class="sub">Four values of the <code>screen</code> enum <span class="ref">root.go:19-24</span>.
+  Solid arrows go forward, dashed arrows go back, the amber arrow is the shortcut that skips a screen.
+  Click a node for its model, keys and render strategy.</p>
+
+  <div class="smwrap">
+    <div class="card" style="padding:10px">
+      <svg class="sm" viewBox="0 0 900 300" role="img" aria-label="Screen state machine">
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--fg-faint)"/>
+          </marker>
+          <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="var(--engine)"/>
+          </marker>
+        </defs>
+
+        <!-- forward edges -->
+        <line class="edge" x1="172" y1="158" x2="243" y2="158" marker-end="url(#ah)"/>
+        <text class="elabel" x="207" y="150">enter</text>
+        <line class="edge" x1="402" y1="158" x2="473" y2="158" marker-end="url(#ah)"/>
+        <text class="elabel" x="437" y="150">enter</text>
+        <line class="edge" x1="632" y1="158" x2="703" y2="158" marker-end="url(#ah)"/>
+        <text class="elabel" x="667" y="150">enter</text>
+
+        <!-- back edges (dashed, above) -->
+        <path class="edge back" d="M 275,130 C 275,72 120,72 96,128" marker-end="url(#ah)"/>
+        <text class="elabel" x="186" y="66">esc/q/⌫/h/←</text>
+        <path class="edge back" d="M 505,130 C 505,44 350,44 326,128" marker-end="url(#ah)"/>
+        <text class="elabel" x="416" y="38">esc → detail if loaded</text>
+        <path class="edge back" d="M 735,130 C 735,72 580,72 556,128" marker-end="url(#ah)"/>
+        <text class="elabel" x="646" y="66">esc/q/⌫/h/←</text>
+
+        <!-- r shortcut edges (below) -->
+        <path class="edge shortcut" d="M 326,188 C 326,262 700,262 748,190" marker-end="url(#ah2)"/>
+        <text class="elabel sc" x="520" y="278">r → startRunMsg (new run, skips Runs)</text>
+        <path class="edge shortcut" d="M 556,188 C 556,232 730,232 762,190" marker-end="url(#ah2)"/>
+        <text class="elabel sc" x="660" y="226">r</text>
+
+        <!-- nodes -->
+        <g class="node" id="S-selector" tabindex="0" role="button" aria-label="Selector screen">
+          <rect x="22" y="130" width="150" height="56" rx="9"/>
+          <text class="nt" x="97" y="153" text-anchor="middle">Selector</text>
+          <text class="ns" x="97" y="171" text-anchor="middle">bubbles/list</text>
+        </g>
+        <g class="node" id="S-detail" tabindex="0" role="button" aria-label="Detail screen">
+          <rect x="252" y="130" width="150" height="56" rx="9"/>
+          <text class="nt" x="327" y="153" text-anchor="middle">Detail</text>
+          <text class="ns" x="327" y="171" text-anchor="middle">viewport + footer</text>
+        </g>
+        <g class="node" id="S-runs" tabindex="0" role="button" aria-label="Runs screen">
+          <rect x="482" y="130" width="150" height="56" rx="9"/>
+          <text class="nt" x="557" y="153" text-anchor="middle">Runs</text>
+          <text class="ns" x="557" y="171" text-anchor="middle">hand-rolled cursor</text>
+        </g>
+        <g class="node" id="S-monitor" tabindex="0" role="button" aria-label="Monitor screen">
+          <rect x="712" y="130" width="150" height="56" rx="9"/>
+          <text class="nt" x="787" y="153" text-anchor="middle">Monitor</text>
+          <text class="ns" x="787" y="171" text-anchor="middle">modeList ⇄ modeChat</text>
+        </g>
+      </svg>
+      <p style="font-size:12px;color:var(--fg-faint);margin:4px 10px 6px">
+        <code>ctrl+c</code> → <code>tea.Quit</code> from any screen <span class="ref">root.go:108</span>.
+        It is the <em>only</em> key the root itself handles.
+      </p>
+    </div>
+
+    <div class="panel" id="screenPanel"></div>
+  </div>
+
+  <div class="note ok">
+    <strong>The monitor is a nested state machine.</strong> An explicit <code>monitorMode</code>
+    <span class="ref">monitor.go:21-30</span> — <code>modeList</code> (step list, <code>j</code>/<code>k</code>
+    move a selection cursor) and <code>modeChat</code> (one step's transcript, <code>j</code>/<code>k</code>
+    scroll) — sits <em>inside</em> the Monitor screen, wrapped in two modal overlays. The four-tier key
+    precedence is load-bearing, and the reason the mode is explicit rather than inferred is written into
+    the type's own doc comment: it <em>"keeps the list-navigation keymap from colliding with the
+    viewport's scroll keymap."</em>
+    <ol class="prec" style="margin-top:10px">
+      <li><code>pendingPrompt != nil</code> → every key goes to the textarea; <code>ctrl+s</code> submits <span class="ref">monitor.go:186-210</span></li>
+      <li><code>pendingReview != nil</code> → digits <code>1</code>–<code>9</code> pick a verdict, <code>esc</code>/<code>q</code> leaves; <strong>everything else is swallowed</strong> by a bare <code>return m, nil</code> so navigation is frozen while a gate is up <span class="ref">monitor.go:214-234</span></li>
+      <li><code>switch m.mode</code> — <code>modeList</code> claims <code>j</code>/<code>k</code>/<code>enter</code>/<code>esc</code> <span class="ref">monitor.go:239-277</span>; <code>modeChat</code> claims only <code>esc</code>/<code>h</code>/<code>←</code>, <code>tab</code>/<code>shift+tab</code>, <code>enter</code>/<code>space</code> and <code>o</code> <span class="ref">monitor.go:278-326</span></li>
+      <li>everything unclaimed falls through to <code>m.vp.Update(msg)</code> <span class="ref">monitor.go:336</span> — which in <code>modeChat</code> is the whole point: <code>j</code>/<code>k</code>/<code>ctrl+d</code>/<code>pgdn</code> reach the viewport's own keymap untouched</li>
+    </ol>
+    <p style="margin:12px 0 0;font-size:13px">Tier 3 <em>must</em> come before tier 4 or the viewport eats
+    <code>j</code>/<code>k</code> before the list ever sees them — and note the two modes make opposite
+    choices about the same keys, which is exactly why an implicit mode wouldn't have worked. Both
+    human-input events also force <code>m.mode = modeList</code> on arrival
+    <span class="ref">monitor.go:387,412</span>: a gate must never render behind a drilled-in chat view, or
+    its keys would be ambiguous. <code>monitor_test.go</code> pins all of this, including that
+    <code>j</code> does <em>not</em> move the list cursor in <code>modeChat</code> or during a review.</p>
+  </div>
+
+  <div class="note ok">
+    <strong>Navigation is state-preserving.</strong> <code>showMonitorMsg</code> only rebuilds the monitor
+    when the run ID actually differs <span class="ref">root.go:162</span>, and seeds the fresh one from
+    <code>run.Snapshot()</code> <span class="ref">root.go:166-169</span>. Combined with the root fanning
+    every engine event to <em>both</em> <code>runs</code> and <code>monitor</code> regardless of which
+    screen is active <span class="ref">root.go:124-128</span>, monitor state survives navigating away and back.
+  </div>
+</section>
+
+<!-- ══════════════ 3. MESSAGES ══════════════ -->
+<section id="messages">
+  <h2><span class="num">03</span> Message catalog</h2>
+  <p class="sub">Every <code>tea.Msg</code> in the program, with what produces it and what consumes it.
+  Hover a row to light the layers and screens it touches. Sub-models return concrete types
+  (<code>(selectorModel, tea.Cmd)</code>, not <code>(tea.Model, tea.Cmd)</code>) so the root can hold
+  them by value with no type assertions — only <code>rootModel</code> implements <code>tea.Model</code>.</p>
+
+  <div class="card">
+    <table>
+      <thead><tr><th style="width:24%">Message</th><th style="width:38%">Produced by</th><th>Consumed by</th></tr></thead>
+      <tbody id="msgBody"></tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <strong>540 lines of the package are unreachable.</strong> <code>newChatModel</code>
+    <span class="ref">chat.go:61</span> has no callers anywhere outside <code>chat.go</code> itself, so the
+    original streaming-chat spike — <code>chat.go</code> (279), <code>viewer.go</code> (127),
+    <code>client.go</code> (118), <code>turn.go</code> (16) — cannot be reached from
+    <code>tea.NewProgram</code>. That includes a <em>second, separate</em> Claude Agent SDK integration in
+    <code>client.go</code>; the live one is in <code>runner/agent.go</code> and the TUI never touches it
+    directly. Those six <code>claude*Msg</code> types are greyed out above.
+  </div>
+
+  <div class="note">
+    <strong>No <code>bubbles/key</code> anywhere.</strong> Every binding is a raw
+    <code>msg.String()</code> comparison, so there is no generated help, no keymap composition, and the
+    bindings the bubbles own internally (viewport's <code>j</code>/<code>k</code>, list's <code>/</code>
+    filter) are reachable only via fall-through. Help text is hand-written per screen in each
+    <code>footerView()</code>.
+  </div>
+</section>
+
+<!-- ══════════════ 4. EVENT BUS ══════════════ -->
+<section id="bus">
+  <h2><span class="num">04</span> Engine event bus</h2>
+  <p class="sub">This is the most important diagram on the page. Eleven event types
+  <span class="ref">event.go:9-121</span> leave the engine by <strong>two different paths</strong> with
+  opposite durability guarantees. Understanding which path an event takes tells you whether you can
+  trust it.</p>
+
+  <div class="bus">
+    <div class="buspath">
+      <header>
+        <h4>scheduler.emit() <span class="badge b-ok">durable</span></h4>
+        <div class="bh">Scheduler goroutine only. Journal write is synchronous and happens
+        <em>before</em> any subscriber sees the event.</div>
+      </header>
+      <ul class="chain">
+        <li class="journaled"><span class="cl">s.seq++</span><span class="cd">monotonic per run <span class="ref">engine.go:1096</span></span></li>
+        <li class="journaled"><span class="cl">MarshalEnvelope(seq, e)</span><span class="cd">{seq, ts, kind, data} <span class="ref">journal.go:54</span></span></li>
+        <li class="journaled"><span class="cl">manifest.Writer.AppendLine</span><span class="cd">→ journal.jsonl, plus result.json on terminal StepStatus <span class="ref">engine.go:1112</span></span></li>
+        <li class="drop"><span class="cl">fanOut(s.subs, e)</span><span class="cd">may drop <span class="ref">engine.go:1115</span></span></li>
+      </ul>
+      <div style="padding:0 16px 14px">
+        <p style="font-size:12.5px;color:var(--fg-dim);margin:0">
+        The invariant this buys you: <strong>in-memory TUI state is always a subset of
+        <code>fold(journal.jsonl)</code></strong>. A dropped event is recoverable by replay.</p>
+      </div>
+    </div>
+
+    <div class="buspath">
+      <header>
+        <h4>reporter.ev() <span class="badge b-drop">lossy</span></h4>
+        <div class="bh">Worker goroutines. Bypasses <code>emit</code> entirely — tags run/step IDs and
+        fans out <em>without touching scheduler state or any lock</em>.</div>
+      </header>
+      <ul class="chain">
+        <li><span class="cl">Output / ToolCall / Message</span><span class="cd">called by the executor from its own goroutine <span class="ref">engine.go:232-236</span></span></li>
+        <li><span class="cl">closure tags RunID, StepID</span><span class="cd">pre-bound at dispatch <span class="ref">engine.go:570-586</span></span></li>
+        <li class="drop"><span class="cl">fanOut(subs, e)</span><span class="cd">no journal, no seq, droppable <span class="ref">engine.go:1141</span></span></li>
+      </ul>
+      <div style="padding:0 16px 14px">
+        <p style="font-size:12.5px;color:var(--fg-dim);margin:0">
+        Deliberately lock-free because it runs off the scheduler goroutine. The cost:
+        <strong>these events are unrecoverable if dropped</strong> — which is exactly why bulk content
+        must not ride this path.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <h3 style="margin-bottom:4px">fanOut drops on a full channel — by design</h3>
+    <p style="color:var(--fg-dim);font-size:13.5px;margin:0 0 12px">
+      A non-blocking <code>select</code> with a bare <code>default</code>. The scheduler must never block
+      on a slow UI, so the UI is allowed to miss events. Subscriber channels are 256-deep
+      <span class="ref">engine.go:112</span>; the TUI drains exactly one per Bubble Tea update cycle, so a
+      burst can and will overflow.</p>
+    <pre>// fanOut sends e to each subscriber channel, dropping events for slow consumers.
+// Called from both scheduler and reporter (which runs in worker goroutines).
+func fanOut(subs []chan&lt;- Event, e Event) {
+	for _, ch := range subs {
+		select {
+		case ch &lt;- e:
+		default:          // ← the drop
+		}
+	}
+}</pre>
+  </div>
+
+  <h3 style="margin-top:32px">The eleven events, and who actually listens</h3>
+  <p class="sub" style="margin-bottom:14px">Seven are consumed by the TUI. Four are not — and three of
+  those four carry information the user would want.</p>
+  <div class="card">
+    <table>
+      <thead><tr><th style="width:19%">Event</th><th style="width:13%">Path</th><th style="width:17%">Journal kind</th><th>TUI consumer</th></tr></thead>
+      <tbody id="evBody"></tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <strong>Gate failures, loop iterations and engine errors are invisible in the UI.</strong>
+    <code>GateResult</code>, <code>LoopFired</code> and <code>RunError</code> are emitted and journaled
+    but no TUI branch handles them — verified: <code>rg 'GateResult|LoopFired|RunError' internal/tui</code>
+    returns nothing. A gate can reject a step, a bounded loop can burn all its iterations, and a worktree
+    creation failure can abort the run, all without a word on screen beyond the resulting status change.
+  </div>
+
+  <div class="note">
+    <strong><code>PromptRequest</code> breaks journal replay.</strong> It is the one event type missing
+    from <em>both</em> <code>eventKind</code> <span class="ref">journal.go:26-51</span> and
+    <code>decoders</code> <span class="ref">journal.go:70-111</span>. It therefore serialises as
+    <code>{"kind":"unknown"}</code>, and <code>UnmarshalEnvelope</code> hard-errors with
+    <code>unknown event kind "unknown"</code> on that line <span class="ref">journal.go:120-122</span>.
+    Confirmed on disk in existing runs under <code>.jig/runs/</code>. Any future journal-replay monitor —
+    the obvious way to open a run from a previous process — dies on the first workflow that asks the user
+    a question. Two lines fix it.
+  </div>
+</section>
+
+<!-- ══════════════ 5. TRACES ══════════════ -->
+<section id="traces">
+  <h2><span class="num">05</span> Traces</h2>
+  <p class="sub">Step through the three round trips that matter, frame by frame. Each frame names the
+  goroutine it runs on — the goroutine changes are where the interesting invariants live.
+  Use <kbd>←</kbd>/<kbd>→</kbd> once focused.</p>
+
+  <div class="tp">
+    <header id="traceTabs"></header>
+    <div class="progress"><i id="traceProg"></i></div>
+    <div class="tpbody">
+      <div class="tsteps" id="traceSteps"></div>
+      <div class="tstage" id="traceStage"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════════ 6. CONCURRENCY ══════════════ -->
+<section id="concurrency">
+  <h2><span class="num">06</span> Concurrency map</h2>
+  <p class="sub">Goroutine census for one live run. The design's backbone is a single-writer invariant:
+  <strong>one scheduler goroutine owns every piece of mutable run state, with no mutex protecting it.</strong>
+  Everything else is a channel message.</p>
+
+  <div class="grid g3">
+    <div class="gcard" style="--gc:var(--tui)">
+      <h4>Bubble Tea loop <span class="cnt">×1</span></h4>
+      <p>Event loop + renderer. Owns <code>rootModel</code>. All <code>Update</code> and
+      <code>View</code> calls happen here.</p>
+    </div>
+    <div class="gcard" style="--gc:var(--tui)">
+      <h4>tea.Cmd goroutines <span class="cnt">×n</span></h4>
+      <p>One per in-flight command — including <code>waitForEngineEventCmd</code>, which is
+      <em>permanently parked</em> on a channel receive. <span class="ref">root.go:235</span></p>
+    </div>
+    <div class="gcard" style="--gc:var(--engine)">
+      <h4>scheduler <span class="cnt">×1 per run</span></h4>
+      <p>Sole owner of <code>states</code>, <code>worktrees</code>, <code>diffs</code>,
+      <code>pendingUserInputs</code>, <code>seq</code>. <strong>No mutex.</strong>
+      <span class="ref">engine.go:104,240</span></p>
+    </div>
+    <div class="gcard" style="--gc:var(--runner)">
+      <h4>step workers <span class="cnt">×n ≤ max_parallel</span></h4>
+      <p>One per dispatched step; calls <code>Executor.Execute</code> then posts
+      <code>stepDoneMsg</code> back to the inbox. <span class="ref">engine.go:606-609</span></p>
+    </div>
+    <div class="gcard" style="--gc:var(--runner)">
+      <h4>SDK subprocess reader <span class="cnt">×n</span></h4>
+      <p>Inside each <code>AgentExecutor</code>, feeding
+      <code>client.ReceiveMessages(ctx)</code>. <span class="ref">agent.go:57</span></p>
+    </div>
+    <div class="gcard" style="--gc:var(--cmd)">
+      <h4>signal.NotifyContext <span class="cnt">×1</span></h4>
+      <p>Interrupt / SIGTERM watcher established in <code>main</code>. <span class="ref">main.go:25</span></p>
+    </div>
+  </div>
+
+  <h3 style="margin-top:30px">Three deliberate consequences</h3>
+  <div class="grid g2">
+    <div class="card">
+      <h4 style="margin:0 0 6px;font-size:14px"><code>Manager.mu</code> guards almost nothing</h4>
+      <p style="margin:0;font-size:13px;color:var(--fg-dim)">It protects <em>only</em> the <code>runs</code>
+      map and the <code>subs</code> slice <span class="ref">engine.go:27-33</span>. It is the single mutex
+      in the package. All workflow state is owned by a goroutine instead of guarded by a lock.</p>
+    </div>
+    <div class="card">
+      <h4 style="margin:0 0 6px;font-size:14px">Gates run <em>synchronously</em> on the scheduler</h4>
+      <p style="margin:0;font-size:13px;color:var(--fg-dim)"><code>runGate</code>
+      <span class="ref">engine.go:757</span> is called inline from <code>handle</code>, not dispatched to a
+      worker. It blocks the whole run — accepted deliberately, to preserve single-writer.</p>
+    </div>
+    <div class="card">
+      <h4 style="margin:0 0 6px;font-size:14px"><code>Snapshot()</code> can't deadlock on a dead scheduler</h4>
+      <p style="margin:0;font-size:13px;color:var(--fg-dim)">A fast path reads <code>finalSnap</code>
+      lock-free once <code>done</code> is observed closed; <code>onDone</code> writes it
+      <em>before</em> the close, satisfying the memory-model happens-before
+      <span class="ref">engine.go:99-102,160-181</span>. Both selects also guard on
+      <code>done</code> in case the scheduler exits mid-request.</p>
+    </div>
+    <div class="card">
+      <h4 style="margin:0 0 6px;font-size:14px">Events are processed strictly in order</h4>
+      <p style="margin:0;font-size:13px;color:var(--fg-dim)">Exactly one
+      <code>waitForEngineEventCmd</code> is outstanding at a time — armed in <code>Init</code>, re-armed on
+      every delivery <span class="ref">root.go:99-102,128</span>. Serial by construction, at the cost of
+      one event per update cycle.</p>
+    </div>
+  </div>
+
+  <h3 style="margin-top:30px">Three consequences that are arguably bugs</h3>
+  <div class="note">
+    <strong>Elapsed times freeze.</strong> There is no <code>tea.Tick</code> anywhere in the TUI
+    (verified: <code>rg 'tea.Tick' internal/tui</code> → nothing), but <code>stepDuration</code> calls
+    <code>time.Now()</code> for any step without an end time <span class="ref">monitor.go:948-958</span>.
+    The number therefore only advances when some <em>other</em> event happens to arrive — during a long
+    silent agent step the duration visibly stops moving. A one-second ticker while
+    <code>!m.done</code> fixes it.
+  </div>
+  <div class="note">
+    <strong>Late subscribers never join a running run.</strong> <code>Start</code> snapshots the
+    subscriber list at launch <span class="ref">engine.go:73-76</span> and hands that copy to the
+    scheduler. Anyone calling <code>Subscribe()</code> afterwards sees nothing from runs already in flight.
+    There is also no unsubscribe, so channels accumulate for the process lifetime.
+  </div>
+  <div class="note">
+    <strong>Runs from a previous process are unopenable.</strong> <code>rootModel.handles</code> is only
+    populated when <em>this</em> process starts a run <span class="ref">root.go:195</span>. A run directory
+    sitting in <code>.jig/runs/</code> from an earlier session has no <code>*engine.Run</code>, so
+    <code>showMonitorMsg</code> finds nothing to snapshot and the monitor opens empty. Rehydrating from
+    <code>journal.jsonl</code> is the intended fix — and is what the <code>PromptRequest</code> journal gap
+    above would break.
+  </div>
+</section>
+
+<!-- ══════════════ 7. DISK ══════════════ -->
+<section id="disk">
+  <h2><span class="num">07</span> Disk layout &amp; phase status</h2>
+  <p class="sub">Two append-only JSONL files with different jobs: the journal records
+  <em>what happened</em> to the run; the transcript records <em>what the agent said</em>.</p>
+
+  <div class="card">
+<pre>.jig/
+├── runs/&lt;run-id&gt;/                      <span style="color:var(--fg-faint)">RunDir()          datastore.go:30</span>
+│   ├── journal.jsonl                   <span style="color:var(--fg-faint)">JournalPath()     datastore.go:54</span>
+│   │                                   <span style="color:var(--ok)">one Envelope per line, written by emit() before fan-out</span>
+│   ├── steps/&lt;step-id&gt;/                <span style="color:var(--fg-faint)">StepDir()         datastore.go:45</span>
+│   │   ├── result.json                 <span style="color:var(--fg-faint)">ResultPath()      datastore.go:57</span>
+│   │   │                               <span style="color:var(--fg-dim)">{step_id, status, attempt} on terminal StepStatus</span>
+│   │   └── transcript.jsonl            <span style="color:var(--fg-faint)">TranscriptPath()  datastore.go:64</span>
+│   │                                   <span style="color:var(--disk)">full conversation: text, thinking, tool_use, tool_result</span>
+│   └── artifacts/                      <span style="color:var(--fg-dim)">agent step outputs</span>
+└── worktrees/&lt;run-id&gt;/&lt;step-id&gt;/       <span style="color:var(--fg-dim)">engine.createWorktree, branch jig/&lt;wf&gt;/&lt;step&gt;</span></pre>
+    <p style="font-size:13px;color:var(--fg-dim);margin:14px 0 0">
+      <code>root == ""</code> is the documented opt-out from all persistence
+      <span class="ref">datastore.go:29</span> — used by tests, and by <code>Manager.Start</code>, where an
+      uncreatable root is deliberately <em>non-fatal</em>: the run still works, it just doesn't persist
+      <span class="ref">engine.go:78-90</span>. That same nil-check cascades into
+      <code>StepRequest.TranscriptPath</code>, so persistence-off means transcript-off too.</p>
+  </div>
+
+  <h3 style="margin-top:30px">Why the transcript exists</h3>
+  <div class="note ok">
+    <strong>The bus carries liveness; the file carries content.</strong> Because
+    <code>fanOut</code> drops on a full channel, no event may be the only copy of something the user needs.
+    So <code>StepMessage</code> <span class="ref">event.go:60-65</span> is a four-field nudge — run, step,
+    <code>seq</code>, <code>iteration</code> — and the actual message lands in
+    <code>transcript.jsonl</code> first. A dropped <code>StepMessage</code> only means "the view is one
+    seq stale," self-correcting on the next read. <code>StepToolCall</code> is now marked
+    <code>Deprecated</code> for precisely this reason <span class="ref">event.go:41-46</span>: it tried to
+    put content on the bus.
+  </div>
+
+  <div class="grid g2">
+    <div class="card">
+      <h4 style="margin:0 0 8px;font-size:14px">Writer — append-only, resumable</h4>
+      <ul style="margin:0;padding-left:18px;font-size:13px;color:var(--fg-dim)">
+        <li><code>Create</code> resumes <code>seq</code> from the existing line count, so retries and loop
+        iterations <em>append</em> rather than truncate <span class="ref">writer.go:40</span></li>
+        <li><code>Append</code> stamps <code>v</code>/<code>seq</code>/<code>ts</code> and clamps each block
+        to 256 KiB on a rune boundary, setting <code>Truncated</code> <span class="ref">writer.go:64,107</span></li>
+        <li>flushes on every append so a concurrent reader only ever sees whole lines</li>
+        <li>every entry tagged with <code>iter</code> and <code>attempt</code> so loop iterations sharing
+        one file stay distinguishable <span class="ref">executor.go:30-33</span></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4 style="margin:0 0 8px;font-size:14px">Reader — handle-free</h4>
+      <ul style="margin:0;padding-left:18px;font-size:13px;color:var(--fg-dim)">
+        <li><code>Count</code> / <code>Window(offset,limit)</code> / <code>Tail(n)</code> each open, read to
+        EOF, and close — no long-lived handle to invalidate <span class="ref">reader.go:34-64</span></li>
+        <li>silently skips malformed or partial trailing lines, so reading a file mid-write is safe
+        <span class="ref">reader.go:83</span></li>
+        <li>preserves unknown block types, so an SDK addition never breaks an old reader
+        <span class="ref">transcript.go:16</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <h3 style="margin-top:30px">Plan phase status</h3>
+  <p class="sub" style="margin-bottom:6px">Against <code>docs/run-monitor-transcript-plan.md</code>. The
+  doc header still reads <em>proposed</em> and every checkbox is unticked, but the code has moved past it:
+  phases 1–4 landed in commit <code>4a41726</code>, <em>"chore: implement the first 4 phases of the run
+  monitor transcript plan"</em> (1,656 insertions across 17 files). This is the honest state, read from
+  source rather than from the checkboxes.</p>
+  <div class="card">
+    <div class="phase">
+      <div class="pn">1</div>
+      <div>
+        <div class="pt"><code>internal/transcript</code> store</div>
+        <div class="pd"><code>Entry</code>, <code>Block</code>, writer, reader,
+        <code>datastore.TranscriptPath</code>. All four files present, 7 tests
+        (<code>transcript_test.go</code>, 284 lines).</div>
+      </div>
+      <div><span class="badge b-ok">done</span></div>
+    </div>
+    <div class="phase">
+      <div class="pn">2</div>
+      <div>
+        <div class="pt">Engine contract</div>
+        <div class="pd"><code>StepMessage</code>, <code>Reporter.Message</code>,
+        <code>StepRequest.TranscriptPath/Iteration/Attempt</code>, dispatch plumbing
+        <span class="ref">engine.go:587-603</span>, <code>step_message</code> journal kind + decoder.</div>
+      </div>
+      <div><span class="badge b-ok">done</span></div>
+    </div>
+    <div class="phase">
+      <div class="pn">3</div>
+      <div>
+        <div class="pt">Runner rich capture</div>
+        <div class="pd"><code>captureStream</code> writes every <code>AssistantMessage</code> and
+        <code>UserMessage</code> to the transcript and calls <code>rep.Message</code>
+        <span class="ref">agent.go:76-152</span>. Thinking is explicitly enabled
+        <span class="ref">agent.go:23</span>; the artifact is derived from the same assistant text that
+        lands in the transcript, so the two can't drift. Split out of <code>Execute</code> so tests drive it
+        with a scripted channel — <code>agent_test.go</code>, 263 lines.</div>
+      </div>
+      <div><span class="badge b-ok">done</span></div>
+    </div>
+    <div class="phase">
+      <div class="pn">4</div>
+      <div>
+        <div class="pt">TUI navigable step list</div>
+        <div class="pd">Explicit <code>monitorMode</code> with <code>modeList</code>/<code>modeChat</code>,
+        <code>cursor</code>, <code>chatStep</code>, <code>msgCount</code>
+        <span class="ref">monitor.go:21-30,43-46</span>; <code>listBody()</code> with a cursor marker and
+        <code>N msg</code> column; <code>ensureCursorVisible()</code> viewport nudging
+        <span class="ref">monitor.go:501</span>; <code>StepMessage</code> consumed. Both human-input events
+        force <code>modeList</code>. <code>monitor_test.go</code> (197 lines) pins mode transitions, cursor
+        clamping, and the two key-collision hazards the plan called out.</div>
+      </div>
+      <div><span class="badge b-ok">done</span></div>
+    </div>
+    <div class="phase">
+      <div class="pn">5</div>
+      <div>
+        <div class="pt">Chat chain rendering</div>
+        <div class="pd"><code>loadChat()</code> <span class="ref">monitor.go:667</span> reads via
+        <code>transcript.Reader.Window</code>, bounded to the trailing
+        <code>chatWindowMax = 300</code> entries; <code>chatBody()</code>
+        <span class="ref">monitor.go:719</span> renders markdown text (glamour, cached per block),
+        dimmed reasoning, tool calls with inputs, tool results, iteration and retry separators, an elision
+        marker, and a <code>typing…</code> live tail. Collapse-expand at
+        <code>chatCollapseWidth = 80</code> with <code>tab</code>/<code>enter</code>/<code>o</code>, bounded
+        by <code>chatExpandMax = 4096</code>. New engine API <code>Manager.RunDir</code>
+        <span class="ref">engine.go:129</span> lets the TUI locate the files.</div>
+      </div>
+      <div><span class="badge b-ok">done</span></div>
+    </div>
+    <div class="phase">
+      <div class="pn">6</div>
+      <div>
+        <div class="pt">Command-step capture</div>
+        <div class="pd">Planned <code>role:"system"</code> transcript entries from
+        <code>CommandExecutor</code>. <code>command.go:92</code> still calls <code>rep.Output</code> only,
+        so a command step has no durable output at all.</div>
+      </div>
+      <div><span class="badge b-warn">pending</span></div>
+    </div>
+    <div class="phase">
+      <div class="pn">7</div>
+      <div>
+        <div class="pt">Retention, security, docs</div>
+        <div class="pd">Pruning, a PII note (transcripts capture full tool inputs and results verbatim),
+        doc updates. Not started.</div>
+      </div>
+      <div><span class="badge b-warn">pending</span></div>
+    </div>
+  </div>
+
+  <div class="note ok">
+    <strong>The loop is closed.</strong> Content flows agent → <code>transcript.jsonl</code> →
+    <code>transcript.Reader.Window</code> → <code>chatBody()</code>, while the bus carries only
+    <code>StepMessage</code> nudges. The design's central claim is now actually in force: you can drop
+    every liveness event and lose nothing but freshness, because <code>loadChat()</code> re-reads from disk.
+    What's left is phase 6 (command steps still have no durable output) and phase 7 (retention, a PII note
+    — transcripts capture tool inputs and results verbatim — and the stale docs below).
+  </div>
+
+  <div class="note">
+    <strong><code>docs/ARCHITECTURE.md</code> is stale — don't trust it.</strong> It still labels
+    <code>engine/</code>, <code>runner/</code>, <code>step/</code>, <code>manifest/</code> and
+    <code>datastore/</code> as <em>planned</em>, has a "where the engine will plug in" section, references a
+    deleted <code>internal/tui/app.go</code>, and doesn't mention <code>internal/transcript</code>. The same
+    applies to the "Placeholders (empty dirs, not yet implemented)" list in <code>CLAUDE.md</code>.
+    Use <code>docs/engine-design.md</code> for engine intent. Refreshing both is phase 7's job.
+  </div>
+</section>
+
+<footer>
+  Generated from the working tree — <code>internal/tui</code>, <code>internal/engine</code>,
+  <code>internal/runner</code>, <code>internal/transcript</code>, <code>internal/datastore</code>,
+  <code>cmd/jig</code>. Self-contained: no network requests, no build step.
+</footer>
+
+</div>
+
+<script>
+"use strict";
+
+/* ══════════════ data ══════════════ */
+
+const SCREENS = {
+  "S-selector": {
+    name: "screenSelector",
+    sub: "internal/tui/selector.go — startup workflow picker",
+    model: "<code>selectorModel</code> <span class='ref'>selector.go:45</span> — wraps a <code>bubbles/list</code> plus <code>loaded</code>/<code>err</code>. No <code>Init()</code>; the root batches its command instead.",
+    keys: [
+      "<code>enter</code> → <code>showDetailMsg</code>, guarded on <code>FilterState() != list.Filtering</code> so it doesn't fire mid-filter <span class='ref'>selector.go:117</span>",
+      "everything <code>bubbles/list</code> provides — <code>/</code> filter, <code>j</code>/<code>k</code>, page keys — reachable only via the fall-through at <span class='ref'>selector.go:126</span>"
+    ],
+    view: "Delegates entirely: <code>return m.list.View()</code> <span class='ref'>selector.go:130</span>, with loading / error / empty short-circuits above it.",
+    data: "<code>discoverWorkflowsCmd</code> walks <code>.agents/jig</code> for <code>*.toml</code> and calls <code>workflow.LoadMeta</code> on each <span class='ref'>selector.go:66</span> → <code>workflowsLoadedMsg</code>."
+  },
+  "S-detail": {
+    name: "screenDetail",
+    sub: "internal/tui/detail.go — read-only workflow inspector",
+    model: "<code>detailModel</code> <span class='ref'>detail.go:17</span> — path, meta, parsed <code>*workflow.Workflow</code>, viewport, <code>ready</code>/<code>loaded</code>/<code>err</code>. The one sub-model with its own <code>Init()</code> <span class='ref'>detail.go:52</span>, called explicitly by the root at <span class='ref'>root.go:136</span>.",
+    keys: [
+      "<code>enter</code> → <code>showRunsMsg</code> <span class='ref'>detail.go:77</span>",
+      "<code>esc</code>/<code>q</code>/<code>backspace</code>/<code>h</code>/<code>left</code> → <code>backToSelectorMsg</code> <span class='ref'>detail.go:79</span>",
+      "<code>r</code> → <code>startRunMsg</code>, only when the workflow parsed <span class='ref'>detail.go:80-83</span>",
+      "anything else → viewport scroll <span class='ref'>detail.go:89</span>"
+    ],
+    view: "<code>lipgloss.JoinVertical(vp.View(), footerView())</code> <span class='ref'>detail.go:225</span>. <code>body()</code> builds steps, type badges, loop/gate markers and validation errors into a <code>strings.Builder</code>, pushed via <code>vp.SetContent</code> from <code>resize()</code>.",
+    data: "<code>loadWorkflowCmd</code> → <code>workflow.Load</code> (full parse + static validation) → <code>workflowLoadedMsg</code> <span class='ref'>detail.go:44</span>."
+  },
+  "S-runs": {
+    name: "screenRuns",
+    sub: "internal/tui/runs.go — one row per run",
+    model: "<code>runsModel</code> <span class='ref'>runs.go:20</span> — <code>rows []runRow</code>, an integer <code>cursor</code>, and the workflow it was opened from. <code>runRow</code> tracks per-run step counts for the <code>n/m steps</code> progress column.",
+    keys: [
+      "<code>up</code>/<code>k</code>, <code>down</code>/<code>j</code> — hand-rolled cursor movement <span class='ref'>runs.go:62-69</span>",
+      "<code>enter</code> → <code>showMonitorMsg{runID}</code> for the selected row <span class='ref'>runs.go:70-73</span>",
+      "<code>r</code> → <code>startRunMsg</code> — starts a <em>new</em> run <span class='ref'>runs.go:75-77</span>",
+      "<code>esc</code>/<code>q</code>/<code>backspace</code>/<code>h</code>/<code>left</code> → <code>backToSelectorMsg</code> <span class='ref'>runs.go:79</span>"
+    ],
+    view: "The only screen with <strong>no viewport</strong> — direct string building <span class='ref'>runs.go:123</span>, with the cursor row bolded ad-hoc via an inline <code>lipgloss.NewStyle().Bold(true)</code>. Also the only <code>Update</code> with <strong>no fall-through</strong>: it returns <code>m, nil</code> <span class='ref'>runs.go:83</span>, so unhandled keys are simply dropped.",
+    data: "Built live from three events — <code>RunStarted</code> appends a row, <code>StepStatus</code> updates counts, <code>RunFinished</code> marks it terminal <span class='ref'>runs.go:86-115</span>. Nothing is read from disk, which is why runs from a previous process never appear."
+  },
+  "S-monitor": {
+    name: "screenMonitor",
+    sub: "internal/tui/monitor.go — the live run view, 994 lines",
+    model: "<code>monitorModel</code> <span class='ref'>monitor.go:35-96</span> is now much the largest model. Beyond <code>runID</code>, <code>steps</code>, the <code>stepID → index</code> map and <code>done</code>/<code>failed</code>: the navigation trio <code>mode</code>/<code>cursor</code>/<code>chatStep</code>; <code>runDir</code> + <code>dark</code> for locating and styling transcripts; <code>chatEntries</code>/<code>chatElided</code> (the loaded window); <code>chatBlocks</code>/<code>chatBlockCursor</code>/<code>chatExpand</code>/<code>chatExpandAll</code> (collapse state); <code>renderer</code>/<code>chatRendered</code>/<code>renderWidth</code> (a glamour renderer plus its per-block cache); <code>msgCount</code>; <code>pendingReview</code>, <code>pendingPrompt</code> + textarea; and <code>stepOutput</code> for the live tail. Seeded by <code>withSnapshot</code> <span class='ref'>monitor.go:144</span>, which carefully preserves the maps it doesn't own.",
+    keys: [
+      "<code>ctrl+s</code> submits the prompt textarea <span class='ref'>monitor.go:187</span>",
+      "<code>1</code>–<code>9</code> pick a review verdict, bounded by <code>len(choices)</code> <span class='ref'>monitor.go:214-229</span>",
+      "<strong><code>modeList</code></strong> — <code>j</code>/<code>k</code>/<code>↓</code>/<code>↑</code> move the cursor, each nudging the viewport via <code>ensureCursorVisible()</code> <span class='ref'>monitor.go:240-258</span>",
+      "<code>enter</code> in <code>modeList</code> → <code>modeChat</code>: resets per-step collapse state, calls <code>loadChat()</code>, then <code>vp.GotoTop()</code> <span class='ref'>monitor.go:259-274</span>",
+      "<code>esc</code>/<code>q</code>/<code>⌫</code>/<code>h</code>/<code>←</code> in <code>modeList</code> → <code>showRunsMsg</code> <span class='ref'>monitor.go:275-276</span>",
+      "<strong><code>modeChat</code></strong> — <code>tab</code>/<code>shift+tab</code> cycle the block cursor (modulo, so it wraps) <span class='ref'>monitor.go:288-304</span>; <code>enter</code>/<code>space</code> toggle the block under it <span class='ref'>monitor.go:305-313</span>; <code>o</code> toggles expand-all <span class='ref'>monitor.go:315</span>; <code>esc</code>/<code>h</code>/<code>←</code> back to the list <span class='ref'>monitor.go:280-287</span>",
+      "everything else → viewport scroll <span class='ref'>monitor.go:336</span> — which in <code>modeChat</code> is deliberate: <code>j</code>/<code>k</code>/<code>ctrl+d</code>/<code>pgdn</code> reach the viewport untouched"
+    ],
+    view: "<code>JoinVertical(vp.View(), footerView())</code> <span class='ref'>monitor.go:989</span>; <code>body()</code> dispatches on <code>mode</code> <span class='ref'>monitor.go:518</span>. <code>listBody()</code> <span class='ref'>monitor.go:530</span> renders cursor marker, glyph, id, status, duration and an <code>N msg</code> column, then the done banner, prompt textarea, review picker with a 200-line-capped colourised diff, and a 10-line tail per <em>running</em> step. <code>chatBody()</code> <span class='ref'>monitor.go:719</span> renders the real transcript: <code>#seq role</code> headers, markdown assistant text, dimmed reasoning, tool calls with inputs, tool results, <code>── iteration N ──</code> / <code>── retry N ──</code> separators, an <code>… N earlier message(s) elided</code> marker, and a <code>typing…</code> live tail. The footer has four hint variants <span class='ref'>monitor.go:960-987</span>.",
+    data: "Seven engine events <span class='ref'>monitor.go:340-452</span>, one <code>run.Snapshot()</code> on entry, and — new in phase 5 — <strong>direct reads of <code>transcript.jsonl</code></strong> via <code>loadChat()</code> <span class='ref'>monitor.go:667</span>. <code>runDir</code> comes from the new <code>Manager.RunDir(runID)</code> <span class='ref'>engine.go:129</span>, set by the root before <code>withSnapshot</code> <span class='ref'>root.go:161-171</span>. There is no dirty-flag: every mutating branch re-runs <code>vp.SetContent(m.body())</code>, which is why the glamour output is cached per block — <code>renderMarkdown</code> <span class='ref'>monitor.go:812</span> would otherwise re-parse whole documents on every event."
+  }
+};
+
+const MESSAGES = [
+  { t:"showDetailMsg", d:"root.go:29", p:"<code>enter</code> on a selector row", pr:"selector.go:119", c:"root builds a fresh <code>detailModel</code>, sizes it, calls <code>Init()</code>", cr:"root.go:131-136", lay:["tui"], scr:["S-selector","S-detail"] },
+  { t:"backToSelectorMsg", d:"root.go:32", p:"<code>esc/q/⌫/h/←</code> in detail or runs", pr:"detail.go:79, runs.go:80", c:"root picks the target by current screen — runs goes back to detail if it loaded", cr:"root.go:138-152", lay:["tui"], scr:["S-detail","S-runs","S-selector"] },
+  { t:"showRunsMsg", d:"root.go:38", p:"<code>enter</code> in detail, or a back-key in the monitor's <code>modeList</code> / review overlay", pr:"detail.go:77, monitor.go:276,231", c:"root flips <code>active</code>, nothing else", cr:"root.go:154", lay:["tui"], scr:["S-detail","S-runs","S-monitor"] },
+  { t:"showMonitorMsg", d:"root.go:41", p:"<code>enter</code> on a run row", pr:"runs.go:73", c:"root rebuilds the monitor only if the runID changed, injecting <code>runDir</code>+<code>dark</code> then seeding from <code>Snapshot()</code>", cr:"root.go:158-180", lay:["tui","engine","disk"], scr:["S-runs","S-monitor"] },
+  { t:"startRunMsg", d:"root.go:35", p:"<code>r</code> in detail or runs", pr:"detail.go:83, runs.go:77", c:"<code>manager.Start(wf)</code>, cache the handle, jump straight to the monitor", cr:"root.go:187-201", lay:["tui","engine","disk"], scr:["S-detail","S-runs","S-monitor"] },
+  { t:"reviewVerdictMsg", d:"root.go:45", p:"digit <code>1</code>–<code>9</code> with a review pending", pr:"monitor.go:221", c:"<code>run.Resolve(stepID, verdict)</code> → scheduler inbox", cr:"root.go:175-179", lay:["tui","engine"], scr:["S-monitor"] },
+  { t:"userInputResponseMsg", d:"root.go:53", p:"<code>ctrl+s</code> with a prompt pending", pr:"monitor.go:131", c:"<code>run.ProvideUserInput(stepID, as, text)</code> → scheduler inbox", cr:"root.go:181-185", lay:["tui","engine"], scr:["S-monitor"] },
+  { t:"engineEventMsg", d:"root.go:61", p:"<code>waitForEngineEventCmd</code> — a blocking <code>&lt;-ch</code> inside the command goroutine", pr:"root.go:235", c:"fanned to <strong>both</strong> <code>runs</code> and <code>monitor</code>, then the drain is re-armed", cr:"root.go:124-128", lay:["tui","engine"], scr:["S-runs","S-monitor"] },
+  { t:"workflowsLoadedMsg", d:"selector.go:38", p:"<code>discoverWorkflowsCmd</code> — <code>WalkDir</code> over <code>.agents/jig</code> + <code>LoadMeta</code>", pr:"selector.go:66", c:"selector populates its list", cr:"selector.go:109", lay:["tui","disk"], scr:["S-selector"] },
+  { t:"workflowLoadedMsg", d:"detail.go:38", p:"<code>loadWorkflowCmd</code> — <code>workflow.Load</code> (parse + validate)", pr:"detail.go:44", c:"detail stores meta/wf/err and re-renders", cr:"detail.go:63", lay:["tui","disk"], scr:["S-detail"] },
+  { t:"claudeConnectedMsg", d:"client.go:14", dead:1, p:"<code>connectClaudeCmd</code>", pr:"client.go:42", c:"<code>chatModel</code> — unreachable", cr:"chat.go:146", lay:[], scr:[] },
+  { t:"claudeDeltaMsg", d:"client.go:25", dead:1, p:"<code>waitForClaudeMessageCmd</code>", pr:"client.go:58", c:"<code>chatModel</code> — unreachable", cr:"chat.go:158", lay:[], scr:[] },
+  { t:"claudeTurnCompleteMsg", d:"client.go:28", dead:1, p:"non-error <code>ResultMessage</code>", pr:"client.go:75", c:"<code>chatModel</code> — unreachable", cr:"chat.go:165", lay:[], scr:[] },
+  { t:"claudeTurnErrorMsg", d:"client.go:32", dead:1, p:"error result, or a send failure", pr:"client.go:71,104", c:"<code>chatModel</code> — unreachable", cr:"chat.go:172", lay:[], scr:[] },
+  { t:"claudeConnectErrMsg", d:"client.go:21", dead:1, p:"<code>connectClaudeCmd</code> failure", pr:"client.go:46", c:"<code>chatModel</code> — unreachable", cr:"chat.go:152", lay:[], scr:[] },
+  { t:"claudeChannelClosedMsg", d:"client.go:36", dead:1, p:"<code>msgChan</code> range exits", pr:"client.go:81", c:"<code>chatModel</code>, fatal — loop not re-armed", cr:"chat.go:186", lay:[], scr:[] }
+];
+
+const EVENTS = [
+  { t:"RunStarted",    d:"event.go:12",  path:"emit",     kind:"run_started",    ok:1, c:"monitor builds <code>steps</code>+<code>index</code> <span class='ref'>monitor.go:342</span>; runs appends a row <span class='ref'>runs.go:88</span>" },
+  { t:"StepStatus",    d:"event.go:25",  path:"emit",     kind:"step_status",    ok:1, c:"status + start/end stamps, clears stale review/prompt on terminal <span class='ref'>monitor.go:354</span>; runs updates counts <span class='ref'>runs.go:105</span>" },
+  { t:"ReviewRequest", d:"event.go:87",  path:"emit",     kind:"review_request", ok:1, c:"sets <code>pendingReview</code> <em>and forces <code>modeList</code></em> so the overlay can't render behind a chat view <span class='ref'>monitor.go:380-387</span>" },
+  { t:"PromptRequest", d:"event.go:103", path:"emit",     kind:"MISSING",        ok:1, warn:1, c:"forces <code>modeList</code>, builds a fresh focused <code>textarea</code>, returns <code>textarea.Blink</code> <span class='ref'>monitor.go:410</span>" },
+  { t:"RunFinished",   d:"event.go:19",  path:"emit",     kind:"run_finished",   ok:1, c:"sets <code>done</code>/<code>failed</code> <span class='ref'>monitor.go:444</span>, marks the row terminal <span class='ref'>runs.go:112</span>" },
+  { t:"StepOutput",    d:"event.go:35",  path:"reporter", kind:"step_output",    ok:1, c:"appends the delta to a per-step <code>strings.Builder</code> <span class='ref'>monitor.go:430</span>, shown as the <code>typing…</code> tail" },
+  { t:"StepMessage",   d:"event.go:60",  path:"reporter", kind:"step_message",   ok:1, c:"does three things <span class='ref'>monitor.go:389-408</span>: monotonic max into <code>msgCount</code> (the <code>Seq &gt; current</code> guard makes duplicates and drops harmless), <strong>resets the live tail</strong> — that text is now finalized on disk — and, if this step's chat is open, calls <code>loadChat()</code> to re-read the file" },
+  { t:"StepToolCall",  d:"event.go:47",  path:"reporter", kind:"step_tool_call", ok:0, dep:1, c:"<em>nothing</em> — superseded by transcript <code>tool_use</code> blocks" },
+  { t:"GateResult",    d:"event.go:68",  path:"emit",     kind:"gate_result",    ok:0, gap:1, c:"<em>nothing</em> — a gate rejecting a step is silent in the UI" },
+  { t:"LoopFired",     d:"event.go:75",  path:"emit",     kind:"loop_fired",     ok:0, gap:1, c:"<em>nothing</em> — loop iterations are invisible" },
+  { t:"RunError",      d:"event.go:95",  path:"emit",     kind:"run_error",      ok:0, gap:1, c:"<em>nothing</em> — engine-level failures (e.g. worktree creation) never surface" }
+];
+
+const TRACES = {
+  A: {
+    label: "A · ctrl+s → screen",
+    blurb: "The full human-in-the-loop round trip: three goroutines, one journal write, back to a rendered line.",
+    frames: [
+      { t:"Monitor intercepts the key", lay:"tui", gor:"bubbletea", ref:"internal/tui/monitor.go:187",
+        code:`if m.pendingPrompt != nil {
+	if msg.String() == "ctrl+s" {
+		text := m.promptTextarea.Value()
+		pr := m.pendingPrompt
+		m.pendingPrompt = nil
+		m.promptTextarea = textarea.Model{}
+		if m.ready {
+			m.vp.SetContent(m.body())
+		}
+		return m, func() tea.Msg {
+			return userInputResponseMsg{
+				runID: pr.RunID, stepID: pr.StepID,
+				as: pr.As, text: text,
+			}
+		}
+	}`,
+        note:"This is tier 1 of the key precedence — a pending prompt is checked before the mode switch, so <code>ctrl+s</code> is reachable from either mode. Local state is cleared and the body re-rendered <em>immediately</em>, before the engine has acknowledged anything: the textarea disappears on keypress, not on round trip. The message is returned as a command, not sent directly." },
+      { t:"Bubble Tea runs the command", lay:"tui", gor:"cmd goroutine", ref:"bubbletea internals",
+        code:`// Bubble Tea invokes the returned tea.Cmd on its own
+// goroutine and feeds the resulting tea.Msg back into
+// the single Update loop.`,
+        note:"This is why sub-models return commands instead of calling the engine inline: it keeps <code>Update</code> pure and non-blocking." },
+      { t:"Root delivers it to the run handle", lay:"tui", gor:"bubbletea", ref:"internal/tui/root.go:181",
+        code:`case userInputResponseMsg:
+	if run, ok := m.handles[msg.runID]; ok {
+		run.ProvideUserInput(msg.stepID, msg.as, msg.text)
+	}
+	return m, nil`,
+        note:"The <code>handles</code> map is the entire back-channel. A missing handle means the keystroke is silently dropped — which is exactly what happens for runs started by a previous process." },
+      { t:"Handle pushes onto the scheduler inbox", lay:"engine", gor:"bubbletea → scheduler", ref:"internal/engine/engine.go:152",
+        code:`func (r *Run) ProvideUserInput(stepID, as, text string) {
+	r.inbox <- userInputMsg{stepID: stepID, as: as, text: text}
+}`,
+        note:"<strong>Goroutine boundary.</strong> A blocking send onto a 64-buffered channel <span class='ref'>engine.go:63</span>. Blocking is safe here and load-bearing: it preserves the single-writer invariant. Note the asymmetry with <code>fanOut</code>, which must never block." },
+      { t:"Scheduler receives one message", lay:"engine", gor:"scheduler", ref:"internal/engine/engine.go:364",
+        code:`select {
+case msg := <-s.inbox:
+	s.handle(msg)
+case <-ctx.Done():
+	s.emit(RunFinished{RunID: s.runID, Failed: true})
+	return
+}`,
+        note:"The loop blocks for <em>exactly one</em> message, then falls back to the top to re-dispatch anything newly ready. Dispatch, terminal-check, block — that's the whole scheduler." },
+      { t:"handle folds the answer into state", lay:"engine", gor:"scheduler", ref:"internal/engine/engine.go:667",
+        code:`case userInputMsg:
+	s.collectedUserInputs[m.stepID] = append(
+		s.collectedUserInputs[m.stepID],
+		ResolvedInput{
+			Ref:   workflow.Input{Inline: true, As: m.as},
+			Value: m.text,
+		},
+	)
+	// If more prompts are queued, fire the next one.
+	if len(s.pendingUserInputs[m.stepID]) > 0 {
+		next := s.pendingUserInputs[m.stepID][0]
+		s.pendingUserInputs[m.stepID] = s.pendingUserInputs[m.stepID][1:]
+		s.emit(PromptRequest{RunID: s.runID, StepID: m.stepID,
+			Label: next.Label, As: next.As})
+		return
+	}
+	s.preResolvedInputs[m.stepID] = s.collectedUserInputs[m.stepID]
+	delete(s.collectedUserInputs, m.stepID)
+	delete(s.pendingUserInputs, m.stepID)
+	s.transition(m.stepID, step.StatusAwaitingReview, step.StatusPending)`,
+        note:"Multiple <code>from=\"user\"</code> inputs are collected <em>sequentially</em> — each answer either triggers the next question or, when the queue empties, flips the step back to <code>pending</code> so the normal dispatch path picks it up. No mutex: this is the only goroutine that touches these maps." },
+      { t:"emit journals, then fans out", lay:"engine", gor:"scheduler", ref:"internal/engine/engine.go:1095",
+        code:`func (s *scheduler) emit(e Event) {
+	s.seq++
+	if s.writer != nil {
+		line, err := MarshalEnvelope(s.seq, e)
+		if err == nil {
+			// ... terminal StepStatus also writes result.json
+			s.writer.AppendLine(line, term)
+		}
+	}
+	fanOut(s.subs, e)
+}`,
+        note:"Journal <strong>before</strong> fan-out, synchronously. This ordering is the invariant that makes in-memory state a subset of <code>fold(journal.jsonl)</code>. For a <code>PromptRequest</code> specifically, the line written here has <code>\"kind\":\"unknown\"</code> — see the journal gap above." },
+      { t:"fanOut — or drops", lay:"engine", gor:"scheduler", ref:"internal/engine/engine.go:1141",
+        code:`func fanOut(subs []chan<- Event, e Event) {
+	for _, ch := range subs {
+		select {
+		case ch <- e:
+		default:
+		}
+	}
+}`,
+        note:"Lands on the 256-buffered channel the root grabbed once in <code>New</code> <span class='ref'>root.go:93</span>. If that buffer is full the event is gone — for <code>emit</code>-path events it is at least still on disk." },
+      { t:"The parked command unblocks", lay:"tui", gor:"cmd goroutine", ref:"internal/tui/root.go:235",
+        code:`func waitForEngineEventCmd(ch <-chan engine.Event) tea.Cmd {
+	return func() tea.Msg {
+		e, ok := <-ch
+		if !ok {
+			return nil // channel closed; stop draining
+		}
+		return engineEventMsg{event: e}
+	}
+}`,
+        note:"This is the whole bridge — there is <strong>no <code>tea.Tick</code> polling loop</strong> in the TUI. One command sits permanently parked on the receive; the root re-arms it after each delivery." },
+      { t:"Root fans to both sub-models and re-arms", lay:"tui", gor:"bubbletea", ref:"internal/tui/root.go:124",
+        code:`case engineEventMsg:
+	var rc, mc tea.Cmd
+	m.runs, rc = m.runs.Update(msg)
+	m.monitor, mc = m.monitor.Update(msg)
+	return m, tea.Batch(waitForEngineEventCmd(m.events), rc, mc)`,
+        note:"Both sub-models see every event regardless of the active screen — that's why monitor state survives navigation. The re-arm is serial, so exactly one event is drained per update cycle: a burst can overflow the 256 buffer." },
+      { t:"Monitor re-renders the whole body", lay:"tui", gor:"bubbletea", ref:"internal/tui/monitor.go:176",
+        code:`case engineEventMsg:
+	var evCmd tea.Cmd
+	m, evCmd = m.handleEngineEvent(msg.event)
+	if m.ready {
+		m.vp.SetContent(m.body())
+	}
+	return m, evCmd`,
+        note:"No dirty tracking — <code>body()</code> rebuilds the entire screen string on every event, dispatching to <code>listBody()</code> or <code>chatBody()</code> by mode <span class='ref'>monitor.go:518</span>, then <code>View()</code> is <code>JoinVertical(vp.View(), footerView())</code>. Simple, and fine at this scale." }
+    ]
+  },
+  B: {
+    label: "B · agent output → screen",
+    blurb: "Two capture paths from one SDK stream: an ephemeral typing tail on the bus, and the durable transcript on disk.",
+    frames: [
+      { t:"Executor opens a fresh SDK connection", lay:"runner", gor:"worker", ref:"internal/runner/agent.go:41",
+        code:`opts := []claudecode.Option{
+	claudecode.WithIncludePartialMessages(true),
+	claudecode.WithMaxThinkingTokens(thinkingTokenBudget),
+}
+if req.Worktree != "" {
+	opts = append(opts, claudecode.WithCwd(req.Worktree))
+}
+client := claudecode.NewClient(opts...)`,
+        note:"Thinking is enabled <em>explicitly</em> <span class='ref'>agent.go:19-23</span> even though it matches the SDK default — so the intent (we want reasoning captured) doesn't silently depend on a default that could change. Each <code>Execute</code> gets its own connection; the executor holds no mutable state." },
+      { t:"Transcript writer opens, resuming seq", lay:"disk", gor:"worker", ref:"internal/runner/agent.go:77",
+        code:`var w *transcript.Writer
+if req.TranscriptPath != "" {
+	var err error
+	w, err = transcript.Create(req.TranscriptPath)
+	if err != nil {
+		return failResult(fmt.Sprintf("transcript open: %v", err), start), nil
+	}
+	defer func() { _ = w.Close() }()
+}`,
+        note:"<code>TranscriptPath</code> is empty when persistence is off, and then <em>no</em> transcript is written and no <code>rep.Message</code> fires — the whole feature degrades cleanly. <code>Create</code> resumes <code>seq</code> from the existing line count, so a retry or loop iteration appends to the same file instead of truncating it <span class='ref'>writer.go:40</span>." },
+      { t:"Partial deltas → ephemeral typing tail", lay:"engine", gor:"worker", ref:"internal/runner/agent.go:120",
+        code:`case *claudecode.StreamEvent:
+	// Live-typing tail only; the finalized AssistantMessage
+	// below is authoritative and is what lands in the transcript.
+	if delta, ok := agentTextDelta(m); ok {
+		rep.Output(delta)
+	}`,
+        note:"<code>agentTextDelta</code> <span class='ref'>agent.go:275</span> only accepts <code>content_block_delta</code> with a <code>text_delta</code> inside; thinking and input-json deltas are dropped. These deltas are <strong>never persisted</strong> — they exist purely so the user sees typing." },
+      { t:"Finalized message → durable blocks", lay:"disk", gor:"worker", ref:"internal/runner/agent.go:112",
+        code:`case *claudecode.AssistantMessage:
+	blocks, text := assistantBlocks(m)
+	if text != "" {
+		finalText = text
+	}
+	appendEntry(transcript.RoleAssistant, blocks)
+case *claudecode.UserMessage:
+	appendEntry(transcript.RoleUser, toolResultBlocks(m))`,
+        note:"<code>assistantBlocks</code> <span class='ref'>agent.go:158</span> preserves original order across <code>text</code>, <code>thinking</code> and <code>tool_use</code> (with raw JSON input and a correlation ID); <code>toolResultBlocks</code> pairs results back by <code>ToolUseID</code>. Unknown block types are skipped so an SDK addition never breaks capture." },
+      { t:"Append, then nudge", lay:"engine", gor:"worker", ref:"internal/runner/agent.go:90",
+        code:`appendEntry := func(role transcript.Role, blocks []transcript.Block) {
+	if w == nil || len(blocks) == 0 {
+		return
+	}
+	seq, err := w.Append(transcript.Entry{
+		Iteration: req.Iteration,
+		Attempt:   req.Attempt,
+		Role:      role,
+		Blocks:    blocks,
+	})
+	if err == nil {
+		rep.Message(seq, req.Iteration)
+	}
+}`,
+        note:"<strong>Write-then-signal.</strong> The file is flushed before <code>rep.Message</code> fires, so any reader woken by the signal is guaranteed to find the entry. The signal carries only <code>seq</code> — a dropped one just means the view is one entry stale." },
+      { t:"Reporter tags and fans out, lock-free", lay:"engine", gor:"worker", ref:"internal/engine/engine.go:570",
+        code:`rep := &reporter{
+	subs: subs,
+	ev: func(e Event) {
+		// Tag the event with run/step IDs and fan-out without holding any lock.
+		switch e := e.(type) {
+		case StepOutput:
+			e.RunID, e.StepID = runID, stepID
+			fanOut(subs, e)
+		case StepToolCall:
+			e.RunID, e.StepID = runID, stepID
+			fanOut(subs, e)
+		case StepMessage:
+			e.RunID, e.StepID = runID, stepID
+			fanOut(subs, e)
+		}
+	},
+}`,
+        note:"<code>runID</code>, <code>stepID</code> and <code>subs</code> are captured as locals at dispatch so the closure never reads scheduler fields from a worker goroutine. This path <strong>bypasses <code>emit</code> entirely</strong> — no journal, no seq." },
+      { t:"Monitor accumulates the delta", lay:"tui", gor:"bubbletea", ref:"internal/tui/monitor.go:430",
+        code:`case engine.StepOutput:
+	if ev.RunID != m.runID {
+		return m, nil
+	}
+	buf, ok := m.stepOutput[ev.StepID]
+	if !ok {
+		buf = &strings.Builder{}
+		m.stepOutput[ev.StepID] = buf
+	}
+	buf.WriteString(ev.Delta)`,
+        note:"An unbounded <code>strings.Builder</code> per step — the trimming happens at render time, not here." },
+      { t:"StepMessage: count, reset tail, reload", lay:"tui", gor:"bubbletea", ref:"internal/tui/monitor.go:389",
+        code:`case engine.StepMessage:
+	if ev.RunID != m.runID {
+		return m, nil
+	}
+	if ev.Seq > m.msgCount[ev.StepID] {
+		m.msgCount[ev.StepID] = ev.Seq
+	}
+	// A StepMessage means a message was just finalized to the transcript, so
+	// the live-typing tail for that step is now on disk: reset it (the next
+	// deltas belong to the next, not-yet-finalized bubble). If that step's
+	// chat is open, re-read the transcript so the finalized entry appears.
+	if buf, ok := m.stepOutput[ev.StepID]; ok {
+		buf.Reset()
+	}
+	if m.mode == modeChat && ev.StepID == m.chatStep {
+		m.loadChat()
+	}`,
+        note:"The signal does exactly the three things the design needs. The <code>Seq &gt; current</code> guard makes the lossy bus safe — duplicate, out-of-order, or dropped signals all leave the count correct or harmlessly low. Resetting the tail is the handoff: that text has become durable, so the ephemeral copy is discarded rather than double-rendered. And the reload is the only place the UI reads content." },
+      { t:"loadChat reads the durable record", lay:"disk", gor:"bubbletea", ref:"internal/tui/monitor.go:667",
+        code:`r, err := transcript.Open(datastore.TranscriptPath(m.runDir, m.chatStep))
+if err != nil { return }
+count, err := r.Count()
+if err != nil { return }
+offset := 0
+if count > chatWindowMax {
+	offset = count - chatWindowMax
+	m.chatElided = offset
+}
+entries, err := r.Window(offset, chatWindowMax)
+if err != nil { return }
+m.chatEntries = entries
+for _, e := range entries {
+	for bi, blk := range e.Blocks {
+		if collapsible(blk.Type) {
+			m.chatBlocks = append(m.chatBlocks, blockKey{seq: e.Seq, block: bi})
+		}
+	}
+}`,
+        note:"<strong>This is the loop closing.</strong> Only the trailing <code>chatWindowMax = 300</code> entries are read, so a thousand-message run stays responsive; the remainder becomes an <em>\"… N earlier message(s) elided\"</em> marker. Safe to call mid-write because the reader opens, reads to EOF and closes — and skips a partial trailing line. The flatten pass builds <code>chatBlocks</code>, giving <code>tab</code> a stable index keyed by <code>{seq, block}</code> rather than by screen position." },
+      { t:"chatBody renders it", lay:"tui", gor:"bubbletea", ref:"internal/tui/monitor.go:719",
+        code:`lastIter, lastAttempt := -1, -1
+for _, e := range m.chatEntries {
+	if lastIter != -1 && e.Iteration > lastIter {
+		b.WriteString("\\n  " + markerStyle.Render(
+			fmt.Sprintf("── iteration %d ──", e.Iteration+1)) + "\\n\\n")
+	}
+	if lastAttempt != -1 && e.Attempt > lastAttempt {
+		b.WriteString("\\n  " + markerStyle.Render(
+			fmt.Sprintf("── retry %d ──", e.Attempt)) + "\\n\\n")
+	}
+	lastIter, lastAttempt = e.Iteration, e.Attempt
+
+	b.WriteString("  " + chatHintStyle.Render(fmt.Sprintf("#%d %s", e.Seq, e.Role)) + "\\n")
+	for bi, blk := range e.Blocks {
+		m.writeBlock(&b, blockKey{seq: e.Seq, block: bi}, blk)
+	}
+	b.WriteString("\\n")
+}`,
+        note:"This is where <code>Iteration</code> and <code>Attempt</code> — carried all the way from <code>StepRequest</code> through the writer — finally pay off as <code>── iteration N ──</code> and <code>── retry N ──</code> separators inside one append-only file. <code>writeBlock</code> <span class='ref'>monitor.go:793</span> then styles by kind: text as cached markdown, reasoning dimmed and italic, tool calls and results collapsed to 80 chars until expanded." },
+      { t:"The list still hides finished output", lay:"tui", gor:"bubbletea", ref:"internal/tui/monitor.go:635",
+        code:`for _, s := range m.steps {
+	if s.status != step.StatusRunning {
+		continue
+	}
+	// ... split, keep non-empty, take last outputMaxLines`,
+        note:"One rough edge survives phase 5. In <code>listBody</code> the tail is still gated on <code>StatusRunning</code>, so at a glance a finished step shows no output at all — you have to press <code>enter</code> to discover it produced anything. In <code>modeChat</code> that's now fine (the transcript is read regardless of status), but the list view still gives no hint that there's something to open beyond the <code>N msg</code> count." },
+      { t:"Result: artifact from the same text", lay:"disk", gor:"worker", ref:"internal/runner/agent.go:135",
+        code:`result := &step.Result{
+	Status:   step.StatusSucceeded,
+	Duration: time.Since(start),
+}
+if req.Step.Output != "" && finalText != "" {
+	outPath := req.Step.Output
+	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err == nil {
+		_ = os.WriteFile(outPath, []byte(finalText), 0o644)
+	}
+	result.OutputPath = outPath
+}
+return result, nil`,
+        note:"<code>finalText</code> comes from <code>assistantBlocks</code> — the <em>same</em> extraction that fed the transcript. One capture path, so the artifact and the transcript cannot drift apart." }
+    ]
+  },
+  C: {
+    label: "C · r → run start",
+    blurb: "From a single keypress to a scheduler goroutine, a run directory, and the first dispatched worker.",
+    frames: [
+      { t:"Detail emits startRunMsg", lay:"tui", gor:"bubbletea", ref:"internal/tui/detail.go:80",
+        code:`case "r":
+	if wf := m.wf; wf != nil {
+		return m, func() tea.Msg { return startRunMsg{wf: wf} }
+	}`,
+        note:"Guarded on a successfully parsed workflow, so <code>r</code> is a no-op on a file that failed validation. The same binding exists on the runs screen <span class='ref'>runs.go:77</span>." },
+      { t:"Root starts the run and jumps to the monitor", lay:"tui", gor:"bubbletea", ref:"internal/tui/root.go:187",
+        code:`case startRunMsg:
+	if msg.wf == nil { return m, nil }
+	run, err := m.manager.Start(msg.wf)
+	if err != nil { return m, nil }
+	m.handles[run.ID] = run
+	m.runs = m.runs.withWorkflow(msg.wf)
+	// Navigate straight to the monitor so prompts and review
+	// gates are visible immediately.
+	m.monitor = newMonitorModel(run.ID)
+	m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+	m.active = screenMonitor
+	return m, nil`,
+        note:"Skipping the runs list is deliberate: a workflow can block on a review gate or a user prompt within milliseconds, and a gate nobody sees is a hung run. Note <code>err</code> is swallowed — a failed <code>Start</code> is currently silent." },
+      { t:"Manager allocates the run and its inbox", lay:"engine", gor:"bubbletea", ref:"internal/engine/engine.go:56",
+        code:`runID := newRunID()
+ctx, cancel := context.WithCancel(context.Background())
+inbox := make(chan schedMsg, 64)
+run := &Run{ID: runID, cancel: cancel, inbox: inbox, done: make(chan struct{})}
+
+m.mu.Lock()
+m.runs[runID] = run
+// Snapshot subscriber list at start — additions after Start don't join mid-run.
+subs := make([]chan<- Event, len(m.subs))
+copy(subs, m.subs)
+m.mu.Unlock()`,
+        note:"The only mutex in the package, held only across the registry and subscriber copy. That copy is why <code>Subscribe()</code> after <code>Start</code> never joins a running run. <code>newRunID</code> is a UTC timestamp plus 8 random chars, so run directories sort chronologically." },
+      { t:"Run directory and journal writer open", lay:"disk", gor:"bubbletea", ref:"internal/engine/engine.go:81",
+        code:`var w *manifest.Writer
+var runDir string
+if m.root != "" {
+	if rd, err := datastore.RunDir(m.root, runID); err == nil {
+		runDir = rd
+		if mw, err := manifest.NewWriter(runDir); err == nil {
+			w = mw
+		}
+	}
+}`,
+        note:"Note the doubly-swallowed errors: <strong>a missing or unwritable root is deliberately non-fatal</strong>. The run executes normally, it just doesn't persist — and, downstream, no transcripts are written either. <code>RunDir</code> creates <code>steps/</code> and <code>artifacts/</code> up front so executors never mkdir." },
+      { t:"onDone establishes the lock-free snapshot", lay:"engine", gor:"bubbletea", ref:"internal/engine/engine.go:99",
+        code:`// onDone is called by the scheduler goroutine before it exits.
+// Writing finalSnap before closing done satisfies the memory-model
+// happens-before requirement so Snapshot() reads are lock-free.
+onDone := func(snap RunSnapshot) {
+	run.finalSnap = snap
+	close(run.done)
+}
+s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir, m.root, repoRoot, onDone)
+go s.run(ctx)
+return run, nil`,
+        note:"Write-then-close is the entire synchronisation for finished runs: any goroutine that observes <code>done</code> closed is guaranteed to see the written <code>finalSnap</code>. That's what lets <code>Snapshot()</code> serve a completed run without touching the dead scheduler." },
+      { t:"Scheduler emits RunStarted, then loops", lay:"engine", gor:"scheduler", ref:"internal/engine/engine.go:314",
+        code:`s.emit(RunStarted{RunID: s.runID, Workflow: s.wf.Meta.Name, Steps: ids})
+
+maxPar := s.wf.Defaults.MaxParallel
+if maxPar <= 0 { maxPar = 4 }
+
+for {
+	// 1. Dispatch every ready step, respecting max_parallel.
+	for s.inFlight < maxPar {
+		st, ok := s.nextReady()
+		if !ok { break }
+		s.dispatch(ctx, st)
+	}
+	// 2. Terminal check: nothing running, nothing pending and runnable.
+	if s.inFlight == 0 && !s.anyPendingRunnable() {
+		s.emit(RunFinished{RunID: s.runID, Failed: s.anyFailed()})
+		return
+	}
+	// 3. Block for exactly one message, then loop to re-dispatch.
+	select {
+	case msg := <-s.inbox:
+		s.handle(msg)
+	case <-ctx.Done():
+		s.emit(RunFinished{RunID: s.runID, Failed: true})
+		return
+	}
+}`,
+        note:"Dispatch-until-full → terminal check → block for one message. The termination guarantee lives in <code>anyPendingRunnable</code> plus the bounded back-edges the validator enforces, not in this loop." },
+      { t:"dispatch builds the StepRequest", lay:"engine", gor:"scheduler", ref:"internal/engine/engine.go:587",
+        code:`var artifactDir, transcriptPath string
+if s.runDir != "" {
+	artifactDir = filepath.Join(s.runDir, "artifacts")
+	transcriptPath = datastore.TranscriptPath(s.runDir, st.ID)
+}
+state := s.states[st.ID]
+req := StepRequest{
+	RunID: runID, Step: st,
+	Inputs:   s.preResolvedInputs[st.ID],
+	Feedback: s.stepFeedback[st.ID],
+	ArtifactDir: artifactDir, Worktree: worktreePath,
+	TranscriptPath: transcriptPath,
+	Iteration: state.Iteration,
+	Attempt:   state.Attempt,
+}`,
+        note:"<code>Iteration</code> and <code>Attempt</code> ride along so the runner can tag every transcript entry — that's what keeps loop iterations and retries distinguishable inside one append-only file. Before this, a mutating step also gets a git worktree on a <code>jig/&lt;workflow&gt;/&lt;step&gt;</code> branch, reused across retries so edits accumulate <span class='ref'>engine.go:536-562</span>." },
+      { t:"Worker goroutine, then back to the inbox", lay:"runner", gor:"scheduler → worker", ref:"internal/engine/engine.go:606",
+        code:`go func() {
+	result, err := s.exec.Execute(ctx, req, rep)
+	s.inbox <- stepDoneMsg{stepID: stepID, result: result, err: err}
+}()`,
+        note:"The whole worker contract in four lines: run, then report back through the same inbox everything else uses. The worker never touches scheduler state — only <code>rep</code> (which fans out lock-free) and this final send. <code>Mux</code> routes <code>req</code> by step type to the agent, command, or fake executor." }
+    ]
+  }
+};
+
+/* ══════════════ highlight wiring ══════════════ */
+
+function setLit(layers, screens) {
+  document.querySelectorAll(".layer").forEach(el =>
+    el.classList.toggle("lit", layers.includes(el.dataset.layer)));
+  document.querySelectorAll(".node").forEach(el =>
+    el.classList.toggle("lit", screens.includes(el.id)));
+}
+function clearLit() { setLit([], []); }
+
+document.querySelectorAll(".layer").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const t = btn.dataset.goto;
+    if (t) document.querySelector(t).scrollIntoView({ block: "start" });
+  });
+});
+
+/* ══════════════ 2. screen panel ══════════════ */
+
+const panel = document.getElementById("screenPanel");
+function showScreen(id) {
+  const s = SCREENS[id];
+  document.querySelectorAll(".node").forEach(n => n.classList.toggle("sel", n.id === id));
+  panel.innerHTML = `
+    <h4>${s.name}</h4>
+    <p class="psub">${s.sub}</p>
+    <dl>
+      <dt>Model</dt><dd>${s.model}</dd>
+      <dt>Keys</dt><dd><ul>${s.keys.map(k => `<li>${k}</li>`).join("")}</ul></dd>
+      <dt>Render</dt><dd>${s.view}</dd>
+      <dt>Where its data comes from</dt><dd>${s.data}</dd>
+    </dl>`;
+}
+Object.keys(SCREENS).forEach(id => {
+  const n = document.getElementById(id);
+  n.addEventListener("click", () => showScreen(id));
+  n.addEventListener("keydown", e => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); showScreen(id); }
+  });
+});
+showScreen("S-monitor");
+
+/* ══════════════ 3. message table ══════════════ */
+
+document.getElementById("msgBody").innerHTML = MESSAGES.map(m => `
+  <tr class="msgrow${m.dead ? " dead" : ""}" data-lay="${m.lay.join(",")}" data-scr="${m.scr.join(",")}">
+    <td><span class="mtype">${m.t}</span><br><span class="ref">${m.d}</span>
+        ${m.dead ? ' <span class="badge b-dead">dead</span>' : ""}</td>
+    <td><div class="pathsplit"><span>${m.p}</span><span class="ref">${m.pr}</span></div></td>
+    <td><div class="pathsplit"><span>${m.c}</span><span class="ref">${m.cr}</span></div></td>
+  </tr>`).join("");
+
+document.querySelectorAll("tr.msgrow").forEach(row => {
+  row.addEventListener("mouseenter", () => setLit(
+    row.dataset.lay ? row.dataset.lay.split(",") : [],
+    row.dataset.scr ? row.dataset.scr.split(",") : []));
+  row.addEventListener("mouseleave", clearLit);
+});
+
+/* ══════════════ 4. event table ══════════════ */
+
+document.getElementById("evBody").innerHTML = EVENTS.map(e => {
+  const pathBadge = e.path === "emit"
+    ? '<span class="badge b-ok">emit</span>'
+    : '<span class="badge b-drop">reporter</span>';
+  const kind = e.kind === "MISSING"
+    ? '<span class="badge b-warn">missing</span> <span style="font-size:11.5px;color:var(--warn)">journals as "unknown"</span>'
+    : `<code style="font-size:12px">${e.kind}</code>`;
+  let flag = "";
+  if (e.dep) flag = ' <span class="badge b-dead">deprecated</span>';
+  else if (e.gap) flag = ' <span class="badge b-warn">gap</span>';
+  else if (!e.ok) flag = ' <span class="badge b-dead">unused</span>';
+  return `<tr>
+    <td><span class="mtype">${e.t}</span>${flag}<br><span class="ref">${e.d}</span></td>
+    <td>${pathBadge}</td>
+    <td>${kind}</td>
+    <td style="${e.ok ? "" : "color:var(--fg-faint)"}">${e.c}</td>
+  </tr>`;
+}).join("");
+
+/* ══════════════ 5. trace player ══════════════ */
+
+const LAYNAME = { tui: "internal/tui", engine: "internal/engine", runner: "internal/runner", disk: ".jig/", cmd: "cmd/jig" };
+const tabs  = document.getElementById("traceTabs");
+const steps = document.getElementById("traceSteps");
+const stage = document.getElementById("traceStage");
+const prog  = document.getElementById("traceProg");
+let curTrace = "A", curFrame = 0, playing = null;
+
+tabs.innerHTML = Object.entries(TRACES)
+  .map(([k, t]) => `<button class="tbtn" data-tr="${k}">${t.label}</button>`).join("")
+  + `<button class="tbtn" id="tPrev" title="Previous frame">◀</button>`
+  + `<button class="tbtn" id="tNext" title="Next frame">▶</button>`
+  + `<button class="tbtn" id="tPlay">▶ Play</button>`;
+
+function renderTrace() {
+  const tr = TRACES[curTrace];
+  tabs.querySelectorAll("[data-tr]").forEach(b => b.classList.toggle("on", b.dataset.tr === curTrace));
+
+  steps.innerHTML = tr.frames.map((f, i) => `
+    <button class="tstep${i === curFrame ? " on" : ""}" data-i="${i}">
+      <span class="tn">${String(i + 1).padStart(2, "0")}</span>
+      <span><strong style="font-weight:600">${f.t}</strong><br>
+      <span style="font-size:11px;color:var(--fg-faint)">${f.gor}</span></span>
+    </button>`).join("");
+  steps.querySelectorAll(".tstep").forEach(b =>
+    b.addEventListener("click", () => { stop(); curFrame = +b.dataset.i; renderTrace(); }));
+
+  const f = tr.frames[curFrame];
+  stage.innerHTML = `
+    <div class="tmeta">
+      <span class="badge b-${f.lay}">${LAYNAME[f.lay]}</span>
+      <span class="gor" style="color:var(--fg-faint)">goroutine: ${f.gor}</span>
+      <span class="ref">${f.ref}</span>
+    </div>
+    <h4>${curFrame + 1}. ${f.t}</h4>
+    <pre></pre>
+    <p class="tnote">${f.note}</p>
+    <p style="font-size:12px;color:var(--fg-faint);margin:14px 0 0">${tr.blurb}</p>`;
+  stage.querySelector("pre").textContent = f.code;
+
+  prog.style.width = ((curFrame + 1) / tr.frames.length * 100) + "%";
+  setLit([f.lay], []);
+
+  const active = steps.querySelector(".tstep.on");
+  if (active) active.scrollIntoView({ block: "nearest" });
+}
+
+function step(d) {
+  const n = TRACES[curTrace].frames.length;
+  curFrame = (curFrame + d + n) % n;
+  renderTrace();
+}
+function stop() {
+  if (playing) { clearInterval(playing); playing = null; }
+  const b = document.getElementById("tPlay");
+  if (b) b.textContent = "▶ Play";
+}
+
+tabs.querySelectorAll("[data-tr]").forEach(b =>
+  b.addEventListener("click", () => { stop(); curTrace = b.dataset.tr; curFrame = 0; renderTrace(); }));
+document.getElementById("tPrev").addEventListener("click", () => { stop(); step(-1); });
+document.getElementById("tNext").addEventListener("click", () => { stop(); step(1); });
+document.getElementById("tPlay").addEventListener("click", e => {
+  if (playing) { stop(); return; }
+  e.target.textContent = "❚❚ Pause";
+  playing = setInterval(() => {
+    if (curFrame === TRACES[curTrace].frames.length - 1) { stop(); return; }
+    step(1);
+  }, 3400);
+});
+
+document.addEventListener("keydown", e => {
+  if (!document.getElementById("traces").contains(document.activeElement)) return;
+  if (e.key === "ArrowRight") { stop(); step(1); e.preventDefault(); }
+  if (e.key === "ArrowLeft")  { stop(); step(-1); e.preventDefault(); }
+});
+
+renderTrace();
+</script>
+</body>
+</html>

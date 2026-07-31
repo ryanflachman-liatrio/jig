@@ -11,6 +11,7 @@ import (
 
 	"jig/internal/engine"
 	"jig/internal/step"
+	"jig/internal/transcript"
 )
 
 // CommandExecutor runs a workflow command step via the system shell.
@@ -104,6 +105,12 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 
 	duration := time.Since(start)
 
+	// Persist the combined output so a command step has a navigable chain like an
+	// agent step (Phase 6). The live rep.Output tail is ephemeral; this is the
+	// durable record read by the monitor's chat view. Written on both success and
+	// failure so a failed command's output survives.
+	writeCommandTranscript(req, rep, combined.String())
+
 	if waitErr != nil {
 		return &step.Result{
 			Status:   step.StatusFailed,
@@ -115,6 +122,33 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 		Status:   step.StatusSucceeded,
 		Duration: duration,
 	}, nil
+}
+
+// writeCommandTranscript records a command step's combined stdout/stderr as a
+// single system/text entry in the per-step transcript, then nudges the monitor
+// via rep.Message so an open chat view re-reads. It is a no-op when persistence
+// is off (empty TranscriptPath) or the command produced no output. The writer's
+// byte cap truncates pathologically large output at write time.
+func writeCommandTranscript(req engine.StepRequest, rep engine.Reporter, output string) {
+	if req.TranscriptPath == "" || output == "" {
+		return
+	}
+	w, err := transcript.Create(req.TranscriptPath)
+	if err != nil {
+		return
+	}
+	seq, appendErr := w.Append(transcript.Entry{
+		Iteration: req.Iteration,
+		Attempt:   req.Attempt,
+		Role:      transcript.RoleSystem,
+		Blocks:    []transcript.Block{{Type: transcript.BlockText, Text: output}},
+	})
+	if err := w.Close(); err != nil {
+		return
+	}
+	if appendErr == nil {
+		rep.Message(seq, req.Iteration)
+	}
 }
 
 // resolveCommand returns the shell expression to pass to sh -c.

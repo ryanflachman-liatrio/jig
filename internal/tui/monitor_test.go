@@ -1,13 +1,225 @@
 package tui
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"jig/internal/datastore"
 	"jig/internal/engine"
+	"jig/internal/transcript"
 )
+
+// writeTranscript writes entries to step's transcript.jsonl under a fresh
+// per-test runDir and returns that runDir, so a monitor can render from disk.
+func writeTranscript(t *testing.T, stepID string, entries []transcript.Entry) string {
+	t.Helper()
+	runDir := t.TempDir()
+	path := datastore.TranscriptPath(runDir, stepID)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir transcript dir: %v", err)
+	}
+	w, err := transcript.Create(path)
+	if err != nil {
+		t.Fatalf("create transcript: %v", err)
+	}
+	for _, e := range entries {
+		if _, err := w.Append(e); err != nil {
+			t.Fatalf("append entry: %v", err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close transcript: %v", err)
+	}
+	return runDir
+}
+
+func rawJSON(t *testing.T, v any) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal input: %v", err)
+	}
+	return b
+}
+
+// enterChatStep drives the monitor into modeChat for the given step id.
+func enterChatStep(t *testing.T, m monitorModel, id string) monitorModel {
+	t.Helper()
+	for m.steps[m.cursor].id != id {
+		before := m.cursor
+		m, _ = m.Update(key("j"))
+		if m.cursor == before {
+			t.Fatalf("step %q not found while navigating", id)
+		}
+	}
+	m, _ = m.Update(key("enter"))
+	if m.mode != modeChat {
+		t.Fatalf("did not enter modeChat for %q", id)
+	}
+	return m
+}
+
+// TestMonitorChatRendersBlocks renders a transcript with every block kind and
+// asserts each surfaces with its label in modeChat.
+func TestMonitorChatRendersBlocks(t *testing.T) {
+	runDir := writeTranscript(t, "a", []transcript.Entry{
+		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+			{Type: transcript.BlockThinking, Text: "let me look"},
+			{Type: transcript.BlockText, Text: "Reading the file now."},
+			{Type: transcript.BlockToolUse, Name: "Read", ToolUseID: "t1",
+				Input: rawJSON(t, map[string]string{"file_path": "/tmp/x"})},
+		}},
+		{Role: transcript.RoleUser, Blocks: []transcript.Block{
+			{Type: transcript.BlockToolResult, ToolUseID: "t1", Content: "file contents"},
+		}},
+	})
+
+	m := newMonitorWithSteps(t)
+	m.runDir = runDir
+	m = enterChatStep(t, m, "a")
+
+	body := m.body()
+	for _, want := range []string{"🧠 reasoning", "⚙ Read", "↳ result", "Reading the file"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("chat body missing %q:\n%s", want, body)
+		}
+	}
+}
+
+// TestMonitorChatCollapseExpand checks a long tool_result collapses to 80 chars
+// with a hint and reveals its full content once expanded (via o).
+func TestMonitorChatCollapseExpand(t *testing.T) {
+	// 90 'a's then a marker past the 80-char collapse boundary.
+	content := strings.Repeat("a", 90) + "MARKER"
+	runDir := writeTranscript(t, "a", []transcript.Entry{
+		{Role: transcript.RoleUser, Blocks: []transcript.Block{
+			{Type: transcript.BlockToolResult, ToolUseID: "t1", Content: content},
+		}},
+	})
+
+	m := newMonitorWithSteps(t)
+	m.runDir = runDir
+	m = enterChatStep(t, m, "a")
+
+	collapsed := m.body()
+	if strings.Contains(collapsed, "MARKER") {
+		t.Fatalf("collapsed body leaked content past 80 chars:\n%s", collapsed)
+	}
+	if !strings.Contains(collapsed, "[96 chars]") {
+		t.Fatalf("collapsed body missing char-count hint:\n%s", collapsed)
+	}
+
+	m, _ = m.Update(key("o")) // expand all
+	expanded := m.body()
+	if !strings.Contains(expanded, "MARKER") {
+		t.Fatalf("expanded body did not reveal full content:\n%s", expanded)
+	}
+}
+
+// TestMonitorChatBlockCursorToggle checks tab moves the block cursor and enter
+// toggles just the selected block.
+func TestMonitorChatBlockCursorToggle(t *testing.T) {
+	long := strings.Repeat("z", 100) + "END"
+	runDir := writeTranscript(t, "a", []transcript.Entry{
+		{Role: transcript.RoleUser, Blocks: []transcript.Block{
+			{Type: transcript.BlockToolResult, ToolUseID: "t1", Content: long},
+		}},
+	})
+
+	m := newMonitorWithSteps(t)
+	m.runDir = runDir
+	m = enterChatStep(t, m, "a")
+
+	if strings.Contains(m.body(), "END") {
+		t.Fatalf("block should start collapsed")
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // toggle block under cursor
+	if !strings.Contains(m.body(), "END") {
+		t.Fatalf("enter did not expand the cursored block:\n%s", m.body())
+	}
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // toggle back
+	if strings.Contains(m.body(), "END") {
+		t.Fatalf("second enter did not collapse the block")
+	}
+}
+
+// TestMonitorChatIterationSeparators checks a loop iteration boundary renders a
+// separator between entries.
+func TestMonitorChatIterationSeparators(t *testing.T) {
+	runDir := writeTranscript(t, "a", []transcript.Entry{
+		{Role: transcript.RoleAssistant, Iteration: 0, Blocks: []transcript.Block{
+			{Type: transcript.BlockText, Text: "first pass"},
+		}},
+		{Role: transcript.RoleAssistant, Iteration: 1, Blocks: []transcript.Block{
+			{Type: transcript.BlockText, Text: "second pass"},
+		}},
+	})
+
+	m := newMonitorWithSteps(t)
+	m.runDir = runDir
+	m = enterChatStep(t, m, "a")
+
+	if !strings.Contains(m.body(), "iteration 2") {
+		t.Fatalf("missing iteration separator:\n%s", m.body())
+	}
+}
+
+// TestMonitorChatNoTranscript shows a graceful placeholder when persistence is
+// off (no runDir) rather than a dead end.
+func TestMonitorChatNoTranscript(t *testing.T) {
+	m := newMonitorWithSteps(t) // runDir stays ""
+	m = enterChatStep(t, m, "a")
+	if !strings.Contains(m.body(), "persistence off") {
+		t.Fatalf("expected persistence-off placeholder:\n%s", m.body())
+	}
+}
+
+// TestMonitorChatCommandOutput checks a command step's captured system/text
+// entry renders in modeChat, so enter is never a dead end for command steps
+// (Phase 6).
+func TestMonitorChatCommandOutput(t *testing.T) {
+	runDir := writeTranscript(t, "a", []transcript.Entry{
+		{Role: transcript.RoleSystem, Blocks: []transcript.Block{
+			{Type: transcript.BlockText, Text: "build output here"},
+		}},
+	})
+
+	m := newMonitorWithSteps(t)
+	m.runDir = runDir
+	m = enterChatStep(t, m, "a")
+
+	if !strings.Contains(m.body(), "build output here") {
+		t.Fatalf("command output not rendered in chat:\n%s", m.body())
+	}
+}
+
+// TestMonitorChatReviewFallback checks drilling into a review step shows its
+// retained diff and choices rather than a dead end (Phase 6).
+func TestMonitorChatReviewFallback(t *testing.T) {
+	m := newMonitorWithSteps(t) // no runDir: review steps have no transcript
+
+	// A review arrives (forces modeList) then is resolved, retaining the request.
+	m, _ = m.Update(engineEventMsg{event: engine.ReviewRequest{
+		RunID:   "run-1",
+		StepID:  "a",
+		Diff:    "@@ -1 +1 @@\n-old line\n+new line",
+		Choices: []string{"approve", "reject"},
+	}})
+	m, _ = m.Update(key("1")) // verdict clears pendingReview
+
+	m = enterChatStep(t, m, "a")
+	body := m.body()
+	for _, want := range []string{"new line", "old line", "[1] approve", "[2] reject"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("review drill-in missing %q:\n%s", want, body)
+		}
+	}
+}
 
 // newMonitorWithSteps returns a sized monitor primed with a three-step run so
 // tests can exercise list navigation without the engine.

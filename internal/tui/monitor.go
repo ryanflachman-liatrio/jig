@@ -4,14 +4,18 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 
+	"jig/internal/datastore"
 	"jig/internal/engine"
 	"jig/internal/step"
+	"jig/internal/transcript"
 )
 
 // monitorMode is the master–detail state of the run monitor. modeList is the
@@ -41,12 +45,46 @@ type monitorModel struct {
 	cursor   int    // selected step in modeList
 	chatStep string // step whose chat is open in modeChat
 
+	// Phase 5 chat rendering. runDir locates the per-step transcript.jsonl on
+	// disk; the transcript file — not the lossy event bus — is what modeChat
+	// renders. dark selects the glamour style.
+	runDir string
+	dark   bool
+
+	// chatEntries is the currently-loaded (windowed) transcript for chatStep,
+	// re-read on entry and on each StepMessage for that step. chatElided counts
+	// entries dropped off the front of the window (see chatWindowMax).
+	chatEntries []transcript.Entry
+	chatElided  int
+
+	// Collapse/expand: chatBlocks flattens the collapsible blocks (thinking,
+	// tool_use, tool_result) of chatEntries in render order; chatBlockCursor
+	// selects one for toggling; chatExpand records per-block overrides and
+	// chatExpandAll a global "expand everything in view" toggle.
+	chatBlocks      []blockKey
+	chatBlockCursor int
+	chatExpand      map[blockKey]bool
+	chatExpandAll   bool
+
+	// renderer renders text blocks as markdown; chatRendered caches the output
+	// keyed by block (glamour re-parses whole documents, so re-rendering on every
+	// event is wasteful). renderWidth is the width the cache was built for; a
+	// resize to a new width rebuilds the renderer and invalidates the cache.
+	renderer     *glamour.TermRenderer
+	chatRendered map[blockKey]string
+	renderWidth  int
+
 	// msgCount tracks the latest transcript entry seq observed per step (via
 	// StepMessage liveness events), used as a message count in the list.
 	msgCount map[string]int
 
 	// Phase 3: review steps park here until a verdict is delivered.
 	pendingReview *engine.ReviewRequest
+
+	// reviews retains the last ReviewRequest seen per step so drilling into a
+	// review step (modeChat) can show its diff/choices — review steps have no
+	// transcript. Kept after the verdict clears pendingReview (Phase 6).
+	reviews map[string]engine.ReviewRequest
 
 	// from="user" input collection: the active prompt and its textarea.
 	pendingPrompt  *engine.PromptRequest
@@ -65,6 +103,29 @@ type monitorModel struct {
 // outputMaxLines is the number of streaming output lines shown per step.
 const outputMaxLines = 10
 
+const (
+	// chatCollapseWidth is the render-time collapse: large blocks (thinking,
+	// tool input, tool result) show at most this many characters on one line
+	// until expanded. Distinct from the writer's byte cap (Truncated).
+	chatCollapseWidth = 80
+
+	// chatExpandMax bounds an expanded block so a 256 KiB write-capped result
+	// never lays out in full; beyond it the middle is elided head+tail.
+	chatExpandMax = 4096
+
+	// chatWindowMax bounds how many trailing entries modeChat renders, so a long
+	// run with thousands of messages stays responsive. Earlier entries are
+	// summarised by a leading "… N earlier messages" marker.
+	chatWindowMax = 300
+)
+
+// blockKey identifies one block within a step's transcript by entry seq (unique
+// per step file) and block index. It keys the expand-state and render caches.
+type blockKey struct {
+	seq   int
+	block int
+}
+
 type monitorStep struct {
 	id     string
 	status step.Status
@@ -74,10 +135,13 @@ type monitorStep struct {
 
 func newMonitorModel(runID string) monitorModel {
 	return monitorModel{
-		runID:      runID,
-		index:      make(map[string]int),
-		stepOutput: make(map[string]*strings.Builder),
-		msgCount:   make(map[string]int),
+		runID:        runID,
+		index:        make(map[string]int),
+		stepOutput:   make(map[string]*strings.Builder),
+		msgCount:     make(map[string]int),
+		chatExpand:   make(map[blockKey]bool),
+		chatRendered: make(map[blockKey]string),
+		reviews:      make(map[string]engine.ReviewRequest),
 	}
 }
 
@@ -94,6 +158,15 @@ func (m monitorModel) withSnapshot(snap engine.RunSnapshot) monitorModel {
 	}
 	if m.msgCount == nil {
 		m.msgCount = make(map[string]int)
+	}
+	if m.chatExpand == nil {
+		m.chatExpand = make(map[blockKey]bool)
+	}
+	if m.chatRendered == nil {
+		m.chatRendered = make(map[blockKey]string)
+	}
+	if m.reviews == nil {
+		m.reviews = make(map[string]engine.ReviewRequest)
 	}
 	for i, st := range snap.Steps {
 		m.steps[i] = monitorStep{id: st.ID, status: st.Status}
@@ -196,6 +269,12 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 				if m.cursor < len(m.steps) {
 					m.mode = modeChat
 					m.chatStep = m.steps[m.cursor].id
+					// Fresh chat: reset per-step collapse/cursor state (seq keys
+					// only make sense within one step's transcript) and load.
+					m.chatBlockCursor = 0
+					m.chatExpandAll = false
+					m.chatExpand = make(map[blockKey]bool)
+					m.loadChat()
 					if m.ready {
 						m.vp.SetContent(m.body())
 						m.vp.GotoTop()
@@ -213,6 +292,40 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 				if m.ready {
 					m.vp.SetContent(m.body())
 					m.vp.GotoTop()
+				}
+				return m, nil
+			case "tab":
+				// Move the block cursor to the next collapsible block.
+				if n := len(m.chatBlocks); n > 0 {
+					m.chatBlockCursor = (m.chatBlockCursor + 1) % n
+					if m.ready {
+						m.vp.SetContent(m.body())
+					}
+				}
+				return m, nil
+			case "shift+tab":
+				if n := len(m.chatBlocks); n > 0 {
+					m.chatBlockCursor = (m.chatBlockCursor - 1 + n) % n
+					if m.ready {
+						m.vp.SetContent(m.body())
+					}
+				}
+				return m, nil
+			case "enter", " ":
+				// Toggle the block under the cursor.
+				if n := len(m.chatBlocks); n > 0 && m.chatBlockCursor < n {
+					k := m.chatBlocks[m.chatBlockCursor]
+					m.chatExpand[k] = !m.chatExpand[k]
+					if m.ready {
+						m.vp.SetContent(m.body())
+					}
+				}
+				return m, nil
+			case "o":
+				// Expand/collapse everything in view at once.
+				m.chatExpandAll = !m.chatExpandAll
+				if m.ready {
+					m.vp.SetContent(m.body())
 				}
 				return m, nil
 			}
@@ -278,6 +391,12 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 			return m, nil
 		}
 		m.pendingReview = &ev
+		if m.reviews == nil {
+			m.reviews = make(map[string]engine.ReviewRequest)
+		}
+		// Retain the request so the step's chat drill-in can show the diff/choices
+		// after the verdict clears pendingReview.
+		m.reviews[ev.StepID] = ev
 		// A human-input gate must never be ambiguous: surface it in the list
 		// view where the overlay renders and keys are unambiguous.
 		m.mode = modeList
@@ -291,6 +410,16 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		}
 		if ev.Seq > m.msgCount[ev.StepID] {
 			m.msgCount[ev.StepID] = ev.Seq
+		}
+		// A StepMessage means a message was just finalized to the transcript, so
+		// the live-typing tail for that step is now on disk: reset it (the next
+		// deltas belong to the next, not-yet-finalized bubble). If that step's
+		// chat is open, re-read the transcript so the finalized entry appears.
+		if buf, ok := m.stepOutput[ev.StepID]; ok {
+			buf.Reset()
+		}
+		if m.mode == modeChat && ev.StepID == m.chatStep {
+			m.loadChat()
 		}
 
 	case engine.PromptRequest:
@@ -353,7 +482,33 @@ func (m *monitorModel) resize() {
 	if m.pendingPrompt != nil {
 		m.promptTextarea.SetWidth(m.width - 4)
 	}
+	m.rebuildRenderer()
 	m.vp.SetContent(m.body())
+}
+
+// rebuildRenderer (re)constructs the markdown renderer for the current width and
+// invalidates the per-block render cache when the width actually changed —
+// glamour bakes its word-wrap width in at construction, so a stale cache would
+// wrap to the old width (see turn.go / viewer.go for the same house rule). A
+// static style (not AutoStyle) avoids the OSC-11 stdin race documented in
+// main.go; the background was detected once before Bubble Tea started.
+func (m *monitorModel) rebuildRenderer() {
+	wordWrap := m.width - 4
+	if wordWrap < 1 {
+		wordWrap = 1
+	}
+	styleName := "light"
+	if m.dark {
+		styleName = "dark"
+	}
+	m.renderer, _ = glamour.NewTermRenderer(
+		glamour.WithStandardStyle(styleName),
+		glamour.WithWordWrap(wordWrap),
+	)
+	if m.renderWidth != m.width {
+		m.chatRendered = make(map[blockKey]string)
+		m.renderWidth = m.width
+	}
 }
 
 // ensureCursorVisible nudges the viewport so the selected step stays on screen
@@ -459,28 +614,7 @@ func (m monitorModel) listBody() string {
 		b.WriteString("  " + markerStyle.Render("Review required — step: "+m.pendingReview.StepID) + "\n\n")
 
 		if m.pendingReview.Diff != "" {
-			b.WriteString("  " + questionStyle.Render("── diff ─────────────────────────────") + "\n")
-			lines := strings.Split(m.pendingReview.Diff, "\n")
-			const maxDiffLines = 200
-			truncated := len(lines) > maxDiffLines
-			if truncated {
-				lines = lines[:maxDiffLines]
-			}
-			for _, line := range lines {
-				switch {
-				case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++"):
-					b.WriteString("  " + diffAddStyle.Render(line) + "\n")
-				case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---"):
-					b.WriteString("  " + diffRemoveStyle.Render(line) + "\n")
-				case strings.HasPrefix(line, "@@"):
-					b.WriteString("  " + diffHunkStyle.Render(line) + "\n")
-				default:
-					b.WriteString("  " + line + "\n")
-				}
-			}
-			if truncated {
-				b.WriteString("  " + questionStyle.Render("… diff truncated") + "\n")
-			}
+			writeDiff(&b, m.pendingReview.Diff)
 			b.WriteString("\n")
 		}
 
@@ -519,10 +653,63 @@ func (m monitorModel) listBody() string {
 	return b.String()
 }
 
-// chatBody renders one step's agent chat chain. Phase 4 is the navigation
-// skeleton: it shows the step header and message count; Phase 5 replaces the
-// placeholder body with the rendered transcript (text, reasoning, tool calls,
-// and results) read from transcript.jsonl.
+// loadChat re-reads chatStep's transcript into the model. The transcript file is
+// the source of truth (not the lossy event bus); we read only the trailing
+// chatWindowMax entries so a long run stays bounded, and flatten the collapsible
+// blocks so the block cursor and expand toggles have a stable index. Safe to
+// call while the writer appends: the reader opens, reads to EOF, and closes.
+func (m *monitorModel) loadChat() {
+	m.chatEntries = nil
+	m.chatBlocks = nil
+	m.chatElided = 0
+	if m.runDir == "" || m.chatStep == "" {
+		return
+	}
+	r, err := transcript.Open(datastore.TranscriptPath(m.runDir, m.chatStep))
+	if err != nil {
+		return
+	}
+	count, err := r.Count()
+	if err != nil {
+		return
+	}
+	offset := 0
+	if count > chatWindowMax {
+		offset = count - chatWindowMax
+		m.chatElided = offset
+	}
+	entries, err := r.Window(offset, chatWindowMax)
+	if err != nil {
+		return
+	}
+	m.chatEntries = entries
+	for _, e := range entries {
+		for bi, blk := range e.Blocks {
+			if collapsible(blk.Type) {
+				m.chatBlocks = append(m.chatBlocks, blockKey{seq: e.Seq, block: bi})
+			}
+		}
+	}
+	if m.chatBlockCursor >= len(m.chatBlocks) {
+		m.chatBlockCursor = 0
+	}
+}
+
+// collapsible reports whether a block type is collapsed to chatCollapseWidth by
+// default (and thus a target for the block cursor). Text renders in full as
+// markdown; unknown types render as an inert placeholder.
+func collapsible(t transcript.BlockType) bool {
+	switch t {
+	case transcript.BlockThinking, transcript.BlockToolUse, transcript.BlockToolResult:
+		return true
+	default:
+		return false
+	}
+}
+
+// chatBody renders one step's agent chat chain from its transcript: assistant
+// text (markdown), reasoning, tool calls with inputs, and tool results, with
+// large blocks collapsed to chatCollapseWidth and iteration/retry separators.
 func (m monitorModel) chatBody() string {
 	var b strings.Builder
 
@@ -539,11 +726,238 @@ func (m monitorModel) chatBody() string {
 	b.WriteString("  " + indicator + "  " + style.Render(s.id) + "  " +
 		statusStyle(s.status).Render(string(s.status)) + "\n\n")
 
-	n := m.msgCount[m.chatStep]
-	b.WriteString("  " + questionStyle.Render(
-		fmt.Sprintf("%d message(s) captured — transcript rendering lands in Phase 5.", n)) + "\n")
+	running := s.status == step.StatusRunning
+	hasTail := false
+	if buf, ok := m.stepOutput[m.chatStep]; ok && buf.Len() > 0 {
+		hasTail = true
+	}
+
+	if len(m.chatEntries) == 0 {
+		// Review steps have no transcript; drilling in shows the diff and choices
+		// instead of a dead end (Phase 6).
+		if rev, ok := m.reviews[m.chatStep]; ok {
+			if rev.Diff != "" {
+				writeDiff(&b, rev.Diff)
+				b.WriteString("\n")
+			}
+			for i, ch := range rev.Choices {
+				b.WriteString(fmt.Sprintf("    [%d] %s\n", i+1, ch))
+			}
+			return b.String()
+		}
+		if m.runDir == "" {
+			b.WriteString("  " + questionStyle.Render("transcript unavailable (persistence off)") + "\n")
+		} else if !running && !hasTail {
+			b.WriteString("  " + questionStyle.Render("no output yet") + "\n")
+		}
+	}
+
+	if m.chatElided > 0 {
+		b.WriteString("  " + chatHintStyle.Render(
+			fmt.Sprintf("… %d earlier message(s) elided", m.chatElided)) + "\n\n")
+	}
+
+	lastIter, lastAttempt := -1, -1
+	for _, e := range m.chatEntries {
+		if lastIter != -1 && e.Iteration > lastIter {
+			b.WriteString("\n  " + markerStyle.Render(
+				fmt.Sprintf("── iteration %d ──", e.Iteration+1)) + "\n\n")
+		}
+		if lastAttempt != -1 && e.Attempt > lastAttempt {
+			b.WriteString("\n  " + markerStyle.Render(
+				fmt.Sprintf("── retry %d ──", e.Attempt)) + "\n\n")
+		}
+		lastIter, lastAttempt = e.Iteration, e.Attempt
+
+		b.WriteString("  " + chatHintStyle.Render(fmt.Sprintf("#%d %s", e.Seq, e.Role)) + "\n")
+		for bi, blk := range e.Blocks {
+			key := blockKey{seq: e.Seq, block: bi}
+			m.writeBlock(&b, key, blk, e.Role)
+		}
+		b.WriteString("\n")
+	}
+
+	// Live tail: the current, not-yet-finalized bubble. Reset on each
+	// StepMessage, so it shows only deltas past the last finalized entry.
+	if running && hasTail {
+		b.WriteString("  " + questionStyle.Render("typing…") + "\n")
+		tail := m.stepOutput[m.chatStep].String()
+		lines := strings.Split(tail, "\n")
+		if len(lines) > outputMaxLines {
+			lines = lines[len(lines)-outputMaxLines:]
+		}
+		for _, l := range lines {
+			b.WriteString("  " + l + "\n")
+		}
+	}
 
 	return b.String()
+}
+
+// writeBlock renders one transcript block. Assistant text is markdown (cached);
+// system text (command output) is shown verbatim so terminal output is not
+// reflowed as prose; thinking, tool_use, and tool_result collapse to
+// chatCollapseWidth until expanded.
+func (m monitorModel) writeBlock(b *strings.Builder, key blockKey, blk transcript.Block, role transcript.Role) {
+	switch blk.Type {
+	case transcript.BlockText:
+		if role == transcript.RoleSystem {
+			writeVerbatim(b, blk.Text)
+			return
+		}
+		b.WriteString(m.renderMarkdown(key, blk.Text))
+	case transcript.BlockThinking:
+		m.writeCollapsible(b, key, thinkingStyle, "🧠 reasoning", blk.Text, false, blk.Truncated)
+	case transcript.BlockToolUse:
+		m.writeCollapsible(b, key, toolCallStyle, "⚙ "+blk.Name, string(blk.Input), false, false)
+	case transcript.BlockToolResult:
+		m.writeCollapsible(b, key, toolResultStyle, "↳ result", blk.Content, blk.IsError, blk.Truncated)
+	default:
+		b.WriteString("  " + questionStyle.Render("[unsupported block: "+string(blk.Type)+"]") + "\n")
+	}
+}
+
+// renderMarkdown renders a text block as markdown, caching the result per block.
+// The cache map is shared across the value copies of monitorModel, so writing to
+// it here persists even though the receiver is by value; the map is invalidated
+// wholesale on a width change (rebuildRenderer).
+func (m monitorModel) renderMarkdown(key blockKey, text string) string {
+	if cached, ok := m.chatRendered[key]; ok {
+		return cached
+	}
+	out := text
+	if m.renderer != nil {
+		if r, err := m.renderer.Render(text); err == nil {
+			out = r
+		}
+	}
+	if m.chatRendered != nil {
+		m.chatRendered[key] = out
+	}
+	return out
+}
+
+// writeCollapsible renders one collapsible block: a labelled header line with a
+// ▸/▾ affordance, then either a one-line preview clipped to chatCollapseWidth or
+// the bounded full content. The block under the chat cursor is highlighted so
+// the expand target is obvious; error results take errorStyle.
+func (m monitorModel) writeCollapsible(b *strings.Builder, key blockKey, labelStyle lipgloss.Style, label, content string, isError, truncated bool) {
+	expanded := m.chatExpandAll || m.chatExpand[key]
+	cursored := len(m.chatBlocks) > 0 && m.chatBlockCursor < len(m.chatBlocks) &&
+		m.chatBlocks[m.chatBlockCursor] == key
+
+	marker := "▸"
+	if expanded {
+		marker = "▾"
+	}
+	head := labelStyle
+	if isError {
+		head = errorStyle
+	}
+	if cursored {
+		b.WriteString("  " + blockCursorStyle.Render(marker+" "+label))
+	} else {
+		b.WriteString("  " + marker + " " + head.Render(label))
+	}
+
+	if !expanded {
+		shown, clipped := collapseLine(content)
+		if shown != "" {
+			b.WriteString("  " + questionStyle.Render(shown))
+		}
+		if clipped || truncated {
+			b.WriteString(chatHintStyle.Render(
+				fmt.Sprintf(" [%d chars]", utf8.RuneCountInString(content))))
+		}
+		b.WriteString("\n")
+		return
+	}
+
+	b.WriteString("\n")
+	for _, l := range strings.Split(expandView(content), "\n") {
+		b.WriteString("    " + questionStyle.Render(l) + "\n")
+	}
+	if truncated {
+		b.WriteString("    " + chatHintStyle.Render("… (truncated at write)") + "\n")
+	}
+}
+
+// collapseLine flattens s to a single line and clips it to chatCollapseWidth
+// runes, reporting whether it was clipped. Interior whitespace is collapsed so a
+// multi-line block previews as one tidy line.
+func collapseLine(s string) (string, bool) {
+	flat := strings.Join(strings.Fields(s), " ")
+	if utf8.RuneCountInString(flat) <= chatCollapseWidth {
+		return flat, false
+	}
+	return string([]rune(flat)[:chatCollapseWidth]), true
+}
+
+// expandView bounds a block's expanded content: below chatExpandMax it returns
+// the content unchanged; above it, a head+tail with the middle elided so a
+// write-capped 256 KiB result never lays out in full.
+func expandView(s string) string {
+	if len(s) <= chatExpandMax {
+		return s
+	}
+	half := chatExpandMax / 2
+	head := clampRunes(s[:half])
+	tail := clampRunesTail(s[len(s)-half:])
+	elided := len(s) - len(head) - len(tail)
+	return head + fmt.Sprintf("\n… %d KB elided …\n", elided/1024) + tail
+}
+
+// clampRunes / clampRunesTail back a byte slice off to a rune boundary so
+// expandView never splits a multibyte rune at the elision seam.
+func clampRunes(s string) string {
+	for len(s) > 0 && !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
+func clampRunesTail(s string) string {
+	for len(s) > 0 && !utf8.ValidString(s) {
+		s = s[1:]
+	}
+	return s
+}
+
+// writeDiff renders a unified diff with +/-/@@ lines styled and indented two
+// spaces, truncated to maxDiffLines. Shared by the review overlay in the list
+// view and the review-step drill-in in the chat view (Phase 6).
+func writeDiff(b *strings.Builder, diff string) {
+	b.WriteString("  " + questionStyle.Render("── diff ─────────────────────────────") + "\n")
+	lines := strings.Split(diff, "\n")
+	const maxDiffLines = 200
+	truncated := len(lines) > maxDiffLines
+	if truncated {
+		lines = lines[:maxDiffLines]
+	}
+	for _, line := range lines {
+		switch {
+		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++"):
+			b.WriteString("  " + diffAddStyle.Render(line) + "\n")
+		case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---"):
+			b.WriteString("  " + diffRemoveStyle.Render(line) + "\n")
+		case strings.HasPrefix(line, "@@"):
+			b.WriteString("  " + diffHunkStyle.Render(line) + "\n")
+		default:
+			b.WriteString("  " + line + "\n")
+		}
+	}
+	if truncated {
+		b.WriteString("  " + questionStyle.Render("… diff truncated") + "\n")
+	}
+}
+
+// writeVerbatim renders text as-is, one indented line per line, without markdown
+// reflow. Used for command-step output (role system), where the content is
+// terminal output that glamour would mangle (Phase 6).
+func writeVerbatim(b *strings.Builder, text string) {
+	for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+		b.WriteString("  " + line + "\n")
+	}
 }
 
 func stepIndicator(s step.Status) (string, lipgloss.Style) {
@@ -614,7 +1028,7 @@ func (m monitorModel) footerView() string {
 	case m.pendingReview != nil:
 		hint = "1-9 select verdict  •  esc runs list  •  ctrl+c quit"
 	case m.mode == modeChat:
-		hint = "esc back  •  j/k scroll  •  ctrl+c quit"
+		hint = "esc back  •  j/k scroll  •  tab block  •  enter expand  •  o all"
 	default:
 		hint = "j/k select  •  enter open  •  esc runs list  •  ctrl+c quit"
 	}

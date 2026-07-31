@@ -71,9 +71,6 @@ func TestRoundTrip(t *testing.T) {
 	}
 	for i := range want {
 		g := got[i]
-		if g.V != SchemaVersion {
-			t.Errorf("entry %d: V = %d, want %d", i, g.V, SchemaVersion)
-		}
 		if g.Seq != i+1 {
 			t.Errorf("entry %d: Seq = %d, want %d", i, g.Seq, i+1)
 		}
@@ -168,7 +165,7 @@ func TestReaderSkipsCorruptAndUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	unknown := Entry{V: 1, Seq: 4, Ts: "2026-07-31T00:00:00Z", Role: RoleAssistant,
+	unknown := Entry{Seq: 4, Ts: "2026-07-31T00:00:00Z", Role: RoleAssistant,
 		Blocks: []Block{{Type: BlockType("future_block"), Text: "hi"}}}
 	line, _ := json.Marshal(unknown)
 	if _, err := f.Write(append(line, '\n')); err != nil {
@@ -177,7 +174,7 @@ func TestReaderSkipsCorruptAndUnknown(t *testing.T) {
 	if _, err := f.WriteString("{ this is not valid json\n"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.WriteString(`{"v":1,"seq":6,"role":"assistant"`); err != nil { // no closing brace, no newline
+	if _, err := f.WriteString(`{"seq":6,"role":"assistant"`); err != nil { // no closing brace, no newline
 		t.Fatal(err)
 	}
 	f.Close()
@@ -262,6 +259,44 @@ func TestSeqResumesOnReopen(t *testing.T) {
 	r, _ := Open(path)
 	if n, _ := r.Count(); n != 4 {
 		t.Errorf("Count after reopen = %d, want 4", n)
+	}
+}
+
+// TestReaderToleratesUnknownFields is the best-effort-render smoke test: a line
+// carrying extra top-level fields and a new block type with new fields — the
+// sort of thing a different jig build might write — must be read without
+// panicking. Unknown fields are dropped by encoding/json; the unknown block
+// type is preserved verbatim for the caller to render as a placeholder. The
+// format is unversioned by design (see the package doc), so this is graceful
+// degradation, not a compatibility guarantee.
+func TestReaderToleratesUnknownFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "transcript.jsonl")
+	line := `{"seq":1,"ts":"2027-01-01T00:00:00Z","iter":0,"attempt":0,` +
+		`"role":"assistant","cost_usd":0.42,"blocks":[` +
+		`{"type":"text","text":"hello"},` +
+		`{"type":"image","url":"https://x/y.png","alt":"a picture"}` +
+		`],"trailing_unknown_field":{"nested":true}}` + "\n"
+	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _ := Open(path)
+	got, err := r.Window(0, 0)
+	if err != nil {
+		t.Fatalf("Window: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("read %d entries, want 1", len(got))
+	}
+	e := got[0]
+	if e.Role != RoleAssistant || len(e.Blocks) != 2 {
+		t.Fatalf("entry not decoded: role=%q blocks=%d", e.Role, len(e.Blocks))
+	}
+	if e.Blocks[0].Type != BlockText || e.Blocks[0].Text != "hello" {
+		t.Errorf("known block not decoded: %+v", e.Blocks[0])
+	}
+	if e.Blocks[1].Type != BlockType("image") {
+		t.Errorf("unknown block type not preserved: %+v", e.Blocks[1])
 	}
 }
 

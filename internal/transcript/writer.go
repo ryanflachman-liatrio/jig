@@ -58,12 +58,11 @@ func Create(path string) (*Writer, error) {
 }
 
 // Append stamps and writes one entry, returning its assigned seq. The caller's
-// V, Seq, and Ts fields are overwritten (the writer owns them); Iteration,
-// Attempt, Role, and Blocks are taken as given. Oversized block text/content is
+// Seq and Ts fields are overwritten (the writer owns them); Iteration, Attempt,
+// Role, and Blocks are taken as given. Oversized block text/content is
 // truncated in place.
 func (w *Writer) Append(e Entry) (int, error) {
 	w.seq++
-	e.V = SchemaVersion
 	e.Seq = w.seq
 	e.Ts = time.Now().UTC().Truncate(time.Second).Format(time.RFC3339)
 
