@@ -48,6 +48,15 @@ type reviewVerdictMsg struct {
 	verdict string
 }
 
+// userInputResponseMsg is emitted by the monitor when the user submits text
+// for a from="user" input. The root delivers it via Run.ProvideUserInput.
+type userInputResponseMsg struct {
+	runID  string
+	stepID string
+	as     string
+	text   string
+}
+
 // engineEventMsg wraps one engine.Event for delivery as a tea.Msg.
 type engineEventMsg struct{ event engine.Event }
 
@@ -147,11 +156,17 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case showMonitorMsg:
-		m.monitor = newMonitorModel(msg.runID)
-		// Seed with a snapshot if we have a Run handle so already-running steps show up.
-		if run, ok := m.handles[msg.runID]; ok {
-			snap := run.Snapshot()
-			m.monitor = m.monitor.withSnapshot(snap)
+		// Preserve monitor state when returning to the same run — events that
+		// arrived while on other screens are already reflected, and we avoid
+		// an unnecessary Snapshot() call.
+		if m.monitor.runID != msg.runID {
+			m.monitor = newMonitorModel(msg.runID)
+			// Seed with a snapshot so already-completed or in-progress steps
+			// show up immediately. Snapshot() is safe for completed runs.
+			if run, ok := m.handles[msg.runID]; ok {
+				snap := run.Snapshot()
+				m.monitor = m.monitor.withSnapshot(snap)
+			}
 		}
 		m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		m.active = screenMonitor
@@ -160,6 +175,12 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case reviewVerdictMsg:
 		if run, ok := m.handles[msg.runID]; ok {
 			run.Resolve(msg.stepID, msg.verdict)
+		}
+		return m, nil
+
+	case userInputResponseMsg:
+		if run, ok := m.handles[msg.runID]; ok {
+			run.ProvideUserInput(msg.stepID, msg.as, msg.text)
 		}
 		return m, nil
 
@@ -173,8 +194,10 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.handles[run.ID] = run
 		m.runs = m.runs.withWorkflow(msg.wf)
-		// Switch to runs list — the RunStarted event will add the row momentarily.
-		m.active = screenRuns
+		// Navigate straight to the monitor so prompts and review gates are visible immediately.
+		m.monitor = newMonitorModel(run.ID)
+		m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		m.active = screenMonitor
 		return m, nil
 	}
 

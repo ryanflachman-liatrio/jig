@@ -73,7 +73,9 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "enter", "esc", "q", "backspace", "h", "left":
+		case "enter":
+			return m, func() tea.Msg { return showRunsMsg{} }
+		case "esc", "q", "backspace", "h", "left":
 			return m, func() tea.Msg { return backToSelectorMsg{} }
 		case "r":
 			if m.wf != nil {
@@ -107,9 +109,9 @@ func (m *detailModel) resize() {
 }
 
 func (m detailModel) footerView() string {
-	help := "  esc/enter back  •  ctrl+c quit"
+	help := "  enter runs  •  esc back  •  ctrl+c quit"
 	if m.wf != nil {
-		help = "  r run  •  esc/enter back  •  ctrl+c quit"
+		help = "  r run  •  enter runs  •  esc back  •  ctrl+c quit"
 	}
 	return footerStyle.Render(help)
 }
