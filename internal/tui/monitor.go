@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -985,11 +986,11 @@ func (m monitorModel) writeBlock(b *strings.Builder, key blockKey, blk transcrip
 		}
 		b.WriteString(m.renderMarkdown(key, blk.Text))
 	case transcript.BlockThinking:
-		m.writeCollapsible(b, key, thinkingStyle, "🧠 reasoning", blk.Text, false, blk.Truncated)
+		m.writeCollapsible(b, key, thinkingStyle, "🧠 reasoning", blk.Text, "", false, blk.Truncated)
 	case transcript.BlockToolUse:
-		m.writeCollapsible(b, key, toolCallStyle, "⚙ "+blk.Name, string(blk.Input), false, false)
+		m.writeCollapsible(b, key, toolCallStyle, "⚙ "+blk.Name, string(blk.Input), fenceJSON(string(blk.Input)), false, false)
 	case transcript.BlockToolResult:
-		m.writeCollapsible(b, key, toolResultStyle, "↳ result", blk.Content, blk.IsError, blk.Truncated)
+		m.writeCollapsible(b, key, toolResultStyle, "↳ result", blk.Content, fenceJSON(blk.Content), blk.IsError, blk.Truncated)
 	default:
 		b.WriteString("  " + questionStyle.Render("[unsupported block: "+string(blk.Type)+"]") + "\n")
 	}
@@ -1015,11 +1016,27 @@ func (m monitorModel) renderMarkdown(key blockKey, text string) string {
 	return out
 }
 
+// fenceJSON pretty-prints s as a ```json fenced markdown block so it can be
+// rendered with syntax highlighting via renderMarkdown. Returns "" when s is
+// not valid JSON so callers can fall back to plain text.
+func fenceJSON(s string) string {
+	s = expandView(s)
+	var v any
+	if err := json.Unmarshal([]byte(s), &v); err != nil {
+		return ""
+	}
+	pretty, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return ""
+	}
+	return "```json\n" + string(pretty) + "\n```"
+}
+
 // writeCollapsible renders one collapsible block: a labelled header line with a
 // ▸/▾ affordance, then either a one-line preview clipped to chatCollapseWidth or
 // the bounded full content. The block under the chat cursor is highlighted so
 // the expand target is obvious; error results take errorStyle.
-func (m monitorModel) writeCollapsible(b *strings.Builder, key blockKey, labelStyle lipgloss.Style, label, content string, isError, truncated bool) {
+func (m monitorModel) writeCollapsible(b *strings.Builder, key blockKey, labelStyle lipgloss.Style, label, content, formattedContent string, isError, truncated bool) {
 	expanded := m.chatExpandAll || m.chatExpand[key]
 	cursored := len(m.chatBlocks) > 0 && m.chatBlockCursor < len(m.chatBlocks) &&
 		m.chatBlocks[m.chatBlockCursor] == key
@@ -1052,8 +1069,12 @@ func (m monitorModel) writeCollapsible(b *strings.Builder, key blockKey, labelSt
 	}
 
 	b.WriteString("\n")
-	for _, l := range strings.Split(expandView(content), "\n") {
-		b.WriteString("    " + questionStyle.Render(l) + "\n")
+	if formattedContent != "" {
+		b.WriteString(m.renderMarkdown(key, formattedContent))
+	} else {
+		for _, l := range strings.Split(expandView(content), "\n") {
+			b.WriteString("    " + questionStyle.Render(l) + "\n")
+		}
 	}
 	if truncated {
 		b.WriteString("    " + chatHintStyle.Render("… (truncated at write)") + "\n")
