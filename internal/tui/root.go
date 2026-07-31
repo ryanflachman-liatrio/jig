@@ -57,6 +57,22 @@ type userInputResponseMsg struct {
 	text   string
 }
 
+// reviewMessageMsg is emitted by the monitor when the user submits a free-text
+// message to the reviewed agent step. The root delivers it via Run.Message.
+type reviewMessageMsg struct {
+	runID  string
+	stepID string
+	text   string
+}
+
+// agentInputMsg is emitted by the monitor when the user submits a response to
+// an agent step blocked by block_on. The root delivers it via Run.SendInput.
+type agentInputMsg struct {
+	runID  string
+	stepID string
+	text   string
+}
+
 // engineEventMsg wraps one engine.Event for delivery as a tea.Msg.
 type engineEventMsg struct{ event engine.Event }
 
@@ -180,6 +196,18 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case reviewVerdictMsg:
 		if run, ok := m.handles[msg.runID]; ok {
 			run.Resolve(msg.stepID, msg.verdict)
+		}
+		return m, nil
+
+	case reviewMessageMsg:
+		if run, ok := m.handles[msg.runID]; ok {
+			run.Message(msg.stepID, msg.text)
+		}
+		return m, nil
+
+	case agentInputMsg:
+		if run, ok := m.handles[msg.runID]; ok {
+			run.SendInput(msg.stepID, msg.text)
 		}
 		return m, nil
 

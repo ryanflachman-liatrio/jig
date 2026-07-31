@@ -1,8 +1,10 @@
 package runner
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -74,7 +76,7 @@ func TestCaptureStream_RichCapture(t *testing.T) {
 		Attempt:        1,
 	}
 
-	res, err := captureStream(scriptChan(assistant, user, result), req, rep, time.Now())
+	res, err := captureStream(scriptChan(assistant, user, result), req, rep, time.Now(), "")
 	if err != nil {
 		t.Fatalf("captureStream: %v", err)
 	}
@@ -157,7 +159,7 @@ func TestCaptureStream_StructuredToolResultTruncated(t *testing.T) {
 	}
 	req := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: tPath}
 
-	if _, err := captureStream(scriptChan(user, &claudecode.ResultMessage{}), req, &captureReporter{}, time.Now()); err != nil {
+	if _, err := captureStream(scriptChan(user, &claudecode.ResultMessage{}), req, &captureReporter{}, time.Now(), ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -200,7 +202,7 @@ func TestCaptureStream_Artifact(t *testing.T) {
 		TranscriptPath: filepath.Join(dir, "transcript.jsonl"),
 	}
 
-	res, err := captureStream(scriptChan(first, final, &claudecode.ResultMessage{}), req, &captureReporter{}, time.Now())
+	res, err := captureStream(scriptChan(first, final, &claudecode.ResultMessage{}), req, &captureReporter{}, time.Now(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +228,7 @@ func TestCaptureStream_NoTranscript(t *testing.T) {
 	rep := &captureReporter{}
 	req := engine.StepRequest{Step: &workflow.Step{}} // TranscriptPath == ""
 
-	if _, err := captureStream(scriptChan(assistant, &claudecode.ResultMessage{}), req, rep, time.Now()); err != nil {
+	if _, err := captureStream(scriptChan(assistant, &claudecode.ResultMessage{}), req, rep, time.Now(), ""); err != nil {
 		t.Fatal(err)
 	}
 	if len(rep.messages) != 0 {
@@ -234,6 +236,204 @@ func TestCaptureStream_NoTranscript(t *testing.T) {
 	}
 	if entries, _ := filepath.Glob(filepath.Join(dir, "*.jsonl")); len(entries) != 0 {
 		t.Errorf("no transcript file should be written; found %v", entries)
+	}
+}
+
+// TestBuildOptions verifies each of a step's model/tool/permission fields is
+// translated into the matching SDK option — the fix for the fields being
+// parsed and validated but never reaching the SDK client.
+func TestBuildOptions(t *testing.T) {
+	st := &workflow.Step{
+		Model:             "claude-opus-4-8",
+		FallbackModel:     "claude-sonnet-4-6",
+		Effort:            workflow.EffortHigh,
+		MaxTurns:          20,
+		MaxThinkingTokens: 8000,
+		MaxBudgetUSD:      5.0,
+		PermissionMode:    "acceptEdits",
+		AllowedTools:      []string{"Read", "Grep"},
+		DisallowedTools:   []string{"Bash"},
+	}
+	opts, err := buildOptions(st)
+	if err != nil {
+		t.Fatalf("buildOptions: %v", err)
+	}
+	var got claudecode.Options
+	for _, o := range opts {
+		o(&got)
+	}
+	if got.Model == nil || *got.Model != "claude-opus-4-8" {
+		t.Errorf("Model = %v, want claude-opus-4-8", got.Model)
+	}
+	if got.FallbackModel == nil || *got.FallbackModel != "claude-sonnet-4-6" {
+		t.Errorf("FallbackModel = %v, want claude-sonnet-4-6", got.FallbackModel)
+	}
+	if got.Effort == nil || *got.Effort != "high" {
+		t.Errorf("Effort = %v, want high", got.Effort)
+	}
+	if got.MaxTurns != 20 {
+		t.Errorf("MaxTurns = %d, want 20", got.MaxTurns)
+	}
+	if got.MaxThinkingTokens != 8000 {
+		t.Errorf("MaxThinkingTokens = %d, want 8000", got.MaxThinkingTokens)
+	}
+	if got.MaxBudgetUSD == nil || *got.MaxBudgetUSD != 5.0 {
+		t.Errorf("MaxBudgetUSD = %v, want 5.0", got.MaxBudgetUSD)
+	}
+	if got.PermissionMode == nil || *got.PermissionMode != claudecode.PermissionMode("acceptEdits") {
+		t.Errorf("PermissionMode = %v, want acceptEdits", got.PermissionMode)
+	}
+	if !reflect.DeepEqual(got.AllowedTools, []string{"Read", "Grep"}) {
+		t.Errorf("AllowedTools = %v, want [Read Grep]", got.AllowedTools)
+	}
+	if !reflect.DeepEqual(got.DisallowedTools, []string{"Bash"}) {
+		t.Errorf("DisallowedTools = %v, want [Bash]", got.DisallowedTools)
+	}
+}
+
+// TestBuildOptions_Empty verifies a zero-value step leaves every optional SDK
+// field unset so the SDK's own defaults apply, rather than sending zero values.
+func TestBuildOptions_Empty(t *testing.T) {
+	opts, err := buildOptions(&workflow.Step{})
+	if err != nil {
+		t.Fatalf("buildOptions: %v", err)
+	}
+	var got claudecode.Options
+	for _, o := range opts {
+		o(&got)
+	}
+	if got.Model != nil || got.FallbackModel != nil || got.Effort != nil ||
+		got.PermissionMode != nil || got.MaxBudgetUSD != nil {
+		t.Errorf("zero-value step should leave optional fields unset: %+v", got)
+	}
+	if got.MaxTurns != 0 || got.MaxThinkingTokens != 0 {
+		t.Errorf("zero-value step should leave numeric fields at 0: %+v", got)
+	}
+	if len(got.AllowedTools) != 0 || len(got.DisallowedTools) != 0 {
+		t.Errorf("zero-value step should leave tool lists empty: %+v", got)
+	}
+	if got.OutputFormat != nil {
+		t.Errorf("zero-value step should leave OutputFormat unset: %+v", got.OutputFormat)
+	}
+}
+
+// TestBuildOptions_Schema verifies a step.schema is translated into a
+// WithJSONSchema option carrying the equivalent JSON Schema document.
+func TestBuildOptions_Schema(t *testing.T) {
+	st := &workflow.Step{
+		Schema: &workflow.Schema{Fields: []*workflow.Field{
+			{Name: "summary", Type: workflow.FieldText},
+			{Name: "passed", Type: workflow.FieldBool},
+		}},
+	}
+	opts, err := buildOptions(st)
+	if err != nil {
+		t.Fatalf("buildOptions: %v", err)
+	}
+	var got claudecode.Options
+	for _, o := range opts {
+		o(&got)
+	}
+	if got.OutputFormat == nil || got.OutputFormat.Type != "json_schema" {
+		t.Fatalf("OutputFormat = %v, want json_schema", got.OutputFormat)
+	}
+	props, ok := got.OutputFormat.Schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema properties missing or wrong type: %v", got.OutputFormat.Schema)
+	}
+	if _, ok := props["summary"]; !ok {
+		t.Errorf("schema missing summary field: %v", props)
+	}
+	if _, ok := props["passed"]; !ok {
+		t.Errorf("schema missing passed field: %v", props)
+	}
+}
+
+// TestCaptureStream_StructuredOutput verifies a ResultMessage's StructuredOutput
+// is captured into step.Result.Structured — the field block_on/when/loop.when
+// guards read to evaluate schema-field conditions.
+func TestCaptureStream_StructuredOutput(t *testing.T) {
+	dir := t.TempDir()
+	req := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: filepath.Join(dir, "transcript.jsonl")}
+
+	result := &claudecode.ResultMessage{
+		StructuredOutput: map[string]any{"needs_input": true, "question": "which threat model?"},
+	}
+	res, err := captureStream(scriptChan(result), req, &captureReporter{}, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != step.StatusSucceeded {
+		t.Fatalf("status = %q, want succeeded: %s", res.Status, res.Err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(res.Structured, &got); err != nil {
+		t.Fatalf("Structured is not valid JSON: %v", err)
+	}
+	if got["needs_input"] != true {
+		t.Errorf("Structured[needs_input] = %v, want true", got["needs_input"])
+	}
+	if got["question"] != "which threat model?" {
+		t.Errorf("Structured[question] = %v", got["question"])
+	}
+}
+
+// TestCaptureStream_AssistantError verifies an AssistantMessage.Error is
+// surfaced as a system transcript entry rather than silently dropped.
+func TestCaptureStream_AssistantError(t *testing.T) {
+	dir := t.TempDir()
+	tPath := filepath.Join(dir, "transcript.jsonl")
+	req := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: tPath}
+
+	rateLimited := claudecode.AssistantMessageErrorRateLimit
+	assistant := &claudecode.AssistantMessage{
+		Content: []claudecode.ContentBlock{&claudecode.TextBlock{Text: "hold on"}},
+		Error:   &rateLimited,
+	}
+	if _, err := captureStream(scriptChan(assistant, &claudecode.ResultMessage{}), req, &captureReporter{}, time.Now(), ""); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _ := transcript.Open(tPath)
+	entries, _ := r.Window(0, 0)
+	if len(entries) != 2 {
+		t.Fatalf("want 2 entries (assistant, system error); got %d", len(entries))
+	}
+	sys := entries[1]
+	if sys.Role != transcript.RoleSystem {
+		t.Errorf("entry 2 role = %q, want system", sys.Role)
+	}
+	if len(sys.Blocks) != 1 || !strings.Contains(sys.Blocks[0].Text, "rate_limit") {
+		t.Errorf("entry 2 blocks = %v, want text containing rate_limit", sys.Blocks)
+	}
+}
+
+// TestCaptureStream_Subtype verifies ResultMessage.Subtype and Errors land on
+// step.Result on both the success and failure paths.
+func TestCaptureStream_Subtype(t *testing.T) {
+	dir := t.TempDir()
+	req := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: filepath.Join(dir, "success.jsonl")}
+
+	ok := &claudecode.ResultMessage{Subtype: "success"}
+	res, err := captureStream(scriptChan(ok), req, &captureReporter{}, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Subtype != "success" {
+		t.Errorf("success Subtype = %q, want success", res.Subtype)
+	}
+
+	req2 := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: filepath.Join(dir, "fail.jsonl")}
+	failed := &claudecode.ResultMessage{IsError: true, Subtype: "error_max_turns", Errors: []string{"hit turn limit"}}
+	res2, err := captureStream(scriptChan(failed), req2, &captureReporter{}, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res2.Subtype != "error_max_turns" {
+		t.Errorf("failure Subtype = %q, want error_max_turns", res2.Subtype)
+	}
+	if !strings.Contains(res2.Err, "hit turn limit") {
+		t.Errorf("failure Err = %q, want it to contain the Errors detail", res2.Err)
 	}
 }
 
@@ -245,7 +445,7 @@ func TestCaptureStream_ErrorResult(t *testing.T) {
 	req := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: tPath}
 
 	errMsg := &claudecode.ResultMessage{IsError: true, Result: strPtr("boom")}
-	res, err := captureStream(scriptChan(errMsg), req, &captureReporter{}, time.Now())
+	res, err := captureStream(scriptChan(errMsg), req, &captureReporter{}, time.Now(), "")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -88,11 +88,22 @@ type LoopFired struct {
 // ReviewRequest asks the human to pick from Choices for a review step.
 // Diff is non-empty when the step declares review = "diff"; it contains the
 // full git diff of mutating steps reachable through the dependency chain.
+// AllowMessage is true when the reviewed target is an agent step and the
+// per-gate message cap has not been exhausted — the TUI offers a [m] action.
 type ReviewRequest struct {
-	RunID   string
-	StepID  string
-	Choices []string
-	Diff    string
+	RunID        string
+	StepID       string
+	Choices      []string
+	Diff         string
+	AllowMessage bool
+}
+
+// InputRequest is emitted when an agent step's block_on condition evaluates to
+// true after it completes. The TUI surfaces a compose box so the human can
+// provide free-text input; the agent resumes its session and re-runs.
+type InputRequest struct {
+	RunID  string
+	StepID string
 }
 
 // RunError is an engine-level failure, not a step-level failure.
@@ -120,5 +131,6 @@ func (StepMessage) isEvent()   {}
 func (GateResult) isEvent()    {}
 func (LoopFired) isEvent()     {}
 func (ReviewRequest) isEvent() {}
+func (InputRequest) isEvent()  {}
 func (RunError) isEvent()      {}
 func (PromptRequest) isEvent() {}

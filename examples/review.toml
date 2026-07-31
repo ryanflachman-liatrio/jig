@@ -1,6 +1,6 @@
+#
 # =============================================================================
 # agent_file + model/reasoning knobs example.
-#
 # Shows:
 #   - an `agent` step driven by a Claude agent file (`agent_file`) instead of a
 #     skill dir — its frontmatter tools/model and body prompt fold into the step
@@ -35,11 +35,14 @@ disallowed_tools     = ["Bash"]
 append_system_prompt = "Only report high and critical severity findings."
 effort               = "max"
 max_budget_usd       = 2.0
+block_on             = "review.needs_input"
 
   [step.schema]
-  summary = "text"
-  passed  = "bool"
-  issues  = { list = { severity = { enum = ["high", "critical"] }, detail = "text" } }
+  summary     = "text"
+  passed      = "bool"
+  needs_input = "bool"
+  question    = "text"
+  issues      = { list = { severity = { enum = ["high", "critical"] }, detail = "text" } }
 
 # Human gate on the verdict.
 [[step]]

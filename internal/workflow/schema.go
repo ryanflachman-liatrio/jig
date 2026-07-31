@@ -66,6 +66,17 @@ func (e EffortLevel) valid() bool {
 	return false
 }
 
+// validPermissionMode reports whether s is one of the SDK's known permission
+// modes. PermissionMode is a plain string field (not a named type like
+// EffortLevel) since it is passed straight through to the SDK.
+func validPermissionMode(s string) bool {
+	switch s {
+	case "default", "acceptEdits", "plan", "bypassPermissions":
+		return true
+	}
+	return false
+}
+
 // OutputKind is the shape of a step's typed verdict.
 type OutputKind string
 
@@ -169,7 +180,13 @@ type Step struct {
 	Script string `toml:"script"`
 
 	// Review-only. "@stepid" (render that markdown) or "diff".
-	Review string `toml:"review"`
+	Review      string `toml:"review"`
+	MaxMessages int    `toml:"max_messages"` // review-only; 0 = engine default (10)
+
+	// Agent-only. Condition checked against the step's own structured output
+	// after it completes. While true the step stays in StatusNeedsInput and the
+	// TUI surfaces a compose box; on false the step succeeds and downstream proceeds.
+	BlockOn string `toml:"block_on"`
 
 	Validate *Validate `toml:"validate"`
 	Loop     *Loop     `toml:"loop"`

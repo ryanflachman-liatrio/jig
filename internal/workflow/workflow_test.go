@@ -380,6 +380,47 @@ run = "true"
 append_system_prompt = "be terse"`,
 			want: "belonging to another step type",
 		},
+		{
+			name: "max_messages negative",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "review"
+review = "diff"
+max_messages = -1
+output_type = { enum = ["ok"] }`,
+			want: "max_messages must be >= 0",
+		},
+		{
+			name: "max_messages on agent step",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "agent"
+skill = "s"
+allowed_tools = ["Read"]
+max_messages = 5`,
+			want: "max_messages is only valid on review steps",
+		},
+		{
+			name: "max_messages on command step",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "command"
+run = "true"
+max_messages = 3`,
+			want: "max_messages is only valid on review steps",
+		},
 	}
 
 	for _, tc := range cases {
@@ -392,6 +433,155 @@ append_system_prompt = "be terse"`,
 				t.Fatalf("error = %q, want substring %q", err.Error(), tc.want)
 			}
 		})
+	}
+}
+
+func TestMaxMessagesValid(t *testing.T) {
+	toml := `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "review"
+review = "diff"
+max_messages = 5
+output_type = { enum = ["ok"] }
+`
+	if _, err := Decode(toml, ""); err != nil {
+		t.Fatalf("expected valid, got error: %v", err)
+	}
+}
+
+func TestBlockOnValid(t *testing.T) {
+	// block_on with a schema field reference — valid when condition references own step.
+	toml := `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "chat"
+type = "agent"
+skill = "skills/ask"
+block_on = "chat.needs_input == 'true'"
+
+  [step.schema]
+  needs_input = { enum = ["true", "false"] }
+`
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "skills/ask", "SKILL.md"), "# ask\n")
+	if _, err := Decode(toml, dir); err != nil {
+		t.Fatalf("expected valid, got error: %v", err)
+	}
+}
+
+func TestBlockOnInvalid(t *testing.T) {
+	cases := []struct {
+		name string
+		toml string
+		want string
+	}{
+		{
+			name: "block_on references other step",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "agent"
+skill = "s"
+block_on = "b.done == 'true'"
+[[step]]
+id = "b"
+type = "command"
+run = "true"`,
+			want: "must reference this step's own output",
+		},
+		{
+			name: "block_on field without schema",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "agent"
+skill = "s"
+block_on = "a.needs_input == 'true'"`,
+			want: "no [step.schema]",
+		},
+		{
+			name: "block_on parse error",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "agent"
+skill = "s"
+block_on = "not a valid condition"`,
+			want: "block_on",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Decode(tc.toml, "")
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %q, want substring %q", err.Error(), tc.want)
+			}
+		})
+	}
+}
+
+// TestPermissionModeValid verifies each of the SDK's known permission modes
+// passes validation, at both the [defaults] and per-step level.
+func TestPermissionModeValid(t *testing.T) {
+	toml := `
+[workflow]
+name = "x"
+version = "1"
+[defaults]
+permission_mode = "acceptEdits"
+[[step]]
+id = "a"
+type = "agent"
+skill = "s"
+[[step]]
+id = "b"
+type = "agent"
+skill = "s"
+permission_mode = "bypassPermissions"
+`
+	if _, err := Decode(toml, ""); err != nil {
+		t.Fatalf("expected valid, got error: %v", err)
+	}
+}
+
+// TestPermissionModeInvalid verifies a typo'd permission_mode fails at load
+// time rather than silently reaching the SDK as a no-op.
+func TestPermissionModeInvalid(t *testing.T) {
+	toml := `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "agent"
+skill = "s"
+permission_mode = "accept-edits"
+`
+	_, err := Decode(toml, "")
+	if err == nil {
+		t.Fatal("expected error for invalid permission_mode, got nil")
+	}
+	if !strings.Contains(err.Error(), "permission_mode") {
+		t.Fatalf("error = %q, want substring %q", err.Error(), "permission_mode")
 	}
 }
 

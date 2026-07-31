@@ -1157,6 +1157,130 @@ done:
 	}
 }
 
+// structuredExec wraps testExec to inject a scripted step.Result.Structured
+// payload and SessionID for one step, changing what it returns on the second
+// call — simulating an agent that resumes its session after human input and
+// reports a different structured answer the second time.
+type structuredExec struct {
+	testExec
+	stepID    string
+	sessionID string
+	responses []string // raw JSON, one per call; the last is reused once exhausted
+	mu        sync.Mutex
+	calls     int
+}
+
+func (e *structuredExec) Execute(ctx context.Context, req StepRequest, rep Reporter) (*step.Result, error) {
+	r, err := e.testExec.Execute(ctx, req, rep)
+	if r == nil || req.Step.ID != e.stepID {
+		return r, err
+	}
+	e.mu.Lock()
+	i := e.calls
+	if i >= len(e.responses) {
+		i = len(e.responses) - 1
+	}
+	e.calls++
+	e.mu.Unlock()
+	r.SessionID = e.sessionID
+	r.Structured = []byte(e.responses[i])
+	return r, err
+}
+
+// TestScheduler_BlockOn verifies that block_on parks an agent step at
+// StatusNeedsInput when its schema-field guard evaluates true against the
+// executor's real Structured output, and that delivering human input via
+// Run.SendInput resumes the step and lets it (and its dependents) succeed
+// once the guard evaluates false. This exercises evalGuard's field-path decode
+// branch with real data — previously untested.
+func TestScheduler_BlockOn(t *testing.T) {
+	const toml = `
+[workflow]
+name = "block-on-test"
+version = "0.1"
+
+[[step]]
+id = "chat"
+type = "agent"
+skill = "chat"
+block_on = "chat.needs_input"
+
+  [step.schema]
+  needs_input = "bool"
+
+[[step]]
+id = "after"
+type = "command"
+run = "echo after"
+depends_on = ["chat"]
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &structuredExec{
+		testExec:  testExec{outcomes: map[string]testOutcome{"chat": {delay: delay}, "after": {delay: delay}}},
+		stepID:    "chat",
+		sessionID: "sess-1",
+		responses: []string{`{"needs_input":true}`, `{"needs_input":false}`},
+	}
+	mgr := NewManager(exec, "")
+	ch := mgr.Subscribe()
+
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var events []Event
+	deadline := time.After(5 * time.Second)
+	sentInput := false
+	for {
+		select {
+		case e := <-ch:
+			events = append(events, e)
+			if ir, ok := e.(InputRequest); ok && ir.StepID == "chat" && !sentInput {
+				sentInput = true
+				run.SendInput("chat", "use the untrusted threat model")
+			}
+			if _, ok := e.(RunFinished); ok {
+				goto done
+			}
+		case <-deadline:
+			t.Fatal("timeout waiting for block_on step to complete")
+		}
+	}
+done:
+	if !sentInput {
+		t.Fatal("InputRequest was never emitted for step 'chat'")
+	}
+
+	gotChat := findStatus(events, "chat")
+	hasNeedsInput := false
+	for _, s := range gotChat {
+		if s == step.StatusNeedsInput {
+			hasNeedsInput = true
+		}
+	}
+	if !hasNeedsInput {
+		t.Errorf("step chat must enter needs_input; got %v", gotChat)
+	}
+	if len(gotChat) == 0 || gotChat[len(gotChat)-1] != step.StatusSucceeded {
+		t.Errorf("step chat should end succeeded once needs_input is false; got %v", gotChat)
+	}
+
+	gotAfter := findStatus(events, "after")
+	if len(gotAfter) == 0 || gotAfter[len(gotAfter)-1] != step.StatusSucceeded {
+		t.Errorf("downstream step 'after' should run once chat unblocks; got %v", gotAfter)
+	}
+
+	last := events[len(events)-1]
+	rf, ok := last.(RunFinished)
+	if !ok || rf.Failed {
+		t.Errorf("want RunFinished{Failed:false}, got %v", last)
+	}
+}
+
 // TestScheduler_Loop verifies that a [step.loop] back-edge re-runs the loop
 // body while the condition holds, and terminates once max_iterations is reached.
 func TestScheduler_Loop(t *testing.T) {

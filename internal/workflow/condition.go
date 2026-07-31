@@ -55,9 +55,6 @@ func ParseCondition(raw string) (*Condition, error) {
 		if err != nil {
 			return nil, err
 		}
-		if val == "" {
-			return nil, fmt.Errorf("right of %s must be a non-empty value", op)
-		}
 		return &Condition{Raw: raw, Step: step, Field: field, Op: op, Value: val}, nil
 	}
 

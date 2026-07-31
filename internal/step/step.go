@@ -16,6 +16,7 @@ const (
 	StatusRunning        Status = "running"
 	StatusValidating     Status = "validating"      // [step.validate] in progress
 	StatusAwaitingReview Status = "awaiting_review" // parked on a human verdict
+	StatusNeedsInput     Status = "needs_input"     // blocked by block_on, waiting for human input
 	StatusSucceeded      Status = "succeeded"
 	StatusFailed         Status = "failed"
 	StatusSkipped        Status = "skipped" // when=false, or dep skipped/failed
@@ -41,4 +42,8 @@ type Result struct {
 	ChangedFiles []string        `json:"changed_files,omitempty"`
 	Duration     time.Duration   `json:"duration_ms"`
 	Err          string          `json:"error,omitempty"`
+	SessionID    string          `json:"session_id,omitempty"`
+	// Subtype is the SDK's ResultMessage.Subtype — the closest thing to a
+	// turn-level "why did this end" (e.g. a clean finish vs. hitting max_turns).
+	Subtype string `json:"subtype,omitempty"`
 }

@@ -11,7 +11,10 @@ permission_mode = "acceptEdits"
 id            = "research"
 type          = "agent"
 skill         = "../../examples/skills/research"
-inputs        = ["../../examples/question.md"]
+inputs        = [
+  "../../examples/question.md",
+  { from = "user", label = "Any additional context or focus areas for the review?", as = "user_context" },
+]
 allowed_tools = ["Read", "Grep", "Glob", "WebSearch"]
 
   [step.schema]

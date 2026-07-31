@@ -14,13 +14,8 @@ import (
 	"jig/internal/engine"
 	"jig/internal/step"
 	"jig/internal/transcript"
+	"jig/internal/workflow"
 )
-
-// thinkingTokenBudget enables extended thinking so ThinkingBlocks are produced
-// and captured to the transcript. It matches the SDK's own default; we set it
-// explicitly so the intent (we *want* reasoning captured) is not silently
-// dependent on an SDK default that could change.
-const thinkingTokenBudget = 8000
 
 // AgentExecutor runs agent steps via the Claude Agent SDK.
 // Each Execute call opens a fresh connection so runs are independent and the
@@ -41,12 +36,18 @@ func NewAgentExecutor() *AgentExecutor { return &AgentExecutor{} }
 func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep engine.Reporter) (*step.Result, error) {
 	start := time.Now()
 
-	opts := []claudecode.Option{
-		claudecode.WithIncludePartialMessages(true),
-		claudecode.WithMaxThinkingTokens(thinkingTokenBudget),
+	opts, err := buildOptions(req.Step)
+	if err != nil {
+		return failResult(fmt.Sprintf("build options: %v", err), start), nil
 	}
 	if req.Worktree != "" {
 		opts = append(opts, claudecode.WithCwd(req.Worktree))
+	}
+	if req.ResumeSessionID != "" {
+		opts = append(opts,
+			claudecode.WithResume(req.ResumeSessionID),
+			claudecode.WithContinueConversation(true),
+		)
 	}
 	client := claudecode.NewClient(opts...)
 	if err := client.Connect(ctx); err != nil {
@@ -56,12 +57,68 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 
 	msgChan := client.ReceiveMessages(ctx)
 
-	prompt := buildAgentPrompt(req)
-	if err := client.Query(ctx, prompt); err != nil {
+	query := buildAgentPrompt(req)
+	if req.ResumeSessionID != "" {
+		query = req.Message
+	}
+	if err := client.Query(ctx, query); err != nil {
 		return failResult(fmt.Sprintf("agent query: %v", err), start), nil
 	}
 
-	return captureStream(msgChan, req, rep, start)
+	initialMsg := ""
+	if req.ResumeSessionID != "" {
+		initialMsg = req.Message
+	}
+	return captureStream(msgChan, req, rep, start, initialMsg)
+}
+
+// buildOptions translates a step's already-defaulted model/tool/permission
+// fields (resolved from [defaults] by workflow.applyDefaults before this ever
+// runs) into SDK options. Zero-value fields are simply omitted so the SDK's
+// own defaults apply.
+func buildOptions(st *workflow.Step) ([]claudecode.Option, error) {
+	opts := []claudecode.Option{
+		claudecode.WithIncludePartialMessages(true),
+	}
+	if st.Model != "" {
+		opts = append(opts, claudecode.WithModel(st.Model))
+	}
+	if st.FallbackModel != "" {
+		opts = append(opts, claudecode.WithFallbackModel(st.FallbackModel))
+	}
+	if st.Effort != "" {
+		opts = append(opts, claudecode.WithEffort(claudecode.EffortLevel(st.Effort)))
+	}
+	if st.MaxTurns > 0 {
+		opts = append(opts, claudecode.WithMaxTurns(st.MaxTurns))
+	}
+	if st.MaxThinkingTokens > 0 {
+		opts = append(opts, claudecode.WithMaxThinkingTokens(st.MaxThinkingTokens))
+	}
+	if st.MaxBudgetUSD > 0 {
+		opts = append(opts, claudecode.WithMaxBudgetUSD(st.MaxBudgetUSD))
+	}
+	if st.PermissionMode != "" {
+		opts = append(opts, claudecode.WithPermissionMode(claudecode.PermissionMode(st.PermissionMode)))
+	}
+	if len(st.AllowedTools) > 0 {
+		opts = append(opts, claudecode.WithAllowedTools(st.AllowedTools...))
+	}
+	if len(st.DisallowedTools) > 0 {
+		opts = append(opts, claudecode.WithDisallowedTools(st.DisallowedTools...))
+	}
+	if st.Schema != nil {
+		raw, err := st.Schema.JSONSchema()
+		if err != nil {
+			return nil, fmt.Errorf("schema: %w", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return nil, fmt.Errorf("schema: %w", err)
+		}
+		opts = append(opts, claudecode.WithJSONSchema(m))
+	}
+	return opts, nil
 }
 
 // captureStream consumes the SDK message stream, appending each message to the
@@ -73,7 +130,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 // ephemeral preview of the not-yet-finalized assistant bubble and are never
 // persisted. When req.TranscriptPath is empty (persistence off) no transcript
 // is written and no rep.Message signals are emitted.
-func captureStream(msgChan <-chan claudecode.Message, req engine.StepRequest, rep engine.Reporter, start time.Time) (*step.Result, error) {
+func captureStream(msgChan <-chan claudecode.Message, req engine.StepRequest, rep engine.Reporter, start time.Time, initialUserMsg string) (*step.Result, error) {
 	var w *transcript.Writer
 	if req.TranscriptPath != "" {
 		var err error
@@ -102,6 +159,12 @@ func captureStream(msgChan <-chan claudecode.Message, req engine.StepRequest, re
 		}
 	}
 
+	// If this is a resumed session, record the human message that triggered it
+	// so the transcript shows the full exchange including the human's turn.
+	if initialUserMsg != "" {
+		appendEntry(transcript.RoleUser, []transcript.Block{{Type: transcript.BlockText, Text: initialUserMsg}})
+	}
+
 	// finalText holds the text of the most recent assistant message that carried
 	// any — it becomes the output artifact (the agent's final answer). The
 	// transcript, not this buffer, is the durable record.
@@ -115,6 +178,12 @@ func captureStream(msgChan <-chan claudecode.Message, req engine.StepRequest, re
 				finalText = text
 			}
 			appendEntry(transcript.RoleAssistant, blocks)
+			if m.HasError() {
+				appendEntry(transcript.RoleSystem, []transcript.Block{{
+					Type: transcript.BlockText,
+					Text: fmt.Sprintf("assistant error: %s", m.GetError()),
+				}})
+			}
 		case *claudecode.UserMessage:
 			appendEntry(transcript.RoleUser, toolResultBlocks(m))
 		case *claudecode.StreamEvent:
@@ -125,16 +194,22 @@ func captureStream(msgChan <-chan claudecode.Message, req engine.StepRequest, re
 			}
 		case *claudecode.ResultMessage:
 			if m.IsError {
-				errStr := "unknown agent error"
-				if m.Result != nil {
-					errStr = *m.Result
-				}
+				errStr := resultErrorText(m)
 				appendEntry(transcript.RoleResult, []transcript.Block{{Type: transcript.BlockText, Text: errStr}})
-				return failResult(errStr, start), nil
+				res := failResult(errStr, start)
+				res.Subtype = m.Subtype
+				return res, nil
 			}
 			result := &step.Result{
-				Status:   step.StatusSucceeded,
-				Duration: time.Since(start),
+				Status:    step.StatusSucceeded,
+				Duration:  time.Since(start),
+				SessionID: m.SessionID,
+				Subtype:   m.Subtype,
+			}
+			if m.StructuredOutput != nil {
+				if raw, err := json.Marshal(m.StructuredOutput); err == nil {
+					result.Structured = raw
+				}
 			}
 			if req.Step.Output != "" && finalText != "" {
 				outPath := req.Step.Output
@@ -254,7 +329,7 @@ func buildAgentPrompt(req engine.StepRequest) string {
 	}
 
 	if req.Feedback != "" {
-		b.WriteString("\n[Previous iteration feedback: ")
+		b.WriteString("\n[Reviewer feedback: ")
 		b.WriteString(req.Feedback)
 		b.WriteString("]\n")
 	}
@@ -268,6 +343,21 @@ func failResult(msg string, start time.Time) *step.Result {
 		Err:      msg,
 		Duration: time.Since(start),
 	}
+}
+
+// resultErrorText builds the failure message for an errored ResultMessage,
+// combining the summary Result string with the more granular Errors list when
+// present. Falls back to a generic message if the SDK supplied neither.
+func resultErrorText(m *claudecode.ResultMessage) string {
+	var parts []string
+	if m.Result != nil && *m.Result != "" {
+		parts = append(parts, *m.Result)
+	}
+	parts = append(parts, m.Errors...)
+	if len(parts) == 0 {
+		return "unknown agent error"
+	}
+	return strings.Join(parts, "; ")
 }
 
 // agentTextDelta extracts the text from a content_block_delta StreamEvent,

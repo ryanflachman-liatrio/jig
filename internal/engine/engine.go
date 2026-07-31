@@ -22,6 +22,11 @@ import (
 	"jig/internal/workflow"
 )
 
+// defaultReviewMaxMessages is the message-round-trip cap for review gates when
+// max_messages is omitted from the workflow. Generous to support real workflows
+// while preserving the static termination guarantee.
+const defaultReviewMaxMessages = 10
+
 // Manager is the registry of concurrent runs.
 // mu guards the registry only — workflow state is owned by each scheduler.
 type Manager struct {
@@ -164,6 +169,19 @@ func (r *Run) ProvideUserInput(stepID, as, text string) {
 	r.inbox <- userInputMsg{stepID: stepID, as: as, text: text}
 }
 
+// Message delivers a free-text human message to an awaiting_review gate, which
+// routes it to the reviewed agent step for continued processing. The agent
+// resumes its SDK session, re-runs, and the gate re-fires when done.
+func (r *Run) Message(reviewStepID, text string) {
+	r.inbox <- humanMessageMsg{stepID: reviewStepID, text: text}
+}
+
+// SendInput delivers a human response to an agent step that is blocked by
+// block_on. The agent resumes its session with the response as the query.
+func (r *Run) SendInput(stepID, text string) {
+	r.inbox <- agentInputMsg{stepID: stepID, text: text}
+}
+
 // Snapshot returns a point-in-time view of the run's state. For a live run
 // the request routes through the scheduler's inbox (single-writer invariant).
 // For a completed run it returns the cached final snapshot immediately,
@@ -225,10 +243,22 @@ type snapshotReqMsg struct {
 	reply chan<- RunSnapshot
 }
 
-func (stepDoneMsg) isSchedMsg()    {}
-func (verdictMsg) isSchedMsg()     {}
-func (userInputMsg) isSchedMsg()   {}
-func (snapshotReqMsg) isSchedMsg() {}
+type humanMessageMsg struct {
+	stepID string // review step ID receiving the message
+	text   string
+}
+
+type agentInputMsg struct {
+	stepID string // agent step blocked by block_on
+	text   string
+}
+
+func (stepDoneMsg) isSchedMsg()     {}
+func (verdictMsg) isSchedMsg()      {}
+func (userInputMsg) isSchedMsg()    {}
+func (snapshotReqMsg) isSchedMsg()  {}
+func (humanMessageMsg) isSchedMsg() {}
+func (agentInputMsg) isSchedMsg()   {}
 
 // ── reporter ─────────────────────────────────────────────────────────────────
 
@@ -278,6 +308,16 @@ type scheduler struct {
 	collectedUserInputs map[string][]ResolvedInput  // stepID → answers so far
 	preResolvedInputs   map[string][]ResolvedInput  // stepID → fully collected, ready to inject
 
+	// review-gate messaging: a human can send free-text to the reviewed agent
+	// step, which resumes the agent's SDK session and re-runs it before a
+	// terminal verdict is chosen. The cap (max_messages) bounds the round-trips.
+	resumeSessions map[string]string // stepID → SDK session ID for next dispatch
+	stepMessage    map[string]string // stepID → human message for resumed query
+	reviewMessages map[string]int    // reviewStepID → messages sent so far
+
+	// block_on: tracks how many times a human has provided input to a blocked step.
+	stepInputCount map[string]int // stepID → input rounds delivered so far
+
 	onDone func(RunSnapshot) // called once before the scheduler goroutine exits
 }
 
@@ -318,6 +358,10 @@ func newScheduler(
 		pendingUserInputs:   make(map[string][]workflow.Input),
 		collectedUserInputs: make(map[string][]ResolvedInput),
 		preResolvedInputs:   make(map[string][]ResolvedInput),
+		resumeSessions:      make(map[string]string),
+		stepMessage:         make(map[string]string),
+		reviewMessages:      make(map[string]int),
+		stepInputCount:      make(map[string]int),
 		onDone:              onDone,
 	}
 }
@@ -630,6 +674,15 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 		Attempt:        state.Attempt,
 	}
 	delete(s.preResolvedInputs, st.ID)
+	if sess := s.resumeSessions[st.ID]; sess != "" {
+		req.ResumeSessionID = sess
+		req.Message = s.stepMessage[st.ID]
+		delete(s.resumeSessions, st.ID)
+		delete(s.stepMessage, st.ID)
+	}
+	// Clear the structured-output cache so block_on and when-guards always
+	// see fresh output after a re-run rather than a stale cached decode.
+	delete(s.structured, st.ID)
 
 	go func() {
 		result, err := s.exec.Execute(ctx, req, rep)
@@ -711,9 +764,16 @@ func (s *scheduler) handle(msg schedMsg) {
 			// Use the current status as "from" — it may be StatusValidating if a
 			// gate ran, or StatusRunning if there was no gate.
 			curFrom := s.states[m.stepID].Status
-			s.transition(m.stepID, curFrom, step.StatusSucceeded)
-			if wfStep != nil && wfStep.Loop != nil {
-				s.fireLoop(m.stepID, wfStep)
+			// block_on: if the condition is still true, hold the step for human input
+			// instead of succeeding — downstream stays blocked until block_on is false.
+			if wfStep != nil && wfStep.BlockOn != "" && s.evalBlockOn(m.stepID, wfStep) {
+				s.transition(m.stepID, curFrom, step.StatusNeedsInput)
+				s.emit(InputRequest{RunID: s.runID, StepID: m.stepID})
+			} else {
+				s.transition(m.stepID, curFrom, step.StatusSucceeded)
+				if wfStep != nil && wfStep.Loop != nil {
+					s.fireLoop(m.stepID, wfStep)
+				}
 			}
 		}
 
@@ -757,6 +817,12 @@ func (s *scheduler) handle(msg schedMsg) {
 		if wfStep != nil && wfStep.Loop != nil {
 			s.fireLoop(m.stepID, wfStep)
 		}
+
+	case humanMessageMsg:
+		s.handleHumanMessage(m)
+
+	case agentInputMsg:
+		s.handleAgentInput(m)
 
 	case snapshotReqMsg:
 		m.reply <- s.snapshot()
@@ -967,6 +1033,90 @@ func (s *scheduler) dispatchUserPrompt(st *workflow.Step) {
 	})
 }
 
+// handleHumanMessage processes a free-text message addressed to a review gate.
+// It finds the reviewed agent step, checks the message cap, then resets the
+// target + review steps to pending so the agent re-runs and the gate re-fires.
+func (s *scheduler) handleHumanMessage(m humanMessageMsg) {
+	state := s.states[m.stepID]
+	if state.Status != step.StatusAwaitingReview {
+		return // stale
+	}
+	wfStep := s.stepByID(m.stepID)
+	if wfStep == nil {
+		return
+	}
+
+	// Resolve "@stepid" or "@stepid.field" → bare step ID.
+	targetID := strings.TrimPrefix(wfStep.Review, "@")
+	if dot := strings.Index(targetID, "."); dot >= 0 {
+		targetID = targetID[:dot]
+	}
+	targetState := s.states[targetID]
+	if targetState == nil || targetState.Result == nil || targetState.Result.SessionID == "" {
+		return // no resumable session
+	}
+
+	// Cap enforcement.
+	maxMsg := defaultReviewMaxMessages
+	if wfStep.MaxMessages > 0 {
+		maxMsg = wfStep.MaxMessages
+	}
+	s.reviewMessages[m.stepID]++
+	if s.reviewMessages[m.stepID] > maxMsg {
+		s.emit(RunError{
+			RunID: s.runID,
+			Err:   fmt.Sprintf("step %q: max_messages %d reached", m.stepID, maxMsg),
+		})
+		// Roll back the increment so the gate stays and the count stays at cap.
+		s.reviewMessages[m.stepID]--
+		return
+	}
+
+	// Stash resume info for the target's next dispatch.
+	s.resumeSessions[targetID] = targetState.Result.SessionID
+	s.stepMessage[targetID] = m.text
+
+	// Reset the loop body (target → review) to pending so both re-run.
+	for _, id := range s.loopBody(targetID, m.stepID) {
+		st := s.states[id]
+		s.transition(id, st.Status, step.StatusPending)
+	}
+}
+
+// evalBlockOn evaluates the step's block_on condition against its own output.
+func (s *scheduler) evalBlockOn(stepID string, wfStep *workflow.Step) bool {
+	cond, err := workflow.ParseCondition(wfStep.BlockOn)
+	if err != nil {
+		return false
+	}
+	return s.evalGuard(cond)
+}
+
+// handleAgentInput processes human input for an agent step blocked by block_on.
+// It stashes the session resume info and resets the step to pending for re-dispatch.
+func (s *scheduler) handleAgentInput(m agentInputMsg) {
+	state := s.states[m.stepID]
+	if state.Status != step.StatusNeedsInput {
+		return
+	}
+	if state.Result == nil || state.Result.SessionID == "" {
+		return
+	}
+	const maxInputRounds = 20
+	s.stepInputCount[m.stepID]++
+	if s.stepInputCount[m.stepID] > maxInputRounds {
+		s.emit(RunError{
+			RunID: s.runID,
+			Err:   fmt.Sprintf("step %q: exceeded maximum input rounds (%d)", m.stepID, maxInputRounds),
+		})
+		s.stepInputCount[m.stepID]--
+		return
+	}
+	s.resumeSessions[m.stepID] = state.Result.SessionID
+	s.stepMessage[m.stepID] = m.text
+	s.transition(m.stepID, step.StatusNeedsInput, step.StatusPending)
+}
+
 // dispatchReview handles a review step inline: it never goes to a worker.
 // The step is parked at awaiting_review and a ReviewRequest is emitted so the
 // TUI can render choices and collect a human verdict via Run.Resolve.
@@ -981,11 +1131,27 @@ func (s *scheduler) dispatchReview(st *workflow.Step) {
 		diff = s.collectDepDiffs(st.ID)
 	}
 
+	allowMsg := false
+	if strings.HasPrefix(st.Review, "@") {
+		targetID := strings.TrimPrefix(st.Review, "@")
+		if dot := strings.Index(targetID, "."); dot >= 0 {
+			targetID = targetID[:dot]
+		}
+		if tgt := s.stepByID(targetID); tgt != nil && tgt.Type == workflow.StepAgent {
+			maxMsg := defaultReviewMaxMessages
+			if st.MaxMessages > 0 {
+				maxMsg = st.MaxMessages
+			}
+			allowMsg = s.reviewMessages[st.ID] < maxMsg
+		}
+	}
+
 	s.emit(ReviewRequest{
-		RunID:   s.runID,
-		StepID:  st.ID,
-		Choices: reviewChoices(st),
-		Diff:    diff,
+		RunID:        s.runID,
+		StepID:       st.ID,
+		Choices:      reviewChoices(st),
+		Diff:         diff,
+		AllowMessage: allowMsg,
 	})
 }
 
@@ -1064,11 +1230,24 @@ func (s *scheduler) fireLoop(stepID string, wfStep *workflow.Step) {
 		Max:       loop.MaxIterations,
 	})
 
-	// Wire feedback: the goto step's next dispatch gets the feedback step ID so
-	// the executor can include it as an extra input.
+	// Wire feedback: resolve the @ref to actual content (verdict for review steps,
+	// output file text for agent/command steps) so the agent receives real input.
 	if loop.Feedback != "" {
 		feedbackID := strings.TrimPrefix(loop.Feedback, "@")
-		s.stepFeedback[loop.Goto] = feedbackID
+		if dot := strings.Index(feedbackID, "."); dot >= 0 {
+			feedbackID = feedbackID[:dot]
+		}
+		var content string
+		if fs := s.states[feedbackID]; fs != nil && fs.Result != nil {
+			if fs.Result.Verdict != "" {
+				content = fs.Result.Verdict
+			} else if fs.Result.OutputPath != "" {
+				if data, err := os.ReadFile(fs.Result.OutputPath); err == nil {
+					content = string(data)
+				}
+			}
+		}
+		s.stepFeedback[loop.Goto] = content
 	}
 
 	// Reset every step in the loop body to pending with the new iteration count.

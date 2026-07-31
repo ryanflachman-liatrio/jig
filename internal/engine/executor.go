@@ -31,6 +31,12 @@ type StepRequest struct {
 	// retries (which append to the same file) can be distinguished on read.
 	Iteration int
 	Attempt   int
+
+	// ResumeSessionID, when non-empty, causes the agent runner to resume the
+	// given session (WithResume + WithContinueConversation) and use Message as
+	// the query prompt instead of the freshly-built full prompt.
+	ResumeSessionID string
+	Message         string
 }
 
 // ResolvedInput pairs an original workflow.Input with its resolved value.

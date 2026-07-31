@@ -128,6 +128,9 @@ func (v *validator) checkTuning(s *Step) {
 	if s.Effort != "" && !s.Effort.valid() {
 		v.errf("step %q has invalid effort %q (want low|medium|high|xhigh|max)", s.ID, s.Effort)
 	}
+	if s.PermissionMode != "" && !validPermissionMode(s.PermissionMode) {
+		v.errf("step %q has invalid permission_mode %q (want default|acceptEdits|plan|bypassPermissions)", s.ID, s.PermissionMode)
+	}
 	if s.MaxThinkingTokens < 0 {
 		v.errf("step %q max_thinking_tokens must be >= 0", s.ID)
 	}
@@ -143,7 +146,7 @@ func (v *validator) checkTuning(s *Step) {
 func hasAgentOnlyFields(s *Step) bool {
 	return s.Skill != "" || s.AgentFile != "" ||
 		len(s.AllowedTools) > 0 || len(s.DisallowedTools) > 0 ||
-		s.AppendSystemPrompt != ""
+		s.AppendSystemPrompt != "" || s.BlockOn != ""
 }
 
 // resolveSchemas loads each step's schema_file into its Schema field so the
@@ -219,6 +222,23 @@ func (v *validator) checkAgent(s *Step) {
 	if s.Run != "" || s.Script != "" || s.Review != "" {
 		v.errf("agent step %q sets fields belonging to another step type (run/script/review)", s.ID)
 	}
+	if s.MaxMessages != 0 {
+		v.errf("agent step %q: max_messages is only valid on review steps", s.ID)
+	}
+	if s.BlockOn != "" {
+		cond, err := ParseCondition(s.BlockOn)
+		if err != nil {
+			v.errf("agent step %q block_on: %v", s.ID, err)
+		} else if cond.Step != s.ID {
+			v.errf("agent step %q block_on: condition must reference this step's own output (got %q, want %q)", s.ID, cond.Step, s.ID)
+		} else if len(cond.Field) > 0 {
+			if s.Schema == nil {
+				v.errf("agent step %q block_on references field %q but step has no [step.schema]", s.ID, strings.Join(cond.Field, "."))
+			} else {
+				v.checkFieldRef(s.ID, "block_on", s, cond.Field)
+			}
+		}
+	}
 }
 
 func (v *validator) checkCommand(s *Step) {
@@ -235,6 +255,9 @@ func (v *validator) checkCommand(s *Step) {
 	}
 	if s.Review != "" || hasAgentOnlyFields(s) {
 		v.errf("command step %q sets fields belonging to another step type (agent skill/agent_file/tools or review)", s.ID)
+	}
+	if s.MaxMessages != 0 {
+		v.errf("command step %q: max_messages is only valid on review steps", s.ID)
 	}
 }
 
@@ -257,6 +280,9 @@ func (v *validator) checkReview(s *Step) {
 	}
 	if s.Run != "" || s.Script != "" || hasAgentOnlyFields(s) {
 		v.errf("review step %q sets fields belonging to another step type (agent skill/agent_file/tools or run/script)", s.ID)
+	}
+	if s.MaxMessages < 0 {
+		v.errf("review step %q: max_messages must be >= 0", s.ID)
 	}
 }
 

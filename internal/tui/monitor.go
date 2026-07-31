@@ -83,7 +83,11 @@ type monitorModel struct {
 	msgCount map[string]int
 
 	// Phase 3: review steps park here until a verdict is delivered.
-	pendingReview *engine.ReviewRequest
+	pendingReview    *engine.ReviewRequest
+	composingMessage bool // true while the user is composing a message to the agent
+
+	// block_on: set when an agent step needs human input before it can proceed.
+	pendingInput *engine.InputRequest
 
 	// reviews retains the last ReviewRequest seen per step so drilling into a
 	// review step (modeChat) can show its diff/choices — review steps have no
@@ -200,10 +204,65 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 		return m, evCmd
 
 	case tea.KeyMsg:
-		// When awaiting user text input, route all keys to the textarea.
-		if m.pendingPrompt != nil {
+		// block_on input: enter submits, esc leaves to runs list, other keys go to textarea.
+		if m.pendingInput != nil {
+			if msg.String() == "esc" {
+				return m, func() tea.Msg { return showRunsMsg{} }
+			}
 			if msg.String() == "enter" {
 				text := m.promptTextarea.Value()
+				if text == "" {
+					return m, nil
+				}
+				inp := m.pendingInput
+				m.pendingInput = nil
+				m.promptTextarea = textarea.Model{}
+				if m.ready {
+					m.vp.SetContent(m.body())
+				}
+				return m, func() tea.Msg {
+					return agentInputMsg{runID: inp.RunID, stepID: inp.StepID, text: text}
+				}
+			}
+			var taCmd tea.Cmd
+			m.promptTextarea, taCmd = m.promptTextarea.Update(msg)
+			if m.ready {
+				m.vp.SetContent(m.body())
+			}
+			return m, taCmd
+		}
+		// When awaiting user text input or composing a message, route keys to the textarea.
+		if m.pendingPrompt != nil || m.composingMessage {
+			if msg.String() == "esc" && m.composingMessage {
+				// Cancel compose — return to the verdict picker.
+				m.composingMessage = false
+				m.promptTextarea = textarea.Model{}
+				if m.ready {
+					m.vp.SetContent(m.body())
+				}
+				return m, nil
+			}
+			if msg.String() == "enter" {
+				text := m.promptTextarea.Value()
+				if m.composingMessage {
+					if text == "" {
+						return m, nil
+					}
+					rev := m.pendingReview
+					m.composingMessage = false
+					m.pendingReview = nil
+					m.promptTextarea = textarea.Model{}
+					if m.ready {
+						m.vp.SetContent(m.body())
+					}
+					return m, func() tea.Msg {
+						return reviewMessageMsg{
+							runID:  rev.RunID,
+							stepID: rev.StepID,
+							text:   text,
+						}
+					}
+				}
 				pr := m.pendingPrompt
 				m.pendingPrompt = nil
 				m.promptTextarea = textarea.Model{}
@@ -227,9 +286,32 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 			return m, taCmd
 		}
 		// Review verdict: digit keys 1–9 select a choice when a review is pending.
-		// A pending review freezes navigation — only a verdict or esc (leave to
-		// the runs list) is accepted, so the overlay input is never ambiguous.
+		// A pending review freezes navigation — only a verdict, message compose, or
+		// esc (leave to the runs list) is accepted.
 		if m.pendingReview != nil {
+			if msg.String() == "m" && m.pendingReview.AllowMessage {
+				m.composingMessage = true
+				ta := textarea.New()
+				ta.Placeholder = "Message to agent…"
+				ta.KeyMap.InsertNewline = keybind.NewBinding(
+					keybind.WithKeys("alt+enter", "shift+enter"),
+					keybind.WithHelp("alt+enter", "insert newline"),
+				)
+				ta.ShowLineNumbers = false
+				ta.SetHeight(4)
+				ta.SetWidth(m.width - 4)
+				focusedStyle, blurredStyle := textarea.DefaultStyles()
+				focusedStyle.Base = textareaStyle.BorderForeground(textareaFocusedBorder)
+				blurredStyle.Base = textareaStyle.BorderForeground(textareaBlurredBorder)
+				ta.FocusedStyle = focusedStyle
+				ta.BlurredStyle = blurredStyle
+				ta.Focus()
+				m.promptTextarea = ta
+				if m.ready {
+					m.vp.SetContent(m.body())
+				}
+				return m, textarea.Blink
+			}
 			choices := m.pendingReview.Choices
 			for i, ch := range choices {
 				key := fmt.Sprintf("%d", i+1)
@@ -344,9 +426,12 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 	}
 
 	// Route non-key messages to the textarea (blink timer, focus events) when active.
-	if m.pendingPrompt != nil {
+	if m.pendingPrompt != nil || m.composingMessage || m.pendingInput != nil {
 		var taCmd tea.Cmd
 		m.promptTextarea, taCmd = m.promptTextarea.Update(msg)
+		if m.ready {
+			m.vp.SetContent(m.body())
+		}
 		return m, taCmd
 	}
 
@@ -397,6 +482,11 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 				m.promptTextarea = textarea.Model{}
 			}
 		}
+		// Clear pending input when the step is no longer blocked (e.g. resumed or failed).
+		if m.pendingInput != nil && m.pendingInput.StepID == ev.StepID && ev.To != step.StatusNeedsInput {
+			m.pendingInput = nil
+			m.promptTextarea = textarea.Model{}
+		}
 
 	case engine.ReviewRequest:
 		if ev.RunID != m.runID {
@@ -412,6 +502,30 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		// A human-input gate must never be ambiguous: surface it in the list
 		// view where the overlay renders and keys are unambiguous.
 		m.mode = modeList
+
+	case engine.InputRequest:
+		if ev.RunID != m.runID {
+			return m, nil
+		}
+		m.pendingInput = &ev
+		m.mode = modeList
+		ta := textarea.New()
+		ta.Placeholder = "Your response to the agent…"
+		ta.KeyMap.InsertNewline = keybind.NewBinding(
+			keybind.WithKeys("alt+enter", "shift+enter"),
+			keybind.WithHelp("alt+enter", "insert newline"),
+		)
+		ta.ShowLineNumbers = false
+		ta.SetHeight(4)
+		ta.SetWidth(m.width - 4)
+		focusedStyle, blurredStyle := textarea.DefaultStyles()
+		focusedStyle.Base = textareaStyle.BorderForeground(textareaFocusedBorder)
+		blurredStyle.Base = textareaStyle.BorderForeground(textareaBlurredBorder)
+		ta.FocusedStyle = focusedStyle
+		ta.BlurredStyle = blurredStyle
+		ta.Focus()
+		m.promptTextarea = ta
+		return m, textarea.Blink
 
 	case engine.StepMessage:
 		if ev.RunID != m.runID {
@@ -505,7 +619,7 @@ func (m *monitorModel) resize() {
 		m.vp.Width = m.width
 		m.vp.Height = vpH
 	}
-	if m.pendingPrompt != nil {
+	if m.pendingPrompt != nil || m.composingMessage || m.pendingInput != nil {
 		m.promptTextarea.SetWidth(m.width - 4)
 	}
 	m.rebuildRenderer()
@@ -645,10 +759,24 @@ func (m monitorModel) listBody() string {
 			b.WriteString("\n")
 		}
 
-		for i, ch := range m.pendingReview.Choices {
-			b.WriteString(fmt.Sprintf("    [%d] %s\n", i+1, ch))
+		if m.composingMessage {
+			b.WriteString(m.promptTextarea.View() + "\n")
+		} else {
+			for i, ch := range m.pendingReview.Choices {
+				b.WriteString(fmt.Sprintf("    [%d] %s\n", i+1, ch))
+			}
+			if m.pendingReview.AllowMessage {
+				b.WriteString("    [m] message\n")
+			}
 		}
 		b.WriteString("\n")
+	}
+
+	// block_on input: show textarea when an agent step is blocked awaiting human input.
+	if m.pendingInput != nil {
+		b.WriteString("\n")
+		b.WriteString("  " + markerStyle.Render("Agent input required — step: "+m.pendingInput.StepID) + "\n\n")
+		b.WriteString(m.promptTextarea.View() + "\n")
 	}
 
 	// Streaming output: show last outputMaxLines lines for any running agent step.
@@ -1026,6 +1154,8 @@ func stepIndicator(s step.Status) (string, lipgloss.Style) {
 		return "⇢", questionStyle
 	case step.StatusAwaitingReview:
 		return "?", markerStyle
+	case step.StatusNeedsInput:
+		return "⊙", markerStyle
 	default:
 		return "·", questionStyle
 	}
@@ -1064,8 +1194,12 @@ func (m monitorModel) footerView() string {
 		} else {
 			status = validStyle.Render("done")
 		}
+	} else if m.pendingInput != nil {
+		status = markerStyle.Render("awaiting agent input")
 	} else if m.pendingPrompt != nil {
 		status = markerStyle.Render("awaiting user input")
+	} else if m.composingMessage {
+		status = markerStyle.Render("composing message")
 	} else if m.pendingReview != nil {
 		status = markerStyle.Render("awaiting review")
 	} else {
@@ -1073,10 +1207,18 @@ func (m monitorModel) footerView() string {
 	}
 	var hint string
 	switch {
+	case m.pendingInput != nil:
+		hint = "enter submit  •  alt+enter newline  •  esc runs list  •  ctrl+c quit"
 	case m.pendingPrompt != nil:
 		hint = "enter submit  •  alt+enter newline  •  esc runs list  •  ctrl+c quit"
+	case m.composingMessage:
+		hint = "enter submit  •  alt+enter newline  •  esc cancel  •  ctrl+c quit"
 	case m.pendingReview != nil:
-		hint = "1-9 select verdict  •  esc runs list  •  ctrl+c quit"
+		if m.pendingReview.AllowMessage {
+			hint = "1-9 select verdict  •  m message  •  esc runs list  •  ctrl+c quit"
+		} else {
+			hint = "1-9 select verdict  •  esc runs list  •  ctrl+c quit"
+		}
 	case m.mode == modeChat:
 		hint = "esc back  •  j/k scroll  •  tab block  •  enter expand  •  o all"
 	default:
