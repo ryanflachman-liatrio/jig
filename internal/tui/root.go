@@ -40,6 +40,14 @@ type showRunsMsg struct{}
 // showMonitorMsg asks the root to open the monitor for a specific run.
 type showMonitorMsg struct{ runID string }
 
+// reviewVerdictMsg is emitted by the monitor when the user selects a verdict
+// for a review step. The root delivers it to the run via Run.Resolve.
+type reviewVerdictMsg struct {
+	runID   string
+	stepID  string
+	verdict string
+}
+
 // engineEventMsg wraps one engine.Event for delivery as a tea.Msg.
 type engineEventMsg struct{ event engine.Event }
 
@@ -147,6 +155,12 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		m.active = screenMonitor
+		return m, nil
+
+	case reviewVerdictMsg:
+		if run, ok := m.handles[msg.runID]; ok {
+			run.Resolve(msg.stepID, msg.verdict)
+		}
 		return m, nil
 
 	case startRunMsg:

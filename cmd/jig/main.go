@@ -33,11 +33,12 @@ func main() {
 	// own package init() already primes this exact cache before main runs.
 	dark := lipgloss.HasDarkBackground()
 
-	// Phase 2: route by step type.  CommandExecutor runs real shell commands.
-	// Agent and review steps still use FakeExecutor until Phase 3/4.
+	// Route by step type. CommandExecutor and AgentExecutor run real work;
+	// review steps are handled inline by the scheduler (no executor needed, but
+	// the mux falls back to FakeExecutor if somehow dispatched).
 	mux := runner.NewMux()
 	mux.Register(workflow.StepCommand, runner.NewCommandExecutor(""))
-	mux.Register(workflow.StepAgent, runner.NewFakeExecutor(nil, runner.FakeOutcome{}))
+	mux.Register(workflow.StepAgent, runner.NewAgentExecutor())
 	mux.Register(workflow.StepReview, runner.NewFakeExecutor(nil, runner.FakeOutcome{}))
 	mgr := engine.NewManager(mux, ".jig")
 

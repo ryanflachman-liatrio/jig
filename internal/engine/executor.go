@@ -16,11 +16,12 @@ type Executor interface {
 // StepRequest is the data a worker needs to execute one step.
 // @ref inputs are resolved to paths / inlined values before dispatch.
 type StepRequest struct {
-	RunID    string
-	Step     *workflow.Step
-	Inputs   []ResolvedInput
-	Feedback string // loop feedback path, when re-running (Phase 3+)
-	Worktree string // "" when isolation = none (Phase 5+)
+	RunID       string
+	Step        *workflow.Step
+	Inputs      []ResolvedInput
+	Feedback    string // loop feedback step ID, when re-running via [step.loop]
+	Worktree    string // "" when isolation = none (Phase 5+)
+	ArtifactDir string // absolute path under .jig/runs/<runID>/artifacts; "" disables file writes
 }
 
 // ResolvedInput pairs an original workflow.Input with its resolved value.

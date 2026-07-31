@@ -6,10 +6,12 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -72,19 +74,21 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	copy(subs, m.subs)
 	m.mu.Unlock()
 
-	// Phase 2: create the run directory and open a manifest.Writer when root is
-	// configured.  A missing or uncreatable root is non-fatal — runs still work,
-	// they just don't persist.  This avoids breaking existing tests that pass "".
+	// Create the run directory and open a manifest.Writer when root is
+	// configured. A missing or uncreatable root is non-fatal — runs still work,
+	// they just don't persist. This avoids breaking existing tests that pass "".
 	var w *manifest.Writer
+	var runDir string
 	if m.root != "" {
-		if runDir, err := datastore.RunDir(m.root, runID); err == nil {
+		if rd, err := datastore.RunDir(m.root, runID); err == nil {
+			runDir = rd
 			if mw, err := manifest.NewWriter(runDir); err == nil {
 				w = mw
 			}
 		}
 	}
 
-	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w)
+	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir)
 	go s.run(ctx)
 	return run, nil
 }
@@ -183,16 +187,20 @@ func (r *reporter) ToolCall(tool, detail string) { r.ev(StepToolCall{Tool: tool,
 // ── scheduler ────────────────────────────────────────────────────────────────
 
 type scheduler struct {
-	wf       *workflow.Workflow
-	runID    string
-	states   map[string]*step.State
-	inbox    chan schedMsg
-	subs     []chan<- Event
-	exec     Executor
-	cancel   context.CancelFunc // cancels the run context; used by abort policy
-	writer   *manifest.Writer   // nil when persistence is disabled (root = "")
-	inFlight int
-	seq      int
+	wf           *workflow.Workflow
+	runID        string
+	states       map[string]*step.State
+	inbox        chan schedMsg
+	subs         []chan<- Event
+	exec         Executor
+	cancel       context.CancelFunc        // cancels the run context; used by abort policy
+	writer       *manifest.Writer          // nil when persistence is disabled (root = "")
+	runDir       string                    // .jig/runs/<runID>/; "" when persistence is disabled
+	structured   map[string]map[string]any // cached JSON decode of step Result.Structured
+	stepFeedback map[string]string         // gotoStepID → feedback step ID for loop replay
+	aborted      bool                      // true when the run was explicitly aborted (loop cap, etc.)
+	inFlight     int
+	seq          int
 }
 
 func newScheduler(
@@ -203,20 +211,24 @@ func newScheduler(
 	exec Executor,
 	cancel context.CancelFunc,
 	writer *manifest.Writer,
+	runDir string,
 ) *scheduler {
 	states := make(map[string]*step.State, len(wf.Steps))
 	for _, s := range wf.Steps {
 		states[s.ID] = &step.State{ID: s.ID, Status: step.StatusPending}
 	}
 	return &scheduler{
-		wf:     wf,
-		runID:  runID,
-		states: states,
-		inbox:  inbox,
-		subs:   subs,
-		exec:   exec,
-		cancel: cancel,
-		writer: writer,
+		wf:           wf,
+		runID:        runID,
+		states:       states,
+		inbox:        inbox,
+		subs:         subs,
+		exec:         exec,
+		cancel:       cancel,
+		writer:       writer,
+		runDir:       runDir,
+		structured:   make(map[string]map[string]any),
+		stepFeedback: make(map[string]string),
 	}
 }
 
@@ -268,19 +280,41 @@ func (s *scheduler) run(ctx context.Context) {
 	}
 }
 
-// nextReady returns the first pending step whose every depends_on is satisfied.
-// A dep is satisfied if it succeeded, or if it failed with on_failure =
-// "continue" (the dep's failure is acknowledged but the workflow continues).
-// Phase 3 adds when-guard evaluation; for now, guards are ignored.
+// nextReady returns the first pending step whose every depends_on is satisfied
+// and whose when guard (if any) is true. Guard false → step is immediately
+// skipped with a cascade; review steps are handled inline and also not returned
+// (they park on human input via dispatchReview). Both cases continue scanning
+// for the next dispatchable step.
 func (s *scheduler) nextReady() (*workflow.Step, bool) {
 	for i := range s.wf.Steps {
 		st := &s.wf.Steps[i]
-		if s.states[st.ID].Status != step.StatusPending {
+		state := s.states[st.ID]
+		if state.Status != step.StatusPending {
 			continue
 		}
-		if s.depsReady(st) {
-			return st, true
+		if !s.depsReady(st) {
+			continue
 		}
+
+		// Evaluate the when guard. The condition was validated at load time so
+		// ParseCondition will not return an error here.
+		if st.When != "" {
+			cond, _ := workflow.ParseCondition(st.When)
+			if !s.evalGuard(cond) {
+				s.transition(st.ID, state.Status, step.StatusSkipped)
+				s.cascadeSkip(st.ID)
+				continue
+			}
+		}
+
+		// Review steps never go to a worker: park them on human input and keep
+		// scanning for other runnable steps this iteration.
+		if st.Type == workflow.StepReview {
+			s.dispatchReview(st)
+			continue
+		}
+
+		return st, true
 	}
 	return nil, false
 }
@@ -366,11 +400,19 @@ func (s *scheduler) anyPendingRunnable() bool {
 		if st.Status == step.StatusPending && !blocked[id] {
 			return true
 		}
+		// A step parked on human input is still "runnable" — it will unblock when
+		// the user delivers a verdict. Don't let the run terminate early.
+		if st.Status == step.StatusAwaitingReview {
+			return true
+		}
 	}
 	return false
 }
 
 func (s *scheduler) anyFailed() bool {
+	if s.aborted {
+		return true
+	}
 	for _, st := range s.states {
 		if st.Status == step.StatusFailed {
 			return true
@@ -402,7 +444,16 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 			}
 		},
 	}
-	req := StepRequest{RunID: runID, Step: st}
+	var artifactDir string
+	if s.runDir != "" {
+		artifactDir = filepath.Join(s.runDir, "artifacts")
+	}
+	req := StepRequest{
+		RunID:       runID,
+		Step:        st,
+		Feedback:    s.stepFeedback[st.ID],
+		ArtifactDir: artifactDir,
+	}
 
 	go func() {
 		result, err := s.exec.Execute(ctx, req, rep)
@@ -454,10 +505,23 @@ func (s *scheduler) handle(msg schedMsg) {
 			// gate ran, or StatusRunning if there was no gate.
 			curFrom := s.states[m.stepID].Status
 			s.transition(m.stepID, curFrom, step.StatusSucceeded)
+			if wfStep != nil && wfStep.Loop != nil {
+				s.fireLoop(m.stepID, wfStep)
+			}
 		}
 
 	case verdictMsg:
-		// Phase 3: review step verdict delivery.
+		// Deliver the human's verdict to an awaiting_review step.
+		state := s.states[m.stepID]
+		if state.Status != step.StatusAwaitingReview {
+			return // stale or duplicate verdict
+		}
+		state.Result = &step.Result{Status: step.StatusSucceeded, Verdict: m.verdict}
+		wfStep := s.stepByID(m.stepID)
+		s.transition(m.stepID, step.StatusAwaitingReview, step.StatusSucceeded)
+		if wfStep != nil && wfStep.Loop != nil {
+			s.fireLoop(m.stepID, wfStep)
+		}
 
 	case snapshotReqMsg:
 		m.reply <- s.snapshot()
@@ -500,7 +564,6 @@ func (s *scheduler) applyFailurePolicy(stepID string, wfStep *workflow.Step) {
 
 	default: // FailAbort or unrecognised
 		s.transition(stepID, from, step.StatusFailed)
-		// Cancel the run context so in-flight workers unwind.
 		s.cancel()
 	}
 }
@@ -551,6 +614,221 @@ func (s *scheduler) runGate(wfStep *workflow.Step) (bool, string) {
 	}
 
 	return true, "gate passed"
+}
+
+// evalGuard evaluates a when-guard condition against the current step results.
+// The condition was syntactically and semantically validated at load time, so
+// missing steps or bad field paths return false (treat as "not yet ready").
+func (s *scheduler) evalGuard(cond *workflow.Condition) bool {
+	depState := s.states[cond.Step]
+	if depState == nil || depState.Result == nil {
+		return false
+	}
+
+	var val string
+	if len(cond.Field) == 0 {
+		// Scalar verdict (output_type bool or enum).
+		val = depState.Result.Verdict
+	} else {
+		// Field path into structured JSON output. Decode once and cache.
+		m, ok := s.structured[cond.Step]
+		if !ok && len(depState.Result.Structured) > 0 {
+			if err := json.Unmarshal(depState.Result.Structured, &m); err == nil {
+				s.structured[cond.Step] = m
+			}
+		}
+		var cur any = m
+		for _, seg := range cond.Field {
+			obj, ok := cur.(map[string]any)
+			if !ok {
+				return false
+			}
+			cur, ok = obj[seg]
+			if !ok {
+				return false
+			}
+		}
+		switch v := cur.(type) {
+		case string:
+			val = v
+		case bool:
+			if v {
+				val = "true"
+			} else {
+				val = "false"
+			}
+		default:
+			val = fmt.Sprintf("%v", cur)
+		}
+	}
+
+	switch cond.Op {
+	case workflow.CondTruthy:
+		return val == "true"
+	case workflow.CondEq:
+		return val == cond.Value
+	case workflow.CondNeq:
+		return val != cond.Value
+	}
+	return false
+}
+
+// cascadeSkip skips every pending step that has a transitive dependency on
+// skipID (and whose dep chain doesn't pass through a on_failure=continue step).
+// A skipped dep means the dependent's @ref inputs can never resolve.
+func (s *scheduler) cascadeSkip(skipID string) {
+	toSkip := map[string]bool{skipID: true}
+	for changed := true; changed; {
+		changed = false
+		for i := range s.wf.Steps {
+			st := &s.wf.Steps[i]
+			if s.states[st.ID].Status != step.StatusPending || toSkip[st.ID] {
+				continue
+			}
+			for _, dep := range st.DependsOn {
+				if !toSkip[dep] {
+					continue
+				}
+				// A skipped dep cascades unless the dep opted into "continue".
+				depStep := s.stepByID(dep)
+				if depStep == nil || depStep.OnFailure != workflow.FailContinue {
+					toSkip[st.ID] = true
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	for id := range toSkip {
+		if id == skipID {
+			continue // already transitioned by nextReady
+		}
+		from := s.states[id].Status
+		s.transition(id, from, step.StatusSkipped)
+	}
+}
+
+// dispatchReview handles a review step inline: it never goes to a worker.
+// The step is parked at awaiting_review and a ReviewRequest is emitted so the
+// TUI can render choices and collect a human verdict via Run.Resolve.
+func (s *scheduler) dispatchReview(st *workflow.Step) {
+	from := s.states[st.ID].Status
+	s.transition(st.ID, from, step.StatusAwaitingReview)
+	s.emit(ReviewRequest{
+		RunID:   s.runID,
+		StepID:  st.ID,
+		Choices: reviewChoices(st),
+	})
+}
+
+// reviewChoices returns the ordered set of verdicts the human can select.
+func reviewChoices(st *workflow.Step) []string {
+	switch st.OutputType.Kind {
+	case workflow.OutputBool:
+		return []string{"true", "false"}
+	case workflow.OutputEnum:
+		return append([]string(nil), st.OutputType.Enum...)
+	default:
+		return []string{"approve"}
+	}
+}
+
+// fireLoop checks the step's [step.loop] condition and, if it fires, resets the
+// loop body (from Goto to this step) to pending for another iteration.
+// When the cap is exceeded while the condition is still true, the run is aborted.
+func (s *scheduler) fireLoop(stepID string, wfStep *workflow.Step) {
+	loop := wfStep.Loop
+	state := s.states[stepID]
+
+	// Evaluate the loop's when guard (validated at load, won't error).
+	if loop.When != "" {
+		cond, _ := workflow.ParseCondition(loop.When)
+		if !s.evalGuard(cond) {
+			return // condition false: loop does not fire
+		}
+	}
+
+	if state.Iteration >= loop.MaxIterations {
+		// Exceeded the cap — abort the run per spec.
+		s.aborted = true
+		s.emit(RunError{
+			RunID: s.runID,
+			Err:   fmt.Sprintf("step %q exceeded max_iterations %d", stepID, loop.MaxIterations),
+		})
+		s.cancel()
+		return
+	}
+
+	newIter := state.Iteration + 1
+	s.emit(LoopFired{
+		RunID:     s.runID,
+		StepID:    stepID,
+		Goto:      loop.Goto,
+		Iteration: newIter,
+		Max:       loop.MaxIterations,
+	})
+
+	// Wire feedback: the goto step's next dispatch gets the feedback step ID so
+	// the executor can include it as an extra input.
+	if loop.Feedback != "" {
+		feedbackID := strings.TrimPrefix(loop.Feedback, "@")
+		s.stepFeedback[loop.Goto] = feedbackID
+	}
+
+	// Reset every step in the loop body to pending with the new iteration count.
+	for _, id := range s.loopBody(loop.Goto, stepID) {
+		bodyState := s.states[id]
+		bodyState.Iteration = newIter
+		s.transition(id, bodyState.Status, step.StatusPending)
+	}
+}
+
+// loopBody returns the IDs of all steps on any path from gotoID to loopID
+// (inclusive) in the DAG. These are the steps to reset when the loop fires.
+func (s *scheduler) loopBody(gotoID, loopID string) []string {
+	// Forward set: all steps reachable from gotoID by following dependents.
+	fwd := map[string]bool{gotoID: true}
+	for changed := true; changed; {
+		changed = false
+		for i := range s.wf.Steps {
+			st := &s.wf.Steps[i]
+			if fwd[st.ID] {
+				continue
+			}
+			for _, dep := range st.DependsOn {
+				if fwd[dep] {
+					fwd[st.ID] = true
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	// Backward set: all steps from which loopID is reachable (ancestors).
+	bwd := map[string]bool{loopID: true}
+	for changed := true; changed; {
+		changed = false
+		for i := range s.wf.Steps {
+			st := &s.wf.Steps[i]
+			if !bwd[st.ID] {
+				continue
+			}
+			for _, dep := range st.DependsOn {
+				if !bwd[dep] {
+					bwd[dep] = true
+					changed = true
+				}
+			}
+		}
+	}
+	// Intersection = the loop body.
+	var body []string
+	for id := range fwd {
+		if bwd[id] {
+			body = append(body, id)
+		}
+	}
+	return body
 }
 
 func (s *scheduler) transition(stepID string, from, to step.Status) {

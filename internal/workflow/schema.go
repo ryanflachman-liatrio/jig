@@ -175,6 +175,12 @@ type Step struct {
 	Loop     *Loop     `toml:"loop"`
 }
 
+// AgentPrompt returns the body of the resolved agent file for this step, or ""
+// if none was set. The field is populated at load time by resolveAgentFiles.
+// The getter exists so runner.AgentExecutor can access it without importing
+// the workflow package's unexported fields directly.
+func (s *Step) AgentPrompt() string { return s.agentPrompt }
+
 // isMutating reports whether the step's tool allowlist implies it edits the
 // working tree.
 func (s *Step) isMutating() bool {

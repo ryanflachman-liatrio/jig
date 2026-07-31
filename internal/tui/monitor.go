@@ -24,12 +24,21 @@ type monitorModel struct {
 	done     bool
 	failed   bool
 
+	// Phase 3: review steps park here until a verdict is delivered.
+	pendingReview *engine.ReviewRequest
+
+	// Phase 4: rolling output buffer per step (last outputMaxLines lines).
+	stepOutput map[string]*strings.Builder
+
 	vp    viewport.Model
 	ready bool
 
 	width  int
 	height int
 }
+
+// outputMaxLines is the number of streaming output lines shown per step.
+const outputMaxLines = 10
 
 type monitorStep struct {
 	id     string
@@ -40,8 +49,9 @@ type monitorStep struct {
 
 func newMonitorModel(runID string) monitorModel {
 	return monitorModel{
-		runID: runID,
-		index: make(map[string]int),
+		runID:      runID,
+		index:      make(map[string]int),
+		stepOutput: make(map[string]*strings.Builder),
 	}
 }
 
@@ -53,6 +63,9 @@ func (m monitorModel) withSnapshot(snap engine.RunSnapshot) monitorModel {
 	m.failed = snap.Failed
 	m.steps = make([]monitorStep, len(snap.Steps))
 	m.index = make(map[string]int, len(snap.Steps))
+	if m.stepOutput == nil {
+		m.stepOutput = make(map[string]*strings.Builder)
+	}
 	for i, st := range snap.Steps {
 		m.steps[i] = monitorStep{id: st.ID, status: st.Status}
 		m.index[st.ID] = i
@@ -75,6 +88,24 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Review verdict: digit keys 1–9 select a choice when a review is pending.
+		if m.pendingReview != nil {
+			choices := m.pendingReview.Choices
+			for i, ch := range choices {
+				key := fmt.Sprintf("%d", i+1)
+				if msg.String() == key {
+					rev := m.pendingReview
+					m.pendingReview = nil
+					return m, func() tea.Msg {
+						return reviewVerdictMsg{
+							runID:   rev.RunID,
+							stepID:  rev.StepID,
+							verdict: ch,
+						}
+					}
+				}
+			}
+		}
 		switch msg.String() {
 		case "esc", "q", "backspace", "h", "left":
 			return m, func() tea.Msg { return showRunsMsg{} }
@@ -115,6 +146,32 @@ func (m monitorModel) handleEngineEvent(e engine.Event) monitorModel {
 		if ev.To == step.StatusSucceeded || ev.To == step.StatusFailed || ev.To == step.StatusSkipped {
 			m.steps[i].end = time.Now()
 		}
+		// Clear stale review when the step resolves.
+		if m.pendingReview != nil && m.pendingReview.StepID == ev.StepID {
+			if ev.To == step.StatusSucceeded || ev.To == step.StatusFailed || ev.To == step.StatusSkipped {
+				m.pendingReview = nil
+			}
+		}
+
+	case engine.ReviewRequest:
+		if ev.RunID != m.runID {
+			return m
+		}
+		m.pendingReview = &ev
+
+	case engine.StepOutput:
+		if ev.RunID != m.runID {
+			return m
+		}
+		if m.stepOutput == nil {
+			m.stepOutput = make(map[string]*strings.Builder)
+		}
+		buf, ok := m.stepOutput[ev.StepID]
+		if !ok {
+			buf = &strings.Builder{}
+			m.stepOutput[ev.StepID] = buf
+		}
+		buf.WriteString(ev.Delta)
 
 	case engine.RunFinished:
 		if ev.RunID != m.runID {
@@ -185,6 +242,43 @@ func (m monitorModel) body() string {
 			b.WriteString("  " + validStyle.Render("✓ run complete") + "\n")
 		}
 	}
+
+	// Review picker: show when a step is awaiting human input.
+	if m.pendingReview != nil {
+		b.WriteString("\n")
+		b.WriteString("  " + markerStyle.Render("Review required — step: "+m.pendingReview.StepID) + "\n\n")
+		for i, ch := range m.pendingReview.Choices {
+			b.WriteString(fmt.Sprintf("    [%d] %s\n", i+1, ch))
+		}
+		b.WriteString("\n")
+	}
+
+	// Streaming output: show last outputMaxLines lines for any running agent step.
+	for _, s := range m.steps {
+		if s.status != step.StatusRunning {
+			continue
+		}
+		buf, ok := m.stepOutput[s.id]
+		if !ok || buf.Len() == 0 {
+			continue
+		}
+		lines := strings.Split(buf.String(), "\n")
+		// Keep only the last outputMaxLines non-empty lines.
+		var recent []string
+		for _, l := range lines {
+			if strings.TrimSpace(l) != "" {
+				recent = append(recent, l)
+			}
+		}
+		if len(recent) > outputMaxLines {
+			recent = recent[len(recent)-outputMaxLines:]
+		}
+		b.WriteString("\n  " + questionStyle.Render("▸ "+s.id) + "\n")
+		for _, l := range recent {
+			b.WriteString("    " + l + "\n")
+		}
+	}
+
 	return b.String()
 }
 
@@ -242,10 +336,16 @@ func (m monitorModel) footerView() string {
 		} else {
 			status = validStyle.Render("done")
 		}
+	} else if m.pendingReview != nil {
+		status = markerStyle.Render("awaiting review")
 	} else {
 		status = runningStyle.Render("running")
 	}
-	return footerStyle.Render("  " + status + "  ·  esc runs list  •  ctrl+c quit")
+	hint := "esc runs list  •  ctrl+c quit"
+	if m.pendingReview != nil {
+		hint = "1-9 select verdict  •  " + hint
+	}
+	return footerStyle.Render("  " + status + "  ·  " + hint)
 }
 
 func (m monitorModel) View() string {

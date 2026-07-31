@@ -823,3 +823,305 @@ func (c *countingExec) Execute(ctx context.Context, req StepRequest, rep Reporte
 	c.onExecute(req.Step.ID)
 	return c.inner.Execute(ctx, req, rep)
 }
+
+// ── Phase 3 tests ─────────────────────────────────────────────────────────────
+
+// verdictExec extends testExec to return a configurable Verdict in the Result.
+type verdictExec struct {
+	testExec
+	verdicts map[string]string // stepID → verdict string
+}
+
+func (e *verdictExec) Execute(ctx context.Context, req StepRequest, rep Reporter) (*step.Result, error) {
+	r, err := e.testExec.Execute(ctx, req, rep)
+	if r != nil && e.verdicts != nil {
+		if v, ok := e.verdicts[req.Step.ID]; ok {
+			r.Verdict = v
+		}
+	}
+	return r, err
+}
+
+// TestScheduler_WhenGuard_Skip verifies that a step with a when guard that
+// evaluates to false is skipped, and the run still finishes (not deadlocked).
+func TestScheduler_WhenGuard_Skip(t *testing.T) {
+	const toml = `
+[workflow]
+name = "guard-skip"
+version = "0.1"
+
+[[step]]
+id = "a"
+type = "command"
+run = "echo a"
+output_type = { enum = ["yes", "no"] }
+
+[[step]]
+id = "b"
+type = "command"
+run = "echo b"
+depends_on = ["a"]
+when = "a == 'yes'"
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &verdictExec{
+		testExec: testExec{outcomes: map[string]testOutcome{
+			"a": {delay: delay},
+		}},
+		verdicts: map[string]string{"a": "no"},
+	}
+	mgr := NewManager(exec, "")
+	ch := mgr.Subscribe()
+
+	_, err = mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := collectEvents(t, ch, 5*time.Second)
+
+	// b must be skipped, not run.
+	gotB := findStatus(events, "b")
+	if len(gotB) == 0 || gotB[len(gotB)-1] != step.StatusSkipped {
+		t.Errorf("step b should be skipped; got %v", gotB)
+	}
+	for _, s := range gotB {
+		if s == step.StatusRunning {
+			t.Error("step b must not run when guard is false")
+		}
+	}
+
+	// Run finishes without failure (a succeeded; b was skipped by guard, not failed).
+	last := events[len(events)-1]
+	rf, ok := last.(RunFinished)
+	if !ok || rf.Failed {
+		t.Errorf("want RunFinished{Failed:false}, got %v", last)
+	}
+}
+
+// TestScheduler_WhenGuard_SkipCascade verifies that skipping a step due to a
+// false guard also cascades to transitive dependents.
+func TestScheduler_WhenGuard_SkipCascade(t *testing.T) {
+	const toml = `
+[workflow]
+name = "guard-cascade"
+version = "0.1"
+
+[[step]]
+id = "a"
+type = "command"
+run = "echo a"
+output_type = { enum = ["yes", "no"] }
+
+[[step]]
+id = "b"
+type = "command"
+run = "echo b"
+depends_on = ["a"]
+when = "a == 'yes'"
+
+[[step]]
+id = "c"
+type = "command"
+run = "echo c"
+depends_on = ["b"]
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &verdictExec{
+		testExec: testExec{outcomes: map[string]testOutcome{
+			"a": {delay: delay},
+		}},
+		verdicts: map[string]string{"a": "no"},
+	}
+	mgr := NewManager(exec, "")
+	ch := mgr.Subscribe()
+
+	_, err = mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := collectEvents(t, ch, 5*time.Second)
+
+	// Both b and c must be skipped.
+	for _, id := range []string{"b", "c"} {
+		got := findStatus(events, id)
+		if len(got) == 0 || got[len(got)-1] != step.StatusSkipped {
+			t.Errorf("step %q should be skipped via cascade; got %v", id, got)
+		}
+	}
+	// Run finishes not-failed.
+	last := events[len(events)-1]
+	rf, ok := last.(RunFinished)
+	if !ok || rf.Failed {
+		t.Errorf("want RunFinished{Failed:false}, got %v", last)
+	}
+}
+
+// TestScheduler_ReviewStep verifies that a review step parks at awaiting_review,
+// emits ReviewRequest, and transitions to succeeded when a verdict is delivered.
+func TestScheduler_ReviewStep(t *testing.T) {
+	const toml = `
+[workflow]
+name = "review-test"
+version = "0.1"
+
+[[step]]
+id = "prep"
+type = "command"
+run = "echo prep"
+
+[[step]]
+id = "check"
+type = "review"
+depends_on = ["prep"]
+review = "@prep"
+output_type = { enum = ["approve", "reject"] }
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &testExec{outcomes: map[string]testOutcome{
+		"prep": {delay: delay},
+	}}
+	mgr := NewManager(exec, "")
+	ch := mgr.Subscribe()
+
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for ReviewRequest, then deliver a verdict.
+	var events []Event
+	deadline := time.After(5 * time.Second)
+	resolved := false
+	for {
+		select {
+		case e := <-ch:
+			events = append(events, e)
+			if rr, ok := e.(ReviewRequest); ok && rr.StepID == "check" && !resolved {
+				resolved = true
+				run.Resolve("check", "approve")
+			}
+			if _, ok := e.(RunFinished); ok {
+				goto done
+			}
+		case <-deadline:
+			t.Fatal("timeout waiting for review step to complete")
+		}
+	}
+done:
+	if !resolved {
+		t.Error("ReviewRequest was never emitted for step 'check'")
+	}
+
+	// check must have been awaiting_review then succeeded.
+	gotCheck := findStatus(events, "check")
+	hasAwaiting := false
+	for _, s := range gotCheck {
+		if s == step.StatusAwaitingReview {
+			hasAwaiting = true
+		}
+	}
+	if !hasAwaiting {
+		t.Errorf("step check must enter awaiting_review; got %v", gotCheck)
+	}
+	if len(gotCheck) == 0 || gotCheck[len(gotCheck)-1] != step.StatusSucceeded {
+		t.Errorf("step check should end succeeded; got %v", gotCheck)
+	}
+
+	// Run must finish not-failed.
+	last := events[len(events)-1]
+	rf, ok := last.(RunFinished)
+	if !ok || rf.Failed {
+		t.Errorf("want RunFinished{Failed:false}, got %v", last)
+	}
+}
+
+// TestScheduler_Loop verifies that a [step.loop] back-edge re-runs the loop
+// body while the condition holds, and terminates once max_iterations is reached.
+func TestScheduler_Loop(t *testing.T) {
+	// a → b, b has a loop back to a with max_iterations = 2.
+	// The condition always holds (a always returns "yes").
+	// Expected: a,b run → loop fires (iter 1) → a,b run → loop fires (iter 2) →
+	// a,b run → iter 2 >= max 2 → run aborted with RunError.
+	const toml = `
+[workflow]
+name = "loop-test"
+version = "0.1"
+
+[[step]]
+id = "a"
+type = "command"
+run = "echo a"
+output_type = { enum = ["yes", "no"] }
+
+[[step]]
+id = "b"
+type = "command"
+run = "echo b"
+depends_on = ["a"]
+
+  [step.loop]
+  when = "a == 'yes'"
+  goto = "a"
+  max_iterations = 2
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &verdictExec{
+		testExec: testExec{outcomes: map[string]testOutcome{
+			"a": {delay: delay},
+			"b": {delay: delay},
+		}},
+		verdicts: map[string]string{"a": "yes"},
+	}
+	mgr := NewManager(exec, "")
+	ch := mgr.Subscribe()
+
+	_, err = mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := collectEvents(t, ch, 10*time.Second)
+
+	// LoopFired must be emitted at least twice.
+	var loopFires []LoopFired
+	for _, e := range events {
+		if lf, ok := e.(LoopFired); ok {
+			loopFires = append(loopFires, lf)
+		}
+	}
+	if len(loopFires) < 2 {
+		t.Errorf("expected at least 2 LoopFired events; got %d", len(loopFires))
+	}
+
+	// Run must end failed (exceeded max_iterations → abort).
+	last := events[len(events)-1]
+	rf, ok := last.(RunFinished)
+	if !ok || !rf.Failed {
+		t.Errorf("want RunFinished{Failed:true} (loop cap exceeded); got %v", last)
+	}
+
+	// RunError must have been emitted.
+	var hasError bool
+	for _, e := range events {
+		if _, ok := e.(RunError); ok {
+			hasError = true
+		}
+	}
+	if !hasError {
+		t.Error("expected RunError event when loop exceeds max_iterations")
+	}
+}
