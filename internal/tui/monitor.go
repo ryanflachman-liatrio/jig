@@ -14,6 +14,17 @@ import (
 	"jig/internal/step"
 )
 
+// monitorMode is the master–detail state of the run monitor. modeList is the
+// step list (j/k move a selection cursor); modeChat drills into one step's
+// agent transcript (j/k scroll the viewport). The explicit mode keeps the
+// list-navigation keymap from colliding with the viewport's scroll keymap.
+type monitorMode int
+
+const (
+	modeList monitorMode = iota
+	modeChat
+)
+
 // monitorModel is the per-run view: a live step-status table for one run,
 // updated as engine events arrive. The user can press esc to return to the
 // runs list.
@@ -24,6 +35,15 @@ type monitorModel struct {
 	index    map[string]int // stepID → steps position
 	done     bool
 	failed   bool
+
+	// Phase 4 navigation: modeList selects a step; modeChat drills into one.
+	mode     monitorMode
+	cursor   int    // selected step in modeList
+	chatStep string // step whose chat is open in modeChat
+
+	// msgCount tracks the latest transcript entry seq observed per step (via
+	// StepMessage liveness events), used as a message count in the list.
+	msgCount map[string]int
 
 	// Phase 3: review steps park here until a verdict is delivered.
 	pendingReview *engine.ReviewRequest
@@ -57,6 +77,7 @@ func newMonitorModel(runID string) monitorModel {
 		runID:      runID,
 		index:      make(map[string]int),
 		stepOutput: make(map[string]*strings.Builder),
+		msgCount:   make(map[string]int),
 	}
 }
 
@@ -70,6 +91,9 @@ func (m monitorModel) withSnapshot(snap engine.RunSnapshot) monitorModel {
 	m.index = make(map[string]int, len(snap.Steps))
 	if m.stepOutput == nil {
 		m.stepOutput = make(map[string]*strings.Builder)
+	}
+	if m.msgCount == nil {
+		m.msgCount = make(map[string]int)
 	}
 	for i, st := range snap.Steps {
 		m.steps[i] = monitorStep{id: st.ID, status: st.Status}
@@ -121,6 +145,8 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 			return m, taCmd
 		}
 		// Review verdict: digit keys 1–9 select a choice when a review is pending.
+		// A pending review freezes navigation — only a verdict or esc (leave to
+		// the runs list) is accepted, so the overlay input is never ambiguous.
 		if m.pendingReview != nil {
 			choices := m.pendingReview.Choices
 			for i, ch := range choices {
@@ -137,10 +163,61 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 					}
 				}
 			}
+			if s := msg.String(); s == "esc" || s == "q" {
+				return m, func() tea.Msg { return showRunsMsg{} }
+			}
+			return m, nil
 		}
-		switch msg.String() {
-		case "esc", "q", "backspace", "h", "left":
-			return m, func() tea.Msg { return showRunsMsg{} }
+		// Mode-specific navigation. In modeList, j/k move the selection cursor
+		// and must be intercepted before the viewport's scroll keymap sees them;
+		// in modeChat, j/k fall through to scroll the transcript.
+		switch m.mode {
+		case modeList:
+			switch msg.String() {
+			case "j", "down":
+				if m.cursor < len(m.steps)-1 {
+					m.cursor++
+					m.ensureCursorVisible()
+					if m.ready {
+						m.vp.SetContent(m.body())
+					}
+				}
+				return m, nil
+			case "k", "up":
+				if m.cursor > 0 {
+					m.cursor--
+					m.ensureCursorVisible()
+					if m.ready {
+						m.vp.SetContent(m.body())
+					}
+				}
+				return m, nil
+			case "enter":
+				if m.cursor < len(m.steps) {
+					m.mode = modeChat
+					m.chatStep = m.steps[m.cursor].id
+					if m.ready {
+						m.vp.SetContent(m.body())
+						m.vp.GotoTop()
+					}
+				}
+				return m, nil
+			case "esc", "q", "backspace", "h", "left":
+				return m, func() tea.Msg { return showRunsMsg{} }
+			}
+		case modeChat:
+			switch msg.String() {
+			case "esc", "h", "left":
+				m.mode = modeList
+				m.chatStep = ""
+				if m.ready {
+					m.vp.SetContent(m.body())
+					m.vp.GotoTop()
+				}
+				return m, nil
+			}
+			// Other keys (j/k/ctrl+d/ctrl+u/pgup/pgdn) fall through to the
+			// viewport to scroll the transcript.
 		}
 	}
 
@@ -201,12 +278,27 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 			return m, nil
 		}
 		m.pendingReview = &ev
+		// A human-input gate must never be ambiguous: surface it in the list
+		// view where the overlay renders and keys are unambiguous.
+		m.mode = modeList
+
+	case engine.StepMessage:
+		if ev.RunID != m.runID {
+			return m, nil
+		}
+		if m.msgCount == nil {
+			m.msgCount = make(map[string]int)
+		}
+		if ev.Seq > m.msgCount[ev.StepID] {
+			m.msgCount[ev.StepID] = ev.Seq
+		}
 
 	case engine.PromptRequest:
 		if ev.RunID != m.runID {
 			return m, nil
 		}
 		m.pendingPrompt = &ev
+		m.mode = modeList
 		ta := textarea.New()
 		ta.Placeholder = ev.Label
 		ta.ShowLineNumbers = false
@@ -264,7 +356,38 @@ func (m *monitorModel) resize() {
 	m.vp.SetContent(m.body())
 }
 
+// ensureCursorVisible nudges the viewport so the selected step stays on screen
+// as the cursor moves, keeping a small margin from the top and bottom edges.
+func (m *monitorModel) ensureCursorVisible() {
+	if !m.ready {
+		return
+	}
+	row := listBodyHeaderLines + m.cursor
+	const margin = 2
+	top := m.vp.YOffset
+	bottom := top + m.vp.Height - 1
+	switch {
+	case row-margin < top:
+		m.vp.SetYOffset(row - margin)
+	case row+margin > bottom:
+		m.vp.SetYOffset(row + margin - m.vp.Height + 1)
+	}
+}
+
+// body dispatches on the current mode: the step list or one step's chat chain.
 func (m monitorModel) body() string {
+	if m.mode == modeChat {
+		return m.chatBody()
+	}
+	return m.listBody()
+}
+
+// listBodyHeaderLines is the number of lines listBody renders above the step
+// table (a leading blank, the title row, a trailing blank). ensureCursorVisible
+// uses it to map a cursor index to a viewport row.
+const listBodyHeaderLines = 3
+
+func (m monitorModel) listBody() string {
 	var b strings.Builder
 
 	wfName := m.workflow
@@ -287,16 +410,30 @@ func (m monitorModel) body() string {
 		}
 	}
 
-	for _, s := range m.steps {
+	for i, s := range m.steps {
+		cursor := "  "
+		if i == m.cursor {
+			cursor = "> "
+		}
 		indicator, style := stepIndicator(s.status)
 		dur := stepDuration(s)
-		line := fmt.Sprintf("  %s  %s  %s  %s",
+		msgs := ""
+		if n := m.msgCount[s.id]; n > 0 {
+			msgs = questionStyle.Render(fmt.Sprintf("%d msg", n))
+		}
+		line := fmt.Sprintf("%s%s  %s  %s  %s  %s",
+			cursor,
 			indicator,
 			style.Render(padRight(s.id, idWidth)),
 			statusStyle(s.status).Render(fmt.Sprintf("%-16s", string(s.status))),
-			questionStyle.Render(dur),
+			questionStyle.Render(padRight(dur, 10)),
+			msgs,
 		)
-		b.WriteString(line + "\n")
+		if i == m.cursor {
+			b.WriteString(lipgloss.NewStyle().Bold(true).Render(line) + "\n")
+		} else {
+			b.WriteString(line + "\n")
+		}
 	}
 
 	b.WriteString("\n")
@@ -382,6 +519,33 @@ func (m monitorModel) body() string {
 	return b.String()
 }
 
+// chatBody renders one step's agent chat chain. Phase 4 is the navigation
+// skeleton: it shows the step header and message count; Phase 5 replaces the
+// placeholder body with the rendered transcript (text, reasoning, tool calls,
+// and results) read from transcript.jsonl.
+func (m monitorModel) chatBody() string {
+	var b strings.Builder
+
+	b.WriteString("\n  " + titleStyle.Render("chat") + "  " +
+		pathStyle.Render(m.chatStep) + "\n\n")
+
+	i, ok := m.index[m.chatStep]
+	if !ok {
+		b.WriteString("  " + questionStyle.Render("no such step") + "\n")
+		return b.String()
+	}
+	s := m.steps[i]
+	indicator, style := stepIndicator(s.status)
+	b.WriteString("  " + indicator + "  " + style.Render(s.id) + "  " +
+		statusStyle(s.status).Render(string(s.status)) + "\n\n")
+
+	n := m.msgCount[m.chatStep]
+	b.WriteString("  " + questionStyle.Render(
+		fmt.Sprintf("%d message(s) captured — transcript rendering lands in Phase 5.", n)) + "\n")
+
+	return b.String()
+}
+
 func stepIndicator(s step.Status) (string, lipgloss.Style) {
 	switch s {
 	case step.StatusPending:
@@ -443,11 +607,16 @@ func (m monitorModel) footerView() string {
 	} else {
 		status = runningStyle.Render("running")
 	}
-	hint := "esc runs list  •  ctrl+c quit"
-	if m.pendingPrompt != nil {
-		hint = "ctrl+s submit  •  " + hint
-	} else if m.pendingReview != nil {
-		hint = "1-9 select verdict  •  " + hint
+	var hint string
+	switch {
+	case m.pendingPrompt != nil:
+		hint = "ctrl+s submit  •  esc runs list  •  ctrl+c quit"
+	case m.pendingReview != nil:
+		hint = "1-9 select verdict  •  esc runs list  •  ctrl+c quit"
+	case m.mode == modeChat:
+		hint = "esc back  •  j/k scroll  •  ctrl+c quit"
+	default:
+		hint = "j/k select  •  enter open  •  esc runs list  •  ctrl+c quit"
 	}
 	return footerStyle.Render("  " + status + "  ·  " + hint)
 }

@@ -35,6 +35,8 @@ func eventKind(e Event) string {
 		return "step_output"
 	case StepToolCall:
 		return "step_tool_call"
+	case StepMessage:
+		return "step_message"
 	case GateResult:
 		return "gate_result"
 	case LoopFired:
@@ -84,6 +86,10 @@ var decoders = map[string]func([]byte) (Event, error){
 	},
 	"step_tool_call": func(b []byte) (Event, error) {
 		var e StepToolCall
+		return e, json.Unmarshal(b, &e)
+	},
+	"step_message": func(b []byte) (Event, error) {
+		var e StepMessage
 		return e, json.Unmarshal(b, &e)
 	},
 	"gate_result": func(b []byte) (Event, error) {

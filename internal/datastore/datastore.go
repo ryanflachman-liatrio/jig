@@ -57,3 +57,10 @@ func JournalPath(runDir string) string { return filepath.Join(runDir, "journal.j
 func ResultPath(runDir, stepID string) string {
 	return filepath.Join(runDir, "steps", stepID, "result.json")
 }
+
+// TranscriptPath returns the path to transcript.jsonl for a step inside runDir.
+// The append-only transcript lives beside result.json and holds the step's full
+// agent conversation (see internal/transcript).
+func TranscriptPath(runDir, stepID string) string {
+	return filepath.Join(runDir, "steps", stepID, "transcript.jsonl")
+}

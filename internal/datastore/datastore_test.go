@@ -85,3 +85,11 @@ func TestResultPath(t *testing.T) {
 		t.Errorf("ResultPath: want %q, got %q", want, p)
 	}
 }
+
+func TestTranscriptPath(t *testing.T) {
+	p := TranscriptPath("/some/run/dir", "my-step")
+	want := filepath.Join("/some/run/dir", "steps", "my-step", "transcript.jsonl")
+	if p != want {
+		t.Errorf("TranscriptPath: want %q, got %q", want, p)
+	}
+}

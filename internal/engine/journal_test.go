@@ -44,6 +44,10 @@ func TestJournalRoundTrip(t *testing.T) {
 			ev:   StepToolCall{RunID: "r1", StepID: "fix", Tool: "Edit", Detail: "some/file.go"},
 		},
 		{
+			name: "StepMessage",
+			ev:   StepMessage{RunID: "r1", StepID: "fix", Seq: 7, Iteration: 2},
+		},
+		{
 			name: "GateResult pass",
 			ev:   GateResult{RunID: "r1", StepID: "validate", Passed: true, Detail: "exit 0"},
 		},

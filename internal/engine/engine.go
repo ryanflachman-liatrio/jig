@@ -231,6 +231,9 @@ type reporter struct {
 
 func (r *reporter) Output(delta string)          { r.ev(StepOutput{Delta: delta}) }
 func (r *reporter) ToolCall(tool, detail string) { r.ev(StepToolCall{Tool: tool, Detail: detail}) }
+func (r *reporter) Message(seq, iteration int) {
+	r.ev(StepMessage{Seq: seq, Iteration: iteration})
+}
 
 // ── scheduler ────────────────────────────────────────────────────────────────
 
@@ -260,9 +263,9 @@ type scheduler struct {
 	// from="user" input collection: inputs are gathered one at a time before
 	// the step is dispatched. preResolvedInputs guards against re-intercepting
 	// after all inputs are collected and the step resets to StatusPending.
-	pendingUserInputs   map[string][]workflow.Input  // stepID → remaining prompts
-	collectedUserInputs map[string][]ResolvedInput   // stepID → answers so far
-	preResolvedInputs   map[string][]ResolvedInput   // stepID → fully collected, ready to inject
+	pendingUserInputs   map[string][]workflow.Input // stepID → remaining prompts
+	collectedUserInputs map[string][]ResolvedInput  // stepID → answers so far
+	preResolvedInputs   map[string][]ResolvedInput  // stepID → fully collected, ready to inject
 
 	onDone func(RunSnapshot) // called once before the scheduler goroutine exits
 }
@@ -575,20 +578,28 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 			case StepToolCall:
 				e.RunID, e.StepID = runID, stepID
 				fanOut(subs, e)
+			case StepMessage:
+				e.RunID, e.StepID = runID, stepID
+				fanOut(subs, e)
 			}
 		},
 	}
-	var artifactDir string
+	var artifactDir, transcriptPath string
 	if s.runDir != "" {
 		artifactDir = filepath.Join(s.runDir, "artifacts")
+		transcriptPath = datastore.TranscriptPath(s.runDir, st.ID)
 	}
+	state := s.states[st.ID]
 	req := StepRequest{
-		RunID:       runID,
-		Step:        st,
-		Inputs:      s.preResolvedInputs[st.ID],
-		Feedback:    s.stepFeedback[st.ID],
-		ArtifactDir: artifactDir,
-		Worktree:    worktreePath,
+		RunID:          runID,
+		Step:           st,
+		Inputs:         s.preResolvedInputs[st.ID],
+		Feedback:       s.stepFeedback[st.ID],
+		ArtifactDir:    artifactDir,
+		Worktree:       worktreePath,
+		TranscriptPath: transcriptPath,
+		Iteration:      state.Iteration,
+		Attempt:        state.Attempt,
 	}
 	delete(s.preResolvedInputs, st.ID)
 

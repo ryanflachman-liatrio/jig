@@ -15,6 +15,7 @@ type noopReporter struct{ deltas []string }
 
 func (r *noopReporter) Output(delta string)          { r.deltas = append(r.deltas, delta) }
 func (r *noopReporter) ToolCall(tool, detail string) {}
+func (r *noopReporter) Message(seq, iteration int)   {}
 
 func TestCommandExecutor_Success(t *testing.T) {
 	exec := NewCommandExecutor("")

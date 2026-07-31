@@ -22,6 +22,15 @@ type StepRequest struct {
 	Feedback    string // loop feedback step ID, when re-running via [step.loop]
 	Worktree    string // "" when isolation = none (Phase 5+)
 	ArtifactDir string // absolute path under .jig/runs/<runID>/artifacts; "" disables file writes
+
+	// TranscriptPath is the absolute path to this step's transcript.jsonl. When
+	// non-empty the runner captures the full message stream there; "" disables
+	// transcript writes (persistence off, e.g. tests with no run dir).
+	TranscriptPath string
+	// Iteration and Attempt tag every transcript entry so loop iterations and
+	// retries (which append to the same file) can be distinguished on read.
+	Iteration int
+	Attempt   int
 }
 
 // ResolvedInput pairs an original workflow.Input with its resolved value.
@@ -35,4 +44,8 @@ type ResolvedInput struct {
 type Reporter interface {
 	Output(delta string)
 	ToolCall(tool, detail string)
+	// Message signals that the step's transcript advanced by one entry (seq).
+	// It carries no payload — content is written directly to the transcript
+	// file by the runner; this is a liveness-only nudge for the TUI to refresh.
+	Message(seq, iteration int)
 }

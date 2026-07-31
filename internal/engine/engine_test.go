@@ -5,9 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"jig/internal/datastore"
 	"jig/internal/step"
 	"jig/internal/workflow"
 )
@@ -1123,5 +1125,134 @@ depends_on = ["a"]
 	}
 	if !hasError {
 		t.Error("expected RunError event when loop exceeds max_iterations")
+	}
+}
+
+// recordingExec captures every StepRequest it receives (across retries/loops)
+// and returns a configurable verdict so loop conditions can hold.
+type recordingExec struct {
+	mu       sync.Mutex
+	requests []StepRequest
+	verdicts map[string]string
+}
+
+func (e *recordingExec) Execute(ctx context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
+	e.mu.Lock()
+	e.requests = append(e.requests, req)
+	e.mu.Unlock()
+	r := &step.Result{Status: step.StatusSucceeded}
+	if v, ok := e.verdicts[req.Step.ID]; ok {
+		r.Verdict = v
+	}
+	return r, nil
+}
+
+func (e *recordingExec) reqsFor(stepID string) []StepRequest {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var out []StepRequest
+	for _, r := range e.requests {
+		if r.Step.ID == stepID {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// TestScheduler_StepRequestTranscript verifies that, when persistence is
+// enabled, dispatch plumbs a per-step TranscriptPath plus the current loop
+// Iteration into each StepRequest — the Phase 2 engine contract that lets the
+// runner (Phase 3) write to the right transcript file tagged by iteration.
+func TestScheduler_StepRequestTranscript(t *testing.T) {
+	// a → b, b loops back to a (max 2). The loop body {a,b} re-runs with an
+	// incrementing Iteration; we assert the last dispatch of "a" reflects it.
+	const toml = `
+[workflow]
+name = "transcript-plumb"
+version = "0.1"
+
+[[step]]
+id = "a"
+type = "command"
+run = "echo a"
+output_type = { enum = ["yes", "no"] }
+
+[[step]]
+id = "b"
+type = "command"
+run = "echo b"
+depends_on = ["a"]
+
+  [step.loop]
+  when = "a == 'yes'"
+  goto = "a"
+  max_iterations = 2
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	jigRoot := t.TempDir()
+	exec := &recordingExec{verdicts: map[string]string{"a": "yes"}}
+	mgr := NewManager(exec, jigRoot)
+	ch := mgr.Subscribe()
+
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collectEvents(t, ch, 10*time.Second)
+
+	runDir := filepath.Join(jigRoot, "runs", run.ID)
+	wantPath := datastore.TranscriptPath(runDir, "a")
+
+	reqs := exec.reqsFor("a")
+	if len(reqs) < 2 {
+		t.Fatalf("expected step a to be dispatched at least twice (looped); got %d", len(reqs))
+	}
+	for i, r := range reqs {
+		if r.TranscriptPath != wantPath {
+			t.Errorf("dispatch %d: TranscriptPath = %q, want %q", i, r.TranscriptPath, wantPath)
+		}
+	}
+	// The final dispatch of the loop body must carry a non-zero Iteration.
+	last := reqs[len(reqs)-1]
+	if last.Iteration == 0 {
+		t.Errorf("final dispatch of looped step a: Iteration = 0, want > 0")
+	}
+}
+
+// TestScheduler_StepRequestNoTranscript verifies the root == "" path (no
+// persistence) leaves TranscriptPath empty so tests without a run dir still work.
+func TestScheduler_StepRequestNoTranscript(t *testing.T) {
+	const toml = `
+[workflow]
+name = "no-persist"
+version = "0.1"
+
+[[step]]
+id = "a"
+type = "command"
+run = "echo a"
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &recordingExec{}
+	mgr := NewManager(exec, "")
+	ch := mgr.Subscribe()
+	if _, err := mgr.Start(wf); err != nil {
+		t.Fatal(err)
+	}
+	collectEvents(t, ch, 10*time.Second)
+
+	reqs := exec.reqsFor("a")
+	if len(reqs) == 0 {
+		t.Fatal("step a was never dispatched")
+	}
+	if reqs[0].TranscriptPath != "" {
+		t.Errorf("TranscriptPath = %q, want empty when persistence off", reqs[0].TranscriptPath)
 	}
 }

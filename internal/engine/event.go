@@ -39,11 +39,29 @@ type StepOutput struct {
 }
 
 // StepToolCall carries observed tool-call metadata from an agent step.
+//
+// Deprecated: tool calls are now captured in full (name + input) in the
+// per-step transcript (see internal/transcript). StepMessage signals that the
+// transcript advanced; the TUI reads content from disk. StepToolCall is kept
+// for journal back-compat and may be removed once no consumer relies on it.
 type StepToolCall struct {
 	RunID  string
 	StepID string
 	Tool   string
 	Detail string
+}
+
+// StepMessage is a lightweight liveness signal that an agent step's transcript
+// advanced by one entry. It carries no bulk content — the full message (text,
+// reasoning, tool calls, tool results) lives in the per-step transcript.jsonl
+// (see internal/transcript). A dropped StepMessage only means "refresh is one
+// seq stale," corrected on the next read; this is why content never rides the
+// drop-on-full event bus.
+type StepMessage struct {
+	RunID     string
+	StepID    string
+	Seq       int // transcript entry seq this refers to
+	Iteration int
 }
 
 // GateResult is emitted when a [step.validate] gate completes.
@@ -94,6 +112,7 @@ func (RunFinished) isEvent()   {}
 func (StepStatus) isEvent()    {}
 func (StepOutput) isEvent()    {}
 func (StepToolCall) isEvent()  {}
+func (StepMessage) isEvent()   {}
 func (GateResult) isEvent()    {}
 func (LoopFired) isEvent()     {}
 func (ReviewRequest) isEvent() {}
