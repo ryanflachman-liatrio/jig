@@ -572,6 +572,23 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 		}
 	}
 
+	// Ensure the per-step directory exists before the executor writes its
+	// transcript there. The manifest writer also calls StepDir, but only on the
+	// step's terminal event — too late for the runner's mid-execution transcript
+	// writes, which would otherwise fail with "no such file or directory".
+	if s.runDir != "" {
+		if _, err := datastore.StepDir(s.runDir, st.ID); err != nil {
+			from := s.states[st.ID].Status
+			s.transition(st.ID, from, step.StatusFailed)
+			s.emit(RunError{
+				RunID: s.runID,
+				Err:   fmt.Sprintf("create step dir for %q: %v", st.ID, err),
+			})
+			s.cancel()
+			return
+		}
+	}
+
 	from := s.states[st.ID].Status
 	s.transition(st.ID, from, step.StatusRunning)
 	s.inFlight++
@@ -630,6 +647,19 @@ func (s *scheduler) handle(msg schedMsg) {
 		if m.result != nil {
 			s.states[m.stepID].Result = m.result
 		}
+		// An executor that returns a Go error (rather than a failed Result) still
+		// needs a reason recorded so transition() can surface it. Synthesize a
+		// failed Result carrying the error text.
+		if m.err != nil {
+			res := s.states[m.stepID].Result
+			if res == nil {
+				res = &step.Result{Status: step.StatusFailed}
+				s.states[m.stepID].Result = res
+			}
+			if res.Err == "" {
+				res.Err = m.err.Error()
+			}
+		}
 
 		// Snapshot the worktree diff after every execution so downstream review
 		// steps always have the most-recent state (across retries and loop iters).
@@ -660,6 +690,18 @@ func (s *scheduler) handle(msg schedMsg) {
 
 			if !passed {
 				execFailed = true
+				// The gate — not the execution — is the failure. Record its detail
+				// as the step's reason (the executor's Result was a success, so its
+				// Err is empty) so transition() surfaces why the gate rejected it.
+				res := s.states[m.stepID].Result
+				if res == nil {
+					res = &step.Result{}
+					s.states[m.stepID].Result = res
+				}
+				res.Status = step.StatusFailed
+				if res.Err == "" {
+					res.Err = detail
+				}
 			}
 		}
 
@@ -1088,14 +1130,21 @@ func (s *scheduler) loopBody(gotoID, loopID string) []string {
 func (s *scheduler) transition(stepID string, from, to step.Status) {
 	state := s.states[stepID]
 	state.Status = to
-	s.emit(StepStatus{
+	ev := StepStatus{
 		RunID:     s.runID,
 		StepID:    stepID,
 		From:      from,
 		To:        to,
 		Attempt:   state.Attempt,
 		Iteration: state.Iteration,
-	})
+	}
+	// Carry the failure reason so the TUI can surface it without re-reading
+	// result.json. handle() guarantees state.Result.Err is populated (executor
+	// error or gate detail) before a step transitions to Failed.
+	if to == step.StatusFailed && state.Result != nil {
+		ev.Err = state.Result.Err
+	}
+	s.emit(ev)
 }
 
 // emit writes an event to the journal (if a writer is configured), then fans

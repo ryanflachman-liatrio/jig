@@ -6,6 +6,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	keybind "github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -39,6 +40,9 @@ type monitorModel struct {
 	index    map[string]int // stepID → steps position
 	done     bool
 	failed   bool
+	// runErr is an engine-level failure (worktree setup, max_iterations) that is
+	// not attributable to a single step. Set by the engine.RunError event.
+	runErr string
 
 	// Phase 4 navigation: modeList selects a step; modeChat drills into one.
 	mode     monitorMode
@@ -131,6 +135,7 @@ type monitorStep struct {
 	status step.Status
 	start  time.Time
 	end    time.Time
+	err    string // failure reason when status == StatusFailed
 }
 
 func newMonitorModel(runID string) monitorModel {
@@ -169,7 +174,11 @@ func (m monitorModel) withSnapshot(snap engine.RunSnapshot) monitorModel {
 		m.reviews = make(map[string]engine.ReviewRequest)
 	}
 	for i, st := range snap.Steps {
-		m.steps[i] = monitorStep{id: st.ID, status: st.Status}
+		ms := monitorStep{id: st.ID, status: st.Status}
+		if st.Status == step.StatusFailed && st.Result != nil {
+			ms.err = st.Result.Err
+		}
+		m.steps[i] = ms
 		m.index[st.ID] = i
 	}
 	return m
@@ -193,7 +202,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 	case tea.KeyMsg:
 		// When awaiting user text input, route all keys to the textarea.
 		if m.pendingPrompt != nil {
-			if msg.String() == "ctrl+s" {
+			if msg.String() == "enter" {
 				text := m.promptTextarea.Value()
 				pr := m.pendingPrompt
 				m.pendingPrompt = nil
@@ -369,6 +378,9 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 			return m, nil
 		}
 		m.steps[i].status = ev.To
+		if ev.To == step.StatusFailed {
+			m.steps[i].err = ev.Err
+		}
 		if ev.To == step.StatusRunning {
 			m.steps[i].start = time.Now()
 		}
@@ -430,6 +442,11 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		m.mode = modeList
 		ta := textarea.New()
 		ta.Placeholder = ev.Label
+		// enter submits the response; newlines are inserted with alt/shift+enter.
+		ta.KeyMap.InsertNewline = keybind.NewBinding(
+			keybind.WithKeys("alt+enter", "shift+enter"),
+			keybind.WithHelp("alt+enter", "insert newline"),
+		)
 		ta.ShowLineNumbers = false
 		ta.SetHeight(4)
 		ta.SetWidth(m.width - 4)
@@ -455,6 +472,15 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 			m.stepOutput[ev.StepID] = buf
 		}
 		buf.WriteString(ev.Delta)
+
+	case engine.RunError:
+		if ev.RunID != m.runID {
+			return m, nil
+		}
+		// Engine-level failures (worktree setup, max_iterations) are not tied to a
+		// single step's transition, so they would otherwise vanish. Retain the
+		// most recent one for the summary.
+		m.runErr = ev.Err
 
 	case engine.RunFinished:
 		if ev.RunID != m.runID {
@@ -595,6 +621,7 @@ func (m monitorModel) listBody() string {
 	if m.done {
 		if m.failed {
 			b.WriteString("  " + errorStyle.Render("✗ run failed") + "\n")
+			m.writeFailureReasons(&b)
 		} else {
 			b.WriteString("  " + validStyle.Render("✓ run complete") + "\n")
 		}
@@ -651,6 +678,29 @@ func (m monitorModel) listBody() string {
 	}
 
 	return b.String()
+}
+
+// writeFailureReasons appends the human-readable "why" behind a failed run: the
+// engine-level error (if any), then each failed step's reason. Without this the
+// summary only says "✗ run failed" — the reason lives in the events but was
+// never rendered. Reasons wrap to the view width so a long shell error or gate
+// detail stays readable.
+func (m monitorModel) writeFailureReasons(b *strings.Builder) {
+	wrapW := m.width - 6
+	if wrapW < 20 {
+		wrapW = 20
+	}
+	wrap := lipgloss.NewStyle().Width(wrapW)
+
+	if m.runErr != "" {
+		b.WriteString("    " + errorStyle.Render(wrap.Render("engine: "+m.runErr)) + "\n")
+	}
+	for _, s := range m.steps {
+		if s.status != step.StatusFailed || s.err == "" {
+			continue
+		}
+		b.WriteString("    " + errorStyle.Render(wrap.Render(s.id+": "+s.err)) + "\n")
+	}
 }
 
 // loadChat re-reads chatStep's transcript into the model. The transcript file is
@@ -1024,7 +1074,7 @@ func (m monitorModel) footerView() string {
 	var hint string
 	switch {
 	case m.pendingPrompt != nil:
-		hint = "ctrl+s submit  •  esc runs list  •  ctrl+c quit"
+		hint = "enter submit  •  alt+enter newline  •  esc runs list  •  ctrl+c quit"
 	case m.pendingReview != nil:
 		hint = "1-9 select verdict  •  esc runs list  •  ctrl+c quit"
 	case m.mode == modeChat:

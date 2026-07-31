@@ -29,6 +29,10 @@ type StepStatus struct {
 	To        step.Status
 	Attempt   int
 	Iteration int
+	// Err carries the failure reason when To == step.StatusFailed — the step
+	// Result's error, or the [step.validate] gate detail when a gate failed.
+	// Empty for every non-failing transition.
+	Err string
 }
 
 // StepOutput carries a streaming text delta from an in-flight agent step.

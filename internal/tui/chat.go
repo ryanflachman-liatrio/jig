@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	keybind "github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -64,7 +65,13 @@ func newChatModel(ctx context.Context, darkBackground bool) tea.Model {
 	s.Style = spinnerStyle
 
 	ta := textarea.New()
-	ta.Placeholder = "Ask Claude... (ctrl+s to send, ctrl+c to quit)"
+	ta.Placeholder = "Ask Claude... (enter to send, alt+enter for newline, ctrl+c to quit)"
+	// enter submits the prompt (handled in Update), so newlines are inserted
+	// with alt/shift+enter instead of the textarea's default enter binding.
+	ta.KeyMap.InsertNewline = keybind.NewBinding(
+		keybind.WithKeys("alt+enter", "shift+enter"),
+		keybind.WithHelp("alt+enter", "insert newline"),
+	)
 	ta.ShowLineNumbers = false
 	ta.SetHeight(3)
 	focusedStyle, blurredStyle := textarea.DefaultStyles()
@@ -114,9 +121,9 @@ func (m chatModel) footerView() string {
 		return footerStyle.Render("ctrl+c quit")
 	}
 	if m.ready && len(m.turns) > 0 {
-		return footerStyle.Render(fmt.Sprintf("ctrl+s send • esc/i switch focus • ctrl+c quit (%.0f%%)", m.viewport.ScrollPercent()*100))
+		return footerStyle.Render(fmt.Sprintf("enter send • alt+enter newline • esc/i switch focus • ctrl+c quit (%.0f%%)", m.viewport.ScrollPercent()*100))
 	}
-	return footerStyle.Render("ctrl+s send • ctrl+c quit")
+	return footerStyle.Render("enter send • alt+enter newline • ctrl+c quit")
 }
 
 // turnIndicatorView reports which turn is currently displayed, and how to
@@ -205,7 +212,13 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, tea.Sequence(disconnectClaudeCmd(m.client), tea.Quit)
 
-		case "ctrl+s":
+		case "enter":
+			// From the output pane, enter focuses the input (mirrors "i").
+			if m.focus == focusOutput {
+				m.focus = focusInput
+				m.viewport.Style = viewportBlurredStyle
+				return m, m.textarea.Focus()
+			}
 			if !m.connected || m.fatal || m.streaming {
 				return m, nil
 			}
@@ -229,7 +242,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "i", "enter":
+		case "i":
 			if m.focus == focusOutput {
 				m.focus = focusInput
 				m.viewport.Style = viewportBlurredStyle

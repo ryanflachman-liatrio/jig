@@ -284,6 +284,105 @@ run = "false"
 	}
 }
 
+// TestScheduler_FailedStatusCarriesReason locks in that a step's failure reason
+// (Result.Err) rides the StepStatus transition to Failed, so the TUI can surface
+// why a run failed without re-reading result.json.
+func TestScheduler_FailedStatusCarriesReason(t *testing.T) {
+	const toml = `
+[workflow]
+name = "fail-reason"
+version = "0.1"
+
+[[step]]
+id = "bad"
+type = "command"
+run = "false"
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &testExec{outcomes: map[string]testOutcome{
+		"bad": {fail: true},
+	}}
+	mgr := NewManager(exec, "")
+	ch := mgr.Subscribe()
+
+	if _, err = mgr.Start(wf); err != nil {
+		t.Fatal(err)
+	}
+
+	events := collectEvents(t, ch, 5*time.Second)
+
+	var failEv *StepStatus
+	for i := range events {
+		if ss, ok := events[i].(StepStatus); ok && ss.StepID == "bad" && ss.To == step.StatusFailed {
+			failEv = &ss
+		}
+	}
+	if failEv == nil {
+		t.Fatal("no StepStatus{To: Failed} event for step bad")
+	}
+	if failEv.Err != "scripted failure" {
+		t.Errorf("failed StepStatus.Err = %q, want %q", failEv.Err, "scripted failure")
+	}
+}
+
+// dirCheckExec records, per step, whether the step's transcript directory
+// existed at dispatch time. It reproduces the runner's mid-execution transcript
+// write, which fails if the engine hasn't created steps/<id>/ first.
+type dirCheckExec struct {
+	mu      sync.Mutex
+	present map[string]bool
+}
+
+func (e *dirCheckExec) Execute(_ context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
+	ok := true
+	if req.TranscriptPath != "" {
+		_, statErr := os.Stat(filepath.Dir(req.TranscriptPath))
+		ok = statErr == nil
+	}
+	e.mu.Lock()
+	e.present[req.Step.ID] = ok
+	e.mu.Unlock()
+	return &step.Result{Status: step.StatusSucceeded}, nil
+}
+
+// TestScheduler_StepDirExistsBeforeExecute guards the fix for a review/agent
+// step failing with "transcript open: … no such file or directory": the engine
+// must create steps/<id>/ before dispatching, not rely on the manifest writer's
+// terminal-event StepDir call.
+func TestScheduler_StepDirExistsBeforeExecute(t *testing.T) {
+	const toml = `
+[workflow]
+name = "stepdir"
+version = "0.1"
+
+[[step]]
+id = "only"
+type = "command"
+run = "echo hi"
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &dirCheckExec{present: make(map[string]bool)}
+	mgr := NewManager(exec, filepath.Join(t.TempDir(), ".jig"))
+	ch := mgr.Subscribe()
+
+	if _, err = mgr.Start(wf); err != nil {
+		t.Fatal(err)
+	}
+	collectEvents(t, ch, 5*time.Second)
+
+	exec.mu.Lock()
+	defer exec.mu.Unlock()
+	if !exec.present["only"] {
+		t.Error("step directory did not exist when the executor was dispatched")
+	}
+}
+
 func TestScheduler_TransitiveFailure(t *testing.T) {
 	// When a fails, b (depending on a) should never run, and the run finishes failed.
 	const toml = `
@@ -748,6 +847,16 @@ command = "false"
 	got := findStatus(events, "check")
 	if len(got) == 0 || got[len(got)-1] != step.StatusFailed {
 		t.Errorf("step check should fail after gate failure; got %v", got)
+	}
+
+	// The failing StepStatus must carry the gate detail as its reason so the TUI
+	// can explain why the gate rejected the step.
+	for _, e := range events {
+		if ss, ok := e.(StepStatus); ok && ss.StepID == "check" && ss.To == step.StatusFailed {
+			if ss.Err != gateResult.Detail {
+				t.Errorf("failed StepStatus.Err = %q, want gate detail %q", ss.Err, gateResult.Detail)
+			}
+		}
 	}
 
 	// Run overall must be failed.
