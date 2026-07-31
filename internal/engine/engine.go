@@ -65,6 +65,7 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 		ID:     runID,
 		cancel: cancel,
 		inbox:  inbox,
+		done:   make(chan struct{}),
 	}
 
 	m.mu.Lock()
@@ -88,7 +89,18 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 		}
 	}
 
-	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir)
+	repoRoot := ""
+	if m.root != "" {
+		repoRoot = filepath.Dir(filepath.Clean(m.root))
+	}
+	// onDone is called by the scheduler goroutine before it exits.
+	// Writing finalSnap before closing done satisfies the memory-model
+	// happens-before requirement so Snapshot() reads are lock-free.
+	onDone := func(snap RunSnapshot) {
+		run.finalSnap = snap
+		close(run.done)
+	}
+	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir, m.root, repoRoot, onDone)
 	go s.run(ctx)
 	return run, nil
 }
@@ -121,6 +133,11 @@ type Run struct {
 	ID     string
 	cancel context.CancelFunc
 	inbox  chan schedMsg
+	// done is closed by the scheduler goroutine before it exits.
+	// finalSnap is written before done is closed; reads after observing
+	// done closed see the written value (Go memory model, channel close).
+	done      chan struct{}
+	finalSnap RunSnapshot
 }
 
 // Cancel terminates the run. In-flight workers receive context cancellation.
@@ -131,12 +148,36 @@ func (r *Run) Resolve(stepID, verdict string) {
 	r.inbox <- verdictMsg{stepID: stepID, verdict: verdict}
 }
 
-// Snapshot requests a point-in-time view of the run's state. The reply goes
-// through the scheduler's inbox so only one goroutine ever reads state.
+// ProvideUserInput delivers text collected from the user for a from="user" input.
+func (r *Run) ProvideUserInput(stepID, as, text string) {
+	r.inbox <- userInputMsg{stepID: stepID, as: as, text: text}
+}
+
+// Snapshot returns a point-in-time view of the run's state. For a live run
+// the request routes through the scheduler's inbox (single-writer invariant).
+// For a completed run it returns the cached final snapshot immediately,
+// avoiding a deadlock on the no-longer-running scheduler goroutine.
 func (r *Run) Snapshot() RunSnapshot {
+	// Fast path: scheduler already exited and finalSnap is ready.
+	select {
+	case <-r.done:
+		return r.finalSnap
+	default:
+	}
+	// Slow path: ask the live scheduler. Also select on done in case the
+	// scheduler exits between the fast-path check and the inbox send.
 	reply := make(chan RunSnapshot, 1)
-	r.inbox <- snapshotReqMsg{reply: reply}
-	return <-reply
+	select {
+	case r.inbox <- snapshotReqMsg{reply: reply}:
+		select {
+		case snap := <-reply:
+			return snap
+		case <-r.done:
+			return r.finalSnap
+		}
+	case <-r.done:
+		return r.finalSnap
+	}
 }
 
 func newRunID() string {
@@ -163,12 +204,19 @@ type verdictMsg struct {
 	verdict string
 }
 
+type userInputMsg struct {
+	stepID string
+	as     string
+	text   string
+}
+
 type snapshotReqMsg struct {
 	reply chan<- RunSnapshot
 }
 
 func (stepDoneMsg) isSchedMsg()    {}
 func (verdictMsg) isSchedMsg()     {}
+func (userInputMsg) isSchedMsg()   {}
 func (snapshotReqMsg) isSchedMsg() {}
 
 // ── reporter ─────────────────────────────────────────────────────────────────
@@ -201,6 +249,22 @@ type scheduler struct {
 	aborted      bool                      // true when the run was explicitly aborted (loop cap, etc.)
 	inFlight     int
 	seq          int
+
+	// Phase 5: worktree lifecycle.
+	jigRoot    string            // .jig/ root; "" when persistence is disabled
+	repoRoot   string            // git repo root (parent of jigRoot)
+	worktrees  map[string]string // stepID → active worktree absolute path
+	wtBaseSHAs map[string]string // stepID → HEAD SHA captured at worktree creation
+	diffs      map[string]string // stepID → latest diff text (updated each execution)
+
+	// from="user" input collection: inputs are gathered one at a time before
+	// the step is dispatched. preResolvedInputs guards against re-intercepting
+	// after all inputs are collected and the step resets to StatusPending.
+	pendingUserInputs   map[string][]workflow.Input  // stepID → remaining prompts
+	collectedUserInputs map[string][]ResolvedInput   // stepID → answers so far
+	preResolvedInputs   map[string][]ResolvedInput   // stepID → fully collected, ready to inject
+
+	onDone func(RunSnapshot) // called once before the scheduler goroutine exits
 }
 
 func newScheduler(
@@ -212,23 +276,35 @@ func newScheduler(
 	cancel context.CancelFunc,
 	writer *manifest.Writer,
 	runDir string,
+	jigRoot string,
+	repoRoot string,
+	onDone func(RunSnapshot),
 ) *scheduler {
 	states := make(map[string]*step.State, len(wf.Steps))
 	for _, s := range wf.Steps {
 		states[s.ID] = &step.State{ID: s.ID, Status: step.StatusPending}
 	}
 	return &scheduler{
-		wf:           wf,
-		runID:        runID,
-		states:       states,
-		inbox:        inbox,
-		subs:         subs,
-		exec:         exec,
-		cancel:       cancel,
-		writer:       writer,
-		runDir:       runDir,
-		structured:   make(map[string]map[string]any),
-		stepFeedback: make(map[string]string),
+		wf:                  wf,
+		runID:               runID,
+		states:              states,
+		inbox:               inbox,
+		subs:                subs,
+		exec:                exec,
+		cancel:              cancel,
+		writer:              writer,
+		runDir:              runDir,
+		structured:          make(map[string]map[string]any),
+		stepFeedback:        make(map[string]string),
+		jigRoot:             jigRoot,
+		repoRoot:            repoRoot,
+		worktrees:           make(map[string]string),
+		wtBaseSHAs:          make(map[string]string),
+		diffs:               make(map[string]string),
+		pendingUserInputs:   make(map[string][]workflow.Input),
+		collectedUserInputs: make(map[string][]ResolvedInput),
+		preResolvedInputs:   make(map[string][]ResolvedInput),
+		onDone:              onDone,
 	}
 }
 
@@ -245,11 +321,23 @@ func (s *scheduler) run(ctx context.Context) {
 	}
 
 	defer func() {
+		// Signal completion first so Snapshot() callers unblock immediately.
+		// finalSnap is written before done is closed, satisfying the memory-model
+		// happens-before requirement for lock-free reads in Run.Snapshot().
+		s.onDone(s.snapshot())
 		// Close the journal file after the final RunFinished event has been
 		// appended. Deferring ensures the file is closed even when the run exits
 		// via ctx.Done().
 		if s.writer != nil {
 			_ = s.writer.Close()
+		}
+		// Remove any worktrees left active at run end. The branches are kept so
+		// downstream merge steps (e.g. git merge jig/feature/implement) can still
+		// reference them after worktree removal.
+		if s.repoRoot != "" {
+			for _, path := range s.worktrees {
+				_ = removeWorktree(s.repoRoot, path)
+			}
 		}
 	}()
 
@@ -307,6 +395,15 @@ func (s *scheduler) nextReady() (*workflow.Step, bool) {
 			}
 		}
 
+		// If the step has from="user" inputs that haven't been collected yet,
+		// park it on a prompt and keep scanning for other runnable steps.
+		// The preResolvedInputs check prevents re-intercepting after all inputs
+		// are collected and the step resets back to StatusPending.
+		if hasUserInputs(st) && len(s.preResolvedInputs[st.ID]) == 0 {
+			s.dispatchUserPrompt(st)
+			continue
+		}
+
 		// Review steps never go to a worker: park them on human input and keep
 		// scanning for other runnable steps this iteration.
 		if st.Type == workflow.StepReview {
@@ -317,6 +414,16 @@ func (s *scheduler) nextReady() (*workflow.Step, bool) {
 		return st, true
 	}
 	return nil, false
+}
+
+// hasUserInputs reports whether st declares any from="user" inputs.
+func hasUserInputs(st *workflow.Step) bool {
+	for _, inp := range st.Inputs {
+		if inp.From == "user" {
+			return true
+		}
+	}
+	return false
 }
 
 // depsReady reports whether all of st's dependencies have reached a state
@@ -424,6 +531,33 @@ func (s *scheduler) anyFailed() bool {
 // dispatch launches a worker goroutine for one step. The worker sends a
 // stepDoneMsg to the inbox when it finishes; only the scheduler reads state.
 func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
+	// Create a git worktree for mutating steps (first dispatch only; retries and
+	// loop re-dispatches reuse the existing worktree so edits accumulate on the
+	// same branch).
+	var worktreePath string
+	if st.Isolation == workflow.IsolationWorktree && s.repoRoot != "" {
+		if existing, ok := s.worktrees[st.ID]; ok {
+			worktreePath = existing
+		} else {
+			branch := "jig/" + sanitizeBranchName(s.wf.Meta.Name) + "/" + st.ID
+			wtPath := filepath.Join(s.jigRoot, "worktrees", s.runID, st.ID)
+			baseSHA, err := createWorktree(s.repoRoot, wtPath, branch)
+			if err != nil {
+				from := s.states[st.ID].Status
+				s.transition(st.ID, from, step.StatusFailed)
+				s.emit(RunError{
+					RunID: s.runID,
+					Err:   fmt.Sprintf("create worktree for step %q: %v", st.ID, err),
+				})
+				s.cancel()
+				return
+			}
+			s.worktrees[st.ID] = wtPath
+			s.wtBaseSHAs[st.ID] = baseSHA
+			worktreePath = wtPath
+		}
+	}
+
 	from := s.states[st.ID].Status
 	s.transition(st.ID, from, step.StatusRunning)
 	s.inFlight++
@@ -451,9 +585,12 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 	req := StepRequest{
 		RunID:       runID,
 		Step:        st,
+		Inputs:      s.preResolvedInputs[st.ID],
 		Feedback:    s.stepFeedback[st.ID],
 		ArtifactDir: artifactDir,
+		Worktree:    worktreePath,
 	}
+	delete(s.preResolvedInputs, st.ID)
 
 	go func() {
 		result, err := s.exec.Execute(ctx, req, rep)
@@ -472,6 +609,12 @@ func (s *scheduler) handle(msg schedMsg) {
 			s.states[m.stepID].Result = m.result
 		}
 
+		// Snapshot the worktree diff after every execution so downstream review
+		// steps always have the most-recent state (across retries and loop iters).
+		if path, ok := s.worktrees[m.stepID]; ok {
+			s.diffs[m.stepID] = captureDiff(path, s.wtBaseSHAs[m.stepID])
+		}
+
 		wfStep := s.stepByID(m.stepID)
 
 		if !execFailed && wfStep != nil && wfStep.Validate != nil {
@@ -485,7 +628,7 @@ func (s *scheduler) handle(msg schedMsg) {
 			from := s.states[m.stepID].Status
 			s.transition(m.stepID, from, step.StatusValidating)
 
-			passed, detail := s.runGate(wfStep)
+			passed, detail := s.runGate(wfStep, s.worktrees[m.stepID])
 			s.emit(GateResult{
 				RunID:  s.runID,
 				StepID: m.stepID,
@@ -509,6 +652,34 @@ func (s *scheduler) handle(msg schedMsg) {
 				s.fireLoop(m.stepID, wfStep)
 			}
 		}
+
+	case userInputMsg:
+		// Append the collected text as an inline ResolvedInput.
+		s.collectedUserInputs[m.stepID] = append(
+			s.collectedUserInputs[m.stepID],
+			ResolvedInput{
+				Ref:   workflow.Input{Inline: true, As: m.as},
+				Value: m.text,
+			},
+		)
+		// If more prompts are queued, fire the next one.
+		if len(s.pendingUserInputs[m.stepID]) > 0 {
+			next := s.pendingUserInputs[m.stepID][0]
+			s.pendingUserInputs[m.stepID] = s.pendingUserInputs[m.stepID][1:]
+			s.emit(PromptRequest{
+				RunID:  s.runID,
+				StepID: m.stepID,
+				Label:  next.Label,
+				As:     next.As,
+			})
+			return
+		}
+		// All inputs collected — promote to preResolved and reset to pending
+		// so nextReady picks it up for normal dispatch.
+		s.preResolvedInputs[m.stepID] = s.collectedUserInputs[m.stepID]
+		delete(s.collectedUserInputs, m.stepID)
+		delete(s.pendingUserInputs, m.stepID)
+		s.transition(m.stepID, step.StatusAwaitingReview, step.StatusPending)
 
 	case verdictMsg:
 		// Deliver the human's verdict to an awaiting_review step.
@@ -570,14 +741,17 @@ func (s *scheduler) applyFailurePolicy(stepID string, wfStep *workflow.Step) {
 
 // runGate evaluates the [step.validate] block for wfStep synchronously.
 // Returns (true, detail) on pass, (false, detail) on failure.
-// Only OutputExists and OutputContains are implemented in Phase 2; Command
-// gates delegate to the shell; OutputSchema is deferred to Phase 4.
-func (s *scheduler) runGate(wfStep *workflow.Step) (bool, string) {
+// worktreePath, when non-empty, sets the working directory for command gates
+// so they run inside the step's isolated worktree (Phase 5).
+func (s *scheduler) runGate(wfStep *workflow.Step, worktreePath string) (bool, string) {
 	v := wfStep.Validate
 
 	// Command gate: run via sh -c, check exit code 0.
 	if v.Command != "" {
 		cmd := exec.Command("sh", "-c", v.Command)
+		if worktreePath != "" {
+			cmd.Dir = worktreePath
+		}
 		out, err := cmd.CombinedOutput()
 		outStr := strings.TrimSpace(string(out))
 		if err != nil {
@@ -708,17 +882,75 @@ func (s *scheduler) cascadeSkip(skipID string) {
 	}
 }
 
+// dispatchUserPrompt parks an agent step that needs from="user" inputs on
+// StatusAwaitingReview and emits the first PromptRequest. Subsequent prompts
+// are emitted by handle(userInputMsg) as each answer arrives.
+func (s *scheduler) dispatchUserPrompt(st *workflow.Step) {
+	var userInputs []workflow.Input
+	for _, inp := range st.Inputs {
+		if inp.From == "user" {
+			userInputs = append(userInputs, inp)
+		}
+	}
+	s.pendingUserInputs[st.ID] = userInputs[1:]
+	s.collectedUserInputs[st.ID] = nil
+	s.transition(st.ID, s.states[st.ID].Status, step.StatusAwaitingReview)
+	s.emit(PromptRequest{
+		RunID:  s.runID,
+		StepID: st.ID,
+		Label:  userInputs[0].Label,
+		As:     userInputs[0].As,
+	})
+}
+
 // dispatchReview handles a review step inline: it never goes to a worker.
 // The step is parked at awaiting_review and a ReviewRequest is emitted so the
 // TUI can render choices and collect a human verdict via Run.Resolve.
+// When review = "diff", the Diff field is populated by walking the dependency
+// graph for any captured worktree diffs.
 func (s *scheduler) dispatchReview(st *workflow.Step) {
 	from := s.states[st.ID].Status
 	s.transition(st.ID, from, step.StatusAwaitingReview)
+
+	var diff string
+	if st.Review == "diff" {
+		diff = s.collectDepDiffs(st.ID)
+	}
+
 	s.emit(ReviewRequest{
 		RunID:   s.runID,
 		StepID:  st.ID,
 		Choices: reviewChoices(st),
+		Diff:    diff,
 	})
+}
+
+// collectDepDiffs walks the dependency graph of stepID and concatenates any
+// captured diffs from mutating steps that ran in worktrees.
+func (s *scheduler) collectDepDiffs(stepID string) string {
+	visited := make(map[string]bool)
+	var parts []string
+	var walk func(id string)
+	walk = func(id string) {
+		if visited[id] {
+			return
+		}
+		visited[id] = true
+		if d, ok := s.diffs[id]; ok && d != "" {
+			parts = append(parts, d)
+		}
+		if wfStep := s.stepByID(id); wfStep != nil {
+			for _, dep := range wfStep.DependsOn {
+				walk(dep)
+			}
+		}
+	}
+	if wfStep := s.stepByID(stepID); wfStep != nil {
+		for _, dep := range wfStep.DependsOn {
+			walk(dep)
+		}
+	}
+	return strings.Join(parts, "\n")
 }
 
 // reviewChoices returns the ordered set of verdicts the human can select.

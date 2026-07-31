@@ -8,7 +8,7 @@ permission_mode = "acceptEdits"
 [[step]]
 id            = "triage"
 type          = "agent"
-skill         = "skills/triage"
+skill         = "../../examples/skills/triage"
 inputs        = ["reports/bug-1234.md"]
 output        = ".jig/artifacts/triage.md"
 allowed_tools = ["Read", "Grep", "Glob"]
@@ -17,7 +17,7 @@ allowed_tools = ["Read", "Grep", "Glob"]
 id            = "fix"
 type          = "agent"
 depends_on    = ["triage"]
-skill         = "skills/fix"
+skill         = "../../examples/skills/fix"
 inputs        = ["@triage"]
 allowed_tools = ["Read", "Edit", "Write", "Bash"]
 

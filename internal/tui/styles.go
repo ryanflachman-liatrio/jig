@@ -71,4 +71,14 @@ var (
 
 	runningStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.AdaptiveColor{Light: "#0F5FBF", Dark: "#7AA2F7"})
+
+	// Diff rendering (Phase 5 review = "diff").
+	diffAddStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "#1A7F37", Dark: "#5FD75F"})
+
+	diffRemoveStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "#D7263D", Dark: "#FF5D5D"})
+
+	diffHunkStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.AdaptiveColor{Light: "#0F5FBF", Dark: "#7AA2F7"})
 )

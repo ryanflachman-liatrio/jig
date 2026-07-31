@@ -31,7 +31,11 @@ func NewAgentExecutor() *AgentExecutor { return &AgentExecutor{} }
 func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep engine.Reporter) (*step.Result, error) {
 	start := time.Now()
 
-	client := claudecode.NewClient(claudecode.WithIncludePartialMessages(true))
+	opts := []claudecode.Option{claudecode.WithIncludePartialMessages(true)}
+	if req.Worktree != "" {
+		opts = append(opts, claudecode.WithCwd(req.Worktree))
+	}
+	client := claudecode.NewClient(opts...)
 	if err := client.Connect(ctx); err != nil {
 		return failResult(fmt.Sprintf("agent connect: %v", err), start), nil
 	}

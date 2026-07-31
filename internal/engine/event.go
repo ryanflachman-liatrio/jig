@@ -64,16 +64,29 @@ type LoopFired struct {
 }
 
 // ReviewRequest asks the human to pick from Choices for a review step.
+// Diff is non-empty when the step declares review = "diff"; it contains the
+// full git diff of mutating steps reachable through the dependency chain.
 type ReviewRequest struct {
 	RunID   string
 	StepID  string
 	Choices []string
+	Diff    string
 }
 
 // RunError is an engine-level failure, not a step-level failure.
 type RunError struct {
 	RunID string
 	Err   string
+}
+
+// PromptRequest asks the human to supply free-form text for a from="user" input.
+// Multiple user inputs on one step are requested sequentially, each replacing
+// the previous PromptRequest.
+type PromptRequest struct {
+	RunID  string
+	StepID string
+	Label  string
+	As     string
 }
 
 func (RunStarted) isEvent()    {}
@@ -85,3 +98,4 @@ func (GateResult) isEvent()    {}
 func (LoopFired) isEvent()     {}
 func (ReviewRequest) isEvent() {}
 func (RunError) isEvent()      {}
+func (PromptRequest) isEvent() {}

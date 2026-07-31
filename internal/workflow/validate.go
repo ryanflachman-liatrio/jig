@@ -262,9 +262,14 @@ func (v *validator) checkReview(s *Step) {
 
 // checkInputs enforces the "always explicit" rule: an @ref input must resolve
 // to a real step AND that step must be listed in depends_on, so the data edge
-// and the ordering edge never disagree.
+// and the ordering edge never disagree. from="user" inputs are validated
+// separately by checkUserInput.
 func (v *validator) checkInputs(s *Step) {
 	for _, in := range s.Inputs {
+		if in.From != "" {
+			v.checkUserInput(s, in)
+			continue
+		}
 		if in.Ref == "" {
 			continue // literal path; existence is a runtime concern
 		}
@@ -279,6 +284,23 @@ func (v *validator) checkInputs(s *Step) {
 		if len(in.RefField) > 0 {
 			v.checkFieldRef(s.ID, "input "+in.String(), &v.wf.Steps[ti], in.RefField)
 		}
+	}
+}
+
+// checkUserInput validates a from="user" input. These are only valid on agent
+// steps, require both label and as, and cannot mix with ref/path/inline.
+func (v *validator) checkUserInput(s *Step, in Input) {
+	if in.From != "user" {
+		v.errf("step %q input: unknown from value %q (only \"user\" is supported)", s.ID, in.From)
+	}
+	if in.Label == "" {
+		v.errf("step %q from=\"user\" input requires `label`", s.ID)
+	}
+	if in.As == "" {
+		v.errf("step %q from=\"user\" input requires `as`", s.ID)
+	}
+	if s.Type != StepAgent {
+		v.errf("step %q from=\"user\" input is only valid on agent steps", s.ID)
 	}
 }
 

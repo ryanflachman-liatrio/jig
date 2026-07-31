@@ -197,16 +197,21 @@ func (s *Step) isMutating() bool {
 // RefField, from "@stepid.field.sub", selects a field out of that step's
 // structured JSON output instead of the whole artifact. Inline requests that
 // the content be injected into the prompt rather than just its path.
+// From="user" pauses the step and collects free-form text from the human via
+// the TUI; Label is the prompt shown, As is a name hint for the agent.
 type Input struct {
 	Ref      string
 	RefField []string
 	Path     string
 	Inline   bool
+	From     string // "user" for interactive collection
+	Label    string // prompt shown in TUI (required when From="user")
+	As       string // name hint passed to agent prompt (required when From="user")
 }
 
 // UnmarshalTOML accepts either a string ("@stepid", "@stepid.field", or a path)
-// or an inline table ({ path = "…", inline = true } or { ref = "…", inline =
-// true }).
+// or an inline table ({ path = "…", inline = true }, { ref = "…", inline =
+// true }, or { from = "user", label = "…", as = "…" }).
 func (in *Input) UnmarshalTOML(data any) error {
 	switch v := data.(type) {
 	case string:
@@ -238,8 +243,32 @@ func (in *Input) UnmarshalTOML(data any) error {
 			}
 			in.Inline = b
 		}
-		if in.Ref == "" && in.Path == "" {
-			return fmt.Errorf("input table must set `ref` or `path`")
+		if raw, ok := v["from"]; ok {
+			s, ok := raw.(string)
+			if !ok {
+				return fmt.Errorf("input `from` must be a string, got %T", raw)
+			}
+			in.From = s
+		}
+		if raw, ok := v["label"]; ok {
+			s, ok := raw.(string)
+			if !ok {
+				return fmt.Errorf("input `label` must be a string, got %T", raw)
+			}
+			in.Label = s
+		}
+		if raw, ok := v["as"]; ok {
+			s, ok := raw.(string)
+			if !ok {
+				return fmt.Errorf("input `as` must be a string, got %T", raw)
+			}
+			in.As = s
+		}
+		if in.From != "" && (in.Ref != "" || in.Path != "") {
+			return fmt.Errorf("input table: `from` cannot be combined with `ref` or `path`")
+		}
+		if in.Ref == "" && in.Path == "" && in.From == "" {
+			return fmt.Errorf("input table must set `ref`, `path`, or `from`")
 		}
 		if in.Ref != "" && in.Path != "" {
 			return fmt.Errorf("input table sets both `ref` and `path`; pick one")
@@ -252,6 +281,9 @@ func (in *Input) UnmarshalTOML(data any) error {
 
 // String renders the input back to its source form, for error messages.
 func (in Input) String() string {
+	if in.From != "" {
+		return "from:" + in.From + "(" + in.As + ")"
+	}
 	if in.Ref != "" {
 		s := "@" + in.Ref
 		if len(in.RefField) > 0 {

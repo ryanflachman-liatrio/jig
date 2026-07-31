@@ -53,8 +53,13 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 	// "sh -c" rather than parsing and splitting the command ourselves avoids
 	// the many edge cases in shell tokenisation.
 	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
-	if e.cwd != "" {
-		cmd.Dir = e.cwd
+	// Worktree takes precedence over the executor's static cwd (Phase 5).
+	cwd := e.cwd
+	if req.Worktree != "" {
+		cwd = req.Worktree
+	}
+	if cwd != "" {
+		cmd.Dir = cwd
 	}
 
 	// Pipe combined stdout+stderr so the TUI can stream both without ordering

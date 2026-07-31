@@ -36,9 +36,9 @@ artifacts_dir   = ".jig/artifacts"
 [[step]]
 id            = "intake"
 type          = "agent"
-skill         = "skills/intake"
-inputs        = ["request.md", { path = "conventions.md", inline = true }]
-schema_file   = "schemas/intake.json"
+skill         = "../../examples/skills/intake"
+inputs        = ["../../examples/request.md", { path = "../../examples/conventions.md", inline = true }]
+schema_file   = "../../examples/schemas/intake.json"
 allowed_tools = ["Read", "Grep", "Glob"]
 
 # -----------------------------------------------------------------------------
@@ -51,7 +51,7 @@ id            = "research_backend"
 type          = "agent"
 depends_on    = ["intake"]
 when          = "intake.status == 'ready'"
-skill         = "skills/research"
+skill         = "../../examples/skills/research"
 inputs        = ["@intake.areas"]
 allowed_tools = ["Read", "Grep", "Glob", "WebSearch"]
 
@@ -69,7 +69,7 @@ id            = "research_frontend"
 type          = "agent"
 depends_on    = ["intake"]
 when          = "intake.status == 'ready'"
-skill         = "skills/research"
+skill         = "../../examples/skills/research"
 inputs        = ["@intake.areas"]
 allowed_tools = ["Read", "Grep", "Glob", "WebSearch"]
 
@@ -88,7 +88,7 @@ allowed_tools = ["Read", "Grep", "Glob", "WebSearch"]
 id            = "plan"
 type          = "agent"
 depends_on    = ["research_backend", "research_frontend"]
-skill         = "skills/plan"
+skill         = "../../examples/skills/plan"
 inputs        = ["@research_backend.summary", "@research_frontend.summary"]
 allowed_tools = ["Read", "Grep", "Glob"]
 
@@ -126,7 +126,7 @@ id            = "implement"
 type          = "agent"
 depends_on    = ["plan_review", "plan"]     # plan_review orders it; @plan.* refs require plan too
 when          = "plan_review == 'approve'"
-skill         = "skills/implement"
+skill         = "../../examples/skills/implement"
 inputs        = ["@plan.tasks", { ref = "@plan.approach", inline = true }]
 isolation     = "worktree"
 allowed_tools = ["Read", "Grep", "Glob", "Edit", "Write", "Bash"]
@@ -153,7 +153,7 @@ run        = "go build ./..."
 id          = "unit_test"
 type        = "command"
 depends_on  = ["implement"]
-script      = "scripts/test.sh"
+script      = "../../examples/scripts/test.sh"
 output      = "test-report.txt"
 on_failure  = "retry"
 max_retries = 2
@@ -171,7 +171,7 @@ max_retries = 2
 id            = "qa"
 type          = "agent"
 depends_on    = ["lint", "typecheck", "unit_test"]
-skill         = "skills/qa"
+skill         = "../../examples/skills/qa"
 inputs        = ["@unit_test"]
 allowed_tools = ["Read", "Grep", "Glob"]
 
@@ -207,7 +207,7 @@ id         = "ship"
 type       = "command"
 depends_on = ["final_review"]
 when       = "final_review == 'ship'"
-script     = "scripts/ship.sh"
+script     = "../../examples/scripts/ship.sh"
 
 [[step]]
 id         = "notify"

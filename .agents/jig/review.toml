@@ -29,8 +29,11 @@ permission_mode     = "acceptEdits"
 [[step]]
 id                   = "review"
 type                 = "agent"
-agent_file           = "agents/security-reviewer.md"
-inputs               = ["request.md"]
+agent_file           = "../../examples/agents/security-reviewer.md"
+inputs               = [
+  "../../examples/request.md",
+  { from = "user", label = "Any additional context or focus areas for the review?", as = "user_context" },
+]
 disallowed_tools     = ["Bash"]
 append_system_prompt = "Only report high and critical severity findings."
 effort               = "max"

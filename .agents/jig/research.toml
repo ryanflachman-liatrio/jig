@@ -10,8 +10,8 @@ permission_mode = "acceptEdits"
 [[step]]
 id            = "research"
 type          = "agent"
-skill         = "skills/research"
-inputs        = ["question.md"]
+skill         = "../../examples/skills/research"
+inputs        = ["../../examples/question.md"]
 allowed_tools = ["Read", "Grep", "Glob", "WebSearch"]
 
   [step.schema]
@@ -26,7 +26,7 @@ allowed_tools = ["Read", "Grep", "Glob", "WebSearch"]
 id            = "report"
 type          = "agent"
 depends_on    = ["research"]
-skill         = "skills/report"
+skill         = "../../examples/skills/report"
 inputs        = ["@research.summary", { ref = "@research.findings", inline = true }]
 when          = "research.status == 'complete'"
 output        = ".jig/artifacts/report.md"
