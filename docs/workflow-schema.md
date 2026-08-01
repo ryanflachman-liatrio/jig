@@ -97,6 +97,7 @@ Claude agent file** (exactly one of `skill` / `agent_file`).
 | `isolation`            | string   | `"worktree"` or `"none"`. See "Worktrees".                  |
 | `[step.schema]`        | table    | Structured output contract (TOML-native). See "Structured outputs". |
 | `schema_file`          | path     | Alternative to `[step.schema]`: a raw JSON Schema file.     |
+| `block_on`             | string   | Condition referencing the step's **own** schema output. See "Interactive input". |
 | `model` / `fallback_model` / `effort` / `max_turns` / `max_thinking_tokens` / `max_budget_usd` / `permission_mode` | | Override `[defaults]`. |
 
 **`SKILL.md` contract.** Agent Skills convention: YAML frontmatter (`name`,
@@ -127,10 +128,11 @@ Deterministic script/command; no agent context.
 
 Pauses the run, renders an upstream artifact for a human, and captures a verdict.
 
-| Field         | Type     | Notes                                                     |
-|---------------|----------|-----------------------------------------------------------|
-| `review`      | string   | `@stepid` (glamour-render that markdown) or `"diff"` (render the upstream worktree diff). |
-| `output_type` | table    | The decision, e.g. `{ enum = ["approve", "revise"] }`. Captured from the TUI. |
+| Field          | Type     | Notes                                                     |
+|----------------|----------|-----------------------------------------------------------|
+| `review`       | string   | `@stepid` (glamour-render that markdown) or `"diff"` (render the upstream worktree diff). |
+| `output_type`  | table    | The decision, e.g. `{ enum = ["approve", "revise"] }`. Captured from the TUI. |
+| `max_messages` | int      | How many free-text messages the human may send to the reviewed agent before giving a verdict. Default 10. See "Interactive input". |
 
 ---
 
@@ -284,6 +286,82 @@ output_type = { enum = ["approve", "revise"] }
   max_iterations = 3                # engine aborts the run past this
   feedback       = "@review"        # becomes an input to the target's next run
 ```
+
+---
+
+## Interactive input
+
+Two mechanisms let an agent and a human exchange information beyond a review gate.
+They are complementary: `block_on` is driven by the **agent** (it knows it needs
+clarification), while `max_messages` is driven by the **human** (they have a
+follow-up question after seeing the agent's output).
+
+### `block_on` — agent-initiated pause
+
+An agent step may declare `block_on` as a condition expression that references the
+step's **own** schema output field (the left-hand side must be the step's own id).
+
+```toml
+[[step]]
+id         = "security_scan"
+type       = "agent"
+agent_file = "agents/security-reviewer.md"
+block_on   = "security_scan.needs_input"   # must reference this step's own output
+
+  [step.schema]
+  needs_input = "bool"    # agent sets this true when it has a question
+  question    = "text"    # the agent's question, surfaced in the TUI
+  # …other fields…
+```
+
+**Execution flow:**
+
+1. The step runs and emits its structured output.
+2. The engine evaluates `block_on` against that output.
+3. If true, the step transitions to `StatusNeedsInput` and the TUI opens a compose
+   box. The human types their answer and submits.
+4. The agent **resumes the same session** with the human's response as the next
+   query, re-runs, and emits a new structured output.
+5. The engine re-evaluates `block_on`. If false, the step succeeds and downstream
+   steps proceed. If still true, step 3 repeats.
+6. A hard cap of **20 input rounds** applies. Exceeding it is a run error.
+
+`block_on` requires `[step.schema]` — the referenced field must be declared there
+and is type-checked by the validator.
+
+### `max_messages` — human-initiated follow-up at a review gate
+
+A review step may declare `max_messages` (default **10**) to allow the human to
+send free-text messages to the reviewed agent before giving the final verdict.
+
+```toml
+[[step]]
+id           = "plan_review"
+type         = "review"
+depends_on   = ["plan"]
+review       = "@plan.summary"             # must target an agent step
+output_type  = { enum = ["approve", "revise"] }
+max_messages = 5                           # human may send up to 5 messages
+```
+
+**Execution flow:**
+
+1. The review step fires; the TUI renders the reviewed content and the verdict
+   choices. If the message cap has not been reached, the TUI also offers a compose
+   box labelled **[m] message**.
+2. The human types a message. The engine resets both the reviewed agent step and
+   the review step to pending.
+3. The agent re-runs with the message fed in as additional context; the review
+   gate re-fires with the updated output.
+4. Steps 1–3 repeat until the human submits a verdict or the cap is hit.
+
+`max_messages` only has effect when `review = "@stepid"` (or `@stepid.field`)
+targeting an **agent** step. A `review = "diff"` step never enables messaging
+because diffs are not re-generated by re-running an agent.
+
+Setting `max_messages = 0` is treated the same as omitting it (the default 10
+applies). To disable messaging entirely, set a value that is effectively never
+reached, or rely on the fact that `review = "diff"` never enables it.
 
 ---
 

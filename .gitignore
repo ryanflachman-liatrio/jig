@@ -12,3 +12,4 @@ coverage.out
 # Editor / OS cruft
 .DS_Store
 *.swp
+/.claude/worktrees

@@ -40,6 +40,7 @@ skill         = "../../examples/skills/intake"
 inputs        = ["../../examples/request.md", { path = "../../examples/conventions.md", inline = true }]
 schema_file   = "../../examples/schemas/intake.json"
 allowed_tools = ["Read", "Grep", "Glob"]
+block_on      = "intake.status == 'needs_info'"
 
 # -----------------------------------------------------------------------------
 # 2. Research — TWO producer agents fan out in parallel (both depend only on

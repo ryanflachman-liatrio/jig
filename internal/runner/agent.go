@@ -170,12 +170,25 @@ func captureStream(msgChan <-chan claudecode.Message, req engine.StepRequest, re
 	// transcript, not this buffer, is the durable record.
 	var finalText string
 
+	// lastStructuredOutput tracks the last successfully-parsed StructuredOutput
+	// tool call input. In session mode the SDK's ResultMessage.StructuredOutput
+	// field is not populated by the CLI, so we capture it directly from the
+	// assistant message stream as a fallback.
+	var lastStructuredOutput json.RawMessage
+
 	for msg := range msgChan {
 		switch m := msg.(type) {
 		case *claudecode.AssistantMessage:
 			blocks, text := assistantBlocks(m)
 			if text != "" {
 				finalText = text
+			}
+			for _, cb := range m.Content {
+				if b, ok := cb.(*claudecode.ToolUseBlock); ok && b.Name == "StructuredOutput" {
+					if raw, err := json.Marshal(b.Input); err == nil && !strings.Contains(string(raw), `"__unparsedToolInput"`) {
+						lastStructuredOutput = raw
+					}
+				}
 			}
 			appendEntry(transcript.RoleAssistant, blocks)
 			if m.HasError() {
@@ -210,6 +223,8 @@ func captureStream(msgChan <-chan claudecode.Message, req engine.StepRequest, re
 				if raw, err := json.Marshal(m.StructuredOutput); err == nil {
 					result.Structured = raw
 				}
+			} else if lastStructuredOutput != nil {
+				result.Structured = lastStructuredOutput
 			}
 			if req.Step.Output != "" && finalText != "" {
 				outPath := req.Step.Output
