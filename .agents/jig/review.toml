@@ -30,6 +30,7 @@ permission_mode     = "acceptEdits"
 id                   = "review"
 type                 = "agent"
 agent_file           = "../../examples/agents/security-reviewer.md"
+profile              = "@interactive"
 inputs               = [
   "../../examples/request.md",
   { from = "user", label = "Any additional context or focus areas for the review?", as = "user_context" },

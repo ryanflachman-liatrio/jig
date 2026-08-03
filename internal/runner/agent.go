@@ -40,6 +40,11 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 	if err != nil {
 		return failResult(fmt.Sprintf("build options: %v", err), start), nil
 	}
+	// If the step enables AskUserQuestion, register the in-process MCP server
+	// so the CLI recognises mcp__jig__AskUserQuestion (rewritten in buildOptions).
+	if containsStr(req.Step.AllowedTools, "AskUserQuestion") {
+		opts = append(opts, claudecode.WithSdkMcpServer("jig", buildAskUserQuestionServer(rep)))
+	}
 	if req.Worktree != "" {
 		opts = append(opts, claudecode.WithCwd(req.Worktree))
 	}
@@ -79,7 +84,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 	if req.ResumeSessionID != "" {
 		initialMsg = req.Message
 	}
-	return captureStream(msgChan, req, rep, start, initialMsg, sendCh)
+	return captureStream(msgChan, req, rep, start, initialMsg)
 }
 
 // buildOptions translates a step's already-defaulted model/tool/permission
@@ -112,7 +117,10 @@ func buildOptions(st *workflow.Step) ([]claudecode.Option, error) {
 		opts = append(opts, claudecode.WithPermissionMode(claudecode.PermissionMode(st.PermissionMode)))
 	}
 	if len(st.AllowedTools) > 0 {
-		opts = append(opts, claudecode.WithAllowedTools(st.AllowedTools...))
+		// AskUserQuestion is not a Claude Code built-in; it is implemented as an
+		// in-process MCP tool. Rewrite it to the MCP-qualified name so the CLI
+		// recognises it. The server is registered separately in Execute.
+		opts = append(opts, claudecode.WithAllowedTools(rewriteAskUserQuestion(st.AllowedTools)...))
 	}
 	if len(st.DisallowedTools) > 0 {
 		opts = append(opts, claudecode.WithDisallowedTools(st.DisallowedTools...))
@@ -129,6 +137,77 @@ func buildOptions(st *workflow.Step) ([]claudecode.Option, error) {
 		opts = append(opts, claudecode.WithJSONSchema(m))
 	}
 	return opts, nil
+}
+
+// rewriteAskUserQuestion replaces every "AskUserQuestion" entry in tools with
+// "mcp__jig__AskUserQuestion". The Claude Code CLI does not expose AskUserQuestion
+// as a built-in; jig registers it as an in-process MCP server so the CLI uses
+// the MCP-qualified name in its allowed-tools list.
+func rewriteAskUserQuestion(tools []string) []string {
+	out := make([]string, len(tools))
+	copy(out, tools)
+	for i, t := range out {
+		if t == "AskUserQuestion" {
+			out[i] = "mcp__jig__AskUserQuestion"
+		}
+	}
+	return out
+}
+
+// buildAskUserQuestionServer creates an in-process MCP server named "jig" that
+// exposes one tool: AskUserQuestion. When the agent calls the tool the handler
+// blocks on rep.Question, which pauses the step and surfaces the question in the
+// TUI. The SDK injects the answer back into the conversation as a tool result,
+// so no manual sendCh injection is needed.
+func buildAskUserQuestionServer(rep engine.Reporter) *claudecode.McpSdkServerConfig {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"questions": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"header":      map[string]any{"type": "string"},
+						"question":    map[string]any{"type": "string"},
+						"multiSelect": map[string]any{"type": "boolean"},
+						"options": map[string]any{
+							"type": "array",
+							"items": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"label":       map[string]any{"type": "string"},
+									"description": map[string]any{"type": "string"},
+								},
+								"required": []any{"label", "description"},
+							},
+						},
+					},
+					"required": []any{"question"},
+				},
+			},
+		},
+		"required": []any{"questions"},
+	}
+	tool := claudecode.NewTool(
+		"AskUserQuestion",
+		"Ask the user one or more questions and wait for their answer before continuing.",
+		schema,
+		func(_ context.Context, args map[string]any) (*claudecode.McpToolResult, error) {
+			questions, err := parseAskUserQuestions(args)
+			if err != nil {
+				return &claudecode.McpToolResult{
+					IsError: true,
+					Content: []claudecode.McpContent{{Type: "text", Text: err.Error()}},
+				}, nil
+			}
+			answer := rep.Question("ask-user-question", questions)
+			return &claudecode.McpToolResult{
+				Content: []claudecode.McpContent{{Type: "text", Text: answer}},
+			}, nil
+		},
+	)
+	return claudecode.CreateSDKMcpServer("jig", "1.0.0", tool)
 }
 
 // captureStream consumes the SDK message stream, appending each message to the
@@ -151,7 +230,6 @@ func captureStream(
 	rep engine.Reporter,
 	start time.Time,
 	initialUserMsg string,
-	send chan<- claudecode.StreamMessage,
 ) (*step.Result, error) {
 	var w *transcript.Writer
 	if req.TranscriptPath != "" {
@@ -205,56 +283,6 @@ func captureStream(
 					Type: transcript.BlockText,
 					Text: fmt.Sprintf("assistant error: %s", m.GetError()),
 				}})
-			}
-			// Intercept AskUserQuestion: pause execution, collect human answers, inject
-			// all tool results in a single user turn. Batching into one message is
-			// required when the agent issues multiple AskUserQuestion calls in the same
-			// AssistantMessage; sequential separate sends would violate the SDK contract.
-			if send != nil {
-				type pendingAnswer struct {
-					toolUseID string
-					content   string
-					isError   bool
-				}
-				var pending []pendingAnswer
-				for _, cb := range m.Content {
-					b, ok := cb.(*claudecode.ToolUseBlock)
-					if !ok || b.Name != "AskUserQuestion" {
-						continue
-					}
-					questions, err := parseAskUserQuestions(b.Input)
-					if err != nil {
-						pending = append(pending, pendingAnswer{
-							toolUseID: b.ToolUseID,
-							content:   fmt.Sprintf("failed to parse question: %v", err),
-							isError:   true,
-						})
-						continue
-					}
-					answer := rep.Question(b.ToolUseID, questions)
-					pending = append(pending, pendingAnswer{toolUseID: b.ToolUseID, content: answer})
-				}
-				if len(pending) > 0 {
-					content := make([]map[string]interface{}, len(pending))
-					for i, p := range pending {
-						entry := map[string]interface{}{
-							"type":        "tool_result",
-							"tool_use_id": p.toolUseID,
-							"content":     p.content,
-						}
-						if p.isError {
-							entry["is_error"] = true
-						}
-						content[i] = entry
-					}
-					send <- claudecode.StreamMessage{
-						Type: "user",
-						Message: map[string]interface{}{
-							"role":    "user",
-							"content": content,
-						},
-					}
-				}
 			}
 		case *claudecode.UserMessage:
 			appendEntry(transcript.RoleUser, toolResultBlocks(m))
@@ -511,6 +539,15 @@ func parseAskUserQuestions(input map[string]any) ([]engine.AgentQuestionItem, er
 		}
 	}
 	return out, nil
+}
+
+func containsStr(ss []string, s string) bool {
+	for _, x := range ss {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 // Ensure AgentExecutor satisfies engine.Executor at compile time.

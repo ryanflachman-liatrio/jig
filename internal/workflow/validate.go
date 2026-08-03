@@ -144,7 +144,7 @@ func (v *validator) checkTuning(s *Step) {
 // excluded: they flow onto every step from [defaults] and are simply ignored by
 // non-agent steps.
 func hasAgentOnlyFields(s *Step) bool {
-	return s.Skill != "" || s.AgentFile != "" ||
+	return s.Skill != "" || s.AgentFile != "" || s.Profile != "" ||
 		len(s.AllowedTools) > 0 || len(s.DisallowedTools) > 0 ||
 		s.AppendSystemPrompt != "" || s.BlockOn != ""
 }
@@ -199,7 +199,30 @@ func (v *validator) checkSchema(s *Step) {
 	}
 }
 
+// checkProfile validates the profile field on an agent step.
+func (v *validator) checkProfile(s *Step) {
+	if s.Profile == "" {
+		return
+	}
+	if !strings.HasPrefix(s.Profile, "@") {
+		v.errf("agent step %q: profile %q must start with '@'", s.ID, s.Profile)
+		return
+	}
+	p, ok := v.wf.profileIndex[s.Profile]
+	if !ok {
+		v.errf("agent step %q: unknown profile %q", s.ID, s.Profile)
+		return
+	}
+	// block_on and AskUserQuestion both pause the agent for human input but via
+	// completely different engine paths; combining them on the same step is a
+	// design error.
+	if p.AskUserQuestion && s.BlockOn != "" {
+		v.errf("agent step %q: block_on and AskUserQuestion (from profile %q) serve overlapping purposes; use one", s.ID, s.Profile)
+	}
+}
+
 func (v *validator) checkAgent(s *Step) {
+	v.checkProfile(s)
 	// A step is driven by exactly one of a skill dir or a Claude agent file.
 	switch {
 	case s.Skill == "" && s.AgentFile == "":

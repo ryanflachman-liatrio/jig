@@ -795,6 +795,197 @@ effort     = "low"
 	}
 }
 
+func TestDecodeProfileValid(t *testing.T) {
+	// minAgent is the smallest valid agent-step TOML, minus any profile.
+	const hdr = `
+[workflow]
+name = "x"
+version = "1"
+`
+	cases := []struct {
+		name          string
+		toml          string
+		checkStep     string
+		wantTools     []string
+		wantDisallowed []string
+	}{
+		{
+			name: "@interactive on step with no tools injects AskUserQuestion",
+			toml: hdr + `
+[[step]]
+id = "ask"
+type = "agent"
+skill = "s"
+profile = "@interactive"
+`,
+			checkStep: "ask",
+			wantTools: []string{"AskUserQuestion"},
+		},
+		{
+			name: "@interactive on step with explicit tools appends AskUserQuestion",
+			toml: hdr + `
+[[step]]
+id = "ask"
+type = "agent"
+skill = "s"
+profile = "@interactive"
+allowed_tools = ["Read", "Grep"]
+`,
+			checkStep: "ask",
+			wantTools: []string{"Read", "Grep", "AskUserQuestion"},
+		},
+		{
+			name: "@interactive does not add AskUserQuestion twice",
+			toml: hdr + `
+[[step]]
+id = "ask"
+type = "agent"
+skill = "s"
+profile = "@interactive"
+allowed_tools = ["AskUserQuestion", "Read"]
+`,
+			checkStep: "ask",
+			wantTools: []string{"AskUserQuestion", "Read"},
+		},
+		{
+			name: "@autonomous sets disallowed_tools",
+			toml: hdr + `
+[[step]]
+id = "bot"
+type = "agent"
+skill = "s"
+profile = "@autonomous"
+`,
+			checkStep:      "bot",
+			wantDisallowed: []string{"AskUserQuestion"},
+		},
+		{
+			name: "explicit disallowed_tools wins over @autonomous",
+			toml: hdr + `
+[[step]]
+id = "bot"
+type = "agent"
+skill = "s"
+profile = "@autonomous"
+disallowed_tools = ["Bash"]
+`,
+			checkStep:      "bot",
+			wantDisallowed: []string{"Bash"},
+		},
+	}
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "s"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(dir, "s", "SKILL.md"), "# skill")
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wf, err := Decode(tc.toml, dir)
+			if err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+			s := wf.Steps[wf.index[tc.checkStep]]
+			if tc.wantTools != nil {
+				if got := strings.Join(s.AllowedTools, ","); got != strings.Join(tc.wantTools, ",") {
+					t.Errorf("AllowedTools = %q, want %q", got, strings.Join(tc.wantTools, ","))
+				}
+			}
+			if tc.wantDisallowed != nil {
+				if got := strings.Join(s.DisallowedTools, ","); got != strings.Join(tc.wantDisallowed, ",") {
+					t.Errorf("DisallowedTools = %q, want %q", got, strings.Join(tc.wantDisallowed, ","))
+				}
+			}
+		})
+	}
+}
+
+func TestDecodeProfileInvalid(t *testing.T) {
+	const hdr = `
+[workflow]
+name = "x"
+version = "1"
+`
+	cases := []struct {
+		name string
+		toml string
+		want string
+	}{
+		{
+			name: "unknown profile",
+			toml: hdr + `
+[[step]]
+id = "a"
+type = "agent"
+skill = "s"
+profile = "@nonexistent"
+`,
+			want: `unknown profile "@nonexistent"`,
+		},
+		{
+			name: "profile without @ prefix",
+			toml: hdr + `
+[[step]]
+id = "a"
+type = "agent"
+skill = "s"
+profile = "interactive"
+`,
+			want: `profile "interactive" must start with '@'`,
+		},
+		{
+			name: "profile on command step",
+			toml: hdr + `
+[[step]]
+id = "a"
+type = "command"
+run = "true"
+profile = "@interactive"
+`,
+			want: "fields belonging to another step type",
+		},
+		{
+			name: "profile on review step",
+			toml: hdr + `
+[[step]]
+id = "a"
+type = "review"
+review = "diff"
+output_type = "bool"
+profile = "@interactive"
+`,
+			want: "fields belonging to another step type",
+		},
+		{
+			name: "@interactive combined with block_on",
+			toml: hdr + `
+[[step]]
+id = "a"
+type = "agent"
+skill = "s"
+profile = "@interactive"
+block_on = "a.needs_input"
+[step.schema]
+needs_input = "bool"
+`,
+			want: "overlapping purposes",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Decode(tc.toml, "")
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %q, want substring %q", err.Error(), tc.want)
+			}
+		})
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

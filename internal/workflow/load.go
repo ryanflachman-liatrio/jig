@@ -41,11 +41,23 @@ func Decode(data, baseDir string) (*Workflow, error) {
 		return nil, fmt.Errorf("unknown key(s) in workflow: %s", formatKeys(keys))
 	}
 
-	// Resolve agent files before applyDefaults so file-derived tools/model feed
-	// into worktree-isolation and [defaults] inheritance.
+	// Resolve agent files before profiles/defaults so file-derived tools/model
+	// feed into worktree-isolation and [defaults] inheritance.
 	if err := wf.resolveAgentFiles(baseDir); err != nil {
 		return nil, err
 	}
+
+	// Load built-in and project-local profiles, then apply them. Profiles run
+	// after agent_file resolution (explicit step fields and file-derived values
+	// both outrank the profile) and before applyDefaults ([defaults] is weakest).
+	localProfiles, err := loadProfiles(baseDir)
+	if err != nil {
+		return nil, err
+	}
+	all := append(builtinProfiles(), localProfiles...)
+	wf.profileIndex = buildProfileIndex(all)
+	wf.applyProfiles()
+
 	wf.applyDefaults()
 	if err := wf.validate(baseDir); err != nil {
 		return nil, err
@@ -115,6 +127,74 @@ func (wf *Workflow) applyDefaults() {
 			s.Isolation = IsolationNone
 		}
 	}
+}
+
+// applyProfiles folds each step's referenced AgentProfile into the step's
+// fields, using the same zero-value semantics as applyDefaults: profile values
+// only fill in fields the step (and agent_file, if any) left unset.
+//
+// AskUserQuestion injection is the one exception: it is always additive,
+// appending the tool even if the step already has an explicit AllowedTools
+// list, so that @interactive reliably enables the tool regardless of what else
+// is listed.
+func (wf *Workflow) applyProfiles() {
+	if wf.profileIndex == nil {
+		return
+	}
+	for i := range wf.Steps {
+		s := &wf.Steps[i]
+		if s.Profile == "" {
+			continue
+		}
+		p, ok := wf.profileIndex[s.Profile]
+		if !ok {
+			continue // unknown profile; validator will report the error
+		}
+		if len(s.AllowedTools) == 0 && len(p.Tools) > 0 {
+			s.AllowedTools = p.Tools
+		}
+		if len(s.DisallowedTools) == 0 && len(p.DisallowedTools) > 0 {
+			s.DisallowedTools = p.DisallowedTools
+		}
+		if s.Model == "" && p.Model != "" {
+			s.Model = p.Model
+		}
+		if s.FallbackModel == "" && p.FallbackModel != "" {
+			s.FallbackModel = p.FallbackModel
+		}
+		if s.Effort == "" && p.Effort != "" {
+			s.Effort = p.Effort
+		}
+		if s.MaxTurns == 0 && p.MaxTurns != 0 {
+			s.MaxTurns = p.MaxTurns
+		}
+		if s.MaxThinkingTokens == 0 && p.MaxThinkingTokens != 0 {
+			s.MaxThinkingTokens = p.MaxThinkingTokens
+		}
+		if s.MaxBudgetUSD == 0 && p.MaxBudgetUSD != 0 {
+			s.MaxBudgetUSD = p.MaxBudgetUSD
+		}
+		if s.PermissionMode == "" && p.PermissionMode != "" {
+			s.PermissionMode = p.PermissionMode
+		}
+		if s.AppendSystemPrompt == "" && p.AppendSystemPrompt != "" {
+			s.AppendSystemPrompt = p.AppendSystemPrompt
+		}
+		if p.AskUserQuestion {
+			injectAskUserQuestion(s)
+		}
+	}
+}
+
+// injectAskUserQuestion appends "AskUserQuestion" to s.AllowedTools if it is
+// not already present.
+func injectAskUserQuestion(s *Step) {
+	for _, t := range s.AllowedTools {
+		if t == "AskUserQuestion" {
+			return
+		}
+	}
+	s.AllowedTools = append(s.AllowedTools, "AskUserQuestion")
 }
 
 // formatKeys renders BurntSushi's dotted keys for an error message.

@@ -105,6 +105,31 @@ type Workflow struct {
 	// index maps step id -> position in Steps, populated by applyDefaults so
 	// validation and later execution can resolve references in O(1).
 	index map[string]int
+	// profileIndex maps profile id (e.g. "@interactive") -> AgentProfile,
+	// populated at load time from built-ins and .agents/jig/profiles/*.toml.
+	profileIndex map[string]*AgentProfile
+}
+
+// AgentProfile is a reusable bundle of agent configuration. Profiles let
+// workflow authors give a step a named "personality" (tool access, model
+// knobs, interaction style) without repeating the same fields on every step.
+// Built-in profiles are hard-coded in profiles.go; project-local profiles
+// live in .agents/jig/profiles/*.toml using [[agent]] tables.
+type AgentProfile struct {
+	ID                string      `toml:"id"`
+	Tools             []string    `toml:"tools"`
+	DisallowedTools   []string    `toml:"disallowed_tools"`
+	Model             string      `toml:"model"`
+	FallbackModel     string      `toml:"fallback_model"`
+	Effort            EffortLevel `toml:"effort"`
+	MaxTurns          int         `toml:"max_turns"`
+	MaxThinkingTokens int         `toml:"max_thinking_tokens"`
+	MaxBudgetUSD      float64     `toml:"max_budget_usd"`
+	PermissionMode    string      `toml:"permission_mode"`
+	// AskUserQuestion injects "AskUserQuestion" into the step's AllowedTools
+	// so the agent can pause mid-run to collect human input via the TUI.
+	AskUserQuestion    bool   `toml:"ask_user_question"`
+	AppendSystemPrompt string `toml:"append_system_prompt"`
 }
 
 // Meta is the top-level [workflow] table.
@@ -144,6 +169,7 @@ type Step struct {
 	// Agent-only.
 	Skill     string    `toml:"skill"`
 	AgentFile string    `toml:"agent_file"` // xor with Skill: a Claude agent .md file
+	Profile   string    `toml:"profile"`    // "@id" references a named AgentProfile
 	Inputs    []Input   `toml:"inputs"`
 	Isolation Isolation `toml:"isolation"`
 
