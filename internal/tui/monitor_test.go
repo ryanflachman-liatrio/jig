@@ -11,6 +11,7 @@ import (
 
 	"jig/internal/datastore"
 	"jig/internal/engine"
+	"jig/internal/step"
 	"jig/internal/transcript"
 )
 
@@ -405,5 +406,243 @@ func TestMonitorMessageCount(t *testing.T) {
 	}})
 	if got := m.msgCount["a"]; got != 3 {
 		t.Fatalf("stale seq lowered count to %d", got)
+	}
+}
+
+// TestMonitorAgentQuestionShowsPanel verifies that an AgentQuestion event shows
+// the question overlay in modeList and updates the footer status.
+func TestMonitorAgentQuestionShowsPanel(t *testing.T) {
+	m := newMonitorWithSteps(t)
+
+	m, _ = m.Update(engineEventMsg{event: engine.AgentQuestion{
+		RunID:     "run-1",
+		StepID:    "a",
+		ToolUseID: "tu1",
+		Questions: []engine.AgentQuestionItem{
+			{
+				Header:   "Format",
+				Question: "Which format should we use?",
+				Options: []engine.AgentQuestionOption{
+					{Label: "JSON", Description: "structured output"},
+					{Label: "Text", Description: "plain output"},
+				},
+			},
+		},
+	}})
+
+	if m.pendingQuestion == nil {
+		t.Fatal("pendingQuestion not set after AgentQuestion event")
+	}
+	if m.mode != modeList {
+		t.Fatalf("expected modeList after AgentQuestion, got %v", m.mode)
+	}
+
+	body := m.body()
+	for _, want := range []string{"Agent question", "Which format should we use?", "[Format]", "[1] JSON", "[2] Text", "structured output"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("question body missing %q:\n%s", want, body)
+		}
+	}
+	if !strings.Contains(m.footerView(), "awaiting answer") {
+		t.Fatalf("footer missing 'awaiting answer':\n%s", m.footerView())
+	}
+}
+
+// TestMonitorAgentQuestionSelectEmits verifies that pressing a digit key for a
+// single-select question emits agentQuestionResponseMsg with the correct answer.
+func TestMonitorAgentQuestionSelectEmits(t *testing.T) {
+	m := newMonitorWithSteps(t)
+
+	m, _ = m.Update(engineEventMsg{event: engine.AgentQuestion{
+		RunID:     "run-1",
+		StepID:    "a",
+		ToolUseID: "tu1",
+		Questions: []engine.AgentQuestionItem{
+			{
+				Question: "Pick one",
+				Options: []engine.AgentQuestionOption{
+					{Label: "Alpha"},
+					{Label: "Beta"},
+				},
+			},
+		},
+	}})
+
+	m, cmd := m.Update(key("2"))
+	if cmd == nil {
+		t.Fatal("digit key produced no command")
+	}
+	msg, ok := cmd().(agentQuestionResponseMsg)
+	if !ok {
+		t.Fatalf("expected agentQuestionResponseMsg, got %T", cmd())
+	}
+	if msg.toolUseID != "tu1" {
+		t.Fatalf("expected toolUseID tu1, got %q", msg.toolUseID)
+	}
+	if !strings.Contains(msg.answer, "Beta") {
+		t.Fatalf("expected answer to contain 'Beta', got %q", msg.answer)
+	}
+	if m.pendingQuestion != nil {
+		t.Fatal("pendingQuestion should be cleared after answer is submitted")
+	}
+}
+
+// TestMonitorAgentQuestionMultiSelect verifies that multiSelect questions require
+// toggling and enter to confirm, and accumulate multiple selections.
+func TestMonitorAgentQuestionMultiSelect(t *testing.T) {
+	m := newMonitorWithSteps(t)
+
+	m, _ = m.Update(engineEventMsg{event: engine.AgentQuestion{
+		RunID:     "run-1",
+		StepID:    "a",
+		ToolUseID: "tu2",
+		Questions: []engine.AgentQuestionItem{
+			{
+				Question:    "Select features",
+				MultiSelect: true,
+				Options: []engine.AgentQuestionOption{
+					{Label: "Cache"},
+					{Label: "Retry"},
+					{Label: "Logging"},
+				},
+			},
+		},
+	}})
+
+	// Toggle options 1 and 3.
+	m, _ = m.Update(key("1"))
+	m, _ = m.Update(key("3"))
+
+	body := m.body()
+	if !strings.Contains(body, "[x]") {
+		t.Fatalf("toggled options not shown:\n%s", body)
+	}
+
+	// A digit toggle in multiSelect mode should not emit a response.
+	_, cmd := m.Update(key("2"))
+	if cmd != nil {
+		if result := cmd(); result != nil {
+			t.Fatalf("digit toggle in multiSelect emitted unexpected message: %T", result)
+		}
+	}
+
+	// Toggle option 1 back off; confirm with enter.
+	m, _ = m.Update(key("1"))
+	m, cmd = m.Update(key("enter"))
+	if cmd == nil {
+		t.Fatal("enter produced no command")
+	}
+	resp, ok := cmd().(agentQuestionResponseMsg)
+	if !ok {
+		t.Fatalf("expected agentQuestionResponseMsg, got %T", cmd())
+	}
+	if !strings.Contains(resp.answer, "Logging") {
+		t.Fatalf("expected Logging in answer, got %q", resp.answer)
+	}
+	if strings.Contains(resp.answer, "Cache") {
+		t.Fatalf("Cache was toggled off but appears in answer: %q", resp.answer)
+	}
+}
+
+// TestMonitorAgentQuestionFreezesNavigation confirms j/k are swallowed while a
+// question overlay is active (like the review overlay).
+func TestMonitorAgentQuestionFreezesNavigation(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	m, _ = m.Update(engineEventMsg{event: engine.AgentQuestion{
+		RunID:     "run-1",
+		StepID:    "a",
+		ToolUseID: "tu1",
+		Questions: []engine.AgentQuestionItem{
+			{Question: "Q?", Options: []engine.AgentQuestionOption{{Label: "A"}}},
+		},
+	}})
+
+	before := m.cursor
+	m, _ = m.Update(key("j"))
+	if m.cursor != before {
+		t.Fatalf("j moved cursor during question overlay: %d → %d", before, m.cursor)
+	}
+}
+
+// TestMonitorStepSubtypeBadge verifies that a failed step with a policy-limit
+// subtype (error_max_turns, error_max_budget_usd) shows its annotation in the
+// list body, and that ordinary failures show no annotation.
+func TestMonitorStepSubtypeBadge(t *testing.T) {
+	m := newMonitorWithSteps(t)
+
+	// Step "a" fails with error_max_turns.
+	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+		RunID:   "run-1",
+		StepID:  "a",
+		From:    step.StatusRunning,
+		To:      step.StatusFailed,
+		Err:     "agent reached the maximum turn limit",
+		Subtype: "error_max_turns",
+	}})
+	// Step "b" fails with error_max_budget_usd.
+	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+		RunID:   "run-1",
+		StepID:  "b",
+		From:    step.StatusRunning,
+		To:      step.StatusFailed,
+		Err:     "agent exceeded the maximum USD budget",
+		Subtype: "error_max_budget_usd",
+	}})
+	// Step "c" fails with a plain API error (no subtype annotation expected).
+	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+		RunID:   "run-1",
+		StepID:  "c",
+		From:    step.StatusRunning,
+		To:      step.StatusFailed,
+		Err:     "unknown agent error",
+		Subtype: "error_during_execution",
+	}})
+
+	body := m.body()
+	if !strings.Contains(body, "[max turns]") {
+		t.Fatalf("list body missing [max turns] annotation:\n%s", body)
+	}
+	if !strings.Contains(body, "[budget]") {
+		t.Fatalf("list body missing [budget] annotation:\n%s", body)
+	}
+	// Verify step "c" (error_during_execution) shows no special annotation.
+	// We can't easily assert a negative per-line, so verify subtypeBadgeLabel directly.
+	if subtypeBadgeLabel("error_during_execution") != "" {
+		t.Error("error_during_execution should have no badge label")
+	}
+	if subtypeBadgeLabel("error_max_turns") != "[max turns]" {
+		t.Error("error_max_turns badge label mismatch")
+	}
+	if subtypeBadgeLabel("error_max_budget_usd") != "[budget]" {
+		t.Error("error_max_budget_usd badge label mismatch")
+	}
+}
+
+// TestMonitorAgentQuestionClearsOnResume verifies that pendingQuestion is cleared
+// when the step transitions away from StatusNeedsInput.
+func TestMonitorAgentQuestionClearsOnResume(t *testing.T) {
+	m := newMonitorWithSteps(t)
+
+	m, _ = m.Update(engineEventMsg{event: engine.AgentQuestion{
+		RunID:     "run-1",
+		StepID:    "a",
+		ToolUseID: "tu1",
+		Questions: []engine.AgentQuestionItem{
+			{Question: "Q?", Options: []engine.AgentQuestionOption{{Label: "A"}}},
+		},
+	}})
+	if m.pendingQuestion == nil {
+		t.Fatal("pendingQuestion should be set")
+	}
+
+	// Simulate the step resuming after the answer is delivered.
+	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+		RunID:  "run-1",
+		StepID: "a",
+		From:   step.StatusNeedsInput,
+		To:     step.StatusRunning,
+	}})
+	if m.pendingQuestion != nil {
+		t.Fatal("pendingQuestion should be cleared when step leaves StatusNeedsInput")
 	}
 }

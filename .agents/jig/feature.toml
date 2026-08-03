@@ -55,6 +55,7 @@ when          = "intake.status == 'ready'"
 skill         = "../../examples/skills/research"
 inputs        = ["@intake.areas"]
 allowed_tools = ["Read", "Grep", "Glob", "WebSearch"]
+block_on      = "research_backend.status == 'blocked'"
 
   # A subtable of the most-recent [[step]] is written [step.schema] — it binds
   # to the step above, not to a step named "step".
@@ -73,6 +74,7 @@ when          = "intake.status == 'ready'"
 skill         = "../../examples/skills/research"
 inputs        = ["@intake.areas"]
 allowed_tools = ["Read", "Grep", "Glob", "WebSearch"]
+block_on      = "research_frontend.status == 'blocked'"
 
   [step.schema]
   summary    = "text"

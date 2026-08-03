@@ -73,8 +73,22 @@ type agentInputMsg struct {
 	text   string
 }
 
+// agentQuestionResponseMsg is emitted by the monitor when the user answers an
+// AskUserQuestion call. The root delivers it via Run.AnswerQuestion.
+type agentQuestionResponseMsg struct {
+	runID     string
+	stepID    string
+	toolUseID string
+	answer    string
+}
+
 // engineEventMsg wraps one engine.Event for delivery as a tea.Msg.
-type engineEventMsg struct{ event engine.Event }
+// isLive distinguishes which channel the event arrived on so the root can
+// re-arm the correct drain loop after processing.
+type engineEventMsg struct {
+	event  engine.Event
+	isLive bool
+}
 
 // ── root model ───────────────────────────────────────────────────────────────
 
@@ -85,11 +99,12 @@ type rootModel struct {
 	runs     runsModel
 	monitor  monitorModel
 
-	ctx     context.Context
-	dark    bool
-	manager *engine.Manager
-	events  <-chan engine.Event
-	handles map[string]*engine.Run // runID → Run handle, for Snapshot()
+	ctx        context.Context
+	dark       bool
+	manager    *engine.Manager
+	liveEvents <-chan engine.Event
+	ctrlEvents <-chan engine.Event
+	handles    map[string]*engine.Run // runID → Run handle, for Snapshot()
 
 	width  int
 	height int
@@ -99,22 +114,25 @@ type rootModel struct {
 // non-nil. darkBackground must be detected before tea.NewProgram takes over
 // stdin (see cmd/jig/main.go).
 func New(ctx context.Context, darkBackground bool, mgr *engine.Manager) tea.Model {
+	live, ctrl := mgr.Subscribe()
 	return rootModel{
-		active:   screenSelector,
-		selector: newSelectorModel(),
-		runs:     newRunsModel(),
-		ctx:      ctx,
-		dark:     darkBackground,
-		manager:  mgr,
-		events:   mgr.Subscribe(),
-		handles:  make(map[string]*engine.Run),
+		active:     screenSelector,
+		selector:   newSelectorModel(),
+		runs:       newRunsModel(),
+		ctx:        ctx,
+		dark:       darkBackground,
+		manager:    mgr,
+		liveEvents: live,
+		ctrlEvents: ctrl,
+		handles:    make(map[string]*engine.Run),
 	}
 }
 
 func (m rootModel) Init() tea.Cmd {
 	return tea.Batch(
 		discoverWorkflowsCmd(workflowsDir),
-		waitForEngineEventCmd(m.events),
+		waitForLiveEventCmd(m.liveEvents),
+		waitForCtrlEventCmd(m.ctrlEvents),
 	)
 }
 
@@ -141,7 +159,13 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var rc, mc tea.Cmd
 		m.runs, rc = m.runs.Update(msg)
 		m.monitor, mc = m.monitor.Update(msg)
-		return m, tea.Batch(waitForEngineEventCmd(m.events), rc, mc)
+		var rearm tea.Cmd
+		if msg.isLive {
+			rearm = waitForLiveEventCmd(m.liveEvents)
+		} else {
+			rearm = waitForCtrlEventCmd(m.ctrlEvents)
+		}
+		return m, tea.Batch(rearm, rc, mc)
 
 	// ── navigation ────────────────────────────────────────────────────────
 	case showDetailMsg:
@@ -211,6 +235,12 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case agentQuestionResponseMsg:
+		if run, ok := m.handles[msg.runID]; ok {
+			run.AnswerQuestion(msg.stepID, msg.toolUseID, msg.answer)
+		}
+		return m, nil
+
 	case userInputResponseMsg:
 		if run, ok := m.handles[msg.runID]; ok {
 			run.ProvideUserInput(msg.stepID, msg.as, msg.text)
@@ -264,15 +294,26 @@ func (m rootModel) View() string {
 	}
 }
 
-// waitForEngineEventCmd returns a tea.Cmd that blocks until one event arrives
-// on ch, then wraps it as an engineEventMsg. The root re-arms it after each
-// delivery, creating a permanent event-drain loop.
-func waitForEngineEventCmd(ch <-chan engine.Event) tea.Cmd {
+// waitForLiveEventCmd drains one event from the live (liveness-signal) channel.
+// The root re-arms it after each delivery, keeping a permanent drain loop running.
+func waitForLiveEventCmd(ch <-chan engine.Event) tea.Cmd {
 	return func() tea.Msg {
 		e, ok := <-ch
 		if !ok {
-			return nil // channel closed; stop draining
+			return nil
 		}
-		return engineEventMsg{event: e}
+		return engineEventMsg{event: e, isLive: true}
+	}
+}
+
+// waitForCtrlEventCmd drains one event from the ctrl (critical-control) channel.
+// The root re-arms it after each delivery, keeping a permanent drain loop running.
+func waitForCtrlEventCmd(ch <-chan engine.Event) tea.Cmd {
+	return func() tea.Msg {
+		e, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return engineEventMsg{event: e, isLive: false}
 	}
 }

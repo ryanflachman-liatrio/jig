@@ -57,6 +57,16 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 
 	msgChan := client.ReceiveMessages(ctx)
 
+	// sendCh carries tool-result messages injected mid-session (e.g. AskUserQuestion
+	// answers). QueryStream starts a goroutine that reads from sendCh and forwards
+	// each message to the SDK transport; closing sendCh signals end-of-stream.
+	sendCh := make(chan claudecode.StreamMessage, 4)
+	if err := client.QueryStream(ctx, sendCh); err != nil {
+		close(sendCh)
+		return failResult(fmt.Sprintf("agent query stream: %v", err), start), nil
+	}
+	defer close(sendCh)
+
 	query := buildAgentPrompt(req)
 	if req.ResumeSessionID != "" {
 		query = req.Message
@@ -69,7 +79,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 	if req.ResumeSessionID != "" {
 		initialMsg = req.Message
 	}
-	return captureStream(msgChan, req, rep, start, initialMsg)
+	return captureStream(msgChan, req, rep, start, initialMsg, sendCh)
 }
 
 // buildOptions translates a step's already-defaulted model/tool/permission
@@ -126,11 +136,23 @@ func buildOptions(st *workflow.Step) ([]claudecode.Option, error) {
 // step Result. It is split out of Execute so tests can drive it with a scripted
 // channel — no live SDK connection required (see agent_test.go).
 //
+// send, when non-nil, is a channel for injecting tool-result messages back into
+// the running agent session (used for AskUserQuestion interception). Pass nil
+// when no mid-session injection is needed (e.g. in tests that don't exercise
+// that path).
+//
 // The transcript file is the durable source of truth; rep.Output deltas are an
 // ephemeral preview of the not-yet-finalized assistant bubble and are never
 // persisted. When req.TranscriptPath is empty (persistence off) no transcript
 // is written and no rep.Message signals are emitted.
-func captureStream(msgChan <-chan claudecode.Message, req engine.StepRequest, rep engine.Reporter, start time.Time, initialUserMsg string) (*step.Result, error) {
+func captureStream(
+	msgChan <-chan claudecode.Message,
+	req engine.StepRequest,
+	rep engine.Reporter,
+	start time.Time,
+	initialUserMsg string,
+	send chan<- claudecode.StreamMessage,
+) (*step.Result, error) {
 	var w *transcript.Writer
 	if req.TranscriptPath != "" {
 		var err error
@@ -170,12 +192,6 @@ func captureStream(msgChan <-chan claudecode.Message, req engine.StepRequest, re
 	// transcript, not this buffer, is the durable record.
 	var finalText string
 
-	// lastStructuredOutput tracks the last successfully-parsed StructuredOutput
-	// tool call input. In session mode the SDK's ResultMessage.StructuredOutput
-	// field is not populated by the CLI, so we capture it directly from the
-	// assistant message stream as a fallback.
-	var lastStructuredOutput json.RawMessage
-
 	for msg := range msgChan {
 		switch m := msg.(type) {
 		case *claudecode.AssistantMessage:
@@ -183,19 +199,39 @@ func captureStream(msgChan <-chan claudecode.Message, req engine.StepRequest, re
 			if text != "" {
 				finalText = text
 			}
-			for _, cb := range m.Content {
-				if b, ok := cb.(*claudecode.ToolUseBlock); ok && b.Name == "StructuredOutput" {
-					if raw, err := json.Marshal(b.Input); err == nil && !strings.Contains(string(raw), `"__unparsedToolInput"`) {
-						lastStructuredOutput = raw
-					}
-				}
-			}
 			appendEntry(transcript.RoleAssistant, blocks)
 			if m.HasError() {
 				appendEntry(transcript.RoleSystem, []transcript.Block{{
 					Type: transcript.BlockText,
 					Text: fmt.Sprintf("assistant error: %s", m.GetError()),
 				}})
+			}
+			// Intercept AskUserQuestion: pause execution, collect human answer, inject tool result.
+			if send != nil {
+				for _, cb := range m.Content {
+					b, ok := cb.(*claudecode.ToolUseBlock)
+					if !ok || b.Name != "AskUserQuestion" {
+						continue
+					}
+					questions, err := parseAskUserQuestions(b.Input)
+					if err != nil {
+						continue
+					}
+					answer := rep.Question(b.ToolUseID, questions)
+					send <- claudecode.StreamMessage{
+						Type: "user",
+						Message: map[string]interface{}{
+							"role": "user",
+							"content": []map[string]interface{}{
+								{
+									"type":        "tool_result",
+									"tool_use_id": b.ToolUseID,
+									"content":     answer,
+								},
+							},
+						},
+					}
+				}
 			}
 		case *claudecode.UserMessage:
 			appendEntry(transcript.RoleUser, toolResultBlocks(m))
@@ -207,7 +243,7 @@ func captureStream(msgChan <-chan claudecode.Message, req engine.StepRequest, re
 			}
 		case *claudecode.ResultMessage:
 			if m.IsError {
-				errStr := resultErrorText(m)
+				errStr := subtypeErrText(m)
 				appendEntry(transcript.RoleResult, []transcript.Block{{Type: transcript.BlockText, Text: errStr}})
 				res := failResult(errStr, start)
 				res.Subtype = m.Subtype
@@ -223,8 +259,6 @@ func captureStream(msgChan <-chan claudecode.Message, req engine.StepRequest, re
 				if raw, err := json.Marshal(m.StructuredOutput); err == nil {
 					result.Structured = raw
 				}
-			} else if lastStructuredOutput != nil {
-				result.Structured = lastStructuredOutput
 			}
 			if req.Step.Output != "" && finalText != "" {
 				outPath := req.Step.Output
@@ -360,6 +394,32 @@ func failResult(msg string, start time.Time) *step.Result {
 	}
 }
 
+// subtypeErrText returns a descriptive error message for a failed ResultMessage.
+// Policy-limit subtypes (error_max_turns, error_max_budget_usd) get a clear
+// human-readable prefix so operators can distinguish them from API failures at
+// a glance. All other subtypes fall through to resultErrorText.
+func subtypeErrText(m *claudecode.ResultMessage) string {
+	var prefix string
+	switch m.Subtype {
+	case "error_max_turns":
+		prefix = "agent reached the maximum turn limit"
+	case "error_max_budget_usd":
+		prefix = "agent exceeded the maximum USD budget"
+	default:
+		return resultErrorText(m)
+	}
+	// Append any additional detail the SDK provided so context is not lost.
+	var parts []string
+	if m.Result != nil && *m.Result != "" {
+		parts = append(parts, *m.Result)
+	}
+	parts = append(parts, m.Errors...)
+	if len(parts) == 0 {
+		return prefix
+	}
+	return prefix + ": " + strings.Join(parts, "; ")
+}
+
 // resultErrorText builds the failure message for an errored ResultMessage,
 // combining the summary Result string with the more granular Errors list when
 // present. Falls back to a generic message if the SDK supplied neither.
@@ -387,6 +447,47 @@ func agentTextDelta(ev *claudecode.StreamEvent) (string, bool) {
 	}
 	text, ok := delta["text"].(string)
 	return text, ok
+}
+
+// parseAskUserQuestions extracts the structured question payload from an
+// AskUserQuestion tool call input map. Returns an error if the payload is
+// malformed or missing.
+func parseAskUserQuestions(input map[string]any) ([]engine.AgentQuestionItem, error) {
+	raw, ok := input["questions"]
+	if !ok {
+		return nil, fmt.Errorf("AskUserQuestion: missing questions field")
+	}
+	// Re-encode and decode to drive the type assertions through JSON.
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("AskUserQuestion: marshal questions: %w", err)
+	}
+	var items []struct {
+		Header      string `json:"header"`
+		Question    string `json:"question"`
+		MultiSelect bool   `json:"multiSelect"`
+		Options     []struct {
+			Label       string `json:"label"`
+			Description string `json:"description"`
+		} `json:"options"`
+	}
+	if err := json.Unmarshal(data, &items); err != nil {
+		return nil, fmt.Errorf("AskUserQuestion: unmarshal questions: %w", err)
+	}
+	out := make([]engine.AgentQuestionItem, len(items))
+	for i, it := range items {
+		opts := make([]engine.AgentQuestionOption, len(it.Options))
+		for j, o := range it.Options {
+			opts[j] = engine.AgentQuestionOption{Label: o.Label, Description: o.Description}
+		}
+		out[i] = engine.AgentQuestionItem{
+			Header:      it.Header,
+			Question:    it.Question,
+			Options:     opts,
+			MultiSelect: it.MultiSelect,
+		}
+	}
+	return out, nil
 }
 
 // Ensure AgentExecutor satisfies engine.Executor at compile time.

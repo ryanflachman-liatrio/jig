@@ -14,6 +14,58 @@ import (
 	"jig/internal/workflow"
 )
 
+// capturingExec records the Inputs slice received per step and delegates
+// execution to an embedded testExec.
+type capturingExec struct {
+	testExec
+	mu     sync.Mutex
+	inputs map[string][]ResolvedInput // stepID → Inputs received
+}
+
+func (e *capturingExec) Execute(ctx context.Context, req StepRequest, rep Reporter) (*step.Result, error) {
+	e.mu.Lock()
+	if e.inputs == nil {
+		e.inputs = make(map[string][]ResolvedInput)
+	}
+	e.inputs[req.Step.ID] = req.Inputs
+	e.mu.Unlock()
+	return e.testExec.Execute(ctx, req, rep)
+}
+
+// outputPathExec wraps capturingExec and additionally sets result.OutputPath
+// for one named step, simulating an agent that writes an artifact file.
+type outputPathExec struct {
+	capturingExec
+	stepID     string
+	outputPath string
+}
+
+func (e *outputPathExec) Execute(ctx context.Context, req StepRequest, rep Reporter) (*step.Result, error) {
+	r, err := e.capturingExec.Execute(ctx, req, rep)
+	if r != nil && req.Step.ID == e.stepID {
+		r.OutputPath = e.outputPath
+	}
+	return r, err
+}
+
+// inputCapturingStructuredExec combines structured-output injection with
+// input capture so that tests can verify what inputs a downstream step receives.
+type inputCapturingStructuredExec struct {
+	structuredExec
+	mu     sync.Mutex
+	inputs map[string][]ResolvedInput
+}
+
+func (e *inputCapturingStructuredExec) Execute(ctx context.Context, req StepRequest, rep Reporter) (*step.Result, error) {
+	e.mu.Lock()
+	if e.inputs == nil {
+		e.inputs = make(map[string][]ResolvedInput)
+	}
+	e.inputs[req.Step.ID] = req.Inputs
+	e.mu.Unlock()
+	return e.structuredExec.Execute(ctx, req, rep)
+}
+
 // testExec is a minimal Executor used only in engine tests.
 // runner.FakeExecutor is the feature-complete version for TUI dry-run.
 type testExec struct {
@@ -101,7 +153,7 @@ depends_on = ["a"]
 		"b": {delay: delay},
 	}}
 	mgr := NewManager(exec, "")
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	_, err = mgr.Start(wf)
 	if err != nil {
@@ -167,7 +219,7 @@ run = "echo b"
 		"b": {delay: delay},
 	}}
 	mgr := NewManager(exec, "")
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	_, err = mgr.Start(wf)
 	if err != nil {
@@ -216,7 +268,7 @@ run = "echo b"
 		"b": {delay: delay},
 	}}
 	mgr := NewManager(exec, "")
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	_, err = mgr.Start(wf)
 	if err != nil {
@@ -264,7 +316,7 @@ run = "false"
 		"bad": {fail: true},
 	}}
 	mgr := NewManager(exec, "")
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	_, err = mgr.Start(wf)
 	if err != nil {
@@ -306,7 +358,7 @@ run = "false"
 		"bad": {fail: true},
 	}}
 	mgr := NewManager(exec, "")
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	if _, err = mgr.Start(wf); err != nil {
 		t.Fatal(err)
@@ -369,7 +421,7 @@ run = "echo hi"
 	}
 	exec := &dirCheckExec{present: make(map[string]bool)}
 	mgr := NewManager(exec, filepath.Join(t.TempDir(), ".jig"))
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	if _, err = mgr.Start(wf); err != nil {
 		t.Fatal(err)
@@ -409,7 +461,7 @@ depends_on = ["a"]
 		"a": {fail: true},
 	}}
 	mgr := NewManager(exec, "")
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	_, err = mgr.Start(wf)
 	if err != nil {
@@ -452,7 +504,7 @@ run = "sleep 10"
 		"slow": {delay: 10 * time.Second},
 	}}
 	mgr := NewManager(exec, "")
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	run, err := mgr.Start(wf)
 	if err != nil {
@@ -506,7 +558,7 @@ run = "echo x"
 		"x": {delay: delay},
 	}}
 	mgr := NewManager(exec, "")
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	run1, _ := mgr.Start(wf)
 	run2, _ := mgr.Start(wf)
@@ -549,7 +601,7 @@ run = "echo s"
 		"s": {delay: 50 * time.Millisecond},
 	}}
 	mgr := NewManager(exec, "")
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 	run, _ := mgr.Start(wf)
 
 	// Wait for step to start running, then snapshot.
@@ -618,7 +670,7 @@ max_retries = 2
 		onExecute: func(id string) { callCount++ },
 	}
 	mgr := NewManager(exec, "")
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	_, err = mgr.Start(wf)
 	if err != nil {
@@ -684,7 +736,7 @@ depends_on = ["soft"]
 		"after": {delay: delay},
 	}}
 	mgr := NewManager(exec, "")
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	_, err = mgr.Start(wf)
 	if err != nil {
@@ -749,7 +801,7 @@ output_contains = "hello"
 		"check": {delay: delay},
 	}}
 	mgr := NewManager(exec, "")
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	_, err = mgr.Start(wf)
 	if err != nil {
@@ -819,7 +871,7 @@ command = "false"
 		"check": {delay: delay},
 	}}
 	mgr := NewManager(exec, "")
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	_, err = mgr.Start(wf)
 	if err != nil {
@@ -890,7 +942,7 @@ run = "echo x"
 
 	root := t.TempDir()
 	mgr := NewManager(exec, root)
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	run, err := mgr.Start(wf)
 	if err != nil {
@@ -985,7 +1037,7 @@ when = "a == 'yes'"
 		verdicts: map[string]string{"a": "no"},
 	}
 	mgr := NewManager(exec, "")
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	_, err = mgr.Start(wf)
 	if err != nil {
@@ -1051,7 +1103,7 @@ depends_on = ["b"]
 		verdicts: map[string]string{"a": "no"},
 	}
 	mgr := NewManager(exec, "")
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	_, err = mgr.Start(wf)
 	if err != nil {
@@ -1103,7 +1155,7 @@ output_type = { enum = ["approve", "reject"] }
 		"prep": {delay: delay},
 	}}
 	mgr := NewManager(exec, "")
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	run, err := mgr.Start(wf)
 	if err != nil {
@@ -1225,7 +1277,7 @@ depends_on = ["chat"]
 		responses: []string{`{"needs_input":true}`, `{"needs_input":false}`},
 	}
 	mgr := NewManager(exec, "")
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	run, err := mgr.Start(wf)
 	if err != nil {
@@ -1281,6 +1333,91 @@ done:
 	}
 }
 
+// TestScheduler_NeedsInput_NoDownstream guards against premature run termination
+// when the only step transitions to StatusNeedsInput. Without the anyPendingRunnable
+// fix, inFlight drops to 0 with no pending steps and the scheduler declares RunFinished
+// before the user can answer, crashing the run.
+func TestScheduler_NeedsInput_NoDownstream(t *testing.T) {
+	const toml = `
+[workflow]
+name = "needs-input-only"
+version = "0.1"
+
+[[step]]
+id       = "chat"
+type     = "agent"
+skill    = "test"
+block_on = "chat.needs_input"
+
+  [step.schema]
+  needs_input = "bool"
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &structuredExec{
+		testExec:  testExec{outcomes: map[string]testOutcome{"chat": {delay: delay}}},
+		stepID:    "chat",
+		sessionID: "sess-1",
+		responses: []string{`{"needs_input":true}`, `{"needs_input":false}`},
+	}
+	mgr := NewManager(exec, "")
+	_, ch := mgr.Subscribe()
+
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var events []Event
+	deadline := time.After(5 * time.Second)
+	sentInput := false
+	for {
+		select {
+		case e := <-ch:
+			events = append(events, e)
+			// If RunFinished arrives before we've sent input, the bug is live.
+			if _, ok := e.(RunFinished); ok {
+				if !sentInput {
+					t.Fatal("run terminated prematurely before user sent input")
+				}
+				goto done
+			}
+			if ir, ok := e.(InputRequest); ok && ir.StepID == "chat" && !sentInput {
+				sentInput = true
+				run.SendInput("chat", "here is the clarification")
+			}
+		case <-deadline:
+			t.Fatal("timeout waiting for block_on step to complete")
+		}
+	}
+done:
+	if !sentInput {
+		t.Fatal("InputRequest was never emitted for step 'chat'")
+	}
+
+	gotChat := findStatus(events, "chat")
+	hasNeedsInput := false
+	for _, s := range gotChat {
+		if s == step.StatusNeedsInput {
+			hasNeedsInput = true
+		}
+	}
+	if !hasNeedsInput {
+		t.Errorf("step chat must enter needs_input; got %v", gotChat)
+	}
+	if len(gotChat) == 0 || gotChat[len(gotChat)-1] != step.StatusSucceeded {
+		t.Errorf("step chat should end succeeded after input; got %v", gotChat)
+	}
+
+	last := events[len(events)-1]
+	rf, ok := last.(RunFinished)
+	if !ok || rf.Failed {
+		t.Errorf("want RunFinished{Failed:false}, got %v", last)
+	}
+}
+
 // TestScheduler_Loop verifies that a [step.loop] back-edge re-runs the loop
 // body while the condition holds, and terminates once max_iterations is reached.
 func TestScheduler_Loop(t *testing.T) {
@@ -1322,7 +1459,7 @@ depends_on = ["a"]
 		verdicts: map[string]string{"a": "yes"},
 	}
 	mgr := NewManager(exec, "")
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	_, err = mgr.Start(wf)
 	if err != nil {
@@ -1429,7 +1566,7 @@ depends_on = ["a"]
 	jigRoot := t.TempDir()
 	exec := &recordingExec{verdicts: map[string]string{"a": "yes"}}
 	mgr := NewManager(exec, jigRoot)
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	run, err := mgr.Start(wf)
 	if err != nil {
@@ -1475,7 +1612,7 @@ run = "echo a"
 	}
 	exec := &recordingExec{}
 	mgr := NewManager(exec, "")
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 	if _, err := mgr.Start(wf); err != nil {
 		t.Fatal(err)
 	}
@@ -1488,4 +1625,268 @@ run = "echo a"
 	if reqs[0].TranscriptPath != "" {
 		t.Errorf("TranscriptPath = %q, want empty when persistence off", reqs[0].TranscriptPath)
 	}
+}
+
+// ── Input resolution tests ────────────────────────────────────────────────────
+
+// TestScheduler_RefFieldInput verifies that a @step.field input extracts a
+// JSON-encoded field value from the upstream step's structured output.
+func TestScheduler_RefFieldInput(t *testing.T) {
+	const toml = `
+[workflow]
+name = "ref-field-test"
+version = "0.1"
+
+[[step]]
+id    = "a"
+type  = "agent"
+skill = "a"
+
+  [step.schema]
+  areas = { list = "text" }
+
+[[step]]
+id         = "b"
+type       = "agent"
+skill      = "b"
+depends_on = ["a"]
+inputs     = ["@a.areas"]
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &inputCapturingStructuredExec{
+		structuredExec: structuredExec{
+			testExec:  testExec{outcomes: map[string]testOutcome{"a": {delay: delay}, "b": {delay: delay}}},
+			stepID:    "a",
+			sessionID: "sess-1",
+			responses: []string{`{"areas":["backend","frontend"]}`},
+		},
+	}
+	mgr := NewManager(exec, "")
+	_, ch := mgr.Subscribe()
+
+	if _, err = mgr.Start(wf); err != nil {
+		t.Fatal(err)
+	}
+	collectEvents(t, ch, 5*time.Second)
+
+	exec.mu.Lock()
+	inputs := exec.inputs["b"]
+	exec.mu.Unlock()
+
+	if len(inputs) != 1 {
+		t.Fatalf("step b: expected 1 input, got %d", len(inputs))
+	}
+	want := `["backend","frontend"]`
+	if inputs[0].Value != want {
+		t.Errorf("step b input Value = %q, want %q", inputs[0].Value, want)
+	}
+}
+
+// TestScheduler_PathInput verifies that a literal file path input is passed
+// through unchanged as ResolvedInput.Value.
+func TestScheduler_PathInput(t *testing.T) {
+	const toml = `
+[workflow]
+name = "path-input-test"
+version = "0.1"
+
+[[step]]
+id     = "b"
+type   = "agent"
+skill  = "b"
+inputs = ["testdata/request.md"]
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &capturingExec{testExec: testExec{outcomes: map[string]testOutcome{"b": {delay: delay}}}}
+	mgr := NewManager(exec, "")
+	_, ch := mgr.Subscribe()
+
+	if _, err = mgr.Start(wf); err != nil {
+		t.Fatal(err)
+	}
+	collectEvents(t, ch, 5*time.Second)
+
+	exec.mu.Lock()
+	inputs := exec.inputs["b"]
+	exec.mu.Unlock()
+
+	if len(inputs) != 1 {
+		t.Fatalf("step b: expected 1 input, got %d", len(inputs))
+	}
+	if inputs[0].Value != "testdata/request.md" {
+		t.Errorf("step b input Value = %q, want %q", inputs[0].Value, "testdata/request.md")
+	}
+}
+
+// TestScheduler_BareRefInput verifies that a bare @step ref (no field path)
+// resolves to the upstream step's OutputPath.
+func TestScheduler_BareRefInput(t *testing.T) {
+	const toml = `
+[workflow]
+name = "bare-ref-test"
+version = "0.1"
+
+[[step]]
+id    = "a"
+type  = "agent"
+skill = "a"
+
+[[step]]
+id         = "b"
+type       = "agent"
+skill      = "b"
+depends_on = ["a"]
+inputs     = ["@a"]
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &outputPathExec{
+		capturingExec: capturingExec{
+			testExec: testExec{outcomes: map[string]testOutcome{"a": {delay: delay}, "b": {delay: delay}}},
+		},
+		stepID:     "a",
+		outputPath: "/tmp/a-out.txt",
+	}
+	mgr := NewManager(exec, "")
+	_, ch := mgr.Subscribe()
+
+	if _, err = mgr.Start(wf); err != nil {
+		t.Fatal(err)
+	}
+	collectEvents(t, ch, 5*time.Second)
+
+	exec.mu.Lock()
+	inputs := exec.inputs["b"]
+	exec.mu.Unlock()
+
+	if len(inputs) != 1 {
+		t.Fatalf("step b: expected 1 input, got %d", len(inputs))
+	}
+	if inputs[0].Value != "/tmp/a-out.txt" {
+		t.Errorf("step b input Value = %q, want %q", inputs[0].Value, "/tmp/a-out.txt")
+	}
+}
+
+// ── Post-execution handler unit tests ────────────────────────────────────────
+
+// TestPostExecHandler_ValidateGate tests phRunValidateGate in isolation:
+// passing gate → decisionContinue, failing gate → decisionFailed.
+func TestPostExecHandler_ValidateGate(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	t.Run("gate passes", func(t *testing.T) {
+		const toml = `
+[workflow]
+name = "val-pass"
+version = "0.1"
+
+[[step]]
+id   = "check"
+type = "command"
+run  = "echo hi"
+
+[step.validate]
+command = "true"
+`
+		wf, err := workflow.Decode(toml, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, "", "", "", func(RunSnapshot) {})
+		s.states["check"].Status = step.StatusRunning
+		s.states["check"].Result = &step.Result{Status: step.StatusSucceeded}
+
+		m := stepDoneMsg{stepID: "check", result: s.states["check"].Result}
+		decision := phRunValidateGate(s, m, s.stepByID("check"))
+		if decision != decisionContinue {
+			t.Errorf("passing gate: want decisionContinue, got %v", decision)
+		}
+	})
+
+	t.Run("gate fails", func(t *testing.T) {
+		const toml = `
+[workflow]
+name = "val-fail"
+version = "0.1"
+
+[[step]]
+id   = "check"
+type = "command"
+run  = "echo hi"
+
+[step.validate]
+command = "false"
+`
+		wf, err := workflow.Decode(toml, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, "", "", "", func(RunSnapshot) {})
+		s.states["check"].Status = step.StatusRunning
+		s.states["check"].Result = &step.Result{Status: step.StatusSucceeded}
+
+		m := stepDoneMsg{stepID: "check", result: s.states["check"].Result}
+		decision := phRunValidateGate(s, m, s.stepByID("check"))
+		if decision != decisionFailed {
+			t.Errorf("failing gate: want decisionFailed, got %v", decision)
+		}
+		if s.states["check"].Result.Err == "" {
+			t.Error("failing gate must record error detail in Result.Err")
+		}
+	})
+
+	_ = ctx
+}
+
+// TestPostExecHandler_BlockOn tests phCheckBlockOn in isolation:
+// when block_on evaluates true against the step's own structured output, the
+// handler parks the step at StatusNeedsInput and returns decisionNeedsInput.
+func TestPostExecHandler_BlockOn(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const toml = `
+[workflow]
+name = "block-on-unit"
+version = "0.1"
+
+[[step]]
+id       = "mystep"
+type     = "agent"
+skill    = "test"
+block_on = "mystep.status == 'blocked'"
+
+  [step.schema]
+  status = { enum = ["ready", "blocked"] }
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, "", "", "", func(RunSnapshot) {})
+	s.states["mystep"].Status = step.StatusRunning
+	s.states["mystep"].Result = &step.Result{
+		Status:     step.StatusSucceeded,
+		Structured: []byte(`{"status":"blocked"}`),
+	}
+
+	m := stepDoneMsg{stepID: "mystep", result: s.states["mystep"].Result}
+	decision := phCheckBlockOn(s, m, s.stepByID("mystep"))
+	if decision != decisionNeedsInput {
+		t.Errorf("want decisionNeedsInput, got %v", decision)
+	}
+	if s.states["mystep"].Status != step.StatusNeedsInput {
+		t.Errorf("want step status NeedsInput, got %v", s.states["mystep"].Status)
+	}
+
+	_ = ctx
 }

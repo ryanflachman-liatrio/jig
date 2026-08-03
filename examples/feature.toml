@@ -134,6 +134,7 @@ skill                = "skills/research"
 inputs               = ["@intake.areas"]
 allowed_tools        = ["Read", "Grep", "Glob", "WebSearch"]
 append_system_prompt = "Focus on backend concerns only: data models, API contracts, storage, and service boundaries. Ignore frontend and UI details."
+block_on             = "research_backend.status == 'blocked'"
 
   [step.schema]
   summary    = "text"
@@ -151,6 +152,7 @@ skill            = "skills/research"
 inputs           = ["@intake.areas"]
 allowed_tools    = ["Read", "Grep", "Glob", "WebSearch"]
 disallowed_tools = ["Bash"]    # belt-and-suspenders: this read-only step must never run shell commands
+block_on         = "research_frontend.status == 'blocked'"
 
   [step.schema]
   summary    = "text"

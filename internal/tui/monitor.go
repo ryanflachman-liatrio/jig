@@ -90,6 +90,15 @@ type monitorModel struct {
 	// block_on: set when an agent step needs human input before it can proceed.
 	pendingInput *engine.InputRequest
 
+	// AskUserQuestion: set when an in-flight agent step calls AskUserQuestion
+	// mid-execution. questionIdx tracks which question we're currently presenting;
+	// questionSelected tracks toggled options for multiSelect questions;
+	// questionAnswers accumulates formatted answers for already-answered questions.
+	pendingQuestion  *engine.AgentQuestion
+	questionIdx      int
+	questionSelected map[int]bool
+	questionAnswers  []string
+
 	// reviews retains the last ReviewRequest seen per step so drilling into a
 	// review step (modeChat) can show its diff/choices — review steps have no
 	// transcript. Kept after the verdict clears pendingReview (Phase 6).
@@ -136,11 +145,12 @@ type blockKey struct {
 }
 
 type monitorStep struct {
-	id     string
-	status step.Status
-	start  time.Time
-	end    time.Time
-	err    string // failure reason when status == StatusFailed
+	id      string
+	status  step.Status
+	start   time.Time
+	end     time.Time
+	err     string // failure reason when status == StatusFailed
+	subtype string // SDK result subtype for agent policy-limit failures
 }
 
 func newMonitorModel(runID string) monitorModel {
@@ -182,6 +192,7 @@ func (m monitorModel) withSnapshot(snap engine.RunSnapshot) monitorModel {
 		ms := monitorStep{id: st.ID, status: st.Status}
 		if st.Status == step.StatusFailed && st.Result != nil {
 			ms.err = st.Result.Err
+			ms.subtype = st.Result.Subtype
 		}
 		m.steps[i] = ms
 		m.index[st.ID] = i
@@ -231,6 +242,45 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 				m.vp.SetContent(m.body())
 			}
 			return m, taCmd
+		}
+		// AskUserQuestion: digit keys select / toggle options; enter confirms multiSelect.
+		if m.pendingQuestion != nil {
+			if s := msg.String(); s == "esc" || s == "q" {
+				return m, func() tea.Msg { return showRunsMsg{} }
+			}
+			if m.questionIdx < len(m.pendingQuestion.Questions) {
+				q := m.pendingQuestion.Questions[m.questionIdx]
+				if q.MultiSelect {
+					for i := range q.Options {
+						if msg.String() == fmt.Sprintf("%d", i+1) {
+							m.questionSelected[i] = !m.questionSelected[i]
+							if m.ready {
+								m.vp.SetContent(m.body())
+							}
+							return m, nil
+						}
+					}
+					if s := msg.String(); s == "enter" || s == " " {
+						var selected []string
+						for i, opt := range q.Options {
+							if m.questionSelected[i] {
+								selected = append(selected, opt.Label)
+							}
+						}
+						if len(selected) == 0 {
+							return m, nil
+						}
+						return m.advanceQuestion(strings.Join(selected, ", "))
+					}
+				} else {
+					for i, opt := range q.Options {
+						if msg.String() == fmt.Sprintf("%d", i+1) {
+							return m.advanceQuestion(opt.Label)
+						}
+					}
+				}
+			}
+			return m, nil
 		}
 		// When awaiting user text input or composing a message, route keys to the textarea.
 		if m.pendingPrompt != nil || m.composingMessage {
@@ -466,6 +516,7 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		m.steps[i].status = ev.To
 		if ev.To == step.StatusFailed {
 			m.steps[i].err = ev.Err
+			m.steps[i].subtype = ev.Subtype
 		}
 		if ev.To == step.StatusRunning {
 			m.steps[i].start = time.Now()
@@ -487,6 +538,12 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		if m.pendingInput != nil && m.pendingInput.StepID == ev.StepID && ev.To != step.StatusNeedsInput {
 			m.pendingInput = nil
 			m.promptTextarea = textarea.Model{}
+		}
+		// Clear pending question when the step resumes or reaches a terminal state.
+		if m.pendingQuestion != nil && m.pendingQuestion.StepID == ev.StepID && ev.To != step.StatusNeedsInput {
+			m.pendingQuestion = nil
+			m.questionSelected = nil
+			m.questionAnswers = nil
 		}
 
 	case engine.ReviewRequest:
@@ -527,6 +584,16 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		ta.Focus()
 		m.promptTextarea = ta
 		return m, textarea.Blink
+
+	case engine.AgentQuestion:
+		if ev.RunID != m.runID {
+			return m, nil
+		}
+		m.pendingQuestion = &ev
+		m.questionIdx = 0
+		m.questionSelected = make(map[int]bool)
+		m.questionAnswers = nil
+		m.mode = modeList
 
 	case engine.StepMessage:
 		if ev.RunID != m.runID {
@@ -725,6 +792,9 @@ func (m monitorModel) listBody() string {
 			questionStyle.Render(padRight(dur, 10)),
 			msgs,
 		)
+		if label := subtypeBadgeLabel(s.subtype); label != "" {
+			line += "  " + errorStyle.Render(label)
+		}
 		if i == m.cursor {
 			b.WriteString(lipgloss.NewStyle().Bold(true).Render(line) + "\n")
 		} else {
@@ -780,6 +850,39 @@ func (m monitorModel) listBody() string {
 		b.WriteString(m.promptTextarea.View() + "\n")
 	}
 
+	// AskUserQuestion: show selectable options when an in-flight agent asks a question.
+	if m.pendingQuestion != nil && m.questionIdx < len(m.pendingQuestion.Questions) {
+		q := m.pendingQuestion.Questions[m.questionIdx]
+		b.WriteString("\n")
+		b.WriteString("  " + markerStyle.Render("Agent question — step: "+m.pendingQuestion.StepID) + "\n\n")
+		if q.Header != "" {
+			b.WriteString("  " + questionStyle.Render("["+q.Header+"]") + "\n")
+		}
+		b.WriteString("  " + q.Question + "\n\n")
+		for i, opt := range q.Options {
+			if q.MultiSelect {
+				mark := "[ ]"
+				if m.questionSelected[i] {
+					mark = "[x]"
+				}
+				b.WriteString(fmt.Sprintf("    %s [%d] %s", mark, i+1, opt.Label))
+			} else {
+				b.WriteString(fmt.Sprintf("    [%d] %s", i+1, opt.Label))
+			}
+			if opt.Description != "" {
+				b.WriteString("  —  " + opt.Description)
+			}
+			b.WriteString("\n")
+		}
+		if q.MultiSelect {
+			b.WriteString("\n    " + chatHintStyle.Render("enter to confirm selection") + "\n")
+		}
+		if len(m.pendingQuestion.Questions) > 1 {
+			b.WriteString("    " + chatHintStyle.Render(
+				fmt.Sprintf("question %d of %d", m.questionIdx+1, len(m.pendingQuestion.Questions))) + "\n")
+		}
+	}
+
 	// Streaming output: show last outputMaxLines lines for any running agent step.
 	for _, s := range m.steps {
 		if s.status != step.StatusRunning {
@@ -830,6 +933,55 @@ func (m monitorModel) writeFailureReasons(b *strings.Builder) {
 		}
 		b.WriteString("    " + errorStyle.Render(wrap.Render(s.id+": "+s.err)) + "\n")
 	}
+}
+
+// advanceQuestion records the answer for the current question and advances the
+// question index. When all questions are answered it clears pendingQuestion and
+// returns a command emitting agentQuestionResponseMsg with the formatted answer.
+func (m monitorModel) advanceQuestion(answer string) (monitorModel, tea.Cmd) {
+	m.questionAnswers = append(m.questionAnswers, answer)
+	m.questionIdx++
+	m.questionSelected = make(map[int]bool)
+
+	if m.questionIdx < len(m.pendingQuestion.Questions) {
+		if m.ready {
+			m.vp.SetContent(m.body())
+		}
+		return m, nil
+	}
+
+	q := m.pendingQuestion
+	answers := m.questionAnswers
+	m.pendingQuestion = nil
+	m.questionAnswers = nil
+	if m.ready {
+		m.vp.SetContent(m.body())
+	}
+	formatted := formatQuestionAnswers(q.Questions, answers)
+	return m, func() tea.Msg {
+		return agentQuestionResponseMsg{
+			runID:     q.RunID,
+			stepID:    q.StepID,
+			toolUseID: q.ToolUseID,
+			answer:    formatted,
+		}
+	}
+}
+
+// formatQuestionAnswers encodes the human's selections as a JSON payload that
+// captureStream sends back to Claude as the AskUserQuestion tool result.
+func formatQuestionAnswers(questions []engine.AgentQuestionItem, answers []string) string {
+	m := make(map[string]string, len(questions))
+	for i, q := range questions {
+		if i < len(answers) {
+			m[q.Question] = answers[i]
+		}
+	}
+	b, err := json.Marshal(map[string]any{"answers": m})
+	if err != nil {
+		return strings.Join(answers, ", ")
+	}
+	return string(b)
 }
 
 // loadChat re-reads chatStep's transcript into the model. The transcript file is
@@ -1195,6 +1347,20 @@ func statusStyle(s step.Status) lipgloss.Style {
 	}
 }
 
+// subtypeBadgeLabel returns a compact label for policy-limit failure subtypes so
+// operators can distinguish "hit turn limit" from an API error at a glance.
+// Returns "" for subtypes that don't warrant a special annotation.
+func subtypeBadgeLabel(subtype string) string {
+	switch subtype {
+	case "error_max_turns":
+		return "[max turns]"
+	case "error_max_budget_usd":
+		return "[budget]"
+	default:
+		return ""
+	}
+}
+
 func stepDuration(s monitorStep) string {
 	if s.start.IsZero() {
 		return "—"
@@ -1217,6 +1383,8 @@ func (m monitorModel) footerView() string {
 		}
 	} else if m.pendingInput != nil {
 		status = markerStyle.Render("awaiting agent input")
+	} else if m.pendingQuestion != nil {
+		status = markerStyle.Render("awaiting answer")
 	} else if m.pendingPrompt != nil {
 		status = markerStyle.Render("awaiting user input")
 	} else if m.composingMessage {
@@ -1230,6 +1398,12 @@ func (m monitorModel) footerView() string {
 	switch {
 	case m.pendingInput != nil:
 		hint = "enter submit  •  alt+enter newline  •  esc runs list  •  ctrl+c quit"
+	case m.pendingQuestion != nil:
+		if m.questionIdx < len(m.pendingQuestion.Questions) && m.pendingQuestion.Questions[m.questionIdx].MultiSelect {
+			hint = "1-9 toggle  •  enter confirm  •  esc runs list  •  ctrl+c quit"
+		} else {
+			hint = "1-9 select answer  •  esc runs list  •  ctrl+c quit"
+		}
 	case m.pendingPrompt != nil:
 		hint = "enter submit  •  alt+enter newline  •  esc runs list  •  ctrl+c quit"
 	case m.composingMessage:

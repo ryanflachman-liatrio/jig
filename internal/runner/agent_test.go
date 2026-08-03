@@ -31,6 +31,7 @@ func (r *captureReporter) ToolCall(tool, detail string) {}
 func (r *captureReporter) Message(seq, iteration int) {
 	r.messages = append(r.messages, captureMsg{seq, iteration})
 }
+func (r *captureReporter) Question(_ string, _ []engine.AgentQuestionItem) string { return "" }
 
 // scriptChan turns a fixed message list into the closed channel captureStream
 // consumes — mimicking a completed SDK stream with no live connection.
@@ -76,7 +77,7 @@ func TestCaptureStream_RichCapture(t *testing.T) {
 		Attempt:        1,
 	}
 
-	res, err := captureStream(scriptChan(assistant, user, result), req, rep, time.Now(), "")
+	res, err := captureStream(scriptChan(assistant, user, result), req, rep, time.Now(), "", nil)
 	if err != nil {
 		t.Fatalf("captureStream: %v", err)
 	}
@@ -159,7 +160,7 @@ func TestCaptureStream_StructuredToolResultTruncated(t *testing.T) {
 	}
 	req := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: tPath}
 
-	if _, err := captureStream(scriptChan(user, &claudecode.ResultMessage{}), req, &captureReporter{}, time.Now(), ""); err != nil {
+	if _, err := captureStream(scriptChan(user, &claudecode.ResultMessage{}), req, &captureReporter{}, time.Now(), "", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -202,7 +203,7 @@ func TestCaptureStream_Artifact(t *testing.T) {
 		TranscriptPath: filepath.Join(dir, "transcript.jsonl"),
 	}
 
-	res, err := captureStream(scriptChan(first, final, &claudecode.ResultMessage{}), req, &captureReporter{}, time.Now(), "")
+	res, err := captureStream(scriptChan(first, final, &claudecode.ResultMessage{}), req, &captureReporter{}, time.Now(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +229,7 @@ func TestCaptureStream_NoTranscript(t *testing.T) {
 	rep := &captureReporter{}
 	req := engine.StepRequest{Step: &workflow.Step{}} // TranscriptPath == ""
 
-	if _, err := captureStream(scriptChan(assistant, &claudecode.ResultMessage{}), req, rep, time.Now(), ""); err != nil {
+	if _, err := captureStream(scriptChan(assistant, &claudecode.ResultMessage{}), req, rep, time.Now(), "", nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(rep.messages) != 0 {
@@ -359,7 +360,7 @@ func TestCaptureStream_StructuredOutput(t *testing.T) {
 	result := &claudecode.ResultMessage{
 		StructuredOutput: map[string]any{"needs_input": true, "question": "which threat model?"},
 	}
-	res, err := captureStream(scriptChan(result), req, &captureReporter{}, time.Now(), "")
+	res, err := captureStream(scriptChan(result), req, &captureReporter{}, time.Now(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -390,7 +391,7 @@ func TestCaptureStream_AssistantError(t *testing.T) {
 		Content: []claudecode.ContentBlock{&claudecode.TextBlock{Text: "hold on"}},
 		Error:   &rateLimited,
 	}
-	if _, err := captureStream(scriptChan(assistant, &claudecode.ResultMessage{}), req, &captureReporter{}, time.Now(), ""); err != nil {
+	if _, err := captureStream(scriptChan(assistant, &claudecode.ResultMessage{}), req, &captureReporter{}, time.Now(), "", nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -408,14 +409,15 @@ func TestCaptureStream_AssistantError(t *testing.T) {
 	}
 }
 
-// TestCaptureStream_Subtype verifies ResultMessage.Subtype and Errors land on
-// step.Result on both the success and failure paths.
+// TestCaptureStream_Subtype verifies ResultMessage.Subtype lands on step.Result
+// for both the success and failure paths, and that policy-limit subtypes produce
+// descriptive human-readable error messages.
 func TestCaptureStream_Subtype(t *testing.T) {
 	dir := t.TempDir()
 	req := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: filepath.Join(dir, "success.jsonl")}
 
 	ok := &claudecode.ResultMessage{Subtype: "success"}
-	res, err := captureStream(scriptChan(ok), req, &captureReporter{}, time.Now(), "")
+	res, err := captureStream(scriptChan(ok), req, &captureReporter{}, time.Now(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -423,17 +425,35 @@ func TestCaptureStream_Subtype(t *testing.T) {
 		t.Errorf("success Subtype = %q, want success", res.Subtype)
 	}
 
+	// error_max_turns: descriptive prefix + SDK Errors appended.
 	req2 := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: filepath.Join(dir, "fail.jsonl")}
 	failed := &claudecode.ResultMessage{IsError: true, Subtype: "error_max_turns", Errors: []string{"hit turn limit"}}
-	res2, err := captureStream(scriptChan(failed), req2, &captureReporter{}, time.Now(), "")
+	res2, err := captureStream(scriptChan(failed), req2, &captureReporter{}, time.Now(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res2.Subtype != "error_max_turns" {
 		t.Errorf("failure Subtype = %q, want error_max_turns", res2.Subtype)
 	}
+	if !strings.Contains(res2.Err, "maximum turn limit") {
+		t.Errorf("failure Err = %q, want descriptive turn-limit message", res2.Err)
+	}
 	if !strings.Contains(res2.Err, "hit turn limit") {
-		t.Errorf("failure Err = %q, want it to contain the Errors detail", res2.Err)
+		t.Errorf("failure Err = %q, want it to include the SDK Errors detail", res2.Err)
+	}
+
+	// error_max_budget_usd: descriptive prefix, no SDK detail.
+	req3 := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: filepath.Join(dir, "budget.jsonl")}
+	budget := &claudecode.ResultMessage{IsError: true, Subtype: "error_max_budget_usd"}
+	res3, err := captureStream(scriptChan(budget), req3, &captureReporter{}, time.Now(), "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res3.Subtype != "error_max_budget_usd" {
+		t.Errorf("budget Subtype = %q, want error_max_budget_usd", res3.Subtype)
+	}
+	if !strings.Contains(res3.Err, "maximum USD budget") {
+		t.Errorf("budget Err = %q, want descriptive budget message", res3.Err)
 	}
 }
 
@@ -445,7 +465,7 @@ func TestCaptureStream_ErrorResult(t *testing.T) {
 	req := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: tPath}
 
 	errMsg := &claudecode.ResultMessage{IsError: true, Result: strPtr("boom")}
-	res, err := captureStream(scriptChan(errMsg), req, &captureReporter{}, time.Now(), "")
+	res, err := captureStream(scriptChan(errMsg), req, &captureReporter{}, time.Now(), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,4 +480,101 @@ func TestCaptureStream_ErrorResult(t *testing.T) {
 	if len(entries) != 1 || entries[0].Role != transcript.RoleResult {
 		t.Fatalf("want 1 result entry, got %v", entries)
 	}
+}
+
+// TestCaptureStream_AskUserQuestion verifies that captureStream detects an
+// AskUserQuestion ToolUseBlock, calls rep.Question, and sends the answer as a
+// tool_result StreamMessage back through the send channel.
+func TestCaptureStream_AskUserQuestion(t *testing.T) {
+	dir := t.TempDir()
+	tPath := filepath.Join(dir, "transcript.jsonl")
+
+	assistant := &claudecode.AssistantMessage{
+		Content: []claudecode.ContentBlock{
+			&claudecode.ToolUseBlock{
+				ToolUseID: "q1",
+				Name:      "AskUserQuestion",
+				Input: map[string]any{
+					"questions": []any{
+						map[string]any{
+							"header":   "Format",
+							"question": "Which format?",
+							"options": []any{
+								map[string]any{"label": "JSON", "description": "JSON output"},
+								map[string]any{"label": "YAML", "description": "YAML output"},
+							},
+							"multiSelect": false,
+						},
+					},
+				},
+			},
+		},
+	}
+	result := &claudecode.ResultMessage{IsError: false}
+
+	// Set up a buffered send channel to capture the injected tool result.
+	sendCh := make(chan claudecode.StreamMessage, 1)
+
+	rep := &answeringReporter{answer: "JSON"}
+	req := engine.StepRequest{
+		Step:           &workflow.Step{},
+		TranscriptPath: tPath,
+	}
+
+	res, err := captureStream(scriptChan(assistant, result), req, rep, time.Now(), "", sendCh)
+	if err != nil {
+		t.Fatalf("captureStream: %v", err)
+	}
+	if res.Status != step.StatusSucceeded {
+		t.Fatalf("want success, got %q: %s", res.Status, res.Err)
+	}
+
+	// The send channel must have received a tool_result StreamMessage.
+	select {
+	case msg := <-sendCh:
+		if msg.Type != "user" {
+			t.Errorf("sent message type = %q, want user", msg.Type)
+		}
+		content, ok := msg.Message.(map[string]interface{})
+		if !ok {
+			t.Fatalf("Message not map: %T", msg.Message)
+		}
+		blocks, ok := content["content"].([]map[string]interface{})
+		if !ok || len(blocks) != 1 {
+			t.Fatalf("content blocks = %v, want 1 tool_result", content["content"])
+		}
+		if blocks[0]["type"] != "tool_result" {
+			t.Errorf("block type = %v, want tool_result", blocks[0]["type"])
+		}
+		if blocks[0]["tool_use_id"] != "q1" {
+			t.Errorf("tool_use_id = %v, want q1", blocks[0]["tool_use_id"])
+		}
+		if blocks[0]["content"] != "JSON" {
+			t.Errorf("content = %v, want JSON", blocks[0]["content"])
+		}
+	default:
+		t.Fatal("expected tool_result to be sent to send channel")
+	}
+
+	// Question must have been called with the right toolUseID and items.
+	if rep.lastToolUseID != "q1" {
+		t.Errorf("Question called with toolUseID = %q, want q1", rep.lastToolUseID)
+	}
+	if len(rep.lastQuestions) != 1 || rep.lastQuestions[0].Question != "Which format?" {
+		t.Errorf("Question called with questions = %v", rep.lastQuestions)
+	}
+}
+
+// answeringReporter is a test Reporter that returns a canned answer from Question.
+type answeringReporter struct {
+	captureReporter
+	answer        string
+	lastToolUseID string
+	lastQuestions []engine.AgentQuestionItem
+}
+
+func (r *answeringReporter) Question(toolUseID string, questions []engine.AgentQuestionItem) string {
+	r.lastToolUseID = toolUseID
+	r.lastQuestions = questions
+	return r.answer
 }

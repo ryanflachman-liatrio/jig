@@ -27,14 +27,23 @@ import (
 // while preserving the static termination guarantee.
 const defaultReviewMaxMessages = 10
 
+// sub holds a subscriber's two event channels: live for high-volume droppable
+// signals (StepOutput, StepToolCall, StepMessage) and ctrl for critical
+// low-volume events that must not be lost (RunFinished, ReviewRequest, etc.).
+// Separating them prevents a burst of live events from displacing ctrl events.
+type sub struct {
+	live chan Event // large buffer; drop-on-full is acceptable
+	ctrl chan Event // sized for worst-case ctrl-event volume; rarely full
+}
+
 // Manager is the registry of concurrent runs.
 // mu guards the registry only — workflow state is owned by each scheduler.
 type Manager struct {
 	mu   sync.Mutex
 	runs map[string]*Run
 	exec Executor
-	root string         // .jig/ root (used in Phase 2+ for file I/O)
-	subs []chan<- Event // manager-level fan-out; TUI subscribes once
+	root string // .jig/ root (used in Phase 2+ for file I/O)
+	subs []sub  // manager-level fan-out; TUI subscribes once
 }
 
 // NewManager returns a Manager backed by exec. root is the .jig/ directory;
@@ -87,7 +96,7 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	m.mu.Lock()
 	m.runs[runID] = run
 	// Snapshot subscriber list at start — additions after Start don't join mid-run.
-	subs := make([]chan<- Event, len(m.subs))
+	subs := make([]sub, len(m.subs))
 	copy(subs, m.subs)
 	m.mu.Unlock()
 
@@ -121,15 +130,26 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	return run, nil
 }
 
-// Subscribe returns a channel that receives every event from every run,
-// tagged with RunID. The caller must drain it; slow readers drop events
-// (the scheduler never blocks on fan-out).
-func (m *Manager) Subscribe() <-chan Event {
-	ch := make(chan Event, 256)
+// Subscribe returns two channels for this subscriber.
+//
+// live carries high-volume liveness signals (StepOutput, StepToolCall,
+// StepMessage). These are drop-on-full: a missed event only means the UI is
+// one sequence stale, corrected on the next read from disk.
+//
+// ctrl carries all other events (RunStarted, RunFinished, StepStatus,
+// ReviewRequest, etc.). These are critical and sized so they cannot fill under
+// normal workflow volumes.
+//
+// Both channels must be drained by the caller; neither is ever closed.
+func (m *Manager) Subscribe() (live, ctrl <-chan Event) {
+	s := sub{
+		live: make(chan Event, 1024),
+		ctrl: make(chan Event, 256),
+	}
 	m.mu.Lock()
-	m.subs = append(m.subs, ch)
+	m.subs = append(m.subs, s)
 	m.mu.Unlock()
-	return ch
+	return s.live, s.ctrl
 }
 
 // Runs returns the live Run handles. Callers that need step states should
@@ -180,6 +200,11 @@ func (r *Run) Message(reviewStepID, text string) {
 // block_on. The agent resumes its session with the response as the query.
 func (r *Run) SendInput(stepID, text string) {
 	r.inbox <- agentInputMsg{stepID: stepID, text: text}
+}
+
+// AnswerQuestion delivers the user's response to an in-flight AskUserQuestion call.
+func (r *Run) AnswerQuestion(stepID, toolUseID, answer string) {
+	r.inbox <- agentQuestionAnswerMsg{stepID: stepID, toolUseID: toolUseID, answer: answer}
 }
 
 // Snapshot returns a point-in-time view of the run's state. For a live run
@@ -253,27 +278,50 @@ type agentInputMsg struct {
 	text   string
 }
 
-func (stepDoneMsg) isSchedMsg()     {}
-func (verdictMsg) isSchedMsg()      {}
-func (userInputMsg) isSchedMsg()    {}
-func (snapshotReqMsg) isSchedMsg()  {}
-func (humanMessageMsg) isSchedMsg() {}
-func (agentInputMsg) isSchedMsg()   {}
+type agentQuestionNotifyMsg struct {
+	stepID string
+}
+
+type agentQuestionAnswerMsg struct {
+	stepID    string
+	toolUseID string
+	answer    string
+}
+
+func (stepDoneMsg) isSchedMsg()            {}
+func (verdictMsg) isSchedMsg()             {}
+func (userInputMsg) isSchedMsg()           {}
+func (snapshotReqMsg) isSchedMsg()         {}
+func (humanMessageMsg) isSchedMsg()        {}
+func (agentInputMsg) isSchedMsg()          {}
+func (agentQuestionNotifyMsg) isSchedMsg() {}
+func (agentQuestionAnswerMsg) isSchedMsg() {}
 
 // ── reporter ─────────────────────────────────────────────────────────────────
 
 // reporter routes live step signals through the scheduler's fan-out.
 // It is created per-dispatch and passed to the executor; the executor
-// may call it from its own goroutine, so fanOut must not touch scheduler state.
+// may call it from its own goroutine, so fanOutLive must not touch scheduler state.
 type reporter struct {
-	subs []chan<- Event
-	ev   func(Event) // pre-bound to emit tags (runID, stepID)
+	subs     []sub
+	ev       func(Event)    // pre-bound to emit tags (runID, stepID)
+	inbox    chan<- schedMsg // scheduler inbox; used to deliver agentQuestionNotifyMsg
+	answerCh chan string     // nil until Question is called; receives the human's answer
 }
 
 func (r *reporter) Output(delta string)          { r.ev(StepOutput{Delta: delta}) }
 func (r *reporter) ToolCall(tool, detail string) { r.ev(StepToolCall{Tool: tool, Detail: detail}) }
 func (r *reporter) Message(seq, iteration int) {
 	r.ev(StepMessage{Seq: seq, Iteration: iteration})
+}
+
+// Question delivers an AskUserQuestion from the running agent to the scheduler,
+// transitions the step to StatusNeedsInput, and blocks until the human answers
+// via Run.AnswerQuestion. Runs in the executor goroutine.
+func (r *reporter) Question(toolUseID string, questions []AgentQuestionItem) string {
+	r.answerCh = make(chan string, 1)
+	r.ev(AgentQuestion{ToolUseID: toolUseID, Questions: questions})
+	return <-r.answerCh
 }
 
 // ── scheduler ────────────────────────────────────────────────────────────────
@@ -283,7 +331,7 @@ type scheduler struct {
 	runID        string
 	states       map[string]*step.State
 	inbox        chan schedMsg
-	subs         []chan<- Event
+	subs         []sub
 	exec         Executor
 	cancel       context.CancelFunc        // cancels the run context; used by abort policy
 	writer       *manifest.Writer          // nil when persistence is disabled (root = "")
@@ -318,6 +366,12 @@ type scheduler struct {
 	// block_on: tracks how many times a human has provided input to a blocked step.
 	stepInputCount map[string]int // stepID → input rounds delivered so far
 
+	// reporters holds the active reporter for each in-flight step so
+	// agentQuestionAnswerMsg can route the answer to the correct channel.
+	reporters map[string]*reporter
+
+	postExecChain []postExecHandler // post-execution handler chain
+
 	onDone func(RunSnapshot) // called once before the scheduler goroutine exits
 }
 
@@ -325,7 +379,7 @@ func newScheduler(
 	wf *workflow.Workflow,
 	runID string,
 	inbox chan schedMsg,
-	subs []chan<- Event,
+	subs []sub,
 	exec Executor,
 	cancel context.CancelFunc,
 	writer *manifest.Writer,
@@ -362,7 +416,13 @@ func newScheduler(
 		stepMessage:         make(map[string]string),
 		reviewMessages:      make(map[string]int),
 		stepInputCount:      make(map[string]int),
-		onDone:              onDone,
+		reporters:           make(map[string]*reporter),
+		postExecChain: []postExecHandler{
+			phCaptureWorktreeDiff,
+			phRunValidateGate,
+			phCheckBlockOn,
+		},
+		onDone: onDone,
 	}
 }
 
@@ -566,8 +626,11 @@ func (s *scheduler) anyPendingRunnable() bool {
 			return true
 		}
 		// A step parked on human input is still "runnable" — it will unblock when
-		// the user delivers a verdict. Don't let the run terminate early.
+		// the user delivers a verdict or input. Don't let the run terminate early.
 		if st.Status == step.StatusAwaitingReview {
+			return true
+		}
+		if st.Status == step.StatusNeedsInput {
 			return true
 		}
 	}
@@ -639,40 +702,42 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 
 	runID, stepID := s.runID, st.ID
 	subs := s.subs
+	inbox := s.inbox
 	rep := &reporter{
-		subs: subs,
+		subs:  subs,
+		inbox: inbox,
 		ev: func(e Event) {
 			// Tag the event with run/step IDs and fan-out without holding any lock.
 			switch e := e.(type) {
 			case StepOutput:
 				e.RunID, e.StepID = runID, stepID
-				fanOut(subs, e)
+				fanOutLive(subs, e)
 			case StepToolCall:
 				e.RunID, e.StepID = runID, stepID
-				fanOut(subs, e)
+				fanOutLive(subs, e)
 			case StepMessage:
 				e.RunID, e.StepID = runID, stepID
-				fanOut(subs, e)
+				fanOutLive(subs, e)
+			case AgentQuestion:
+				e.RunID, e.StepID = runID, stepID
+				fanOutCtrl(subs, e)
+				// Notify the scheduler to transition the step to StatusNeedsInput.
+				// Non-blocking: inbox is buffered (64) and rarely full.
+				select {
+				case inbox <- agentQuestionNotifyMsg{stepID: stepID}:
+				default:
+				}
 			}
 		},
 	}
+	s.reporters[st.ID] = rep
 	var artifactDir, transcriptPath string
 	if s.runDir != "" {
 		artifactDir = filepath.Join(s.runDir, "artifacts")
 		transcriptPath = datastore.TranscriptPath(s.runDir, st.ID)
 	}
-	state := s.states[st.ID]
-	req := StepRequest{
-		RunID:          runID,
-		Step:           st,
-		Inputs:         s.preResolvedInputs[st.ID],
-		Feedback:       s.stepFeedback[st.ID],
-		ArtifactDir:    artifactDir,
-		Worktree:       worktreePath,
-		TranscriptPath: transcriptPath,
-		Iteration:      state.Iteration,
-		Attempt:        state.Attempt,
-	}
+	s.resolveAllInputs(st)
+	req := s.buildRequest(st, runID, worktreePath, artifactDir, transcriptPath)
 	delete(s.preResolvedInputs, st.ID)
 	if sess := s.resumeSessions[st.ID]; sess != "" {
 		req.ResumeSessionID = sess
@@ -690,19 +755,110 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 	}()
 }
 
+// resolveAllInputs appends ResolvedInput entries for every non-user input
+// into s.preResolvedInputs[st.ID]. User inputs are already present from the
+// prompt-collection flow (handle(userInputMsg)); this fills the remaining refs.
+func (s *scheduler) resolveAllInputs(st *workflow.Step) {
+	for _, inp := range st.Inputs {
+		if inp.From == "user" {
+			continue // already collected via prompt flow
+		}
+
+		var value string
+
+		switch {
+		case inp.Ref != "" && len(inp.RefField) > 0:
+			// @step.field — extract from the dependency's structured output.
+			// Reuse the same decode cache as evalGuard for consistency.
+			depState := s.states[inp.Ref]
+			if depState != nil && depState.Result != nil {
+				m, ok := s.structured[inp.Ref]
+				if !ok && len(depState.Result.Structured) > 0 {
+					if err := json.Unmarshal(depState.Result.Structured, &m); err == nil {
+						s.structured[inp.Ref] = m
+					}
+				}
+				var cur any = m
+				for _, seg := range inp.RefField {
+					obj, ok := cur.(map[string]any)
+					if !ok {
+						cur = nil
+						break
+					}
+					cur, ok = obj[seg]
+					if !ok {
+						cur = nil
+						break
+					}
+				}
+				switch v := cur.(type) {
+				case string:
+					value = v
+				case bool:
+					if v {
+						value = "true"
+					} else {
+						value = "false"
+					}
+				case nil:
+					// missing field — validation already caught dangling refs; pass empty
+				default:
+					if b, err := json.Marshal(v); err == nil {
+						value = string(b)
+					}
+				}
+			}
+
+		case inp.Ref != "":
+			// bare @step — use the dependency's artifact output file path.
+			if depState := s.states[inp.Ref]; depState != nil && depState.Result != nil {
+				value = depState.Result.OutputPath
+			}
+
+		case inp.Path != "":
+			value = inp.Path
+		}
+
+		s.preResolvedInputs[st.ID] = append(s.preResolvedInputs[st.ID], ResolvedInput{
+			Ref:   inp,
+			Value: value,
+		})
+	}
+}
+
+// buildRequest constructs the StepRequest for a dispatch. It must be called
+// after resolveAllInputs so that preResolvedInputs contains all inputs
+// (both user and non-user).
+func (s *scheduler) buildRequest(
+	st *workflow.Step,
+	runID, worktreePath, artifactDir, transcriptPath string,
+) StepRequest {
+	state := s.states[st.ID]
+	return StepRequest{
+		RunID:          runID,
+		Step:           st,
+		Inputs:         s.preResolvedInputs[st.ID],
+		Feedback:       s.stepFeedback[st.ID],
+		ArtifactDir:    artifactDir,
+		Worktree:       worktreePath,
+		TranscriptPath: transcriptPath,
+		Iteration:      state.Iteration,
+		Attempt:        state.Attempt,
+	}
+}
+
 // handle processes one message from the scheduler's inbox.
 func (s *scheduler) handle(msg schedMsg) {
 	switch m := msg.(type) {
 	case stepDoneMsg:
 		s.inFlight--
-		// Determine whether the raw execution succeeded or failed.
-		execFailed := m.err != nil || (m.result != nil && m.result.Status == step.StatusFailed)
+		delete(s.reporters, m.stepID)
+
+		// Record result and synthesize an error result when the executor
+		// returned a Go error rather than a failed Result.
 		if m.result != nil {
 			s.states[m.stepID].Result = m.result
 		}
-		// An executor that returns a Go error (rather than a failed Result) still
-		// needs a reason recorded so transition() can surface it. Synthesize a
-		// failed Result carrying the error text.
 		if m.err != nil {
 			res := s.states[m.stepID].Result
 			if res == nil {
@@ -714,66 +870,34 @@ func (s *scheduler) handle(msg schedMsg) {
 			}
 		}
 
-		// Snapshot the worktree diff after every execution so downstream review
-		// steps always have the most-recent state (across retries and loop iters).
-		if path, ok := s.worktrees[m.stepID]; ok {
-			s.diffs[m.stepID] = captureDiff(path, s.wtBaseSHAs[m.stepID])
-		}
+		// Raw execution failure short-circuits the chain.
+		execFailed := m.err != nil || (m.result != nil && m.result.Status == step.StatusFailed)
 
 		wfStep := s.stepByID(m.stepID)
 
-		if !execFailed && wfStep != nil && wfStep.Validate != nil {
-			// Step executed successfully but has a [step.validate] gate.
-			// Run the gate synchronously in the scheduler goroutine (file checks)
-			// or inline for command gates.  This keeps all state mutation in one
-			// goroutine — the "single writer" invariant — at the cost of blocking
-			// the scheduler loop briefly.  Gate commands are expected to be fast
-			// (e.g. file existence checks, grep, quick test); slow gates belong
-			// in a proper step of type "command".
-			from := s.states[m.stepID].Status
-			s.transition(m.stepID, from, step.StatusValidating)
+		if execFailed {
+			s.applyFailurePolicy(m.stepID, wfStep)
+			break
+		}
 
-			passed, detail := s.runGate(wfStep, s.worktrees[m.stepID])
-			s.emit(GateResult{
-				RunID:  s.runID,
-				StepID: m.stepID,
-				Passed: passed,
-				Detail: detail,
-			})
-
-			if !passed {
-				execFailed = true
-				// The gate — not the execution — is the failure. Record its detail
-				// as the step's reason (the executor's Result was a success, so its
-				// Err is empty) so transition() surfaces why the gate rejected it.
-				res := s.states[m.stepID].Result
-				if res == nil {
-					res = &step.Result{}
-					s.states[m.stepID].Result = res
-				}
-				res.Status = step.StatusFailed
-				if res.Err == "" {
-					res.Err = detail
-				}
+		// Run the post-execution handler chain.
+		decision := decisionContinue
+		for _, h := range s.postExecChain {
+			if decision = h(s, m, wfStep); decision != decisionContinue {
+				break
 			}
 		}
 
-		if execFailed {
+		switch decision {
+		case decisionFailed:
 			s.applyFailurePolicy(m.stepID, wfStep)
-		} else {
-			// Use the current status as "from" — it may be StatusValidating if a
-			// gate ran, or StatusRunning if there was no gate.
+		case decisionNeedsInput:
+			// handler already transitioned the step; nothing more to do
+		default: // decisionContinue — all handlers passed → step succeeded
 			curFrom := s.states[m.stepID].Status
-			// block_on: if the condition is still true, hold the step for human input
-			// instead of succeeding — downstream stays blocked until block_on is false.
-			if wfStep != nil && wfStep.BlockOn != "" && s.evalBlockOn(m.stepID, wfStep) {
-				s.transition(m.stepID, curFrom, step.StatusNeedsInput)
-				s.emit(InputRequest{RunID: s.runID, StepID: m.stepID})
-			} else {
-				s.transition(m.stepID, curFrom, step.StatusSucceeded)
-				if wfStep != nil && wfStep.Loop != nil {
-					s.fireLoop(m.stepID, wfStep)
-				}
+			s.transition(m.stepID, curFrom, step.StatusSucceeded)
+			if wfStep != nil && wfStep.Loop != nil {
+				s.fireLoop(m.stepID, wfStep)
 			}
 		}
 
@@ -823,6 +947,30 @@ func (s *scheduler) handle(msg schedMsg) {
 
 	case agentInputMsg:
 		s.handleAgentInput(m)
+
+	case agentQuestionNotifyMsg:
+		// The agent step called AskUserQuestion; transition to StatusNeedsInput so
+		// the TUI can surface the question. The goroutine is still alive, blocked on
+		// rep.answerCh; inFlight remains > 0.
+		state := s.states[m.stepID]
+		if state != nil && state.Status == step.StatusRunning {
+			s.transition(m.stepID, step.StatusRunning, step.StatusNeedsInput)
+		}
+
+	case agentQuestionAnswerMsg:
+		// Deliver the human's answer to the blocked agent goroutine.
+		rep := s.reporters[m.stepID]
+		if rep == nil || rep.answerCh == nil {
+			return
+		}
+		state := s.states[m.stepID]
+		if state != nil && state.Status == step.StatusNeedsInput {
+			s.transition(m.stepID, step.StatusNeedsInput, step.StatusRunning)
+		}
+		select {
+		case rep.answerCh <- m.answer:
+		default:
+		}
 
 	case snapshotReqMsg:
 		m.reply <- s.snapshot()
@@ -1317,11 +1465,12 @@ func (s *scheduler) transition(stepID string, from, to step.Status) {
 		Attempt:   state.Attempt,
 		Iteration: state.Iteration,
 	}
-	// Carry the failure reason so the TUI can surface it without re-reading
-	// result.json. handle() guarantees state.Result.Err is populated (executor
-	// error or gate detail) before a step transitions to Failed.
+	// Carry the failure reason and subtype so the TUI can surface them without
+	// re-reading result.json. handle() guarantees state.Result.Err is populated
+	// (executor error or gate detail) before a step transitions to Failed.
 	if to == step.StatusFailed && state.Result != nil {
 		ev.Err = state.Result.Err
+		ev.Subtype = state.Result.Subtype
 	}
 	s.emit(ev)
 }
@@ -1351,7 +1500,12 @@ func (s *scheduler) emit(e Event) {
 			s.writer.AppendLine(line, term)
 		}
 	}
-	fanOut(s.subs, e)
+	switch e.(type) {
+	case StepOutput, StepToolCall, StepMessage:
+		fanOutLive(s.subs, e)
+	default:
+		fanOutCtrl(s.subs, e)
+	}
 }
 
 func (s *scheduler) snapshot() RunSnapshot {
@@ -1375,12 +1529,25 @@ func (s *scheduler) snapshot() RunSnapshot {
 	}
 }
 
-// fanOut sends e to each subscriber channel, dropping events for slow consumers.
-// Called from both scheduler and reporter (which runs in worker goroutines).
-func fanOut(subs []chan<- Event, e Event) {
-	for _, ch := range subs {
+// fanOutLive sends e to each subscriber's live channel, dropping for slow consumers.
+// Live events (StepOutput, StepToolCall, StepMessage) are liveness signals only;
+// the durable content lives in the per-step transcript on disk.
+func fanOutLive(subs []sub, e Event) {
+	for _, s := range subs {
 		select {
-		case ch <- e:
+		case s.live <- e:
+		default:
+		}
+	}
+}
+
+// fanOutCtrl sends e to each subscriber's ctrl channel, dropping for slow consumers.
+// Ctrl events are critical (RunFinished, ReviewRequest, etc.) but the ctrl channel
+// is sized for worst-case workflow volume, so drops should not occur in practice.
+func fanOutCtrl(subs []sub, e Event) {
+	for _, s := range subs {
+		select {
+		case s.ctrl <- e:
 		default:
 		}
 	}

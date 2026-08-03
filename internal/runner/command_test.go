@@ -20,9 +20,10 @@ type noopReporter struct {
 	message bool
 }
 
-func (r *noopReporter) Output(delta string)          { r.deltas = append(r.deltas, delta) }
-func (r *noopReporter) ToolCall(tool, detail string) {}
-func (r *noopReporter) Message(seq, iteration int)   { r.message = true }
+func (r *noopReporter) Output(delta string)                                    { r.deltas = append(r.deltas, delta) }
+func (r *noopReporter) ToolCall(tool, detail string)                           {}
+func (r *noopReporter) Message(seq, iteration int)                             { r.message = true }
+func (r *noopReporter) Question(_ string, _ []engine.AgentQuestionItem) string { return "" }
 
 func TestCommandExecutor_Success(t *testing.T) {
 	exec := NewCommandExecutor("")

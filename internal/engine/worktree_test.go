@@ -112,7 +112,7 @@ skill = "skills/mutate"
 
 	exec := newCaptureExec()
 	mgr := NewManager(exec, jigRoot)
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	_, err = mgr.Start(wf)
 	if err != nil {
@@ -186,7 +186,7 @@ output_type = { enum = ["approve", "reject"] }
 
 	exec := newCaptureExec()
 	mgr := NewManager(exec, jigRoot)
-	ch := mgr.Subscribe()
+	_, ch := mgr.Subscribe()
 
 	run, err := mgr.Start(wf)
 	if err != nil {

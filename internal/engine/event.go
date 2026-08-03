@@ -33,6 +33,10 @@ type StepStatus struct {
 	// Result's error, or the [step.validate] gate detail when a gate failed.
 	// Empty for every non-failing transition.
 	Err string
+	// Subtype is the SDK ResultMessage.Subtype for agent steps that fail due to
+	// a policy limit (e.g. "error_max_turns", "error_max_budget_usd"). Empty for
+	// non-agent failures and for all non-failing transitions.
+	Subtype string
 }
 
 // StepOutput carries a streaming text delta from an in-flight agent step.
@@ -122,6 +126,27 @@ type PromptRequest struct {
 	As     string
 }
 
+// AgentQuestion is emitted when an in-flight agent step calls AskUserQuestion.
+// The step transitions to StatusNeedsInput and waits for Run.AnswerQuestion.
+type AgentQuestion struct {
+	RunID     string
+	StepID    string
+	ToolUseID string
+	Questions []AgentQuestionItem
+}
+
+type AgentQuestionItem struct {
+	Header      string
+	Question    string
+	Options     []AgentQuestionOption
+	MultiSelect bool
+}
+
+type AgentQuestionOption struct {
+	Label       string
+	Description string
+}
+
 func (RunStarted) isEvent()    {}
 func (RunFinished) isEvent()   {}
 func (StepStatus) isEvent()    {}
@@ -134,3 +159,4 @@ func (ReviewRequest) isEvent() {}
 func (InputRequest) isEvent()  {}
 func (RunError) isEvent()      {}
 func (PromptRequest) isEvent() {}
+func (AgentQuestion) isEvent() {}

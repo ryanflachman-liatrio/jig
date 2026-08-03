@@ -54,4 +54,7 @@ type Reporter interface {
 	// It carries no payload — content is written directly to the transcript
 	// file by the runner; this is a liveness-only nudge for the TUI to refresh.
 	Message(seq, iteration int)
+	// Question delivers a dynamic AskUserQuestion from the agent to the scheduler
+	// and blocks until the human provides an answer. Returns the user's answer text.
+	Question(toolUseID string, questions []AgentQuestionItem) string
 }
