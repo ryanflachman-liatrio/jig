@@ -246,7 +246,22 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 		// AskUserQuestion: digit keys select / toggle options; enter confirms multiSelect.
 		if m.pendingQuestion != nil {
 			if s := msg.String(); s == "esc" || s == "q" {
-				return m, func() tea.Msg { return showRunsMsg{} }
+				// Deliver a cancellation answer so the blocked reporter goroutine
+				// unblocks and Claude receives a tool_result instead of hanging.
+				q := m.pendingQuestion
+				m.pendingQuestion = nil
+				m.questionAnswers = nil
+				return m, tea.Batch(
+					func() tea.Msg {
+						return agentQuestionResponseMsg{
+							runID:     q.RunID,
+							stepID:    q.StepID,
+							toolUseID: q.ToolUseID,
+							answer:    "cancelled",
+						}
+					},
+					func() tea.Msg { return showRunsMsg{} },
+				)
 			}
 			if m.questionIdx < len(m.pendingQuestion.Questions) {
 				q := m.pendingQuestion.Questions[m.questionIdx]
@@ -594,6 +609,11 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		m.questionSelected = make(map[int]bool)
 		m.questionAnswers = nil
 		m.mode = modeList
+		// Update the step badge immediately — the scheduler inbox notification
+		// may be dropped under load, so drive the display from this reliable event.
+		if idx, ok := m.index[ev.StepID]; ok {
+			m.steps[idx].status = step.StatusNeedsInput
+		}
 
 	case engine.StepMessage:
 		if ev.RunID != m.runID {

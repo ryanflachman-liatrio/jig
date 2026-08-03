@@ -206,8 +206,17 @@ func captureStream(
 					Text: fmt.Sprintf("assistant error: %s", m.GetError()),
 				}})
 			}
-			// Intercept AskUserQuestion: pause execution, collect human answer, inject tool result.
+			// Intercept AskUserQuestion: pause execution, collect human answers, inject
+			// all tool results in a single user turn. Batching into one message is
+			// required when the agent issues multiple AskUserQuestion calls in the same
+			// AssistantMessage; sequential separate sends would violate the SDK contract.
 			if send != nil {
+				type pendingAnswer struct {
+					toolUseID string
+					content   string
+					isError   bool
+				}
+				var pending []pendingAnswer
 				for _, cb := range m.Content {
 					b, ok := cb.(*claudecode.ToolUseBlock)
 					if !ok || b.Name != "AskUserQuestion" {
@@ -215,20 +224,34 @@ func captureStream(
 					}
 					questions, err := parseAskUserQuestions(b.Input)
 					if err != nil {
+						pending = append(pending, pendingAnswer{
+							toolUseID: b.ToolUseID,
+							content:   fmt.Sprintf("failed to parse question: %v", err),
+							isError:   true,
+						})
 						continue
 					}
 					answer := rep.Question(b.ToolUseID, questions)
+					pending = append(pending, pendingAnswer{toolUseID: b.ToolUseID, content: answer})
+				}
+				if len(pending) > 0 {
+					content := make([]map[string]interface{}, len(pending))
+					for i, p := range pending {
+						entry := map[string]interface{}{
+							"type":        "tool_result",
+							"tool_use_id": p.toolUseID,
+							"content":     p.content,
+						}
+						if p.isError {
+							entry["is_error"] = true
+						}
+						content[i] = entry
+					}
 					send <- claudecode.StreamMessage{
 						Type: "user",
 						Message: map[string]interface{}{
-							"role": "user",
-							"content": []map[string]interface{}{
-								{
-									"type":        "tool_result",
-									"tool_use_id": b.ToolUseID,
-									"content":     answer,
-								},
-							},
+							"role":    "user",
+							"content": content,
 						},
 					}
 				}
