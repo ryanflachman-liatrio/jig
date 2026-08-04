@@ -101,6 +101,15 @@ type Styles struct {
 		Focused lipgloss.Style
 		Blurred lipgloss.Style
 	}
+	// Panel is the titled-box primitive (see panel.go). The border styles omit
+	// the top edge (the helper hand-composites the titled top line per ADR 0001);
+	// Focused/Blurred reuse the same Charple/Iron token pair as Viewport so the
+	// focus convention stays consistent app-wide.
+	Panel struct {
+		FocusedBorder lipgloss.Style
+		BlurredBorder lipgloss.Style
+		Title         lipgloss.Style
+	}
 	Textarea struct {
 		Base          lipgloss.Style
 		FocusedBorder color.Color
@@ -195,6 +204,16 @@ func DefaultTheme() Styles {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color(hexIron)).
 		Padding(0, 1)
+
+	// Panel borders omit the top edge (BorderTop(false)); panel() hand-builds the
+	// titled top line. Same primary/Iron pair as Viewport.Focused/.Blurred.
+	panelBorder := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderTop(false).
+		Padding(0, 1)
+	s.Panel.FocusedBorder = panelBorder.BorderForeground(primary)
+	s.Panel.BlurredBorder = panelBorder.BorderForeground(lipgloss.Color(hexIron))
+	s.Panel.Title = lipgloss.NewStyle().Bold(true).Foreground(fgBase)
 
 	s.Textarea.Base = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	s.Textarea.FocusedBorder = primary

@@ -1,0 +1,14 @@
+╭─ Runs ───────────────────────────────────────────────────────────────╮
+│ ▌ run-a1b2c3              feature               running  1/3 steps   │
+│   run-d4e5f6              feature               done  0/3 steps      │
+│   run-77aa88              feature               running  0/3 steps   │
+│   run-90ffee              feature               running  0/3 steps   │
+│   run-cc1122              feature               running  0/3 steps   │
+│   run-334455              feature               running  0/3 steps   │
+│   run-667788              feature               running  0/3 steps   │
+│   run-99aabb              feature               running  0/3 steps   │
+│                                                                      │
+│                                                                      │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
+  r new run  •  enter monitor  •  esc back  •  ctrl+c quit

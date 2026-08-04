@@ -90,22 +90,36 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 	return m, cmd
 }
 
-// resize (re)builds the viewport to fit the terminal, leaving one row for the
-// footer help line.
+// resize (re)builds the viewport to fit the panel's inner area, leaving one row
+// for the footer help line below the box.
 func (m *detailModel) resize() {
+	hFrame, vFrame := panelFrame()
 	footerHeight := lipgloss.Height(m.footerView())
-	vpHeight := m.height - footerHeight
+	vpWidth := m.width - hFrame
+	vpHeight := m.height - vFrame - footerHeight
+	if vpWidth < 1 {
+		vpWidth = 1
+	}
 	if vpHeight < 1 {
 		vpHeight = 1
 	}
 	if !m.ready {
-		m.vp = viewport.New(viewport.WithWidth(m.width), viewport.WithHeight(vpHeight))
+		m.vp = viewport.New(viewport.WithWidth(vpWidth), viewport.WithHeight(vpHeight))
 		m.ready = true
 	} else {
-		m.vp.SetWidth(m.width)
+		m.vp.SetWidth(vpWidth)
 		m.vp.SetHeight(vpHeight)
 	}
 	m.vp.SetContent(m.body())
+}
+
+// titleText is the detail panel's title: the workflow name, falling back to the
+// file path when the workflow could not be named (unparseable or unnamed).
+func (m detailModel) titleText() string {
+	if m.meta.Name != "" {
+		return m.meta.Name
+	}
+	return m.path
 }
 
 func (m detailModel) footerView() string {
@@ -122,16 +136,13 @@ func (m detailModel) body() string {
 		return "\n  Loading…\n"
 	}
 
+	// The panel title carries the workflow name, so the body opens with the
+	// version/description/path metadata rather than repeating the name.
 	var b strings.Builder
-	name := m.meta.Name
-	if name == "" {
-		name = m.path
-	}
-	header := theme.Title.Render(name)
+	b.WriteString("\n")
 	if m.meta.Version != "" {
-		header += "  " + theme.Question.Render("v"+m.meta.Version)
+		b.WriteString("  " + theme.Question.Render("v"+m.meta.Version) + "\n")
 	}
-	b.WriteString("\n  " + header + "\n")
 	if m.meta.Description != "" {
 		b.WriteString("  " + theme.Question.Render(m.meta.Description) + "\n")
 	}
@@ -226,5 +237,7 @@ func (m detailModel) View() string {
 	if !m.ready {
 		return "\n  Loading…\n"
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, m.vp.View(), m.footerView())
+	footer := m.footerView()
+	body := panel(m.titleText(), m.vp.View(), m.width, m.height-lipgloss.Height(footer), true)
+	return lipgloss.JoinVertical(lipgloss.Left, body, footer)
 }

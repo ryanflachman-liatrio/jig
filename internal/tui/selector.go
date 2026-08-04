@@ -67,11 +67,10 @@ func newSelectorModel() selectorModel {
 	delegate.Styles.DimmedDesc = delegate.Styles.DimmedDesc.Foreground(lipgloss.Color(hexOyster))
 
 	l := list.New(nil, delegate, 0, 0)
-	l.Title = "Workflows"
-	l.Styles.Title = l.Styles.Title.
-		Background(lipgloss.Color(hexCharple)).
-		Foreground(lipgloss.Color(hexButter)).
-		Bold(true)
+	// The panel border now supplies the "Workflows" title and the footer supplies
+	// the hints, so strip the bubbles-list internal title/help/status chrome.
+	l.SetShowTitle(false)
+	l.SetShowHelp(false)
 	l.SetShowStatusBar(false)
 	l.SetStatusBarItemName("workflow", "workflows")
 	return selectorModel{list: l, loading: true}
@@ -121,7 +120,7 @@ func (m selectorModel) Update(msg tea.Msg) (selectorModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.list.SetSize(msg.Width, msg.Height)
+		m.resize()
 		return m, nil
 
 	case workflowsLoadedMsg:
@@ -145,6 +144,31 @@ func (m selectorModel) Update(msg tea.Msg) (selectorModel, tea.Cmd) {
 	return m, cmd
 }
 
+// resize fits the list to the panel's inner area, leaving room for the footer
+// line rendered below the box.
+func (m *selectorModel) resize() {
+	hFrame, vFrame := panelFrame()
+	footerH := lipgloss.Height(m.footerView())
+	w := m.width - hFrame
+	h := m.height - vFrame - footerH
+	if w < 1 {
+		w = 1
+	}
+	if h < 1 {
+		h = 1
+	}
+	m.list.SetSize(w, h)
+}
+
+// footerView is the single plain hint line below the panel; it branches on the
+// filter state, mirroring lazygit's global keybind bar.
+func (m selectorModel) footerView() string {
+	if m.list.FilterState() == list.Filtering {
+		return theme.Footer.Render("  enter apply  •  esc clear filter  •  ctrl+c quit")
+	}
+	return theme.Footer.Render("  ↑/↓ navigate  •  / filter  •  enter open  •  ctrl+c quit")
+}
+
 func (m selectorModel) View() string {
 	switch {
 	case m.loading:
@@ -156,5 +180,7 @@ func (m selectorModel) View() string {
 			theme.Question.Render("  Add a <name>.toml with a [workflow] table under "+workflowsDir+"/.") +
 			"\n\n" + theme.Footer.Render("  ctrl+c quit") + "\n"
 	}
-	return m.list.View()
+	footer := m.footerView()
+	body := panel("Workflows", m.list.View(), m.width, m.height-lipgloss.Height(footer), true)
+	return body + "\n" + footer
 }

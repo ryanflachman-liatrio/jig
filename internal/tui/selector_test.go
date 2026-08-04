@@ -3,7 +3,11 @@ package tui
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
 )
 
 // TestDiscoverWorkflows verifies the startup scan: it walks the tree, keeps only
@@ -49,5 +53,33 @@ func TestDiscoverWorkflows(t *testing.T) {
 	msg, _ = discoverWorkflowsCmd(filepath.Join(dir, "does-not-exist"))().(workflowsLoadedMsg)
 	if msg.err != nil || len(msg.items) != 0 {
 		t.Fatalf("missing dir: got err=%v items=%d, want nil/0", msg.err, len(msg.items))
+	}
+}
+
+// TestSelector verifies the selector renders inside a "Workflows" panel with the
+// bubbles-list internal title/help chrome stripped (the panel border and the
+// external footer now supply those).
+func TestSelector(t *testing.T) {
+	m := newSelectorModel()
+	m, _ = m.Update(workflowsLoadedMsg{items: []list.Item{
+		workflowItem{name: "alpha", desc: "first", path: "a.toml"},
+		workflowItem{name: "beta", desc: "second", path: "b.toml"},
+	}})
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 60, Height: 20})
+
+	// Chrome stripped: the list supplies neither its own title nor help line.
+	if m.list.ShowTitle() {
+		t.Error("selector list title chrome should be disabled")
+	}
+	if m.list.ShowHelp() {
+		t.Error("selector list help chrome should be disabled")
+	}
+
+	firstLine := strings.SplitN(m.View(), "\n", 2)[0]
+	if !strings.Contains(firstLine, "Workflows") {
+		t.Errorf("top edge %q missing panel title \"Workflows\"", firstLine)
+	}
+	if !strings.Contains(firstLine, "╭") {
+		t.Errorf("top edge %q missing rounded corner", firstLine)
 	}
 }

@@ -1,0 +1,16 @@
+╭─ Workflows ──────────────────────────────────────────────────────────╮
+│                                                                      │
+│ │ feature                                                            │
+│ │ Kitchen-sink reference workflow                                    │
+│                                                                      │
+│   bugfix                                                             │
+│   Reproduce, fix, and verify a bug                                   │
+│                                                                      │
+│   review                                                             │
+│   Multi-agent code review with a human gate                          │
+│                                                                      │
+│                                                                      │
+│                                                                      │
+│                                                                      │
+╰──────────────────────────────────────────────────────────────────────╯
+  ↑/↓ navigate  •  / filter  •  enter open  •  ctrl+c quit

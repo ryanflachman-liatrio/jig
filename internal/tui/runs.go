@@ -5,7 +5,9 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"jig/internal/engine"
 	"jig/internal/step"
@@ -21,6 +23,9 @@ type runsModel struct {
 	index  map[string]int // runID → rows position
 	cursor int
 	wf     *workflow.Workflow // used for "r" to start another run
+
+	vp    viewport.Model // scrolls the run rows within the panel frame
+	ready bool
 
 	width  int
 	height int
@@ -51,20 +56,25 @@ func (m runsModel) Update(msg tea.Msg) (runsModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.resize()
 		return m, nil
 
 	case engineEventMsg:
-		return m.handleEngineEvent(msg.event), nil
+		m = m.handleEngineEvent(msg.event)
+		m.syncViewport()
+		return m, nil
 
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
+				m.syncViewport()
 			}
 		case "down", "j":
 			if m.cursor < len(m.rows)-1 {
 				m.cursor++
+				m.syncViewport()
 			}
 		case "enter":
 			if m.cursor < len(m.rows) {
@@ -119,16 +129,66 @@ func (m runsModel) handleEngineEvent(e engine.Event) runsModel {
 	return m
 }
 
-func (m runsModel) View() string {
-	if len(m.rows) == 0 {
-		return "\n  " + theme.Title.Render("No runs yet") + "\n\n" +
-			theme.Question.Render("  Press r in a workflow detail to start a run.") + "\n\n" +
-			theme.Footer.Render("  esc back  •  ctrl+c quit") + "\n"
+// resize fits the run-row viewport to the panel's inner area, leaving a row for
+// the footer below the box.
+func (m *runsModel) resize() {
+	hFrame, vFrame := panelFrame()
+	footerH := lipgloss.Height(m.footerView())
+	w := m.width - hFrame
+	h := m.height - vFrame - footerH
+	if w < 1 {
+		w = 1
 	}
+	if h < 1 {
+		h = 1
+	}
+	if !m.ready {
+		m.vp = viewport.New(viewport.WithWidth(w), viewport.WithHeight(h))
+		m.ready = true
+	} else {
+		m.vp.SetWidth(w)
+		m.vp.SetHeight(h)
+	}
+	m.syncViewport()
+}
 
+// syncViewport re-renders the rows into the viewport and keeps the selection in
+// view; called whenever the rows or the cursor change.
+func (m *runsModel) syncViewport() {
+	if !m.ready {
+		return
+	}
+	m.vp.SetContent(m.rowsBody())
+	m.ensureCursorVisible()
+}
+
+// ensureCursorVisible nudges the viewport so the selected run stays on screen as
+// the cursor moves. Rows start at line 0 (the panel border carries the title),
+// so the cursor index maps directly to a viewport row.
+func (m *runsModel) ensureCursorVisible() {
+	if !m.ready {
+		return
+	}
+	row := m.cursor
+	const margin = 1
+	top := m.vp.YOffset()
+	bottom := top + m.vp.Height() - 1
+	switch {
+	case row-margin < top:
+		m.vp.SetYOffset(row - margin)
+	case row+margin > bottom:
+		m.vp.SetYOffset(row + margin - m.vp.Height() + 1)
+	}
+}
+
+func (m runsModel) footerView() string {
+	return theme.Footer.Render("  r new run  •  enter monitor  •  esc back  •  ctrl+c quit")
+}
+
+// rowsBody renders one line per run with the selected row highlighted; the panel
+// wraps it and the viewport scrolls it.
+func (m runsModel) rowsBody() string {
 	var b strings.Builder
-	b.WriteString("\n  " + gradientTitle("Runs") + "\n\n")
-
 	for i, row := range m.rows {
 		cursor := "  "
 		if i == m.cursor {
@@ -151,11 +211,23 @@ func (m runsModel) View() string {
 			b.WriteString(line + "\n")
 		}
 	}
-
-	b.WriteString("\n")
-	help := "  r new run  •  enter monitor  •  esc back  •  ctrl+c quit"
-	b.WriteString(theme.Footer.Render(help) + "\n")
 	return b.String()
+}
+
+func (m runsModel) View() string {
+	if len(m.rows) == 0 {
+		return "\n  " + theme.Title.Render("No runs yet") + "\n\n" +
+			theme.Question.Render("  Press r in a workflow detail to start a run.") + "\n\n" +
+			theme.Footer.Render("  esc back  •  ctrl+c quit") + "\n"
+	}
+
+	footer := m.footerView()
+	content := m.rowsBody()
+	if m.ready {
+		content = m.vp.View()
+	}
+	body := panel("Runs", content, m.width, m.height-lipgloss.Height(footer), true)
+	return body + "\n" + footer
 }
 
 func runRowStatus(row runRow) string {
