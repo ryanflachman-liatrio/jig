@@ -64,8 +64,9 @@ func newChatModel(ctx context.Context, darkBackground bool) tea.Model {
 	s.Style = theme.Spinner
 
 	// enter submits the prompt (handled in Update); width is deferred to the
-	// first resize. See newInputTextarea for the shared setup.
-	ta := newInputTextarea("Ask Claude... (enter to send, alt+enter for newline, ctrl+c to quit)", 0, 3)
+	// first resize. withoutBorder: the Message panel owns the frame, so the
+	// textarea must not draw its own box (avoids a double border).
+	ta := newInputTextarea("Ask Claude... (enter to send, alt+enter for newline, ctrl+c to quit)", 0, 3, withoutBorder())
 
 	return chatModel{
 		textarea:       ta,
@@ -80,26 +81,43 @@ func (m chatModel) Init() tea.Cmd {
 	return tea.Batch(connectClaudeCmd(m.ctx), textarea.Blink)
 }
 
-func (m chatModel) headerView() string {
-	status := "Connecting to Claude..."
-	switch {
-	case m.fatal:
-		status = "⚠ " + m.fatalErr.Error()
-	case m.connected:
-		status = "Connected"
+// conversationTitle is the output panel's title. It folds the old header/turn
+// chrome into the border edge: "connecting…" until the client connects (then it
+// drops — never a persistent "Connected"), and "· Turn N of M" once more than
+// one turn exists so the reader knows which of several answers is shown.
+func (m chatModel) conversationTitle() string {
+	title := "Conversation"
+	if !m.connected && !m.fatal {
+		return title + " · connecting…"
 	}
-	return theme.Title.Render("jig - Claude chat") + "\n" + theme.Question.Render(status)
+	if len(m.turns) > 1 {
+		return fmt.Sprintf("%s · Turn %d of %d", title, m.activeTurn+1, len(m.turns))
+	}
+	return title
 }
 
-func (m chatModel) statusLineView() string {
-	switch {
-	case m.streaming:
-		return m.spinner.View() + " " + gradientText(theme.GradFrom, theme.GradTo, "Claude is responding…")
-	case !m.connected && !m.fatal:
-		return theme.StatusLine.Render("Connecting to Claude...")
-	default:
+// messageTitle is the input panel's title. The streaming state lives here as
+// text ("· responding…") rather than a spinner glyph in the border edge, which
+// would jitter the top line every tick.
+func (m chatModel) messageTitle() string {
+	if m.streaming {
+		return "Message · responding…"
+	}
+	return "Message"
+}
+
+// fatalLine renders a fatal connection/stream error as its own full-width line
+// beneath the panels — the chat's analogue of the monitor's gate strip — so the
+// message is never truncated inside a panel title. Returns "" when no error.
+func (m chatModel) fatalLine() string {
+	if !m.fatal || m.fatalErr == nil {
 		return ""
 	}
+	line := theme.Error.Render("⚠ " + m.fatalErr.Error())
+	if m.width > 0 {
+		line = theme.Error.MaxWidth(m.width).Render("⚠ " + m.fatalErr.Error())
+	}
+	return line
 }
 
 func (m chatModel) footerView() string {
@@ -110,16 +128,6 @@ func (m chatModel) footerView() string {
 		return theme.Footer.Render(fmt.Sprintf("enter send • alt+enter newline • esc/i switch focus • ctrl+c quit (%.0f%%)", m.viewport.ScrollPercent()*100))
 	}
 	return theme.Footer.Render("enter send • alt+enter newline • ctrl+c quit")
-}
-
-// turnIndicatorView reports which turn is currently displayed, and how to
-// move between turns. It always renders exactly one line so the layout
-// math in handleResize doesn't need to react to the turn count changing.
-func (m chatModel) turnIndicatorView() string {
-	if len(m.turns) == 0 {
-		return theme.TurnIndicator.Render(" ")
-	}
-	return theme.TurnIndicator.Render(fmt.Sprintf("Turn %d of %d (←/→ to switch)", m.activeTurn+1, len(m.turns)))
 }
 
 func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -200,9 +208,9 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "enter":
 			// From the output pane, enter focuses the input (mirrors "i").
+			// The panel border (not the viewport's own style) reflects focus now.
 			if m.focus == focusOutput {
 				m.focus = focusInput
-				m.viewport.Style = theme.Viewport.Blurred
 				return m, m.textarea.Focus()
 			}
 			if !m.connected || m.fatal || m.streaming {
@@ -224,14 +232,12 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.focus == focusInput {
 				m.textarea.Blur()
 				m.focus = focusOutput
-				m.viewport.Style = theme.Viewport.Focused
 			}
 			return m, nil
 
 		case "i":
 			if m.focus == focusOutput {
 				m.focus = focusInput
-				m.viewport.Style = theme.Viewport.Blurred
 				return m, m.textarea.Focus()
 			}
 
@@ -262,17 +268,36 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+// View stacks two titled panels: a "Conversation" output panel wrapping the
+// viewport and a "Message" input panel wrapping the textarea. The focused
+// panel's border is drawn primary (via the focusInput/focusOutput toggle). A
+// fatal error renders as its own full-width line beneath the panels (never
+// inside a truncatable title). chatModel is a standalone root model, so View
+// returns a tea.View (unlike the sub-models).
 func (m chatModel) View() tea.View {
 	if !m.ready {
 		return tea.NewView("Initializing...\n")
 	}
 
-	return tea.NewView(lipgloss.JoinVertical(lipgloss.Left,
-		m.headerView(),
-		m.turnIndicatorView(),
-		m.viewport.View(),
-		m.statusLineView(),
-		m.textarea.View(),
-		m.footerView(),
-	))
+	_, vFrame := panelFrame()
+	width := m.width
+	if width < 1 {
+		width = 1
+	}
+
+	// Panel heights are the viewport/textarea content heights plus the frame the
+	// border+title consume; handleResize sized the inner components to match.
+	convH := m.viewport.Height() + vFrame
+	msgH := m.textarea.Height() + vFrame
+
+	conversation := panel(m.conversationTitle(), m.viewport.View(), width, convH, m.focus == focusOutput)
+	message := panel(m.messageTitle(), m.textarea.View(), width, msgH, m.focus == focusInput)
+
+	parts := []string{conversation, message}
+	if line := m.fatalLine(); line != "" {
+		parts = append(parts, line)
+	}
+	parts = append(parts, m.footerView())
+
+	return tea.NewView(lipgloss.JoinVertical(lipgloss.Left, parts...))
 }
