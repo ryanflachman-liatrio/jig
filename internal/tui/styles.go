@@ -1,9 +1,7 @@
 package tui
 
 import (
-	"fmt"
 	"image/color"
-	"strings"
 
 	"charm.land/glamour/v2/ansi"
 	"charm.land/glamour/v2/styles"
@@ -111,7 +109,11 @@ type Styles struct {
 		Title         lipgloss.Style
 	}
 	Textarea struct {
-		Base          lipgloss.Style
+		Base lipgloss.Style
+		// Borderless is Base with no border/padding: used when a surrounding panel
+		// owns the frame (the paneled chat's Message panel) so the textarea does
+		// not draw a second box inside it.
+		Borderless    lipgloss.Style
 		FocusedBorder color.Color
 		BlurredBorder color.Color
 	}
@@ -216,6 +218,7 @@ func DefaultTheme() Styles {
 	s.Panel.Title = lipgloss.NewStyle().Bold(true).Foreground(fgBase)
 
 	s.Textarea.Base = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
+	s.Textarea.Borderless = lipgloss.NewStyle()
 	s.Textarea.FocusedBorder = primary
 	s.Textarea.BlurredBorder = lipgloss.Color(hexIron)
 
@@ -257,50 +260,6 @@ func DefaultTheme() Styles {
 	s.Markdown = charmtoneMarkdown()
 
 	return s
-}
-
-// gradientText paints s with a horizontal RGB gradient from → to, one lerp step
-// per rune. Modeled on crush's logo/working-indicator gradients; used for the
-// title wordmark and the streaming spinner label. Whitespace runes are emitted
-// unstyled so leading indentation doesn't carry color.
-func gradientText(from, to color.Color, s string) string {
-	runes := []rune(s)
-	n := len(runes)
-	if n == 0 {
-		return s
-	}
-	fr, fg, fb := rgb(from)
-	tr, tg, tb := rgb(to)
-	var b strings.Builder
-	for i, r := range runes {
-		if r == ' ' || r == '\t' || r == '\n' {
-			b.WriteRune(r)
-			continue
-		}
-		t := 0.0
-		if n > 1 {
-			t = float64(i) / float64(n-1)
-		}
-		cr := uint8(float64(fr) + (float64(tr)-float64(fr))*t)
-		cg := uint8(float64(fg) + (float64(tg)-float64(fg))*t)
-		cb := uint8(float64(fb) + (float64(tb)-float64(fb))*t)
-		hex := fmt.Sprintf("#%02X%02X%02X", cr, cg, cb)
-		b.WriteString(lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color(hex)).Render(string(r)))
-	}
-	return b.String()
-}
-
-// gradientTitle renders s as a bold Charple→Dolly gradient wordmark, the brand
-// accent used for top-level screen titles. Falls back through gradientText.
-func gradientTitle(s string) string {
-	return gradientText(theme.GradFrom, theme.GradTo, s)
-}
-
-// rgb extracts 8-bit RGB from a color.Color (color.RGBA() returns 16-bit
-// premultiplied channels; shift down to 8-bit).
-func rgb(c color.Color) (r, g, b uint8) {
-	r16, g16, b16, _ := c.RGBA()
-	return uint8(r16 >> 8), uint8(g16 >> 8), uint8(b16 >> 8)
 }
 
 // charmtoneMarkdown clones glamour's dark style and repaints the headings, code,

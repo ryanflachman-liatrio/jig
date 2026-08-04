@@ -139,42 +139,47 @@ func defaultChatKeys() chatKeys {
 
 // ── monitor ──────────────────────────────────────────────────────────────────
 
-// monitorKeys covers the run monitor, whose key surface is state-dependent: a
-// list/chat navigation split plus four human-in-the-loop gates. Bindings marked
-// display-only are rendered in the footer but matched elsewhere — the digit
-// gates (Verdict/Answer/ToggleOpt) run a loop that needs the option index, and
-// ListNav/Scroll label the viewport's own j/k handling.
-//
-// NOTE: PromptLeave is display-only. The from="user" prompt gate advertises
-// "esc runs list" but the handler currently routes esc to the textarea (it does
-// not leave). That pre-existing discrepancy is left intact by this mechanical
-// sweep and is slated for the monitor FSM cleanup — see
-// docs/bug-gate-navigation-freeze.md.
+// monitorKeys covers the two-panel run monitor. Focus moves between the Steps
+// panel, the Transcript panel, and (when present) the Gate; each region reads its
+// own keys, and the gates are non-blocking (ADR 0002) so focus keys are handled
+// before any region sees input. Bindings marked display-only are rendered in the
+// footer but matched elsewhere — the digit gates (Verdict/Answer/ToggleOpt) run a
+// loop that needs the option index, and the *Nav/Scroll/Block/Focus* labels
+// combine keys (e.g. "j/k", "n/N", "tab/←/→") the regions match individually.
 type monitorKeys struct {
-	// modeList navigation
-	Up      keybind.Binding // matched (k/up)
-	Down    keybind.Binding // matched (j/down)
-	ListNav keybind.Binding // display-only ("j/k select")
-	Open    keybind.Binding // matched (enter)
-	Back    keybind.Binding // matched (esc/q/backspace/h/left → runs list)
+	// focus movement (handled in Update before region dispatch)
+	FocusNext  keybind.Binding // matched (tab)
+	FocusPrev  keybind.Binding // matched (shift+tab)
+	PanelFocus keybind.Binding // matched (left/right → the two side panels)
+	FocusHint  keybind.Binding // display-only ("tab focus", gate footers)
+	FocusFull  keybind.Binding // display-only ("tab/←/→ focus", panel footers)
 
-	// modeChat
-	ChatBack  keybind.Binding // matched (esc/h/left)
-	Scroll    keybind.Binding // display-only ("j/k scroll")
-	NextBlock keybind.Binding // matched (tab)
-	PrevBlock keybind.Binding // matched (shift+tab)
-	Toggle    keybind.Binding // matched (enter/space → expand)
-	ExpandAll keybind.Binding // matched (o)
+	// Steps panel
+	Down           keybind.Binding // matched (j/down)
+	Up             keybind.Binding // matched (k/up)
+	StepsNav       keybind.Binding // display-only ("j/k select")
+	OpenTranscript keybind.Binding // matched (enter/l → Transcript)
+	StepsLeave     keybind.Binding // matched (esc/q/backspace/h → runs list)
+
+	// Transcript panel
+	TransToSteps keybind.Binding // matched (esc/h → Steps)
+	TransLeave   keybind.Binding // matched (q → runs list)
+	Scroll       keybind.Binding // display-only ("j/k scroll")
+	NextBlock    keybind.Binding // matched (n)
+	PrevBlock    keybind.Binding // matched (N)
+	BlockNav     keybind.Binding // display-only ("n/N block")
+	Toggle       keybind.Binding // matched (enter/space → expand)
+	ExpandAll    keybind.Binding // matched (o)
 
 	// gates
 	Submit         keybind.Binding // matched (enter: input/prompt/compose submit)
 	Newline        keybind.Binding // display-only (textarea-owned)
-	InputLeave     keybind.Binding // matched (esc, block_on gate)
-	PromptLeave    keybind.Binding // display-only (see NOTE above)
+	InputLeave     keybind.Binding // matched (esc, block_on gate → runs list)
+	PromptLeave    keybind.Binding // display-only ("esc runs list", prompt gate)
 	ComposeCancel  keybind.Binding // matched (esc, while composing)
 	Message        keybind.Binding // matched (m, review gate)
-	ReviewLeave    keybind.Binding // matched (esc/q, review gate)
-	Verdict        keybind.Binding // display-only ("1-9 select verdict")
+	ReviewLeave    keybind.Binding // matched (esc/q, review gate → runs list)
+	Verdict        keybind.Binding // display-only ("1-9 verdict")
 	Answer         keybind.Binding // display-only ("1-9 select answer")
 	ToggleOpt      keybind.Binding // display-only ("1-9 toggle", multiSelect)
 	QConfirm       keybind.Binding // matched (enter/space, multiSelect confirm)
@@ -183,18 +188,26 @@ type monitorKeys struct {
 
 func defaultMonitorKeys() monitorKeys {
 	return monitorKeys{
-		Up:      keybind.NewBinding(keybind.WithKeys("k", "up"), keybind.WithHelp("↑/k", "up")),
-		Down:    keybind.NewBinding(keybind.WithKeys("j", "down"), keybind.WithHelp("↓/j", "down")),
-		ListNav: keybind.NewBinding(keybind.WithKeys("j", "k"), keybind.WithHelp("j/k", "select")),
-		Open:    keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "open")),
-		Back:    keybind.NewBinding(keybind.WithKeys("esc", "q", "backspace", "h", "left"), keybind.WithHelp("esc", "runs list")),
+		FocusNext:  keybind.NewBinding(keybind.WithKeys("tab"), keybind.WithHelp("tab", "focus")),
+		FocusPrev:  keybind.NewBinding(keybind.WithKeys("shift+tab"), keybind.WithHelp("shift+tab", "prev focus")),
+		PanelFocus: keybind.NewBinding(keybind.WithKeys("left", "right"), keybind.WithHelp("←/→", "focus")),
+		FocusHint:  keybind.NewBinding(keybind.WithKeys("tab"), keybind.WithHelp("tab", "focus")),
+		FocusFull:  keybind.NewBinding(keybind.WithKeys("tab", "left", "right"), keybind.WithHelp("tab/←/→", "focus")),
 
-		ChatBack:  keybind.NewBinding(keybind.WithKeys("esc", "h", "left"), keybind.WithHelp("esc", "back")),
-		Scroll:    keybind.NewBinding(keybind.WithKeys("j", "k"), keybind.WithHelp("j/k", "scroll")),
-		NextBlock: keybind.NewBinding(keybind.WithKeys("tab"), keybind.WithHelp("tab", "block")),
-		PrevBlock: keybind.NewBinding(keybind.WithKeys("shift+tab"), keybind.WithHelp("shift+tab", "prev block")),
-		Toggle:    keybind.NewBinding(keybind.WithKeys("enter", " "), keybind.WithHelp("enter", "expand")),
-		ExpandAll: keybind.NewBinding(keybind.WithKeys("o"), keybind.WithHelp("o", "all")),
+		Down:           keybind.NewBinding(keybind.WithKeys("j", "down"), keybind.WithHelp("↓/j", "down")),
+		Up:             keybind.NewBinding(keybind.WithKeys("k", "up"), keybind.WithHelp("↑/k", "up")),
+		StepsNav:       keybind.NewBinding(keybind.WithKeys("j", "k"), keybind.WithHelp("j/k", "select")),
+		OpenTranscript: keybind.NewBinding(keybind.WithKeys("enter", "l"), keybind.WithHelp("enter", "transcript")),
+		StepsLeave:     keybind.NewBinding(keybind.WithKeys("esc", "q", "backspace", "h"), keybind.WithHelp("esc", "runs list")),
+
+		TransToSteps: keybind.NewBinding(keybind.WithKeys("esc", "h"), keybind.WithHelp("esc", "steps")),
+		TransLeave:   keybind.NewBinding(keybind.WithKeys("q"), keybind.WithHelp("q", "runs list")),
+		Scroll:       keybind.NewBinding(keybind.WithKeys("j", "k"), keybind.WithHelp("j/k", "scroll")),
+		NextBlock:    keybind.NewBinding(keybind.WithKeys("n"), keybind.WithHelp("n", "next block")),
+		PrevBlock:    keybind.NewBinding(keybind.WithKeys("N"), keybind.WithHelp("N", "prev block")),
+		BlockNav:     keybind.NewBinding(keybind.WithKeys("n", "N"), keybind.WithHelp("n/N", "block")),
+		Toggle:       keybind.NewBinding(keybind.WithKeys("enter", " "), keybind.WithHelp("enter", "expand")),
+		ExpandAll:    keybind.NewBinding(keybind.WithKeys("o"), keybind.WithHelp("o", "all")),
 
 		Submit:         keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "submit")),
 		Newline:        keybind.NewBinding(keybind.WithKeys("alt+enter", "shift+enter"), keybind.WithHelp("alt+enter", "newline")),
@@ -203,7 +216,7 @@ func defaultMonitorKeys() monitorKeys {
 		ComposeCancel:  keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "cancel")),
 		Message:        keybind.NewBinding(keybind.WithKeys("m"), keybind.WithHelp("m", "message")),
 		ReviewLeave:    keybind.NewBinding(keybind.WithKeys("esc", "q"), keybind.WithHelp("esc", "runs list")),
-		Verdict:        keybind.NewBinding(keybind.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"), keybind.WithHelp("1-9", "select verdict")),
+		Verdict:        keybind.NewBinding(keybind.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"), keybind.WithHelp("1-9", "verdict")),
 		Answer:         keybind.NewBinding(keybind.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"), keybind.WithHelp("1-9", "select answer")),
 		ToggleOpt:      keybind.NewBinding(keybind.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"), keybind.WithHelp("1-9", "toggle")),
 		QConfirm:       keybind.NewBinding(keybind.WithKeys("enter", " "), keybind.WithHelp("enter", "confirm")),

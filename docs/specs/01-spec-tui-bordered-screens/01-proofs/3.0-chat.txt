@@ -1,0 +1,23 @@
+╭─ Conversation · Turn 2 of 2 ─────────────────────────────────────────────────╮
+│ You                                                                          │
+│ Now wire it into the loader.                                                 │
+│                                                                              │
+│                                                                              │
+│   The loader now defaults and validates the field. All tests pass.           │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Message ────────────────────────────────────────────────────────────────────╮
+│ ┃ Ask Claude... (enter to send, alt+enter for newline, ctrl+c to quit)       │
+│ ┃                                                                            │
+│ ┃                                                                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+enter send • alt+enter newline • esc/i switch focus • ctrl+c quit (100%)        

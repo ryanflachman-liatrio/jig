@@ -67,40 +67,48 @@ func (m *chatModel) renderActiveTurn() {
 }
 
 // handleResize rebuilds the viewport, textarea, and glamour renderer to fit
-// the new terminal dimensions, then re-renders the active turn into them.
+// the new terminal dimensions, then re-renders the active turn into them. Both
+// the Conversation and Message panels now own their frames, so inner sizes are
+// derived from panelFrame() (no magic numbers) and the panel borders — not the
+// viewport/textarea's own styles — carry the focus color.
 func (m *chatModel) handleResize(msg tea.WindowSizeMsg) {
 	m.width, m.height = msg.Width, msg.Height
 
-	headerHeight := lipgloss.Height(m.headerView())
-	turnIndicatorHeight := lipgloss.Height(m.turnIndicatorView())
-	footerHeight := lipgloss.Height(m.footerView())
-	statusLineHeight := lipgloss.Height(m.statusLineView())
-	textareaHeight := m.textarea.Height()
-	// +1 for the blank line between header and viewport, plus the
-	// viewport border's own frame size.
-	verticalMargins := headerHeight + turnIndicatorHeight + footerHeight + statusLineHeight + textareaHeight + 1 + theme.Viewport.Blurred.GetVerticalFrameSize()
+	hFrame, vFrame := panelFrame()
 
-	viewportHeight := m.height - verticalMargins
+	footerHeight := lipgloss.Height(m.footerView())
+	fatalHeight := lipgloss.Height(m.fatalLine())
+	// The Message panel is the textarea's height plus the panel frame; the
+	// Conversation panel takes the remaining rows (also minus its own frame).
+	messagePanelH := m.textarea.Height() + vFrame
+	viewportHeight := m.height - footerHeight - fatalHeight - messagePanelH - vFrame
 	if viewportHeight < 1 {
 		viewportHeight = 1
 	}
 
+	innerW := m.width - hFrame
+	if innerW < 1 {
+		innerW = 1
+	}
+
 	if !m.ready {
-		m.viewport = viewport.New(viewport.WithWidth(m.width), viewport.WithHeight(viewportHeight))
-		if m.focus == focusOutput {
-			m.viewport.Style = theme.Viewport.Focused
-		} else {
-			m.viewport.Style = theme.Viewport.Blurred
-		}
+		m.viewport = viewport.New(viewport.WithWidth(innerW), viewport.WithHeight(viewportHeight))
+		// No own border: the Conversation panel draws the frame and its color
+		// reflects focus. A bordered viewport here would double-box.
+		m.viewport.Style = lipgloss.NewStyle()
+		// Content is word-wrapped to the panel width; horizontal scrolling only
+		// ever cuts left characters off rendered lines. Disable it.
+		m.viewport.KeyMap.Left.Unbind()
+		m.viewport.KeyMap.Right.Unbind()
 		m.ready = true
 	} else {
-		m.viewport.SetWidth(m.width)
+		m.viewport.SetWidth(innerW)
 		m.viewport.SetHeight(viewportHeight)
 	}
 
-	m.textarea.SetWidth(m.width - theme.Textarea.Base.GetHorizontalFrameSize())
+	m.textarea.SetWidth(innerW)
 
-	wordWrap := m.width - theme.Viewport.Blurred.GetHorizontalFrameSize()
+	wordWrap := innerW
 	if wordWrap < 1 {
 		wordWrap = 1
 	}

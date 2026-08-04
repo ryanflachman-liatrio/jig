@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
+	"charm.land/lipgloss/v2"
 
 	"jig/internal/datastore"
 	"jig/internal/engine"
@@ -49,7 +49,10 @@ func rawJSON(t *testing.T, v any) json.RawMessage {
 	return b
 }
 
-// enterChatStep drives the monitor into modeChat for the given step id.
+// enterChatStep drives the Steps cursor to the given step id (which eagerly
+// reloads that step's transcript) and focuses the Transcript panel. The two-panel
+// monitor always shows the cursor's step, so this is a cursor move plus a focus
+// switch rather than a mode toggle.
 func enterChatStep(t *testing.T, m monitorModel, id string) monitorModel {
 	t.Helper()
 	for m.steps[m.cursor].id != id {
@@ -59,10 +62,13 @@ func enterChatStep(t *testing.T, m monitorModel, id string) monitorModel {
 			t.Fatalf("step %q not found while navigating", id)
 		}
 	}
-	m, _ = m.Update(key("enter"))
-	if m.mode != modeChat {
-		t.Fatalf("did not enter modeChat for %q", id)
-	}
+	// Force a fresh load: the runDir is typically set by the test after the model
+	// is built (so the initial eager load found nothing), and the target may
+	// already be under the cursor. Reset chatStep so reloadTranscript re-reads.
+	m.chatStep = ""
+	m.reloadTranscript()
+	m.focus = focusTranscript
+	m.refreshPanels()
 	return m
 }
 
@@ -85,7 +91,7 @@ func TestMonitorChatRendersBlocks(t *testing.T) {
 	m.runDir = runDir
 	m = enterChatStep(t, m, "a")
 
-	body := m.body()
+	body := m.chatBody()
 	for _, want := range []string{IconThinking + " reasoning", IconToolCall + " Read", IconToolResult + " result", "Reading the file"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("chat body missing %q:\n%s", want, body)
@@ -108,7 +114,7 @@ func TestMonitorChatCollapseExpand(t *testing.T) {
 	m.runDir = runDir
 	m = enterChatStep(t, m, "a")
 
-	collapsed := m.body()
+	collapsed := m.chatBody()
 	if strings.Contains(collapsed, "MARKER") {
 		t.Fatalf("collapsed body leaked content past 80 chars:\n%s", collapsed)
 	}
@@ -117,7 +123,7 @@ func TestMonitorChatCollapseExpand(t *testing.T) {
 	}
 
 	m, _ = m.Update(key("o")) // expand all
-	expanded := m.body()
+	expanded := m.chatBody()
 	if !strings.Contains(expanded, "MARKER") {
 		t.Fatalf("expanded body did not reveal full content:\n%s", expanded)
 	}
@@ -137,15 +143,15 @@ func TestMonitorChatBlockCursorToggle(t *testing.T) {
 	m.runDir = runDir
 	m = enterChatStep(t, m, "a")
 
-	if strings.Contains(m.body(), "END") {
+	if strings.Contains(m.chatBody(), "END") {
 		t.Fatalf("block should start collapsed")
 	}
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // toggle block under cursor
-	if !strings.Contains(m.body(), "END") {
-		t.Fatalf("enter did not expand the cursored block:\n%s", m.body())
+	if !strings.Contains(m.chatBody(), "END") {
+		t.Fatalf("enter did not expand the cursored block:\n%s", m.chatBody())
 	}
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // toggle back
-	if strings.Contains(m.body(), "END") {
+	if strings.Contains(m.chatBody(), "END") {
 		t.Fatalf("second enter did not collapse the block")
 	}
 }
@@ -166,8 +172,8 @@ func TestMonitorChatIterationSeparators(t *testing.T) {
 	m.runDir = runDir
 	m = enterChatStep(t, m, "a")
 
-	if !strings.Contains(m.body(), "iteration 2") {
-		t.Fatalf("missing iteration separator:\n%s", m.body())
+	if !strings.Contains(m.chatBody(), "iteration 2") {
+		t.Fatalf("missing iteration separator:\n%s", m.chatBody())
 	}
 }
 
@@ -176,8 +182,8 @@ func TestMonitorChatIterationSeparators(t *testing.T) {
 func TestMonitorChatNoTranscript(t *testing.T) {
 	m := newMonitorWithSteps(t) // runDir stays ""
 	m = enterChatStep(t, m, "a")
-	if !strings.Contains(m.body(), "persistence off") {
-		t.Fatalf("expected persistence-off placeholder:\n%s", m.body())
+	if !strings.Contains(m.chatBody(), "persistence off") {
+		t.Fatalf("expected persistence-off placeholder:\n%s", m.chatBody())
 	}
 }
 
@@ -195,8 +201,8 @@ func TestMonitorChatCommandOutput(t *testing.T) {
 	m.runDir = runDir
 	m = enterChatStep(t, m, "a")
 
-	if !strings.Contains(m.body(), "build output here") {
-		t.Fatalf("command output not rendered in chat:\n%s", m.body())
+	if !strings.Contains(m.chatBody(), "build output here") {
+		t.Fatalf("command output not rendered in chat:\n%s", m.chatBody())
 	}
 }
 
@@ -205,7 +211,7 @@ func TestMonitorChatCommandOutput(t *testing.T) {
 func TestMonitorChatReviewFallback(t *testing.T) {
 	m := newMonitorWithSteps(t) // no runDir: review steps have no transcript
 
-	// A review arrives (forces modeList) then is resolved, retaining the request.
+	// A review arrives (auto-focuses the gate) then is resolved, retaining the request.
 	m, _ = m.Update(engineEventMsg{event: engine.ReviewRequest{
 		RunID:   "run-1",
 		StepID:  "a",
@@ -215,7 +221,7 @@ func TestMonitorChatReviewFallback(t *testing.T) {
 	m, _ = m.Update(key("1")) // verdict clears pendingReview
 
 	m = enterChatStep(t, m, "a")
-	body := m.body()
+	body := m.chatBody()
 	for _, want := range []string{"new line", "old line", "[1] approve", "[2] reject"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("review drill-in missing %q:\n%s", want, body)
@@ -248,13 +254,13 @@ func key(s string) tea.KeyPressMsg {
 	}
 }
 
-// TestMonitorListNavigation checks that j/k move the selection cursor in
-// modeList (without scrolling) and clamp at the list bounds.
+// TestMonitorListNavigation checks that j/k move the selection cursor with the
+// Steps panel focused (without scrolling) and clamp at the list bounds.
 func TestMonitorListNavigation(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
-	if m.mode != modeList {
-		t.Fatalf("expected modeList by default, got %v", m.mode)
+	if m.focus != focusSteps {
+		t.Fatalf("expected focusSteps by default, got %v", m.focus)
 	}
 	if m.cursor != 0 {
 		t.Fatalf("expected cursor 0, got %d", m.cursor)
@@ -287,66 +293,61 @@ func TestMonitorListNavigation(t *testing.T) {
 	}
 }
 
-// TestMonitorEnterAndBack checks enter drills into a step's chat, esc returns
-// to the list, and a second esc emits showRunsMsg.
+// TestMonitorEnterAndBack checks enter crosses focus into the Transcript panel,
+// esc returns focus to Steps, and a second esc emits showRunsMsg. The Transcript
+// always shows the cursor's step (eager reload), so moving the cursor to "b"
+// points the transcript at "b".
 func TestMonitorEnterAndBack(t *testing.T) {
 	m := newMonitorWithSteps(t)
-	m, _ = m.Update(key("j")) // cursor → step "b"
+	m, _ = m.Update(key("j")) // cursor → step "b"; eager reload points transcript at "b"
+
+	if m.chatStep != "b" {
+		t.Fatalf("expected chatStep b after cursor move, got %q", m.chatStep)
+	}
 
 	m, _ = m.Update(key("enter"))
-	if m.mode != modeChat {
-		t.Fatalf("enter did not enter modeChat, got %v", m.mode)
-	}
-	if m.chatStep != "b" {
-		t.Fatalf("expected chatStep b, got %q", m.chatStep)
-	}
-	// The "chat" header is a gradient wordmark (per-rune ANSI); strip styling
-	// before the substring check.
-	if !strings.Contains(ansi.Strip(m.body()), "chat") {
-		t.Fatalf("chat body missing header:\n%s", m.body())
+	if m.focus != focusTranscript {
+		t.Fatalf("enter did not focus the Transcript panel, got %v", m.focus)
 	}
 
 	m, _ = m.Update(key("esc"))
-	if m.mode != modeList {
-		t.Fatalf("esc did not return to modeList, got %v", m.mode)
-	}
-	if m.chatStep != "" {
-		t.Fatalf("expected chatStep cleared, got %q", m.chatStep)
+	if m.focus != focusSteps {
+		t.Fatalf("esc did not return focus to Steps, got %v", m.focus)
 	}
 
 	_, cmd := m.Update(key("esc"))
 	if cmd == nil {
-		t.Fatal("esc in modeList produced no command")
+		t.Fatal("esc with Steps focused produced no command")
 	}
 	if _, ok := cmd().(showRunsMsg); !ok {
-		t.Fatalf("esc in modeList did not emit showRunsMsg, got %T", cmd())
+		t.Fatalf("esc with Steps focused did not emit showRunsMsg, got %T", cmd())
 	}
 }
 
-// TestMonitorChatScrolls confirms j/k in modeChat are not intercepted as
-// cursor moves (they fall through to the viewport).
+// TestMonitorChatScrolls confirms j/k with the Transcript focused are not
+// intercepted as cursor moves (they fall through to the viewport).
 func TestMonitorChatScrolls(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	m, _ = m.Update(key("j")) // cursor → 1
 	m, _ = m.Update(key("enter"))
-	if m.mode != modeChat {
-		t.Fatalf("expected modeChat, got %v", m.mode)
+	if m.focus != focusTranscript {
+		t.Fatalf("expected focusTranscript, got %v", m.focus)
 	}
 	before := m.cursor
 	m, _ = m.Update(key("j"))
 	if m.cursor != before {
-		t.Fatalf("j in modeChat moved the list cursor from %d to %d", before, m.cursor)
+		t.Fatalf("j with Transcript focused moved the list cursor from %d to %d", before, m.cursor)
 	}
 }
 
-// TestMonitorReviewForcesList verifies a review gate arriving while in modeChat
-// pops back to the list (where the overlay renders) and that digit keys select
-// a verdict.
-func TestMonitorReviewForcesList(t *testing.T) {
+// TestMonitorReviewAutoFocusesGate verifies a review gate arriving auto-focuses
+// the Gate region, renders the verdict picker in the gate strip, and that digit
+// keys select a verdict.
+func TestMonitorReviewAutoFocusesGate(t *testing.T) {
 	m := newMonitorWithSteps(t)
-	m, _ = m.Update(key("enter")) // into chat for step "a"
-	if m.mode != modeChat {
-		t.Fatalf("expected modeChat, got %v", m.mode)
+	m, _ = m.Update(key("enter")) // focus the Transcript panel for step "a"
+	if m.focus != focusTranscript {
+		t.Fatalf("expected focusTranscript, got %v", m.focus)
 	}
 
 	m, _ = m.Update(engineEventMsg{event: engine.ReviewRequest{
@@ -354,11 +355,11 @@ func TestMonitorReviewForcesList(t *testing.T) {
 		StepID:  "a",
 		Choices: []string{"approve", "reject"},
 	}})
-	if m.mode != modeList {
-		t.Fatalf("review gate did not force modeList, got %v", m.mode)
+	if m.focus != focusGate {
+		t.Fatalf("review gate did not auto-focus the Gate, got %v", m.focus)
 	}
-	if !strings.Contains(m.body(), "Review required") {
-		t.Fatalf("review overlay not shown:\n%s", m.body())
+	if !strings.Contains(m.gateStrip(), "Review") {
+		t.Fatalf("review gate strip not shown:\n%s", m.gateStrip())
 	}
 
 	_, cmd := m.Update(key("1"))
@@ -374,9 +375,11 @@ func TestMonitorReviewForcesList(t *testing.T) {
 	}
 }
 
-// TestMonitorReviewFreezesNavigation confirms j/k are swallowed (do not move
-// the cursor) while a review overlay is up.
-func TestMonitorReviewFreezesNavigation(t *testing.T) {
+// TestMonitorGateConsumesKeys confirms that with the Gate focused, a review
+// verdict picker consumes j/k (they are not a review action) so the Steps cursor
+// does not move — but focus can still be switched away (see
+// TestMonitorGateNonBlocking).
+func TestMonitorGateConsumesKeys(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	m, _ = m.Update(engineEventMsg{event: engine.ReviewRequest{
 		RunID:   "run-1",
@@ -386,7 +389,7 @@ func TestMonitorReviewFreezesNavigation(t *testing.T) {
 	before := m.cursor
 	m, _ = m.Update(key("j"))
 	if m.cursor != before {
-		t.Fatalf("j moved cursor during review: %d → %d", before, m.cursor)
+		t.Fatalf("j moved cursor while Gate focused: %d → %d", before, m.cursor)
 	}
 }
 
@@ -436,11 +439,11 @@ func TestMonitorAgentQuestionShowsPanel(t *testing.T) {
 	if m.pendingQuestion == nil {
 		t.Fatal("pendingQuestion not set after AgentQuestion event")
 	}
-	if m.mode != modeList {
-		t.Fatalf("expected modeList after AgentQuestion, got %v", m.mode)
+	if m.focus != focusGate {
+		t.Fatalf("expected focusGate after AgentQuestion, got %v", m.focus)
 	}
 
-	body := m.body()
+	body := m.gateStrip()
 	for _, want := range []string{"Agent question", "Which format should we use?", "[Format]", "[1] JSON", "[2] Text", "structured output"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("question body missing %q:\n%s", want, body)
@@ -516,7 +519,7 @@ func TestMonitorAgentQuestionMultiSelect(t *testing.T) {
 	m, _ = m.Update(key("1"))
 	m, _ = m.Update(key("3"))
 
-	body := m.body()
+	body := m.gateStrip()
 	if !strings.Contains(body, "[x]") {
 		t.Fatalf("toggled options not shown:\n%s", body)
 	}
@@ -547,9 +550,10 @@ func TestMonitorAgentQuestionMultiSelect(t *testing.T) {
 	}
 }
 
-// TestMonitorAgentQuestionFreezesNavigation confirms j/k are swallowed while a
-// question overlay is active (like the review overlay).
-func TestMonitorAgentQuestionFreezesNavigation(t *testing.T) {
+// TestMonitorAgentQuestionConsumesKeys confirms j/k are consumed by the focused
+// question gate (they are not a selection key), so the Steps cursor does not move
+// while the Gate is focused.
+func TestMonitorAgentQuestionConsumesKeys(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	m, _ = m.Update(engineEventMsg{event: engine.AgentQuestion{
 		RunID:     "run-1",
@@ -647,5 +651,238 @@ func TestMonitorAgentQuestionClearsOnResume(t *testing.T) {
 	}})
 	if m.pendingQuestion != nil {
 		t.Fatal("pendingQuestion should be cleared when step leaves StatusNeedsInput")
+	}
+}
+
+// primaryBorderSeq is the SGR truecolor foreground for the Charple primary token
+// (#6B50FF → 107;80;255), used to detect which panel's border is focused.
+const primaryBorderSeq = "\x1b[38;2;107;80;255m"
+
+// titleLineFor returns the top-edge (title) line of the panel whose title
+// contains want, from a rendered two-panel monitor View. Panels are joined
+// horizontally, so each rendered row concatenates both panels' cells; the first
+// row carries both top edges. It returns that first row for inspection.
+func firstRow(view string) string {
+	return strings.SplitN(view, "\n", 2)[0]
+}
+
+// TestMonitorTwoPanel asserts the monitor renders both titled panels side by side
+// and that tab toggles which region's border uses the primary (Charple) style.
+func TestMonitorTwoPanel(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	view := m.View()
+
+	if !strings.Contains(view, "Steps") {
+		t.Fatalf("view missing Steps panel title:\n%s", view)
+	}
+	// The right panel title is the selected step id ("a") — the cursor's step.
+	top := firstRow(view)
+	if !strings.Contains(top, "a") {
+		t.Fatalf("top edge missing selected-step transcript title:\n%s", top)
+	}
+
+	// Default focus is Steps: the Steps (left) title should carry the primary
+	// color and the Transcript (right) title should not. The left title precedes
+	// the right on the first row, so split on the "Transcript"/step boundary is
+	// fiddly; instead assert the whole first row contains exactly one primary
+	// border run and that it moves after tab.
+	if m.focus != focusSteps {
+		t.Fatalf("expected default focusSteps, got %v", m.focus)
+	}
+	beforeCount := strings.Count(top, primaryBorderSeq)
+	if beforeCount == 0 {
+		t.Fatalf("focused Steps panel should use the primary border color:\n%q", top)
+	}
+
+	// Tab moves focus to Transcript; the primary border must move to the right
+	// panel. We detect the move by checking the primary sequence now appears
+	// after the "Steps" label position rather than before it.
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.focus != focusTranscript {
+		t.Fatalf("tab did not move focus to Transcript, got %v", m.focus)
+	}
+	top2 := firstRow(m.View())
+
+	stepsIdx := strings.Index(ansiStrip(top2), "Steps")
+	// Find the byte offset in the raw string of the primary sequence and compare
+	// to where the Steps title sits: with Transcript focused, the primary run
+	// should start to the right of the left panel (i.e. after the Steps region).
+	primIdx := strings.Index(top2, primaryBorderSeq)
+	if primIdx < 0 {
+		t.Fatalf("no primary border after tab:\n%q", top2)
+	}
+	// The left panel (Steps) is ~stepsW cells; the primary run for a focused
+	// Transcript must appear later in the row than the un-focused Steps title.
+	if primIdx <= stepsIdx {
+		t.Fatalf("primary border did not move to the right panel after tab (primIdx=%d, stepsIdx=%d):\n%q", primIdx, stepsIdx, top2)
+	}
+}
+
+// ansiStrip removes SGR sequences so index math over visible text is meaningful.
+func ansiStrip(s string) string {
+	var b strings.Builder
+	inEsc := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == 0x1b {
+			inEsc = true
+			continue
+		}
+		if inEsc {
+			if c == 'm' {
+				inEsc = false
+			}
+			continue
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
+}
+
+// TestMonitorGateNonBlocking asserts that a pending gate does not freeze
+// navigation (ADR 0002): a focus-switch key still moves focus, gate keys resolve
+// the gate with the correct response, and esc/q cancellation delivers the
+// cancellation response so no reporter goroutine hangs.
+func TestMonitorGateNonBlocking(t *testing.T) {
+	// A gate that owes a tool_result: AskUserQuestion.
+	makeGate := func() monitorModel {
+		m := newMonitorWithSteps(t)
+		m, _ = m.Update(engineEventMsg{event: engine.AgentQuestion{
+			RunID:     "run-1",
+			StepID:    "a",
+			ToolUseID: "tu1",
+			Questions: []engine.AgentQuestionItem{
+				{Question: "Pick one", Options: []engine.AgentQuestionOption{{Label: "Alpha"}, {Label: "Beta"}}},
+			},
+		}})
+		return m
+	}
+
+	// 1) Navigation is not frozen: tab moves focus off the gate.
+	m := makeGate()
+	if m.focus != focusGate {
+		t.Fatalf("gate should auto-focus, got %v", m.focus)
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.focus == focusGate {
+		t.Fatalf("tab did not move focus away from the gate (still %v)", m.focus)
+	}
+	// The gate is still pending (moving focus did not resolve it).
+	if m.pendingQuestion == nil {
+		t.Fatal("moving focus off the gate should not resolve it")
+	}
+	// With focus on a panel, j/k navigate (Steps) rather than answering.
+	m.focus = focusSteps
+	before := m.cursor
+	m, _ = m.Update(key("j"))
+	if m.cursor == before {
+		t.Fatal("j did not move the Steps cursor while a gate was pending (navigation frozen)")
+	}
+
+	// 2) Returning focus to the gate and answering resolves it with the response.
+	m.focus = focusGate
+	m, cmd := m.Update(key("2"))
+	if cmd == nil {
+		t.Fatal("gate digit produced no command")
+	}
+	resp, ok := cmd().(agentQuestionResponseMsg)
+	if !ok {
+		t.Fatalf("expected agentQuestionResponseMsg, got %T", cmd())
+	}
+	if !strings.Contains(resp.answer, "Beta") {
+		t.Fatalf("expected answer Beta, got %q", resp.answer)
+	}
+
+	// 3) Cancellation (esc) delivers the cancellation response so the reporter
+	// goroutine unblocks rather than hanging.
+	m = makeGate()
+	_, cmd = m.Update(key("esc"))
+	if cmd == nil {
+		t.Fatal("esc produced no command")
+	}
+	var gotCancel bool
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, c := range batch {
+			if c == nil {
+				continue
+			}
+			if r, ok := c().(agentQuestionResponseMsg); ok && r.answer == "cancelled" {
+				gotCancel = true
+			}
+		}
+	} else if r, ok := msg.(agentQuestionResponseMsg); ok && r.answer == "cancelled" {
+		gotCancel = true
+	}
+	if !gotCancel {
+		t.Fatalf("esc cancellation did not emit agentQuestionResponseMsg{answer:\"cancelled\"}: %T", msg)
+	}
+}
+
+// TestMonitorEagerReload asserts moving the Steps cursor eagerly reloads the
+// Transcript panel to the newly-selected step (Resolved Decision 10).
+func TestMonitorEagerReload(t *testing.T) {
+	runDirA := writeTranscript(t, "a", []transcript.Entry{
+		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+			{Type: transcript.BlockText, Text: "ALPHA-BODY"},
+		}},
+	})
+	// Write step "b" into the SAME run dir so both transcripts resolve.
+	pathB := datastore.TranscriptPath(runDirA, "b")
+	if err := os.MkdirAll(filepath.Dir(pathB), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	w, err := transcript.Create(pathB)
+	if err != nil {
+		t.Fatalf("create b: %v", err)
+	}
+	if _, err := w.Append(transcript.Entry{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+		{Type: transcript.BlockText, Text: "BETA-BODY"},
+	}}); err != nil {
+		t.Fatalf("append b: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close b: %v", err)
+	}
+
+	m := newMonitorWithSteps(t)
+	m.runDir = runDirA
+	// Force the initial eager load now that runDir is set.
+	m.chatStep = ""
+	m.reloadTranscript()
+	m.refreshPanels()
+
+	if got := m.chatBody(); !strings.Contains(got, "ALPHA-BODY") {
+		t.Fatalf("transcript for step a not shown before cursor move:\n%s", got)
+	}
+
+	// Move the cursor to step "b": the transcript body must switch to b's content.
+	m, _ = m.Update(key("j"))
+	if m.chatStep != "b" {
+		t.Fatalf("cursor move did not re-point transcript, chatStep=%q", m.chatStep)
+	}
+	body := m.chatBody()
+	if !strings.Contains(body, "BETA-BODY") {
+		t.Fatalf("transcript did not eagerly reload to step b:\n%s", body)
+	}
+	if strings.Contains(body, "ALPHA-BODY") {
+		t.Fatalf("transcript still shows step a after moving to b:\n%s", body)
+	}
+}
+
+// TestMonitorResizeRefits asserts a second WindowSizeMsg re-fits both panels with
+// no line exceeding the new terminal width (no overflow, borders intact).
+func TestMonitorResizeRefits(t *testing.T) {
+	m := newMonitorWithSteps(t) // 80x24
+
+	for _, size := range []struct{ w, h int }{{100, 30}, {70, 20}, {120, 40}} {
+		m, _ = m.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
+		view := m.View()
+		for i, line := range strings.Split(view, "\n") {
+			if w := lipgloss.Width(line); w > size.w {
+				t.Fatalf("at %dx%d, line %d width %d exceeds terminal width:\n%q",
+					size.w, size.h, i, w, ansiStrip(line))
+			}
+		}
 	}
 }

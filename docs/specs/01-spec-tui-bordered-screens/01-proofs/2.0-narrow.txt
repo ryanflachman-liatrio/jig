@@ -1,0 +1,21 @@
+╭─ Steps ──────────────────────────────────────────────────────╮
+│ ▌ ✓  plan      succeeded         —                           │
+│   ●  generate  running           0s                          │
+│   ○  review    pending           —                           │
+│   ○  test      pending           —                           │
+│                                                              │
+│                                                              │
+│                                                              │
+│                                                              │
+│                                                              │
+│                                                              │
+│                                                              │
+│                                                              │
+│                                                              │
+│                                                              │
+│                                                              │
+│                                                              │
+│                                                              │
+│                                                              │
+╰──────────────────────────────────────────────────────────────╯
+  running  ·  tab/←/→ focus  •  j/k select  •  esc runs list  • 
