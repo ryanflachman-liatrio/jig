@@ -7,8 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"jig/internal/workflow"
 )
@@ -52,8 +53,25 @@ type selectorModel struct {
 
 func newSelectorModel() selectorModel {
 	delegate := list.NewDefaultDelegate()
+	// Repaint the stock delegate in Charmtone: the selected row gets a charple
+	// left bar + brand-colored title, unselected rows the muted foreground ladder.
+	delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.
+		Foreground(lipgloss.Color(hexCharple)).
+		BorderForeground(lipgloss.Color(hexCharple))
+	delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.
+		Foreground(lipgloss.Color(hexDolly)).
+		BorderForeground(lipgloss.Color(hexCharple))
+	delegate.Styles.NormalTitle = delegate.Styles.NormalTitle.Foreground(lipgloss.Color(hexSash))
+	delegate.Styles.NormalDesc = delegate.Styles.NormalDesc.Foreground(lipgloss.Color(hexSquid))
+	delegate.Styles.DimmedTitle = delegate.Styles.DimmedTitle.Foreground(lipgloss.Color(hexOyster))
+	delegate.Styles.DimmedDesc = delegate.Styles.DimmedDesc.Foreground(lipgloss.Color(hexOyster))
+
 	l := list.New(nil, delegate, 0, 0)
 	l.Title = "Workflows"
+	l.Styles.Title = l.Styles.Title.
+		Background(lipgloss.Color(hexCharple)).
+		Foreground(lipgloss.Color(hexButter)).
+		Bold(true)
 	l.SetShowStatusBar(false)
 	l.SetStatusBarItemName("workflow", "workflows")
 	return selectorModel{list: l, loading: true}
@@ -111,7 +129,7 @@ func (m selectorModel) Update(msg tea.Msg) (selectorModel, tea.Cmd) {
 		m.err = msg.err
 		return m, m.list.SetItems(msg.items)
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// While the filter input is open, let the list consume Enter (it applies
 		// the filter) rather than treating it as a selection.
 		if msg.String() == "enter" && m.list.FilterState() != list.Filtering {
@@ -132,11 +150,11 @@ func (m selectorModel) View() string {
 	case m.loading:
 		return "\n  Scanning " + workflowsDir + "…\n"
 	case m.err != nil:
-		return "\n  " + errorStyle.Render("Failed to scan "+workflowsDir+": "+m.err.Error()) + "\n"
+		return "\n  " + theme.Error.Render("Failed to scan "+workflowsDir+": "+m.err.Error()) + "\n"
 	case len(m.list.Items()) == 0:
-		return "\n  " + titleStyle.Render("No workflows found") + "\n\n" +
-			questionStyle.Render("  Add a <name>.toml with a [workflow] table under "+workflowsDir+"/.") +
-			"\n\n" + footerStyle.Render("  ctrl+c quit") + "\n"
+		return "\n  " + theme.Title.Render("No workflows found") + "\n\n" +
+			theme.Question.Render("  Add a <name>.toml with a [workflow] table under "+workflowsDir+"/.") +
+			"\n\n" + theme.Footer.Render("  ctrl+c quit") + "\n"
 	}
 	return m.list.View()
 }

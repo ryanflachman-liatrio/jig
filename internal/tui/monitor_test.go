@@ -7,7 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"jig/internal/datastore"
 	"jig/internal/engine"
@@ -85,7 +86,7 @@ func TestMonitorChatRendersBlocks(t *testing.T) {
 	m = enterChatStep(t, m, "a")
 
 	body := m.body()
-	for _, want := range []string{"🧠 reasoning", "⚙ Read", "↳ result", "Reading the file"} {
+	for _, want := range []string{IconThinking + " reasoning", IconToolCall + " Read", IconToolResult + " result", "Reading the file"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("chat body missing %q:\n%s", want, body)
 		}
@@ -139,11 +140,11 @@ func TestMonitorChatBlockCursorToggle(t *testing.T) {
 	if strings.Contains(m.body(), "END") {
 		t.Fatalf("block should start collapsed")
 	}
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // toggle block under cursor
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // toggle block under cursor
 	if !strings.Contains(m.body(), "END") {
 		t.Fatalf("enter did not expand the cursored block:\n%s", m.body())
 	}
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter}) // toggle back
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // toggle back
 	if strings.Contains(m.body(), "END") {
 		t.Fatalf("second enter did not collapse the block")
 	}
@@ -236,14 +237,14 @@ func newMonitorWithSteps(t *testing.T) monitorModel {
 	return m
 }
 
-func key(s string) tea.KeyMsg {
+func key(s string) tea.KeyPressMsg {
 	switch s {
 	case "esc":
-		return tea.KeyMsg{Type: tea.KeyEsc}
+		return tea.KeyPressMsg{Code: tea.KeyEsc}
 	case "enter":
-		return tea.KeyMsg{Type: tea.KeyEnter}
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
 	default:
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
+		return tea.KeyPressMsg{Code: []rune(s)[0], Text: s}
 	}
 }
 
@@ -280,8 +281,8 @@ func TestMonitorListNavigation(t *testing.T) {
 		t.Fatalf("expected cursor 1 after k, got %d", m.cursor)
 	}
 
-	// Selected row is marked in the list body.
-	if !strings.Contains(m.body(), "> ") {
+	// Selected row is marked in the list body with the cursor bar.
+	if !strings.Contains(m.body(), CursorBar) {
 		t.Fatalf("list body missing cursor marker:\n%s", m.body())
 	}
 }
@@ -299,7 +300,9 @@ func TestMonitorEnterAndBack(t *testing.T) {
 	if m.chatStep != "b" {
 		t.Fatalf("expected chatStep b, got %q", m.chatStep)
 	}
-	if !strings.Contains(m.body(), "chat") {
+	// The "chat" header is a gradient wordmark (per-rune ANSI); strip styling
+	// before the substring check.
+	if !strings.Contains(ansi.Strip(m.body()), "chat") {
 		t.Fatalf("chat body missing header:\n%s", m.body())
 	}
 
@@ -599,21 +602,21 @@ func TestMonitorStepSubtypeBadge(t *testing.T) {
 	}})
 
 	body := m.body()
-	if !strings.Contains(body, "[max turns]") {
-		t.Fatalf("list body missing [max turns] annotation:\n%s", body)
+	if !strings.Contains(body, "max turns") {
+		t.Fatalf("list body missing max turns annotation:\n%s", body)
 	}
-	if !strings.Contains(body, "[budget]") {
-		t.Fatalf("list body missing [budget] annotation:\n%s", body)
+	if !strings.Contains(body, "budget") {
+		t.Fatalf("list body missing budget annotation:\n%s", body)
 	}
 	// Verify step "c" (error_during_execution) shows no special annotation.
 	// We can't easily assert a negative per-line, so verify subtypeBadgeLabel directly.
 	if subtypeBadgeLabel("error_during_execution") != "" {
 		t.Error("error_during_execution should have no badge label")
 	}
-	if subtypeBadgeLabel("error_max_turns") != "[max turns]" {
+	if subtypeBadgeLabel("error_max_turns") != "max turns" {
 		t.Error("error_max_turns badge label mismatch")
 	}
-	if subtypeBadgeLabel("error_max_budget_usd") != "[budget]" {
+	if subtypeBadgeLabel("error_max_budget_usd") != "budget" {
 		t.Error("error_max_budget_usd badge label mismatch")
 	}
 }

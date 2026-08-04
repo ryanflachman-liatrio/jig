@@ -93,8 +93,9 @@ gofmt -l -w .
 go vet ./...
 ```
 
-Go toolchain is pinned via [`mise.toml`](mise.toml) (Go 1.24); `go.mod`
-declares `go 1.24.2`.
+Go toolchain is pinned via [`mise.toml`](mise.toml) (Go 1.25); `go.mod`
+declares `go 1.25`. The TUI is built on the Charm **v2** stack
+(`charm.land/{lipgloss,bubbletea,bubbles,glamour}/v2`), which requires Go 1.25.
 
 ## Conventions
 
@@ -115,11 +116,57 @@ declares `go 1.24.2`.
   reference exercising every construct — keep it valid (`go run ./cmd/jig
   validate examples/feature.toml`) when changing the schema.
 
+## TUI styling
+
+All lipgloss styles live in `internal/tui/styles.go`. The structure:
+
+- **`Styles` struct** — one `lipgloss.Style` field per visual element, organized
+  into nested sub-structs by UI region (`Viewport`, `Textarea`, `Chat`, `Diff`,
+  `Step`). Never add a bare package-level `var xStyle = lipgloss.NewStyle()...`.
+- **`DefaultTheme()` constructor** — builds the entire `Styles` struct from
+  ~7 semantic color tokens (`primary`, `secondary`, `fgBase`, `fgMuted`, `fgDim`,
+  `danger`, `success`, `warning`). Every style derives from these tokens — never
+  hardcode a hex color directly on a style.
+- **`var theme = DefaultTheme()`** — the package-level singleton. All TUI files
+  reference `theme.X` (e.g. `theme.Title`, `theme.Chat.Hint`,
+  `theme.Diff.Add`). Swap the singleton to change the active theme globally.
+
+Style naming conventions:
+- `theme.Title` / `theme.Question` / `theme.Error` / `theme.Valid` /
+  `theme.Running` / `theme.Marker` — semantic status/role styles used everywhere.
+- `theme.Viewport.Focused` / `.Blurred` — border color reflects focus state;
+  always use `theme.Viewport.Blurred.GetVerticalFrameSize()` for layout math,
+  never magic numbers.
+- `theme.Textarea.Base` / `.FocusedBorder` / `.BlurredBorder` — consumed by the
+  single shared `newInputTextarea` helper (`internal/tui/input.go`), which builds
+  every prompt/review/agent-input editor via the v2 `SetStyles` API. Don't
+  re-inline textarea setup; call the helper.
+- `theme.Chat.*` — thinking blocks, tool calls, tool results, collapse hints,
+  block cursor.
+- `theme.Diff.*` — add/remove/hunk lines in unified diffs.
+- `theme.Step.Types` — `map[string]lipgloss.Style` keyed by step type string
+  (`"agent"`, `"command"`, `"review"`).
+- `theme.SelectedLine` — bold highlight for the cursor row in list views; replaces
+  inline `lipgloss.NewStyle().Bold(true)`.
+
+When adding a new style: add the field to the appropriate sub-struct in `Styles`,
+set it in `DefaultTheme()` using the existing color tokens, then reference it as
+`theme.X` at the call site. Do not pass styles as parameters or store them in
+component structs — the package singleton is always available.
+
 ## Gotchas
 
-- Detect the terminal background **before** `tea.NewProgram` takes over stdin —
-  querying it later races the Bubble Tea input reader and leaks OSC responses as
-  garbled keystrokes (see `cmd/jig/main.go`).
+- The theme is **dark-only** (Charmtone "Pantera"), so there is no terminal
+  background detection — the removed `lipgloss.HasDarkBackground()` no longer
+  exists in v2, and the glamour renderer uses a fixed themed style config.
+- v2 declares alt-screen and the full-screen background on the `tea.View` itself
+  (`rootModel.View` sets `AltScreen` + `BackgroundColor = theme.Canvas`), not as
+  `tea.NewProgram` options. The compositor paints the background edge-to-edge, so
+  a screen-wide background no longer needs per-line padding. Sub-models
+  (selector/detail/runs/monitor) return `string`; only `rootModel` (and the
+  standalone `chatModel`) return `tea.View`.
+- v2 key handling: switch on `tea.KeyPressMsg` (not `tea.KeyMsg`, now an
+  interface). In tests, construct keys as `tea.KeyPressMsg{Code:…, Text:…}`.
 - The TUI holds a *persistent* Claude client and streams partial messages; text
   deltas arrive as `content_block_delta` StreamEvents. Thinking / input-json
   deltas are intentionally ignored.

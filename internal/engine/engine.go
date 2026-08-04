@@ -304,7 +304,7 @@ func (agentQuestionAnswerMsg) isSchedMsg() {}
 // may call it from its own goroutine, so fanOutLive must not touch scheduler state.
 type reporter struct {
 	subs     []sub
-	ev       func(Event)    // pre-bound to emit tags (runID, stepID)
+	ev       func(Event)     // pre-bound to emit tags (runID, stepID)
 	inbox    chan<- schedMsg // scheduler inbox; used to deliver agentQuestionNotifyMsg
 	answerCh chan string     // nil until Question is called; receives the human's answer
 }

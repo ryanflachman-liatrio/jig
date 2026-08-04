@@ -7,7 +7,7 @@ package tui
 import (
 	"context"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"jig/internal/engine"
 	"jig/internal/workflow"
@@ -100,7 +100,6 @@ type rootModel struct {
 	monitor  monitorModel
 
 	ctx        context.Context
-	dark       bool
 	manager    *engine.Manager
 	liveEvents <-chan engine.Event
 	ctrlEvents <-chan engine.Event
@@ -111,16 +110,14 @@ type rootModel struct {
 }
 
 // New returns jig's root TUI model. mgr is the engine manager; it must be
-// non-nil. darkBackground must be detected before tea.NewProgram takes over
-// stdin (see cmd/jig/main.go).
-func New(ctx context.Context, darkBackground bool, mgr *engine.Manager) tea.Model {
+// non-nil. The theme is dark-only, so no terminal-background detection is needed.
+func New(ctx context.Context, mgr *engine.Manager) tea.Model {
 	live, ctrl := mgr.Subscribe()
 	return rootModel{
 		active:     screenSelector,
 		selector:   newSelectorModel(),
 		runs:       newRunsModel(),
 		ctx:        ctx,
-		dark:       darkBackground,
 		manager:    mgr,
 		liveEvents: live,
 		ctrlEvents: ctrl,
@@ -138,7 +135,7 @@ func (m rootModel) Init() tea.Cmd {
 
 func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
 		}
@@ -201,11 +198,9 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// an unnecessary Snapshot() call.
 		if m.monitor.runID != msg.runID {
 			m.monitor = newMonitorModel(msg.runID)
-			// runDir/dark let the monitor read per-step transcripts from disk and
-			// render markdown with the correct terminal style (Phase 5). Set them
-			// before withSnapshot so it preserves them.
+			// runDir lets the monitor read per-step transcripts from disk. Set it
+			// before withSnapshot so it preserves it.
 			m.monitor.runDir = m.manager.RunDir(msg.runID)
-			m.monitor.dark = m.dark
 			// Seed with a snapshot so already-completed or in-progress steps
 			// show up immediately. Snapshot() is safe for completed runs.
 			if run, ok := m.handles[msg.runID]; ok {
@@ -260,7 +255,6 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Navigate straight to the monitor so prompts and review gates are visible immediately.
 		m.monitor = newMonitorModel(run.ID)
 		m.monitor.runDir = m.manager.RunDir(run.ID)
-		m.monitor.dark = m.dark
 		m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		m.active = screenMonitor
 		return m, nil
@@ -281,17 +275,26 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m rootModel) View() string {
+func (m rootModel) View() tea.View {
+	var content string
 	switch m.active {
 	case screenDetail:
-		return m.detail.View()
+		content = m.detail.View()
 	case screenRuns:
-		return m.runs.View()
+		content = m.runs.View()
 	case screenMonitor:
-		return m.monitor.View()
+		content = m.monitor.View()
 	default:
-		return m.selector.View()
+		content = m.selector.View()
 	}
+	// v2 declares alt-screen and the full-screen background on the View itself
+	// (the compositor paints BackgroundColor edge-to-edge, so nested styled
+	// spans no longer punch holes in a screen-wide background — the reason the
+	// Pepper canvas was blocked on v1). theme.Canvas is Charmtone Pepper.
+	v := tea.NewView(content)
+	v.AltScreen = true
+	v.BackgroundColor = theme.Canvas
+	return v
 }
 
 // waitForLiveEventCmd drains one event from the live (liveness-signal) channel.

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	claudecode "github.com/severity1/claude-agent-sdk-go"
 )
 

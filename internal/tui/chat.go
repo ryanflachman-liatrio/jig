@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	keybind "github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/glamour/v2"
+	"charm.land/lipgloss/v2"
 	claudecode "github.com/severity1/claude-agent-sdk-go"
 )
 
@@ -62,24 +61,11 @@ type chatModel struct {
 func newChatModel(ctx context.Context, darkBackground bool) tea.Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
-	s.Style = spinnerStyle
+	s.Style = theme.Spinner
 
-	ta := textarea.New()
-	ta.Placeholder = "Ask Claude... (enter to send, alt+enter for newline, ctrl+c to quit)"
-	// enter submits the prompt (handled in Update), so newlines are inserted
-	// with alt/shift+enter instead of the textarea's default enter binding.
-	ta.KeyMap.InsertNewline = keybind.NewBinding(
-		keybind.WithKeys("alt+enter", "shift+enter"),
-		keybind.WithHelp("alt+enter", "insert newline"),
-	)
-	ta.ShowLineNumbers = false
-	ta.SetHeight(3)
-	focusedStyle, blurredStyle := textarea.DefaultStyles()
-	focusedStyle.Base = textareaStyle.BorderForeground(textareaFocusedBorder)
-	blurredStyle.Base = textareaStyle.BorderForeground(textareaBlurredBorder)
-	ta.FocusedStyle = focusedStyle
-	ta.BlurredStyle = blurredStyle
-	ta.Focus()
+	// enter submits the prompt (handled in Update); width is deferred to the
+	// first resize. See newInputTextarea for the shared setup.
+	ta := newInputTextarea("Ask Claude... (enter to send, alt+enter for newline, ctrl+c to quit)", 0, 3)
 
 	return chatModel{
 		textarea:       ta,
@@ -102,15 +88,15 @@ func (m chatModel) headerView() string {
 	case m.connected:
 		status = "Connected"
 	}
-	return titleStyle.Render("jig - Claude chat") + "\n" + questionStyle.Render(status)
+	return theme.Title.Render("jig - Claude chat") + "\n" + theme.Question.Render(status)
 }
 
 func (m chatModel) statusLineView() string {
 	switch {
 	case m.streaming:
-		return statusLineStyle.Render(m.spinner.View() + " Claude is responding...")
+		return m.spinner.View() + " " + gradientText(theme.GradFrom, theme.GradTo, "Claude is responding…")
 	case !m.connected && !m.fatal:
-		return statusLineStyle.Render("Connecting to Claude...")
+		return theme.StatusLine.Render("Connecting to Claude...")
 	default:
 		return ""
 	}
@@ -118,12 +104,12 @@ func (m chatModel) statusLineView() string {
 
 func (m chatModel) footerView() string {
 	if m.fatal {
-		return footerStyle.Render("ctrl+c quit")
+		return theme.Footer.Render("ctrl+c quit")
 	}
 	if m.ready && len(m.turns) > 0 {
-		return footerStyle.Render(fmt.Sprintf("enter send • alt+enter newline • esc/i switch focus • ctrl+c quit (%.0f%%)", m.viewport.ScrollPercent()*100))
+		return theme.Footer.Render(fmt.Sprintf("enter send • alt+enter newline • esc/i switch focus • ctrl+c quit (%.0f%%)", m.viewport.ScrollPercent()*100))
 	}
-	return footerStyle.Render("enter send • alt+enter newline • ctrl+c quit")
+	return theme.Footer.Render("enter send • alt+enter newline • ctrl+c quit")
 }
 
 // turnIndicatorView reports which turn is currently displayed, and how to
@@ -131,9 +117,9 @@ func (m chatModel) footerView() string {
 // math in handleResize doesn't need to react to the turn count changing.
 func (m chatModel) turnIndicatorView() string {
 	if len(m.turns) == 0 {
-		return turnIndicatorStyle.Render(" ")
+		return theme.TurnIndicator.Render(" ")
 	}
-	return turnIndicatorStyle.Render(fmt.Sprintf("Turn %d of %d (←/→ to switch)", m.activeTurn+1, len(m.turns)))
+	return theme.TurnIndicator.Render(fmt.Sprintf("Turn %d of %d (←/→ to switch)", m.activeTurn+1, len(m.turns)))
 }
 
 func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -207,7 +193,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.renderActiveTurn()
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Sequence(disconnectClaudeCmd(m.client), tea.Quit)
@@ -216,7 +202,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// From the output pane, enter focuses the input (mirrors "i").
 			if m.focus == focusOutput {
 				m.focus = focusInput
-				m.viewport.Style = viewportBlurredStyle
+				m.viewport.Style = theme.Viewport.Blurred
 				return m, m.textarea.Focus()
 			}
 			if !m.connected || m.fatal || m.streaming {
@@ -238,20 +224,20 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.focus == focusInput {
 				m.textarea.Blur()
 				m.focus = focusOutput
-				m.viewport.Style = viewportFocusedStyle
+				m.viewport.Style = theme.Viewport.Focused
 			}
 			return m, nil
 
 		case "i":
 			if m.focus == focusOutput {
 				m.focus = focusInput
-				m.viewport.Style = viewportBlurredStyle
+				m.viewport.Style = theme.Viewport.Blurred
 				return m, m.textarea.Focus()
 			}
 
 		case "left":
 			if m.focus == focusOutput && m.activeTurn > 0 {
-				m.turns[m.activeTurn].scrollOffset = m.viewport.YOffset
+				m.turns[m.activeTurn].scrollOffset = m.viewport.YOffset()
 				m.activeTurn--
 				m.renderActiveTurn()
 				return m, nil
@@ -259,7 +245,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		case "right":
 			if m.focus == focusOutput && m.activeTurn < len(m.turns)-1 {
-				m.turns[m.activeTurn].scrollOffset = m.viewport.YOffset
+				m.turns[m.activeTurn].scrollOffset = m.viewport.YOffset()
 				m.activeTurn++
 				m.renderActiveTurn()
 				return m, nil
@@ -276,17 +262,17 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m chatModel) View() string {
+func (m chatModel) View() tea.View {
 	if !m.ready {
-		return "Initializing...\n"
+		return tea.NewView("Initializing...\n")
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left,
+	return tea.NewView(lipgloss.JoinVertical(lipgloss.Left,
 		m.headerView(),
 		m.turnIndicatorView(),
 		m.viewport.View(),
 		m.statusLineView(),
 		m.textarea.View(),
 		m.footerView(),
-	)
+	))
 }

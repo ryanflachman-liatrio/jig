@@ -5,8 +5,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
 
 	"jig/internal/engine"
 	"jig/internal/step"
@@ -57,7 +56,7 @@ func (m runsModel) Update(msg tea.Msg) (runsModel, tea.Cmd) {
 	case engineEventMsg:
 		return m.handleEngineEvent(msg.event), nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "up", "k":
 			if m.cursor > 0 {
@@ -122,18 +121,18 @@ func (m runsModel) handleEngineEvent(e engine.Event) runsModel {
 
 func (m runsModel) View() string {
 	if len(m.rows) == 0 {
-		return "\n  " + titleStyle.Render("No runs yet") + "\n\n" +
-			questionStyle.Render("  Press r in a workflow detail to start a run.") + "\n\n" +
-			footerStyle.Render("  esc back  •  ctrl+c quit") + "\n"
+		return "\n  " + theme.Title.Render("No runs yet") + "\n\n" +
+			theme.Question.Render("  Press r in a workflow detail to start a run.") + "\n\n" +
+			theme.Footer.Render("  esc back  •  ctrl+c quit") + "\n"
 	}
 
 	var b strings.Builder
-	b.WriteString("\n  " + titleStyle.Render("Runs") + "\n\n")
+	b.WriteString("\n  " + gradientTitle("Runs") + "\n\n")
 
 	for i, row := range m.rows {
 		cursor := "  "
 		if i == m.cursor {
-			cursor = "> "
+			cursor = theme.SelectedBar.Render(CursorBar) + " "
 		}
 
 		status := runRowStatus(row)
@@ -147,7 +146,7 @@ func (m runsModel) View() string {
 			progress,
 		)
 		if i == m.cursor {
-			b.WriteString(lipgloss.NewStyle().Bold(true).Render(line) + "\n")
+			b.WriteString(theme.SelectedLine.Render(line) + "\n")
 		} else {
 			b.WriteString(line + "\n")
 		}
@@ -155,18 +154,18 @@ func (m runsModel) View() string {
 
 	b.WriteString("\n")
 	help := "  r new run  •  enter monitor  •  esc back  •  ctrl+c quit"
-	b.WriteString(footerStyle.Render(help) + "\n")
+	b.WriteString(theme.Footer.Render(help) + "\n")
 	return b.String()
 }
 
 func runRowStatus(row runRow) string {
 	if row.failed {
-		return errorStyle.Render("failed")
+		return theme.Error.Render("failed")
 	}
 	if row.done {
-		return validStyle.Render("done")
+		return theme.Valid.Render("done")
 	}
-	return runningStyle.Render("running")
+	return theme.Running.Render("running")
 }
 
 func runRowProgress(row runRow) string {

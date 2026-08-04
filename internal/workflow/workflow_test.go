@@ -803,10 +803,10 @@ name = "x"
 version = "1"
 `
 	cases := []struct {
-		name          string
-		toml          string
-		checkStep     string
-		wantTools     []string
+		name           string
+		toml           string
+		checkStep      string
+		wantTools      []string
 		wantDisallowed []string
 	}{
 		{

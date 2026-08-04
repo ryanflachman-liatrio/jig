@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"jig/internal/engine"
 	"jig/internal/runner"
@@ -33,17 +33,17 @@ run = "echo hi"
 
 	exec := runner.NewFakeExecutor(nil, runner.FakeOutcome{})
 	mgr := engine.NewManager(exec, "")
-	var m tea.Model = New(context.Background(), true, mgr)
+	var m tea.Model = New(context.Background(), mgr)
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m, _ = m.Update(discoverWorkflowsCmd(dir)())
 
-	if view := m.View(); !strings.Contains(view, "mini") {
+	if view := m.View().Content; !strings.Contains(view, "mini") {
 		t.Fatalf("selector view missing workflow name:\n%s", view)
 	}
 
 	// Enter emits a showDetailMsg via its command; run it and deliver it.
 	var cmd tea.Cmd
-	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd == nil {
 		t.Fatal("enter produced no command")
 	}
@@ -54,7 +54,7 @@ run = "echo hi"
 
 	// The detail screen loads asynchronously; deliver the load result directly.
 	m, _ = m.Update(loadWorkflowCmd(path)())
-	view := m.View()
+	view := m.View().Content
 	for _, want := range []string{"mini", "valid", "hello", "command"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("detail view missing %q:\n%s", want, view)
@@ -62,7 +62,7 @@ run = "echo hi"
 	}
 
 	// esc returns to the picker.
-	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if cmd == nil {
 		t.Fatal("esc produced no command")
 	}
@@ -70,7 +70,7 @@ run = "echo hi"
 		t.Fatalf("esc did not produce backToSelectorMsg, got %T", cmd())
 	}
 	m, _ = m.Update(backToSelectorMsg{})
-	if view := m.View(); !strings.Contains(view, "mini") {
+	if view := m.View().Content; !strings.Contains(view, "mini") {
 		t.Fatalf("did not return to selector:\n%s", view)
 	}
 }

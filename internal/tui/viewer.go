@@ -3,10 +3,10 @@ package tui
 import (
 	"strings"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/glamour/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // renderActiveTurn rebuilds the viewport's content from m.turns[m.activeTurn].
@@ -34,7 +34,7 @@ func (m *chatModel) renderActiveTurn() {
 
 	var b strings.Builder
 	if t.question != "" {
-		b.WriteString(userPromptStyle.Render("You") + "\n" + t.question)
+		b.WriteString(theme.UserPrompt.Render("You") + "\n" + t.question)
 		b.WriteString("\n\n")
 	}
 
@@ -42,7 +42,7 @@ func (m *chatModel) renderActiveTurn() {
 	case isActiveStream:
 		b.WriteString(t.answer)
 	case t.isError:
-		b.WriteString(errorStyle.Render("Error: " + t.answer))
+		b.WriteString(theme.Error.Render("Error: " + t.answer))
 	default:
 		if t.rendered == "" && m.renderer != nil {
 			if out, err := m.renderer.Render(t.answer); err == nil {
@@ -78,7 +78,7 @@ func (m *chatModel) handleResize(msg tea.WindowSizeMsg) {
 	textareaHeight := m.textarea.Height()
 	// +1 for the blank line between header and viewport, plus the
 	// viewport border's own frame size.
-	verticalMargins := headerHeight + turnIndicatorHeight + footerHeight + statusLineHeight + textareaHeight + 1 + viewportBlurredStyle.GetVerticalFrameSize()
+	verticalMargins := headerHeight + turnIndicatorHeight + footerHeight + statusLineHeight + textareaHeight + 1 + theme.Viewport.Blurred.GetVerticalFrameSize()
 
 	viewportHeight := m.height - verticalMargins
 	if viewportHeight < 1 {
@@ -86,35 +86,31 @@ func (m *chatModel) handleResize(msg tea.WindowSizeMsg) {
 	}
 
 	if !m.ready {
-		m.viewport = viewport.New(m.width, viewportHeight)
+		m.viewport = viewport.New(viewport.WithWidth(m.width), viewport.WithHeight(viewportHeight))
 		if m.focus == focusOutput {
-			m.viewport.Style = viewportFocusedStyle
+			m.viewport.Style = theme.Viewport.Focused
 		} else {
-			m.viewport.Style = viewportBlurredStyle
+			m.viewport.Style = theme.Viewport.Blurred
 		}
 		m.ready = true
 	} else {
-		m.viewport.Width = m.width
-		m.viewport.Height = viewportHeight
+		m.viewport.SetWidth(m.width)
+		m.viewport.SetHeight(viewportHeight)
 	}
 
-	m.textarea.SetWidth(m.width - textareaStyle.GetHorizontalFrameSize())
+	m.textarea.SetWidth(m.width - theme.Textarea.Base.GetHorizontalFrameSize())
 
-	wordWrap := m.width - viewportBlurredStyle.GetHorizontalFrameSize()
+	wordWrap := m.width - theme.Viewport.Blurred.GetHorizontalFrameSize()
 	if wordWrap < 1 {
 		wordWrap = 1
 	}
-	styleName := "light"
-	if m.darkBackground {
-		styleName = "dark"
-	}
-	// A static style, not glamour.WithAutoStyle(): AutoStyle performs a
-	// live OSC 11 terminal query on every call, which races with Bubble
-	// Tea's stdin reader and leaks the terminal's response into the
-	// focused textarea as garbled keystrokes. The background is detected
-	// once, safely, in main.go before Bubble Tea starts.
+	// A static themed style, not glamour.WithAutoStyle(): AutoStyle performs a
+	// live OSC 11 terminal query on every call, which races with Bubble Tea's
+	// stdin reader and leaks the terminal's response into the focused textarea
+	// as garbled keystrokes. The Charmtone theme is dark-only, so
+	// m.darkBackground no longer selects the style.
 	m.renderer, _ = glamour.NewTermRenderer(
-		glamour.WithStandardStyle(styleName),
+		glamour.WithStyles(theme.Markdown),
 		glamour.WithWordWrap(wordWrap),
 	)
 

@@ -7,12 +7,11 @@ import (
 	"time"
 	"unicode/utf8"
 
-	keybind "github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/glamour"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/glamour/v2"
+	"charm.land/lipgloss/v2"
 
 	"jig/internal/datastore"
 	"jig/internal/engine"
@@ -52,9 +51,8 @@ type monitorModel struct {
 
 	// Phase 5 chat rendering. runDir locates the per-step transcript.jsonl on
 	// disk; the transcript file — not the lossy event bus — is what modeChat
-	// renders. dark selects the glamour style.
+	// renders (as themed Charmtone markdown).
 	runDir string
-	dark   bool
 
 	// chatEntries is the currently-loaded (windowed) transcript for chatStep,
 	// re-read on entry and on each StepMessage for that step. chatElided counts
@@ -111,8 +109,9 @@ type monitorModel struct {
 	// Phase 4: rolling output buffer per step (last outputMaxLines lines).
 	stepOutput map[string]*strings.Builder
 
-	vp    viewport.Model
-	ready bool
+	vp     viewport.Model // list mode scroll
+	chatVP viewport.Model // chat mode scroll — independent so each mode remembers its position
+	ready  bool
 
 	width  int
 	height int
@@ -209,13 +208,21 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 
 	case engineEventMsg:
 		var evCmd tea.Cmd
+		wasAtBottom := m.chatVP.AtBottom()
 		m, evCmd = m.handleEngineEvent(msg.event)
 		if m.ready {
-			m.vp.SetContent(m.body())
+			if m.mode == modeChat {
+				m.chatVP.SetContent(m.chatBody())
+				if wasAtBottom {
+					m.chatVP.GotoBottom()
+				}
+			} else {
+				m.vp.SetContent(m.listBody())
+			}
 		}
 		return m, evCmd
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// block_on input: enter submits, esc leaves to runs list, other keys go to textarea.
 		if m.pendingInput != nil {
 			if msg.String() == "esc" {
@@ -230,7 +237,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 				m.pendingInput = nil
 				m.promptTextarea = textarea.Model{}
 				if m.ready {
-					m.vp.SetContent(m.body())
+					m.vp.SetContent(m.listBody())
 				}
 				return m, func() tea.Msg {
 					return agentInputMsg{runID: inp.RunID, stepID: inp.StepID, text: text}
@@ -239,7 +246,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 			var taCmd tea.Cmd
 			m.promptTextarea, taCmd = m.promptTextarea.Update(msg)
 			if m.ready {
-				m.vp.SetContent(m.body())
+				m.vp.SetContent(m.listBody())
 			}
 			return m, taCmd
 		}
@@ -270,7 +277,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 						if msg.String() == fmt.Sprintf("%d", i+1) {
 							m.questionSelected[i] = !m.questionSelected[i]
 							if m.ready {
-								m.vp.SetContent(m.body())
+								m.vp.SetContent(m.listBody())
 							}
 							return m, nil
 						}
@@ -304,7 +311,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 				m.composingMessage = false
 				m.promptTextarea = textarea.Model{}
 				if m.ready {
-					m.vp.SetContent(m.body())
+					m.vp.SetContent(m.listBody())
 				}
 				return m, nil
 			}
@@ -319,7 +326,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 					m.pendingReview = nil
 					m.promptTextarea = textarea.Model{}
 					if m.ready {
-						m.vp.SetContent(m.body())
+						m.vp.SetContent(m.listBody())
 					}
 					return m, func() tea.Msg {
 						return reviewMessageMsg{
@@ -333,7 +340,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 				m.pendingPrompt = nil
 				m.promptTextarea = textarea.Model{}
 				if m.ready {
-					m.vp.SetContent(m.body())
+					m.vp.SetContent(m.listBody())
 				}
 				return m, func() tea.Msg {
 					return userInputResponseMsg{
@@ -347,7 +354,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 			var taCmd tea.Cmd
 			m.promptTextarea, taCmd = m.promptTextarea.Update(msg)
 			if m.ready {
-				m.vp.SetContent(m.body())
+				m.vp.SetContent(m.listBody())
 			}
 			return m, taCmd
 		}
@@ -357,24 +364,9 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 		if m.pendingReview != nil {
 			if msg.String() == "m" && m.pendingReview.AllowMessage {
 				m.composingMessage = true
-				ta := textarea.New()
-				ta.Placeholder = "Message to agent…"
-				ta.KeyMap.InsertNewline = keybind.NewBinding(
-					keybind.WithKeys("alt+enter", "shift+enter"),
-					keybind.WithHelp("alt+enter", "insert newline"),
-				)
-				ta.ShowLineNumbers = false
-				ta.SetHeight(4)
-				ta.SetWidth(m.width - 4)
-				focusedStyle, blurredStyle := textarea.DefaultStyles()
-				focusedStyle.Base = textareaStyle.BorderForeground(textareaFocusedBorder)
-				blurredStyle.Base = textareaStyle.BorderForeground(textareaBlurredBorder)
-				ta.FocusedStyle = focusedStyle
-				ta.BlurredStyle = blurredStyle
-				ta.Focus()
-				m.promptTextarea = ta
+				m.promptTextarea = newInputTextarea("Message to agent…", m.width-4, 4)
 				if m.ready {
-					m.vp.SetContent(m.body())
+					m.vp.SetContent(m.listBody())
 				}
 				return m, textarea.Blink
 			}
@@ -409,7 +401,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 					m.cursor++
 					m.ensureCursorVisible()
 					if m.ready {
-						m.vp.SetContent(m.body())
+						m.vp.SetContent(m.listBody())
 					}
 				}
 				return m, nil
@@ -418,7 +410,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 					m.cursor--
 					m.ensureCursorVisible()
 					if m.ready {
-						m.vp.SetContent(m.body())
+						m.vp.SetContent(m.listBody())
 					}
 				}
 				return m, nil
@@ -433,8 +425,8 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 					m.chatExpand = make(map[blockKey]bool)
 					m.loadChat()
 					if m.ready {
-						m.vp.SetContent(m.body())
-						m.vp.GotoTop()
+						m.chatVP.SetContent(m.chatBody())
+						m.chatVP.GotoBottom()
 					}
 				}
 				return m, nil
@@ -447,8 +439,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 				m.mode = modeList
 				m.chatStep = ""
 				if m.ready {
-					m.vp.SetContent(m.body())
-					m.vp.GotoTop()
+					m.vp.SetContent(m.listBody())
 				}
 				return m, nil
 			case "tab":
@@ -456,7 +447,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 				if n := len(m.chatBlocks); n > 0 {
 					m.chatBlockCursor = (m.chatBlockCursor + 1) % n
 					if m.ready {
-						m.vp.SetContent(m.body())
+						m.chatVP.SetContent(m.chatBody())
 					}
 				}
 				return m, nil
@@ -464,7 +455,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 				if n := len(m.chatBlocks); n > 0 {
 					m.chatBlockCursor = (m.chatBlockCursor - 1 + n) % n
 					if m.ready {
-						m.vp.SetContent(m.body())
+						m.chatVP.SetContent(m.chatBody())
 					}
 				}
 				return m, nil
@@ -474,7 +465,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 					k := m.chatBlocks[m.chatBlockCursor]
 					m.chatExpand[k] = !m.chatExpand[k]
 					if m.ready {
-						m.vp.SetContent(m.body())
+						m.chatVP.SetContent(m.chatBody())
 					}
 				}
 				return m, nil
@@ -482,12 +473,12 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 				// Expand/collapse everything in view at once.
 				m.chatExpandAll = !m.chatExpandAll
 				if m.ready {
-					m.vp.SetContent(m.body())
+					m.chatVP.SetContent(m.chatBody())
 				}
 				return m, nil
 			}
 			// Other keys (j/k/ctrl+d/ctrl+u/pgup/pgdn) fall through to the
-			// viewport to scroll the transcript.
+			// chat viewport to scroll the transcript.
 		}
 	}
 
@@ -496,13 +487,18 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 		var taCmd tea.Cmd
 		m.promptTextarea, taCmd = m.promptTextarea.Update(msg)
 		if m.ready {
-			m.vp.SetContent(m.body())
+			m.vp.SetContent(m.listBody())
 		}
 		return m, taCmd
 	}
 
+	// Route remaining messages (scroll keys, mouse wheel) to the active viewport.
 	var cmd tea.Cmd
-	m.vp, cmd = m.vp.Update(msg)
+	if m.mode == modeChat {
+		m.chatVP, cmd = m.chatVP.Update(msg)
+	} else {
+		m.vp, cmd = m.vp.Update(msg)
+	}
 	return m, cmd
 }
 
@@ -582,22 +578,7 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		}
 		m.pendingInput = &ev
 		m.mode = modeList
-		ta := textarea.New()
-		ta.Placeholder = "Your response to the agent…"
-		ta.KeyMap.InsertNewline = keybind.NewBinding(
-			keybind.WithKeys("alt+enter", "shift+enter"),
-			keybind.WithHelp("alt+enter", "insert newline"),
-		)
-		ta.ShowLineNumbers = false
-		ta.SetHeight(4)
-		ta.SetWidth(m.width - 4)
-		focusedStyle, blurredStyle := textarea.DefaultStyles()
-		focusedStyle.Base = textareaStyle.BorderForeground(textareaFocusedBorder)
-		blurredStyle.Base = textareaStyle.BorderForeground(textareaBlurredBorder)
-		ta.FocusedStyle = focusedStyle
-		ta.BlurredStyle = blurredStyle
-		ta.Focus()
-		m.promptTextarea = ta
+		m.promptTextarea = newInputTextarea("Your response to the agent…", m.width-4, 4)
 		return m, textarea.Blink
 
 	case engine.AgentQuestion:
@@ -642,23 +623,8 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		}
 		m.pendingPrompt = &ev
 		m.mode = modeList
-		ta := textarea.New()
-		ta.Placeholder = ev.Label
 		// enter submits the response; newlines are inserted with alt/shift+enter.
-		ta.KeyMap.InsertNewline = keybind.NewBinding(
-			keybind.WithKeys("alt+enter", "shift+enter"),
-			keybind.WithHelp("alt+enter", "insert newline"),
-		)
-		ta.ShowLineNumbers = false
-		ta.SetHeight(4)
-		ta.SetWidth(m.width - 4)
-		focusedStyle, blurredStyle := textarea.DefaultStyles()
-		focusedStyle.Base = textareaStyle.BorderForeground(textareaFocusedBorder)
-		blurredStyle.Base = textareaStyle.BorderForeground(textareaBlurredBorder)
-		ta.FocusedStyle = focusedStyle
-		ta.BlurredStyle = blurredStyle
-		ta.Focus()
-		m.promptTextarea = ta
+		m.promptTextarea = newInputTextarea(ev.Label, m.width-4, 4)
 		return m, textarea.Blink
 
 	case engine.StepOutput:
@@ -701,17 +667,21 @@ func (m *monitorModel) resize() {
 		vpH = 1
 	}
 	if !m.ready {
-		m.vp = viewport.New(m.width, vpH)
+		m.vp = viewport.New(viewport.WithWidth(m.width), viewport.WithHeight(vpH))
+		m.chatVP = viewport.New(viewport.WithWidth(m.width), viewport.WithHeight(vpH))
 		m.ready = true
 	} else {
-		m.vp.Width = m.width
-		m.vp.Height = vpH
+		m.vp.SetWidth(m.width)
+		m.vp.SetHeight(vpH)
+		m.chatVP.SetWidth(m.width)
+		m.chatVP.SetHeight(vpH)
 	}
 	if m.pendingPrompt != nil || m.composingMessage || m.pendingInput != nil {
 		m.promptTextarea.SetWidth(m.width - 4)
 	}
 	m.rebuildRenderer()
-	m.vp.SetContent(m.body())
+	m.vp.SetContent(m.listBody())
+	m.chatVP.SetContent(m.chatBody())
 }
 
 // rebuildRenderer (re)constructs the markdown renderer for the current width and
@@ -725,12 +695,11 @@ func (m *monitorModel) rebuildRenderer() {
 	if wordWrap < 1 {
 		wordWrap = 1
 	}
-	styleName := "light"
-	if m.dark {
-		styleName = "dark"
-	}
+	// A themed Charmtone style (not a stock "dark"/"light" one, and not
+	// AutoStyle): AutoStyle performs a live OSC-11 query that races Bubble Tea's
+	// stdin reader (see main.go). The theme is dark-only, so m.dark is unused.
 	m.renderer, _ = glamour.NewTermRenderer(
-		glamour.WithStandardStyle(styleName),
+		glamour.WithStyles(theme.Markdown),
 		glamour.WithWordWrap(wordWrap),
 	)
 	if m.renderWidth != m.width {
@@ -747,13 +716,13 @@ func (m *monitorModel) ensureCursorVisible() {
 	}
 	row := listBodyHeaderLines + m.cursor
 	const margin = 2
-	top := m.vp.YOffset
-	bottom := top + m.vp.Height - 1
+	top := m.vp.YOffset()
+	bottom := top + m.vp.Height() - 1
 	switch {
 	case row-margin < top:
 		m.vp.SetYOffset(row - margin)
 	case row+margin > bottom:
-		m.vp.SetYOffset(row + margin - m.vp.Height + 1)
+		m.vp.SetYOffset(row + margin - m.vp.Height() + 1)
 	}
 }
 
@@ -778,11 +747,11 @@ func (m monitorModel) listBody() string {
 		wfName = m.runID
 	}
 
-	b.WriteString("\n  " + titleStyle.Render(wfName) + "  " +
-		pathStyle.Render(m.runID) + "\n\n")
+	b.WriteString("\n  " + theme.Title.Render(wfName) + "  " +
+		theme.Path.Render(m.runID) + "\n\n")
 
 	if len(m.steps) == 0 {
-		b.WriteString("  " + questionStyle.Render("Waiting for run to start…") + "\n")
+		b.WriteString("  " + theme.Question.Render("Waiting for run to start…") + "\n")
 		return b.String()
 	}
 
@@ -796,27 +765,27 @@ func (m monitorModel) listBody() string {
 	for i, s := range m.steps {
 		cursor := "  "
 		if i == m.cursor {
-			cursor = "> "
+			cursor = theme.SelectedBar.Render(CursorBar) + " "
 		}
 		indicator, style := stepIndicator(s.status)
 		dur := stepDuration(s)
 		msgs := ""
 		if n := m.msgCount[s.id]; n > 0 {
-			msgs = questionStyle.Render(fmt.Sprintf("%d msg", n))
+			msgs = theme.Question.Render(fmt.Sprintf("%d msg", n))
 		}
 		line := fmt.Sprintf("%s%s  %s  %s  %s  %s",
 			cursor,
 			indicator,
 			style.Render(padRight(s.id, idWidth)),
 			statusStyle(s.status).Render(fmt.Sprintf("%-16s", string(s.status))),
-			questionStyle.Render(padRight(dur, 10)),
+			theme.Question.Render(padRight(dur, 10)),
 			msgs,
 		)
 		if label := subtypeBadgeLabel(s.subtype); label != "" {
-			line += "  " + errorStyle.Render(label)
+			line += "  " + theme.Badge.Error.Render(label)
 		}
 		if i == m.cursor {
-			b.WriteString(lipgloss.NewStyle().Bold(true).Render(line) + "\n")
+			b.WriteString(theme.SelectedLine.Render(line) + "\n")
 		} else {
 			b.WriteString(line + "\n")
 		}
@@ -825,25 +794,25 @@ func (m monitorModel) listBody() string {
 	b.WriteString("\n")
 	if m.done {
 		if m.failed {
-			b.WriteString("  " + errorStyle.Render("✗ run failed") + "\n")
+			b.WriteString("  " + theme.Error.Render(IconError+" run failed") + "\n")
 			m.writeFailureReasons(&b)
 		} else {
-			b.WriteString("  " + validStyle.Render("✓ run complete") + "\n")
+			b.WriteString("  " + theme.Valid.Render(IconSuccess+" run complete") + "\n")
 		}
 	}
 
 	// User input: show textarea when a step needs free-form text.
 	if m.pendingPrompt != nil {
 		b.WriteString("\n")
-		b.WriteString("  " + markerStyle.Render("Input required — step: "+m.pendingPrompt.StepID) + "\n")
-		b.WriteString("  " + questionStyle.Render(m.pendingPrompt.Label) + "\n\n")
+		b.WriteString("  " + theme.Marker.Render("Input required — step: "+m.pendingPrompt.StepID) + "\n")
+		b.WriteString("  " + theme.Question.Render(m.pendingPrompt.Label) + "\n\n")
 		b.WriteString(m.promptTextarea.View() + "\n")
 	}
 
 	// Review picker: show when a step is awaiting human input.
 	if m.pendingReview != nil {
 		b.WriteString("\n")
-		b.WriteString("  " + markerStyle.Render("Review required — step: "+m.pendingReview.StepID) + "\n\n")
+		b.WriteString("  " + theme.Marker.Render("Review required — step: "+m.pendingReview.StepID) + "\n\n")
 
 		if m.pendingReview.Diff != "" {
 			writeDiff(&b, m.pendingReview.Diff)
@@ -866,7 +835,7 @@ func (m monitorModel) listBody() string {
 	// block_on input: show textarea when an agent step is blocked awaiting human input.
 	if m.pendingInput != nil {
 		b.WriteString("\n")
-		b.WriteString("  " + markerStyle.Render("Agent input required — step: "+m.pendingInput.StepID) + "\n\n")
+		b.WriteString("  " + theme.Marker.Render("Agent input required — step: "+m.pendingInput.StepID) + "\n\n")
 		b.WriteString(m.promptTextarea.View() + "\n")
 	}
 
@@ -874,9 +843,9 @@ func (m monitorModel) listBody() string {
 	if m.pendingQuestion != nil && m.questionIdx < len(m.pendingQuestion.Questions) {
 		q := m.pendingQuestion.Questions[m.questionIdx]
 		b.WriteString("\n")
-		b.WriteString("  " + markerStyle.Render("Agent question — step: "+m.pendingQuestion.StepID) + "\n\n")
+		b.WriteString("  " + theme.Marker.Render("Agent question — step: "+m.pendingQuestion.StepID) + "\n\n")
 		if q.Header != "" {
-			b.WriteString("  " + questionStyle.Render("["+q.Header+"]") + "\n")
+			b.WriteString("  " + theme.Question.Render("["+q.Header+"]") + "\n")
 		}
 		b.WriteString("  " + q.Question + "\n\n")
 		for i, opt := range q.Options {
@@ -895,10 +864,10 @@ func (m monitorModel) listBody() string {
 			b.WriteString("\n")
 		}
 		if q.MultiSelect {
-			b.WriteString("\n    " + chatHintStyle.Render("enter to confirm selection") + "\n")
+			b.WriteString("\n    " + theme.Chat.Hint.Render("enter to confirm selection") + "\n")
 		}
 		if len(m.pendingQuestion.Questions) > 1 {
-			b.WriteString("    " + chatHintStyle.Render(
+			b.WriteString("    " + theme.Chat.Hint.Render(
 				fmt.Sprintf("question %d of %d", m.questionIdx+1, len(m.pendingQuestion.Questions))) + "\n")
 		}
 	}
@@ -923,7 +892,7 @@ func (m monitorModel) listBody() string {
 		if len(recent) > outputMaxLines {
 			recent = recent[len(recent)-outputMaxLines:]
 		}
-		b.WriteString("\n  " + questionStyle.Render("▸ "+s.id) + "\n")
+		b.WriteString("\n  " + theme.Question.Render("▸ "+s.id) + "\n")
 		for _, l := range recent {
 			b.WriteString("    " + l + "\n")
 		}
@@ -945,13 +914,13 @@ func (m monitorModel) writeFailureReasons(b *strings.Builder) {
 	wrap := lipgloss.NewStyle().Width(wrapW)
 
 	if m.runErr != "" {
-		b.WriteString("    " + errorStyle.Render(wrap.Render("engine: "+m.runErr)) + "\n")
+		b.WriteString("    " + theme.Error.Render(wrap.Render("engine: "+m.runErr)) + "\n")
 	}
 	for _, s := range m.steps {
 		if s.status != step.StatusFailed || s.err == "" {
 			continue
 		}
-		b.WriteString("    " + errorStyle.Render(wrap.Render(s.id+": "+s.err)) + "\n")
+		b.WriteString("    " + theme.Error.Render(wrap.Render(s.id+": "+s.err)) + "\n")
 	}
 }
 
@@ -965,7 +934,7 @@ func (m monitorModel) advanceQuestion(answer string) (monitorModel, tea.Cmd) {
 
 	if m.questionIdx < len(m.pendingQuestion.Questions) {
 		if m.ready {
-			m.vp.SetContent(m.body())
+			m.vp.SetContent(m.listBody())
 		}
 		return m, nil
 	}
@@ -975,7 +944,7 @@ func (m monitorModel) advanceQuestion(answer string) (monitorModel, tea.Cmd) {
 	m.pendingQuestion = nil
 	m.questionAnswers = nil
 	if m.ready {
-		m.vp.SetContent(m.body())
+		m.vp.SetContent(m.listBody())
 	}
 	formatted := formatQuestionAnswers(q.Questions, answers)
 	return m, func() tea.Msg {
@@ -1064,12 +1033,12 @@ func collapsible(t transcript.BlockType) bool {
 func (m monitorModel) chatBody() string {
 	var b strings.Builder
 
-	b.WriteString("\n  " + titleStyle.Render("chat") + "  " +
-		pathStyle.Render(m.chatStep) + "\n\n")
+	b.WriteString("\n  " + gradientTitle("chat") + "  " +
+		theme.Path.Render(m.chatStep) + "\n\n")
 
 	i, ok := m.index[m.chatStep]
 	if !ok {
-		b.WriteString("  " + questionStyle.Render("no such step") + "\n")
+		b.WriteString("  " + theme.Question.Render("no such step") + "\n")
 		return b.String()
 	}
 	s := m.steps[i]
@@ -1097,30 +1066,30 @@ func (m monitorModel) chatBody() string {
 			return b.String()
 		}
 		if m.runDir == "" {
-			b.WriteString("  " + questionStyle.Render("transcript unavailable (persistence off)") + "\n")
+			b.WriteString("  " + theme.Question.Render("transcript unavailable (persistence off)") + "\n")
 		} else if !running && !hasTail {
-			b.WriteString("  " + questionStyle.Render("no output yet") + "\n")
+			b.WriteString("  " + theme.Question.Render("no output yet") + "\n")
 		}
 	}
 
 	if m.chatElided > 0 {
-		b.WriteString("  " + chatHintStyle.Render(
+		b.WriteString("  " + theme.Chat.Hint.Render(
 			fmt.Sprintf("… %d earlier message(s) elided", m.chatElided)) + "\n\n")
 	}
 
 	lastIter, lastAttempt := -1, -1
 	for _, e := range m.chatEntries {
 		if lastIter != -1 && e.Iteration > lastIter {
-			b.WriteString("\n  " + markerStyle.Render(
+			b.WriteString("\n  " + theme.Marker.Render(
 				fmt.Sprintf("── iteration %d ──", e.Iteration+1)) + "\n\n")
 		}
 		if lastAttempt != -1 && e.Attempt > lastAttempt {
-			b.WriteString("\n  " + markerStyle.Render(
+			b.WriteString("\n  " + theme.Marker.Render(
 				fmt.Sprintf("── retry %d ──", e.Attempt)) + "\n\n")
 		}
 		lastIter, lastAttempt = e.Iteration, e.Attempt
 
-		b.WriteString("  " + chatHintStyle.Render(fmt.Sprintf("#%d %s", e.Seq, e.Role)) + "\n")
+		b.WriteString("  " + theme.Chat.Hint.Render(fmt.Sprintf("#%d %s", e.Seq, e.Role)) + "\n")
 		for bi, blk := range e.Blocks {
 			key := blockKey{seq: e.Seq, block: bi}
 			m.writeBlock(&b, key, blk, e.Role)
@@ -1131,7 +1100,7 @@ func (m monitorModel) chatBody() string {
 	// Live tail: the current, not-yet-finalized bubble. Reset on each
 	// StepMessage, so it shows only deltas past the last finalized entry.
 	if running && hasTail {
-		b.WriteString("  " + questionStyle.Render("typing…") + "\n")
+		b.WriteString("  " + theme.Question.Render("typing…") + "\n")
 		tail := m.stepOutput[m.chatStep].String()
 		lines := strings.Split(tail, "\n")
 		if len(lines) > outputMaxLines {
@@ -1158,13 +1127,13 @@ func (m monitorModel) writeBlock(b *strings.Builder, key blockKey, blk transcrip
 		}
 		b.WriteString(m.renderMarkdown(key, blk.Text))
 	case transcript.BlockThinking:
-		m.writeCollapsible(b, key, thinkingStyle, "🧠 reasoning", blk.Text, "", false, blk.Truncated)
+		m.writeCollapsible(b, key, theme.Chat.Thinking, theme.Chat.BarThinking, IconThinking+" reasoning", blk.Text, "", false, blk.Truncated)
 	case transcript.BlockToolUse:
-		m.writeCollapsible(b, key, toolCallStyle, "⚙ "+blk.Name, string(blk.Input), fenceJSON(string(blk.Input)), false, false)
+		m.writeCollapsible(b, key, theme.Chat.ToolCall, theme.Chat.BarToolCall, IconToolCall+" "+blk.Name, string(blk.Input), fenceJSON(string(blk.Input)), false, false)
 	case transcript.BlockToolResult:
-		m.writeCollapsible(b, key, toolResultStyle, "↳ result", blk.Content, fenceJSON(blk.Content), blk.IsError, blk.Truncated)
+		m.writeCollapsible(b, key, theme.Chat.ToolResult, theme.Chat.BarToolResult, IconToolResult+" result", blk.Content, fenceJSON(blk.Content), blk.IsError, blk.Truncated)
 	default:
-		b.WriteString("  " + questionStyle.Render("[unsupported block: "+string(blk.Type)+"]") + "\n")
+		b.WriteString("  " + theme.Question.Render("[unsupported block: "+string(blk.Type)+"]") + "\n")
 	}
 }
 
@@ -1204,36 +1173,40 @@ func fenceJSON(s string) string {
 	return "```json\n" + string(pretty) + "\n```"
 }
 
-// writeCollapsible renders one collapsible block: a labelled header line with a
-// ▸/▾ affordance, then either a one-line preview clipped to chatCollapseWidth or
-// the bounded full content. The block under the chat cursor is highlighted so
-// the expand target is obvious; error results take errorStyle.
-func (m monitorModel) writeCollapsible(b *strings.Builder, key blockKey, labelStyle lipgloss.Style, label, content, formattedContent string, isError, truncated bool) {
+// writeCollapsible renders one collapsible block: a role-colored left bar ("▌")
+// and a labelled header with a ▸/▾ affordance, then either a one-line preview
+// clipped to chatCollapseWidth or the bounded full content (also bar-accented).
+// The block under the chat cursor is highlighted so the expand target is
+// obvious; error results take theme.Error and the danger bar.
+func (m monitorModel) writeCollapsible(b *strings.Builder, key blockKey, labelStyle, barStyle lipgloss.Style, label, content, formattedContent string, isError, truncated bool) {
 	expanded := m.chatExpandAll || m.chatExpand[key]
 	cursored := len(m.chatBlocks) > 0 && m.chatBlockCursor < len(m.chatBlocks) &&
 		m.chatBlocks[m.chatBlockCursor] == key
 
-	marker := "▸"
+	marker := CollapsedMarker
 	if expanded {
-		marker = "▾"
+		marker = ExpandedMarker
 	}
 	head := labelStyle
+	bar := barStyle
 	if isError {
-		head = errorStyle
+		head = theme.Error
+		bar = theme.Chat.BarError
 	}
+	barGlyph := bar.Render(BarThick)
 	if cursored {
-		b.WriteString("  " + blockCursorStyle.Render(marker+" "+label))
+		b.WriteString("  " + barGlyph + " " + theme.Chat.BlockCursor.Render(marker+" "+label))
 	} else {
-		b.WriteString("  " + marker + " " + head.Render(label))
+		b.WriteString("  " + barGlyph + " " + marker + " " + head.Render(label))
 	}
 
 	if !expanded {
 		shown, clipped := collapseLine(content)
 		if shown != "" {
-			b.WriteString("  " + questionStyle.Render(shown))
+			b.WriteString("  " + theme.Question.Render(shown))
 		}
 		if clipped || truncated {
-			b.WriteString(chatHintStyle.Render(
+			b.WriteString(theme.Chat.Hint.Render(
 				fmt.Sprintf(" [%d chars]", utf8.RuneCountInString(content))))
 		}
 		b.WriteString("\n")
@@ -1242,15 +1215,30 @@ func (m monitorModel) writeCollapsible(b *strings.Builder, key blockKey, labelSt
 
 	b.WriteString("\n")
 	if formattedContent != "" {
-		b.WriteString(m.renderMarkdown(key, formattedContent))
+		b.WriteString(withBar(bar, m.renderMarkdown(key, formattedContent)))
 	} else {
+		var body strings.Builder
 		for _, l := range strings.Split(expandView(content), "\n") {
-			b.WriteString("    " + questionStyle.Render(l) + "\n")
+			body.WriteString(theme.Question.Render(l) + "\n")
 		}
+		b.WriteString(withBar(bar, body.String()))
 	}
 	if truncated {
-		b.WriteString("    " + chatHintStyle.Render("… (truncated at write)") + "\n")
+		b.WriteString("    " + theme.Chat.Hint.Render("… (truncated at write)") + "\n")
 	}
+}
+
+// withBar prefixes every line of content with a role-colored thick bar ("▌"),
+// crush's signature block affordance. content may already carry ANSI styling
+// (e.g. glamour output); the bar is emitted before each line's styling begins so
+// nested SGR resets never clear it.
+func withBar(style lipgloss.Style, content string) string {
+	bar := style.Render(BarThick)
+	var b strings.Builder
+	for _, l := range strings.Split(strings.TrimRight(content, "\n"), "\n") {
+		b.WriteString("  " + bar + " " + l + "\n")
+	}
+	return b.String()
 }
 
 // collapseLine flattens s to a single line and clips it to chatCollapseWidth
@@ -1298,7 +1286,7 @@ func clampRunesTail(s string) string {
 // spaces, truncated to maxDiffLines. Shared by the review overlay in the list
 // view and the review-step drill-in in the chat view (Phase 6).
 func writeDiff(b *strings.Builder, diff string) {
-	b.WriteString("  " + questionStyle.Render("── diff ─────────────────────────────") + "\n")
+	b.WriteString("  " + theme.Question.Render("── diff ─────────────────────────────") + "\n")
 	lines := strings.Split(diff, "\n")
 	const maxDiffLines = 200
 	truncated := len(lines) > maxDiffLines
@@ -1308,17 +1296,17 @@ func writeDiff(b *strings.Builder, diff string) {
 	for _, line := range lines {
 		switch {
 		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++"):
-			b.WriteString("  " + diffAddStyle.Render(line) + "\n")
+			b.WriteString("  " + theme.Diff.Add.Render(line) + "\n")
 		case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---"):
-			b.WriteString("  " + diffRemoveStyle.Render(line) + "\n")
+			b.WriteString("  " + theme.Diff.Remove.Render(line) + "\n")
 		case strings.HasPrefix(line, "@@"):
-			b.WriteString("  " + diffHunkStyle.Render(line) + "\n")
+			b.WriteString("  " + theme.Diff.Hunk.Render(line) + "\n")
 		default:
 			b.WriteString("  " + line + "\n")
 		}
 	}
 	if truncated {
-		b.WriteString("  " + questionStyle.Render("… diff truncated") + "\n")
+		b.WriteString("  " + theme.Question.Render("… diff truncated") + "\n")
 	}
 }
 
@@ -1334,36 +1322,36 @@ func writeVerbatim(b *strings.Builder, text string) {
 func stepIndicator(s step.Status) (string, lipgloss.Style) {
 	switch s {
 	case step.StatusPending:
-		return "○", questionStyle
+		return "○", theme.Question
 	case step.StatusRunning:
-		return "●", runningStyle
+		return "●", theme.Running
 	case step.StatusSucceeded:
-		return "✓", validStyle
+		return "✓", theme.Valid
 	case step.StatusFailed:
-		return "✗", errorStyle
+		return "✗", theme.Error
 	case step.StatusSkipped:
-		return "—", questionStyle
+		return "—", theme.Question
 	case step.StatusValidating:
-		return "⇢", questionStyle
+		return "⇢", theme.Question
 	case step.StatusAwaitingReview:
-		return "?", markerStyle
+		return "?", theme.Marker
 	case step.StatusNeedsInput:
-		return "⊙", markerStyle
+		return "⊙", theme.Marker
 	default:
-		return "·", questionStyle
+		return "·", theme.Question
 	}
 }
 
 func statusStyle(s step.Status) lipgloss.Style {
 	switch s {
 	case step.StatusRunning:
-		return runningStyle
+		return theme.Running
 	case step.StatusSucceeded:
-		return validStyle
+		return theme.Valid
 	case step.StatusFailed:
-		return errorStyle
+		return theme.Error
 	default:
-		return questionStyle
+		return theme.Question
 	}
 }
 
@@ -1373,9 +1361,9 @@ func statusStyle(s step.Status) lipgloss.Style {
 func subtypeBadgeLabel(subtype string) string {
 	switch subtype {
 	case "error_max_turns":
-		return "[max turns]"
+		return "max turns"
 	case "error_max_budget_usd":
-		return "[budget]"
+		return "budget"
 	default:
 		return ""
 	}
@@ -1397,22 +1385,22 @@ func (m monitorModel) footerView() string {
 	var status string
 	if m.done {
 		if m.failed {
-			status = errorStyle.Render("failed")
+			status = theme.Error.Render("failed")
 		} else {
-			status = validStyle.Render("done")
+			status = theme.Valid.Render("done")
 		}
 	} else if m.pendingInput != nil {
-		status = markerStyle.Render("awaiting agent input")
+		status = theme.Marker.Render("awaiting agent input")
 	} else if m.pendingQuestion != nil {
-		status = markerStyle.Render("awaiting answer")
+		status = theme.Marker.Render("awaiting answer")
 	} else if m.pendingPrompt != nil {
-		status = markerStyle.Render("awaiting user input")
+		status = theme.Marker.Render("awaiting user input")
 	} else if m.composingMessage {
-		status = markerStyle.Render("composing message")
+		status = theme.Marker.Render("composing message")
 	} else if m.pendingReview != nil {
-		status = markerStyle.Render("awaiting review")
+		status = theme.Marker.Render("awaiting review")
 	} else {
-		status = runningStyle.Render("running")
+		status = theme.Running.Render("running")
 	}
 	var hint string
 	switch {
@@ -1439,12 +1427,16 @@ func (m monitorModel) footerView() string {
 	default:
 		hint = "j/k select  •  enter open  •  esc runs list  •  ctrl+c quit"
 	}
-	return footerStyle.Render("  " + status + "  ·  " + hint)
+	return theme.Footer.Render("  " + status + "  ·  " + hint)
 }
 
 func (m monitorModel) View() string {
 	if !m.ready {
 		return "\n  Loading…\n"
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, m.vp.View(), m.footerView())
+	vp := m.vp
+	if m.mode == modeChat {
+		vp = m.chatVP
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, vp.View(), m.footerView())
 }

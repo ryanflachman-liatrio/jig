@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"jig/internal/workflow"
 )
@@ -71,7 +71,7 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 		}
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "enter":
 			return m, func() tea.Msg { return showRunsMsg{} }
@@ -99,11 +99,11 @@ func (m *detailModel) resize() {
 		vpHeight = 1
 	}
 	if !m.ready {
-		m.vp = viewport.New(m.width, vpHeight)
+		m.vp = viewport.New(viewport.WithWidth(m.width), viewport.WithHeight(vpHeight))
 		m.ready = true
 	} else {
-		m.vp.Width = m.width
-		m.vp.Height = vpHeight
+		m.vp.SetWidth(m.width)
+		m.vp.SetHeight(vpHeight)
 	}
 	m.vp.SetContent(m.body())
 }
@@ -113,7 +113,7 @@ func (m detailModel) footerView() string {
 	if m.wf != nil {
 		help = "  r run  •  enter runs  •  esc back  •  ctrl+c quit"
 	}
-	return footerStyle.Render(help)
+	return theme.Footer.Render(help)
 }
 
 // body renders the header and step list into the viewport's content.
@@ -127,18 +127,18 @@ func (m detailModel) body() string {
 	if name == "" {
 		name = m.path
 	}
-	header := titleStyle.Render(name)
+	header := theme.Title.Render(name)
 	if m.meta.Version != "" {
-		header += "  " + questionStyle.Render("v"+m.meta.Version)
+		header += "  " + theme.Question.Render("v"+m.meta.Version)
 	}
 	b.WriteString("\n  " + header + "\n")
 	if m.meta.Description != "" {
-		b.WriteString("  " + questionStyle.Render(m.meta.Description) + "\n")
+		b.WriteString("  " + theme.Question.Render(m.meta.Description) + "\n")
 	}
-	b.WriteString("  " + pathStyle.Render(m.path) + "\n\n")
+	b.WriteString("  " + theme.Path.Render(m.path) + "\n\n")
 
 	if m.loadErr != nil {
-		b.WriteString("  " + errorStyle.Render("✗ invalid workflow") + "\n\n")
+		b.WriteString("  " + theme.Error.Render(IconError+" invalid workflow") + "\n\n")
 		// The loader aggregates every problem; indent the multi-line message.
 		for _, line := range strings.Split(strings.TrimRight(m.loadErr.Error(), "\n"), "\n") {
 			b.WriteString("  " + line + "\n")
@@ -146,8 +146,8 @@ func (m detailModel) body() string {
 		return b.String()
 	}
 
-	b.WriteString("  " + validStyle.Render("✓ valid") +
-		questionStyle.Render(fmt.Sprintf("  ·  %d step(s)", len(m.wf.Steps))) + "\n\n")
+	b.WriteString("  " + theme.Valid.Render(IconSuccess+" valid") +
+		theme.Question.Render(fmt.Sprintf("  ·  %d step(s)", len(m.wf.Steps))) + "\n\n")
 	b.WriteString(m.stepsView())
 	return b.String()
 }
@@ -167,16 +167,16 @@ func (m detailModel) stepsView() string {
 	for i, s := range steps {
 		typ := string(s.Type)
 		badge := typ
-		if style, ok := stepTypeStyles[typ]; ok {
+		if style, ok := theme.Step.Types[typ]; ok {
 			badge = style.Render(typ)
 		}
 		fmt.Fprintf(&b, "  %2d  %s  %s",
 			i+1,
-			stepIDStyle.Render(padRight(s.ID, idWidth)),
+			theme.Step.ID.Render(padRight(s.ID, idWidth)),
 			padRight(badge, len(typ), 8),
 		)
 		for _, mk := range stepMarkers(s) {
-			b.WriteString("  " + markerStyle.Render(mk))
+			b.WriteString("  " + theme.Marker.Render(mk))
 		}
 		b.WriteString("\n")
 	}
