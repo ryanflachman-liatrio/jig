@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	keybind "charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -45,6 +46,7 @@ type workflowsLoadedMsg struct {
 // under workflowsDir.
 type selectorModel struct {
 	list    list.Model
+	keys    selectorKeys
 	loading bool
 	err     error
 	width   int
@@ -73,7 +75,7 @@ func newSelectorModel() selectorModel {
 	l.SetShowHelp(false)
 	l.SetShowStatusBar(false)
 	l.SetStatusBarItemName("workflow", "workflows")
-	return selectorModel{list: l, loading: true}
+	return selectorModel{list: l, keys: defaultSelectorKeys(), loading: true}
 }
 
 // discoverWorkflowsCmd walks workflowsDir for *.toml files that carry a
@@ -131,7 +133,7 @@ func (m selectorModel) Update(msg tea.Msg) (selectorModel, tea.Cmd) {
 	case tea.KeyPressMsg:
 		// While the filter input is open, let the list consume Enter (it applies
 		// the filter) rather than treating it as a selection.
-		if msg.String() == "enter" && m.list.FilterState() != list.Filtering {
+		if keybind.Matches(msg, m.keys.Open) && m.list.FilterState() != list.Filtering {
 			if item, ok := m.list.SelectedItem().(workflowItem); ok {
 				return m, func() tea.Msg { return showDetailMsg{path: item.path} }
 			}
@@ -164,9 +166,9 @@ func (m *selectorModel) resize() {
 // filter state, mirroring lazygit's global keybind bar.
 func (m selectorModel) footerView() string {
 	if m.list.FilterState() == list.Filtering {
-		return theme.Footer.Render("  enter apply  •  esc clear filter  •  ctrl+c quit")
+		return theme.Footer.Render("  " + hintString(m.keys.Apply, m.keys.Clear, keyQuit))
 	}
-	return theme.Footer.Render("  ↑/↓ navigate  •  / filter  •  enter open  •  ctrl+c quit")
+	return theme.Footer.Render("  " + hintString(m.keys.Nav, m.keys.Filter, m.keys.Open, keyQuit))
 }
 
 func (m selectorModel) View() string {
@@ -178,7 +180,7 @@ func (m selectorModel) View() string {
 	case len(m.list.Items()) == 0:
 		return "\n  " + theme.Title.Render("No workflows found") + "\n\n" +
 			theme.Question.Render("  Add a <name>.toml with a [workflow] table under "+workflowsDir+"/.") +
-			"\n\n" + theme.Footer.Render("  ctrl+c quit") + "\n"
+			"\n\n" + theme.Footer.Render("  "+hintString(keyQuit)) + "\n"
 	}
 	footer := m.footerView()
 	body := panel("Workflows", m.list.View(), m.width, m.height-lipgloss.Height(footer), true)

@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	keybind "charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -36,6 +37,7 @@ const (
 type monitorModel struct {
 	runID    string
 	workflow string
+	keys     monitorKeys
 	steps    []monitorStep
 	index    map[string]int // stepID → steps position
 	done     bool
@@ -155,6 +157,7 @@ type monitorStep struct {
 func newMonitorModel(runID string) monitorModel {
 	return monitorModel{
 		runID:        runID,
+		keys:         defaultMonitorKeys(),
 		index:        make(map[string]int),
 		stepOutput:   make(map[string]*strings.Builder),
 		msgCount:     make(map[string]int),
@@ -225,10 +228,10 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 	case tea.KeyPressMsg:
 		// block_on input: enter submits, esc leaves to runs list, other keys go to textarea.
 		if m.pendingInput != nil {
-			if msg.String() == "esc" {
+			if keybind.Matches(msg, m.keys.InputLeave) {
 				return m, func() tea.Msg { return showRunsMsg{} }
 			}
-			if msg.String() == "enter" {
+			if keybind.Matches(msg, m.keys.Submit) {
 				text := m.promptTextarea.Value()
 				if text == "" {
 					return m, nil
@@ -252,7 +255,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 		}
 		// AskUserQuestion: digit keys select / toggle options; enter confirms multiSelect.
 		if m.pendingQuestion != nil {
-			if s := msg.String(); s == "esc" || s == "q" {
+			if keybind.Matches(msg, m.keys.QuestionCancel) {
 				// Deliver a cancellation answer so the blocked reporter goroutine
 				// unblocks and Claude receives a tool_result instead of hanging.
 				q := m.pendingQuestion
@@ -282,7 +285,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 							return m, nil
 						}
 					}
-					if s := msg.String(); s == "enter" || s == " " {
+					if keybind.Matches(msg, m.keys.QConfirm) {
 						var selected []string
 						for i, opt := range q.Options {
 							if m.questionSelected[i] {
@@ -306,7 +309,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 		}
 		// When awaiting user text input or composing a message, route keys to the textarea.
 		if m.pendingPrompt != nil || m.composingMessage {
-			if msg.String() == "esc" && m.composingMessage {
+			if m.composingMessage && keybind.Matches(msg, m.keys.ComposeCancel) {
 				// Cancel compose — return to the verdict picker.
 				m.composingMessage = false
 				m.promptTextarea = textarea.Model{}
@@ -315,7 +318,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 				}
 				return m, nil
 			}
-			if msg.String() == "enter" {
+			if keybind.Matches(msg, m.keys.Submit) {
 				text := m.promptTextarea.Value()
 				if m.composingMessage {
 					if text == "" {
@@ -362,7 +365,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 		// A pending review freezes navigation — only a verdict, message compose, or
 		// esc (leave to the runs list) is accepted.
 		if m.pendingReview != nil {
-			if msg.String() == "m" && m.pendingReview.AllowMessage {
+			if m.pendingReview.AllowMessage && keybind.Matches(msg, m.keys.Message) {
 				m.composingMessage = true
 				m.promptTextarea = newInputTextarea("Message to agent…", m.width-4, 4)
 				if m.ready {
@@ -385,7 +388,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 					}
 				}
 			}
-			if s := msg.String(); s == "esc" || s == "q" {
+			if keybind.Matches(msg, m.keys.ReviewLeave) {
 				return m, func() tea.Msg { return showRunsMsg{} }
 			}
 			return m, nil
@@ -395,8 +398,8 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 		// in modeChat, j/k fall through to scroll the transcript.
 		switch m.mode {
 		case modeList:
-			switch msg.String() {
-			case "j", "down":
+			switch {
+			case keybind.Matches(msg, m.keys.Down):
 				if m.cursor < len(m.steps)-1 {
 					m.cursor++
 					m.ensureCursorVisible()
@@ -405,7 +408,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 					}
 				}
 				return m, nil
-			case "k", "up":
+			case keybind.Matches(msg, m.keys.Up):
 				if m.cursor > 0 {
 					m.cursor--
 					m.ensureCursorVisible()
@@ -414,7 +417,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 					}
 				}
 				return m, nil
-			case "enter":
+			case keybind.Matches(msg, m.keys.Open):
 				if m.cursor < len(m.steps) {
 					m.mode = modeChat
 					m.chatStep = m.steps[m.cursor].id
@@ -430,19 +433,19 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 					}
 				}
 				return m, nil
-			case "esc", "q", "backspace", "h", "left":
+			case keybind.Matches(msg, m.keys.Back):
 				return m, func() tea.Msg { return showRunsMsg{} }
 			}
 		case modeChat:
-			switch msg.String() {
-			case "esc", "h", "left":
+			switch {
+			case keybind.Matches(msg, m.keys.ChatBack):
 				m.mode = modeList
 				m.chatStep = ""
 				if m.ready {
 					m.vp.SetContent(m.listBody())
 				}
 				return m, nil
-			case "tab":
+			case keybind.Matches(msg, m.keys.NextBlock):
 				// Move the block cursor to the next collapsible block.
 				if n := len(m.chatBlocks); n > 0 {
 					m.chatBlockCursor = (m.chatBlockCursor + 1) % n
@@ -451,7 +454,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 					}
 				}
 				return m, nil
-			case "shift+tab":
+			case keybind.Matches(msg, m.keys.PrevBlock):
 				if n := len(m.chatBlocks); n > 0 {
 					m.chatBlockCursor = (m.chatBlockCursor - 1 + n) % n
 					if m.ready {
@@ -459,7 +462,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 					}
 				}
 				return m, nil
-			case "enter", " ":
+			case keybind.Matches(msg, m.keys.Toggle):
 				// Toggle the block under the cursor.
 				if n := len(m.chatBlocks); n > 0 && m.chatBlockCursor < n {
 					k := m.chatBlocks[m.chatBlockCursor]
@@ -469,7 +472,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 					}
 				}
 				return m, nil
-			case "o":
+			case keybind.Matches(msg, m.keys.ExpandAll):
 				// Expand/collapse everything in view at once.
 				m.chatExpandAll = !m.chatExpandAll
 				if m.ready {
@@ -1405,27 +1408,27 @@ func (m monitorModel) footerView() string {
 	var hint string
 	switch {
 	case m.pendingInput != nil:
-		hint = "enter submit  •  alt+enter newline  •  esc runs list  •  ctrl+c quit"
+		hint = hintString(m.keys.Submit, m.keys.Newline, m.keys.InputLeave, keyQuit)
 	case m.pendingQuestion != nil:
 		if m.questionIdx < len(m.pendingQuestion.Questions) && m.pendingQuestion.Questions[m.questionIdx].MultiSelect {
-			hint = "1-9 toggle  •  enter confirm  •  esc runs list  •  ctrl+c quit"
+			hint = hintString(m.keys.ToggleOpt, m.keys.QConfirm, m.keys.QuestionCancel, keyQuit)
 		} else {
-			hint = "1-9 select answer  •  esc runs list  •  ctrl+c quit"
+			hint = hintString(m.keys.Answer, m.keys.QuestionCancel, keyQuit)
 		}
 	case m.pendingPrompt != nil:
-		hint = "enter submit  •  alt+enter newline  •  esc runs list  •  ctrl+c quit"
+		hint = hintString(m.keys.Submit, m.keys.Newline, m.keys.PromptLeave, keyQuit)
 	case m.composingMessage:
-		hint = "enter submit  •  alt+enter newline  •  esc cancel  •  ctrl+c quit"
+		hint = hintString(m.keys.Submit, m.keys.Newline, m.keys.ComposeCancel, keyQuit)
 	case m.pendingReview != nil:
 		if m.pendingReview.AllowMessage {
-			hint = "1-9 select verdict  •  m message  •  esc runs list  •  ctrl+c quit"
+			hint = hintString(m.keys.Verdict, m.keys.Message, m.keys.ReviewLeave, keyQuit)
 		} else {
-			hint = "1-9 select verdict  •  esc runs list  •  ctrl+c quit"
+			hint = hintString(m.keys.Verdict, m.keys.ReviewLeave, keyQuit)
 		}
 	case m.mode == modeChat:
-		hint = "esc back  •  j/k scroll  •  tab block  •  enter expand  •  o all"
+		hint = hintString(m.keys.ChatBack, m.keys.Scroll, m.keys.NextBlock, m.keys.Toggle, m.keys.ExpandAll)
 	default:
-		hint = "j/k select  •  enter open  •  esc runs list  •  ctrl+c quit"
+		hint = hintString(m.keys.ListNav, m.keys.Open, m.keys.Back, keyQuit)
 	}
 	return theme.Footer.Render("  " + status + "  ·  " + hint)
 }

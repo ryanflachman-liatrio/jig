@@ -7,6 +7,7 @@ package tui
 import (
 	"context"
 
+	keybind "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
 	"jig/internal/engine"
@@ -136,7 +137,7 @@ func (m rootModel) Init() tea.Cmd {
 func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		if msg.String() == "ctrl+c" {
+		if keybind.Matches(msg, keyQuit) {
 			return m, tea.Quit
 		}
 

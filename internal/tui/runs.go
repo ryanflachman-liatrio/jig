@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	keybind "charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -23,6 +24,7 @@ type runsModel struct {
 	index  map[string]int // runID → rows position
 	cursor int
 	wf     *workflow.Workflow // used for "r" to start another run
+	keys   runsKeys
 
 	vp    viewport.Model // scrolls the run rows within the panel frame
 	ready bool
@@ -42,7 +44,7 @@ type runRow struct {
 }
 
 func newRunsModel() runsModel {
-	return runsModel{index: make(map[string]int)}
+	return runsModel{index: make(map[string]int), keys: defaultRunsKeys()}
 }
 
 // withWorkflow returns a copy of the model with the current workflow set, so
@@ -65,27 +67,27 @@ func (m runsModel) Update(msg tea.Msg) (runsModel, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "up", "k":
+		switch {
+		case keybind.Matches(msg, m.keys.Up):
 			if m.cursor > 0 {
 				m.cursor--
 				m.syncViewport()
 			}
-		case "down", "j":
+		case keybind.Matches(msg, m.keys.Down):
 			if m.cursor < len(m.rows)-1 {
 				m.cursor++
 				m.syncViewport()
 			}
-		case "enter":
+		case keybind.Matches(msg, m.keys.Open):
 			if m.cursor < len(m.rows) {
 				id := m.rows[m.cursor].id
 				return m, func() tea.Msg { return showMonitorMsg{runID: id} }
 			}
-		case "r":
+		case keybind.Matches(msg, m.keys.NewRun):
 			if m.wf != nil {
 				return m, func() tea.Msg { return startRunMsg{wf: m.wf} }
 			}
-		case "esc", "q", "backspace", "h", "left":
+		case keybind.Matches(msg, m.keys.Back):
 			return m, func() tea.Msg { return backToSelectorMsg{} }
 		}
 	}
@@ -182,7 +184,7 @@ func (m *runsModel) ensureCursorVisible() {
 }
 
 func (m runsModel) footerView() string {
-	return theme.Footer.Render("  r new run  •  enter monitor  •  esc back  •  ctrl+c quit")
+	return theme.Footer.Render("  " + hintString(m.keys.NewRun, m.keys.Open, m.keys.Back, keyQuit))
 }
 
 // rowsBody renders one line per run with the selected row highlighted; the panel
@@ -218,7 +220,7 @@ func (m runsModel) View() string {
 	if len(m.rows) == 0 {
 		return "\n  " + theme.Title.Render("No runs yet") + "\n\n" +
 			theme.Question.Render("  Press r in a workflow detail to start a run.") + "\n\n" +
-			theme.Footer.Render("  esc back  •  ctrl+c quit") + "\n"
+			theme.Footer.Render("  "+hintString(m.keys.Back, keyQuit)) + "\n"
 	}
 
 	footer := m.footerView()

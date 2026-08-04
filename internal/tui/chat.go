@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	keybind "charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
@@ -32,6 +33,7 @@ type chatModel struct {
 	spinner  spinner.Model
 	viewport viewport.Model
 	renderer *glamour.TermRenderer
+	keys     chatKeys
 
 	turns         []turn
 	activeTurn    int
@@ -70,6 +72,7 @@ func newChatModel(ctx context.Context, darkBackground bool) tea.Model {
 	return chatModel{
 		textarea:       ta,
 		spinner:        s,
+		keys:           defaultChatKeys(),
 		ctx:            ctx,
 		darkBackground: darkBackground,
 		focus:          focusInput,
@@ -104,12 +107,13 @@ func (m chatModel) statusLineView() string {
 
 func (m chatModel) footerView() string {
 	if m.fatal {
-		return theme.Footer.Render("ctrl+c quit")
+		return theme.Footer.Render("  " + hintString(keyQuit))
 	}
 	if m.ready && len(m.turns) > 0 {
-		return theme.Footer.Render(fmt.Sprintf("enter send • alt+enter newline • esc/i switch focus • ctrl+c quit (%.0f%%)", m.viewport.ScrollPercent()*100))
+		hint := hintString(m.keys.Send, m.keys.Newline, m.keys.SwitchFocus, keyQuit)
+		return theme.Footer.Render(fmt.Sprintf("  %s (%.0f%%)", hint, m.viewport.ScrollPercent()*100))
 	}
-	return theme.Footer.Render("enter send • alt+enter newline • ctrl+c quit")
+	return theme.Footer.Render("  " + hintString(m.keys.Send, m.keys.Newline, keyQuit))
 }
 
 // turnIndicatorView reports which turn is currently displayed, and how to
@@ -194,11 +198,11 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "ctrl+c":
+		switch {
+		case keybind.Matches(msg, m.keys.Quit):
 			return m, tea.Sequence(disconnectClaudeCmd(m.client), tea.Quit)
 
-		case "enter":
+		case keybind.Matches(msg, m.keys.Send):
 			// From the output pane, enter focuses the input (mirrors "i").
 			if m.focus == focusOutput {
 				m.focus = focusInput
@@ -220,7 +224,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.renderActiveTurn()
 			return m, tea.Batch(submitPromptCmd(m.ctx, m.client, prompt), m.spinner.Tick)
 
-		case "esc":
+		case keybind.Matches(msg, m.keys.ToOutput):
 			if m.focus == focusInput {
 				m.textarea.Blur()
 				m.focus = focusOutput
@@ -228,14 +232,14 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "i":
+		case keybind.Matches(msg, m.keys.FocusInput):
 			if m.focus == focusOutput {
 				m.focus = focusInput
 				m.viewport.Style = theme.Viewport.Blurred
 				return m, m.textarea.Focus()
 			}
 
-		case "left":
+		case keybind.Matches(msg, m.keys.PrevTurn):
 			if m.focus == focusOutput && m.activeTurn > 0 {
 				m.turns[m.activeTurn].scrollOffset = m.viewport.YOffset()
 				m.activeTurn--
@@ -243,7 +247,7 @@ func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-		case "right":
+		case keybind.Matches(msg, m.keys.NextTurn):
 			if m.focus == focusOutput && m.activeTurn < len(m.turns)-1 {
 				m.turns[m.activeTurn].scrollOffset = m.viewport.YOffset()
 				m.activeTurn++

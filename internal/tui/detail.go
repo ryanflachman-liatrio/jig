@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	keybind "charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -16,6 +17,7 @@ import (
 // It runs no agents; it just makes the parsed graph legible.
 type detailModel struct {
 	path string
+	keys detailKeys
 
 	meta    workflow.Meta
 	wf      *workflow.Workflow
@@ -29,7 +31,11 @@ type detailModel struct {
 }
 
 func newDetailModel(path string) detailModel {
-	return detailModel{path: path}
+	keys := defaultDetailKeys()
+	// Run is unavailable until a valid workflow loads; disabling it both stops
+	// matching "r" and drops "r run" from the footer.
+	keys.Run.SetEnabled(false)
+	return detailModel{path: path, keys: keys}
 }
 
 // workflowLoadedMsg carries the result of fully loading the selected workflow.
@@ -65,6 +71,7 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 		m.meta = msg.meta
 		m.wf = msg.wf
 		m.loadErr = msg.err
+		m.keys.Run.SetEnabled(m.wf != nil)
 		if m.ready {
 			m.vp.SetContent(m.body())
 			m.vp.GotoTop()
@@ -72,16 +79,15 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "enter":
+		switch {
+		case keybind.Matches(msg, m.keys.Runs):
 			return m, func() tea.Msg { return showRunsMsg{} }
-		case "esc", "q", "backspace", "h", "left":
+		case keybind.Matches(msg, m.keys.Back):
 			return m, func() tea.Msg { return backToSelectorMsg{} }
-		case "r":
-			if m.wf != nil {
-				wf := m.wf
-				return m, func() tea.Msg { return startRunMsg{wf: wf} }
-			}
+		case keybind.Matches(msg, m.keys.Run):
+			// Run is disabled until m.wf is non-nil, so a match implies a workflow.
+			wf := m.wf
+			return m, func() tea.Msg { return startRunMsg{wf: wf} }
 		}
 	}
 
@@ -123,11 +129,8 @@ func (m detailModel) titleText() string {
 }
 
 func (m detailModel) footerView() string {
-	help := "  enter runs  •  esc back  •  ctrl+c quit"
-	if m.wf != nil {
-		help = "  r run  •  enter runs  •  esc back  •  ctrl+c quit"
-	}
-	return theme.Footer.Render(help)
+	// Run drops out automatically when disabled (no workflow loaded).
+	return theme.Footer.Render("  " + hintString(m.keys.Run, m.keys.Runs, m.keys.Back, keyQuit))
 }
 
 // body renders the header and step list into the viewport's content.
