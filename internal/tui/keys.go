@@ -12,8 +12,8 @@ import (
 // `keys` field and matches input with keybind.Matches rather than comparing
 // msg.String(). Footers render from the same bindings via hintString, so the
 // hint line can never advertise a key the handler does not accept, nor omit one
-// it does — the class of drift that produced the stale monitor freeze comment
-// (see docs/bug-gate-navigation-freeze.md).
+// it does — the class of drift that lets a footer or comment describe behavior
+// the code no longer has.
 //
 // Some bindings are display-only: a footer shows a combined label ("j/k",
 // "1-9") whose per-key matching is done elsewhere (a viewport keymap, or a
