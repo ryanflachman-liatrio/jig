@@ -105,6 +105,10 @@ func (m *detailModel) resize() {
 	}
 	if !m.ready {
 		m.vp = viewport.New(viewport.WithWidth(vpWidth), viewport.WithHeight(vpHeight))
+		// Content is word-wrapped to the panel width, so horizontal scrolling
+		// only ever cuts left characters off rendered lines. Disable it.
+		m.vp.KeyMap.Left.Unbind()
+		m.vp.KeyMap.Right.Unbind()
 		m.ready = true
 	} else {
 		m.vp.SetWidth(vpWidth)

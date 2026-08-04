@@ -850,6 +850,12 @@ func (m *monitorModel) resize() {
 	if !m.ready {
 		m.vp = viewport.New(viewport.WithWidth(m.stepsInnerW), viewport.WithHeight(innerH))
 		m.chatVP = viewport.New(viewport.WithWidth(m.transcriptInnerW), viewport.WithHeight(innerH))
+		// Content is word-wrapped to each panel's inner width; horizontal
+		// scrolling only ever cuts left characters off rendered lines.
+		m.vp.KeyMap.Left.Unbind()
+		m.vp.KeyMap.Right.Unbind()
+		m.chatVP.KeyMap.Left.Unbind()
+		m.chatVP.KeyMap.Right.Unbind()
 		m.ready = true
 	} else {
 		m.vp.SetWidth(m.stepsInnerW)

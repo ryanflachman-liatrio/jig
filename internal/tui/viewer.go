@@ -96,6 +96,10 @@ func (m *chatModel) handleResize(msg tea.WindowSizeMsg) {
 		// No own border: the Conversation panel draws the frame and its color
 		// reflects focus. A bordered viewport here would double-box.
 		m.viewport.Style = lipgloss.NewStyle()
+		// Content is word-wrapped to the panel width; horizontal scrolling only
+		// ever cuts left characters off rendered lines. Disable it.
+		m.viewport.KeyMap.Left.Unbind()
+		m.viewport.KeyMap.Right.Unbind()
 		m.ready = true
 	} else {
 		m.viewport.SetWidth(innerW)
