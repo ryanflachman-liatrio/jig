@@ -19,15 +19,21 @@ import (
 	"jig/internal/transcript"
 )
 
-// monitorMode is the master–detail state of the run monitor. modeList is the
-// step list (j/k move a selection cursor); modeChat drills into one step's
-// agent transcript (j/k scroll the viewport). The explicit mode keeps the
-// list-navigation keymap from colliding with the viewport's scroll keymap.
-type monitorMode int
+// focusRegion is which of the monitor's three regions currently holds keyboard
+// input. Both the Steps panel and the Transcript panel are always visible; only
+// the focused region's border is drawn primary (Charple). A pending gate is a
+// third region: it auto-focuses on arrival but does not freeze navigation — the
+// user can tab away to read the transcript a verdict is about and tab back. See
+// docs/adr/0002-gates-are-nonblocking-focus-regions.md.
+//
+// The explicit focus keeps the Steps list-navigation keymap (j/k select) from
+// colliding with the Transcript viewport's scroll keymap (j/k scroll).
+type focusRegion int
 
 const (
-	modeList monitorMode = iota
-	modeChat
+	focusSteps focusRegion = iota
+	focusTranscript
+	focusGate
 )
 
 // monitorModel is the per-run view: a live step-status table for one run,
@@ -44,14 +50,17 @@ type monitorModel struct {
 	// not attributable to a single step. Set by the engine.RunError event.
 	runErr string
 
-	// Phase 4 navigation: modeList selects a step; modeChat drills into one.
-	mode     monitorMode
-	cursor   int    // selected step in modeList
-	chatStep string // step whose chat is open in modeChat
+	// Two-panel navigation: focus selects the active region; cursor selects the
+	// step in the Steps panel. chatStep is the step whose transcript the right
+	// panel currently shows — kept in sync with the cursor via eager reload (the
+	// transcript always shows the cursor's step, Resolved Decision 10/13).
+	focus    focusRegion
+	cursor   int    // selected step in the Steps panel
+	chatStep string // step whose transcript the Transcript panel renders
 
 	// Phase 5 chat rendering. runDir locates the per-step transcript.jsonl on
-	// disk; the transcript file — not the lossy event bus — is what modeChat
-	// renders (as themed Charmtone markdown).
+	// disk; the transcript file — not the lossy event bus — is what the
+	// Transcript panel renders (as themed Charmtone markdown).
 	runDir string
 
 	// chatEntries is the currently-loaded (windowed) transcript for chatStep,
@@ -71,11 +80,10 @@ type monitorModel struct {
 
 	// renderer renders text blocks as markdown; chatRendered caches the output
 	// keyed by block (glamour re-parses whole documents, so re-rendering on every
-	// event is wasteful). renderWidth is the width the cache was built for; a
-	// resize to a new width rebuilds the renderer and invalidates the cache.
+	// event is wasteful). The cache is invalidated when the transcript panel's
+	// inner width changes (see lastTranscriptW / rebuildRenderer).
 	renderer     *glamour.TermRenderer
 	chatRendered map[blockKey]string
-	renderWidth  int
 
 	// msgCount tracks the latest transcript entry seq observed per step (via
 	// StepMessage liveness events), used as a message count in the list.
@@ -109,12 +117,57 @@ type monitorModel struct {
 	// Phase 4: rolling output buffer per step (last outputMaxLines lines).
 	stepOutput map[string]*strings.Builder
 
-	vp     viewport.Model // list mode scroll
-	chatVP viewport.Model // chat mode scroll — independent so each mode remembers its position
+	vp     viewport.Model // Steps panel scroll
+	chatVP viewport.Model // Transcript panel scroll — independent scroll position
 	ready  bool
 
 	width  int
 	height int
+
+	// stepsInnerW / transcriptInnerW are the two panels' inner content widths,
+	// computed in resize() from the width split (Resolved Decision 11). narrow
+	// is true when the terminal is too narrow for both panels to meet their
+	// minimums, triggering the single-focused-panel fallback (Decision 14).
+	stepsInnerW      int
+	transcriptInnerW int
+	narrow           bool
+
+	// lastTranscriptW is the transcript panel inner width the glamour renderer
+	// and per-block cache were last built for; rebuildRenderer invalidates the
+	// cache when it changes.
+	lastTranscriptW int
+}
+
+const (
+	// stepsMinWidth / transcriptMinInnerWidth are the panel-split minimums from
+	// Resolved Decision 11: the Steps panel is at least stepsMinWidth cells wide
+	// and the Transcript panel keeps at least transcriptMinInnerWidth inner cells.
+	stepsMinWidth           = 32
+	transcriptMinInnerWidth = 40
+)
+
+// panelSplit computes the two panels' outer widths for the given total width per
+// Resolved Decision 11: Steps = max(32, width/3), clamped so the Transcript keeps
+// an inner width of at least ~40; the Transcript takes the remainder. narrow
+// reports that the terminal is too narrow for both panels to meet their minimums,
+// so the caller should fall back to a single full-width focused panel.
+func panelSplit(width int) (stepsW, transcriptW int, narrow bool) {
+	hFrame, _ := panelFrame()
+	// Both panels need at least their border frame; the Transcript additionally
+	// needs transcriptMinInnerWidth inner cells. Below this the split is impossible.
+	minTotal := stepsMinWidth + hFrame + transcriptMinInnerWidth
+	if width < minTotal {
+		return width, width, true
+	}
+	stepsW = width / 3
+	if stepsW < stepsMinWidth {
+		stepsW = stepsMinWidth
+	}
+	// Clamp so the Transcript keeps its minimum inner width.
+	if maxSteps := width - (transcriptMinInnerWidth + hFrame); stepsW > maxSteps {
+		stepsW = maxSteps
+	}
+	return stepsW, width - stepsW, false
 }
 
 // outputMaxLines is the number of streaming output lines shown per step.
@@ -210,275 +263,52 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 		var evCmd tea.Cmd
 		wasAtBottom := m.chatVP.AtBottom()
 		m, evCmd = m.handleEngineEvent(msg.event)
+		// The Transcript panel always shows the cursor's step; point it at the
+		// first step as soon as the run's steps are known (eager reload).
+		if m.chatStep == "" && m.cursor < len(m.steps) {
+			m.reloadTranscript()
+		}
+		// Both panels are always visible, so refresh both on every event.
 		if m.ready {
-			if m.mode == modeChat {
-				m.chatVP.SetContent(m.chatBody())
-				if wasAtBottom {
-					m.chatVP.GotoBottom()
-				}
-			} else {
-				m.vp.SetContent(m.listBody())
+			m.vp.SetContent(m.listBody())
+			m.chatVP.SetContent(m.chatBody())
+			if wasAtBottom {
+				m.chatVP.GotoBottom()
 			}
 		}
 		return m, evCmd
 
 	case tea.KeyPressMsg:
-		// block_on input: enter submits, esc leaves to runs list, other keys go to textarea.
-		if m.pendingInput != nil {
-			if msg.String() == "esc" {
-				return m, func() tea.Msg { return showRunsMsg{} }
-			}
-			if msg.String() == "enter" {
-				text := m.promptTextarea.Value()
-				if text == "" {
-					return m, nil
-				}
-				inp := m.pendingInput
-				m.pendingInput = nil
-				m.promptTextarea = textarea.Model{}
-				if m.ready {
-					m.vp.SetContent(m.listBody())
-				}
-				return m, func() tea.Msg {
-					return agentInputMsg{runID: inp.RunID, stepID: inp.StepID, text: text}
-				}
-			}
-			var taCmd tea.Cmd
-			m.promptTextarea, taCmd = m.promptTextarea.Update(msg)
-			if m.ready {
-				m.vp.SetContent(m.listBody())
-			}
-			return m, taCmd
-		}
-		// AskUserQuestion: digit keys select / toggle options; enter confirms multiSelect.
-		if m.pendingQuestion != nil {
-			if s := msg.String(); s == "esc" || s == "q" {
-				// Deliver a cancellation answer so the blocked reporter goroutine
-				// unblocks and Claude receives a tool_result instead of hanging.
-				q := m.pendingQuestion
-				m.pendingQuestion = nil
-				m.questionAnswers = nil
-				return m, tea.Batch(
-					func() tea.Msg {
-						return agentQuestionResponseMsg{
-							runID:     q.RunID,
-							stepID:    q.StepID,
-							toolUseID: q.ToolUseID,
-							answer:    "cancelled",
-						}
-					},
-					func() tea.Msg { return showRunsMsg{} },
-				)
-			}
-			if m.questionIdx < len(m.pendingQuestion.Questions) {
-				q := m.pendingQuestion.Questions[m.questionIdx]
-				if q.MultiSelect {
-					for i := range q.Options {
-						if msg.String() == fmt.Sprintf("%d", i+1) {
-							m.questionSelected[i] = !m.questionSelected[i]
-							if m.ready {
-								m.vp.SetContent(m.listBody())
-							}
-							return m, nil
-						}
-					}
-					if s := msg.String(); s == "enter" || s == " " {
-						var selected []string
-						for i, opt := range q.Options {
-							if m.questionSelected[i] {
-								selected = append(selected, opt.Label)
-							}
-						}
-						if len(selected) == 0 {
-							return m, nil
-						}
-						return m.advanceQuestion(strings.Join(selected, ", "))
-					}
-				} else {
-					for i, opt := range q.Options {
-						if msg.String() == fmt.Sprintf("%d", i+1) {
-							return m.advanceQuestion(opt.Label)
-						}
-					}
-				}
-			}
+		// Focus-switch keys move keyboard focus between the present regions even
+		// while a gate is pending — gates are non-blocking (ADR 0002). Handled
+		// first so navigation is never frozen. In the Transcript panel the block
+		// cursor moved off tab to n/N (Resolved Decision 9), so tab is unambiguous.
+		switch msg.String() {
+		case "tab":
+			m.focus = m.cycleFocus(+1)
+			m.refreshPanels()
+			return m, nil
+		case "shift+tab":
+			m.focus = m.cycleFocus(-1)
+			m.refreshPanels()
+			return m, nil
+		case "left", "right":
+			// left/right alias for moving between the two side-by-side panels.
+			m.focus = m.aliasPanelFocus(msg.String())
+			m.refreshPanels()
 			return m, nil
 		}
-		// When awaiting user text input or composing a message, route keys to the textarea.
-		if m.pendingPrompt != nil || m.composingMessage {
-			if msg.String() == "esc" && m.composingMessage {
-				// Cancel compose — return to the verdict picker.
-				m.composingMessage = false
-				m.promptTextarea = textarea.Model{}
-				if m.ready {
-					m.vp.SetContent(m.listBody())
-				}
-				return m, nil
-			}
-			if msg.String() == "enter" {
-				text := m.promptTextarea.Value()
-				if m.composingMessage {
-					if text == "" {
-						return m, nil
-					}
-					rev := m.pendingReview
-					m.composingMessage = false
-					m.pendingReview = nil
-					m.promptTextarea = textarea.Model{}
-					if m.ready {
-						m.vp.SetContent(m.listBody())
-					}
-					return m, func() tea.Msg {
-						return reviewMessageMsg{
-							runID:  rev.RunID,
-							stepID: rev.StepID,
-							text:   text,
-						}
-					}
-				}
-				pr := m.pendingPrompt
-				m.pendingPrompt = nil
-				m.promptTextarea = textarea.Model{}
-				if m.ready {
-					m.vp.SetContent(m.listBody())
-				}
-				return m, func() tea.Msg {
-					return userInputResponseMsg{
-						runID:  pr.RunID,
-						stepID: pr.StepID,
-						as:     pr.As,
-						text:   text,
-					}
-				}
-			}
-			var taCmd tea.Cmd
-			m.promptTextarea, taCmd = m.promptTextarea.Update(msg)
-			if m.ready {
-				m.vp.SetContent(m.listBody())
-			}
-			return m, taCmd
-		}
-		// Review verdict: digit keys 1–9 select a choice when a review is pending.
-		// A pending review freezes navigation — only a verdict, message compose, or
-		// esc (leave to the runs list) is accepted.
-		if m.pendingReview != nil {
-			if msg.String() == "m" && m.pendingReview.AllowMessage {
-				m.composingMessage = true
-				m.promptTextarea = newInputTextarea("Message to agent…", m.width-4, 4)
-				if m.ready {
-					m.vp.SetContent(m.listBody())
-				}
-				return m, textarea.Blink
-			}
-			choices := m.pendingReview.Choices
-			for i, ch := range choices {
-				key := fmt.Sprintf("%d", i+1)
-				if msg.String() == key {
-					rev := m.pendingReview
-					m.pendingReview = nil
-					return m, func() tea.Msg {
-						return reviewVerdictMsg{
-							runID:   rev.RunID,
-							stepID:  rev.StepID,
-							verdict: ch,
-						}
-					}
-				}
-			}
-			if s := msg.String(); s == "esc" || s == "q" {
-				return m, func() tea.Msg { return showRunsMsg{} }
-			}
-			return m, nil
-		}
-		// Mode-specific navigation. In modeList, j/k move the selection cursor
-		// and must be intercepted before the viewport's scroll keymap sees them;
-		// in modeChat, j/k fall through to scroll the transcript.
-		switch m.mode {
-		case modeList:
-			switch msg.String() {
-			case "j", "down":
-				if m.cursor < len(m.steps)-1 {
-					m.cursor++
-					m.ensureCursorVisible()
-					if m.ready {
-						m.vp.SetContent(m.listBody())
-					}
-				}
-				return m, nil
-			case "k", "up":
-				if m.cursor > 0 {
-					m.cursor--
-					m.ensureCursorVisible()
-					if m.ready {
-						m.vp.SetContent(m.listBody())
-					}
-				}
-				return m, nil
-			case "enter":
-				if m.cursor < len(m.steps) {
-					m.mode = modeChat
-					m.chatStep = m.steps[m.cursor].id
-					// Fresh chat: reset per-step collapse/cursor state (seq keys
-					// only make sense within one step's transcript) and load.
-					m.chatBlockCursor = 0
-					m.chatExpandAll = false
-					m.chatExpand = make(map[blockKey]bool)
-					m.loadChat()
-					if m.ready {
-						m.chatVP.SetContent(m.chatBody())
-						m.chatVP.GotoBottom()
-					}
-				}
-				return m, nil
-			case "esc", "q", "backspace", "h", "left":
-				return m, func() tea.Msg { return showRunsMsg{} }
-			}
-		case modeChat:
-			switch msg.String() {
-			case "esc", "h", "left":
-				m.mode = modeList
-				m.chatStep = ""
-				if m.ready {
-					m.vp.SetContent(m.listBody())
-				}
-				return m, nil
-			case "tab":
-				// Move the block cursor to the next collapsible block.
-				if n := len(m.chatBlocks); n > 0 {
-					m.chatBlockCursor = (m.chatBlockCursor + 1) % n
-					if m.ready {
-						m.chatVP.SetContent(m.chatBody())
-					}
-				}
-				return m, nil
-			case "shift+tab":
-				if n := len(m.chatBlocks); n > 0 {
-					m.chatBlockCursor = (m.chatBlockCursor - 1 + n) % n
-					if m.ready {
-						m.chatVP.SetContent(m.chatBody())
-					}
-				}
-				return m, nil
-			case "enter", " ":
-				// Toggle the block under the cursor.
-				if n := len(m.chatBlocks); n > 0 && m.chatBlockCursor < n {
-					k := m.chatBlocks[m.chatBlockCursor]
-					m.chatExpand[k] = !m.chatExpand[k]
-					if m.ready {
-						m.chatVP.SetContent(m.chatBody())
-					}
-				}
-				return m, nil
-			case "o":
-				// Expand/collapse everything in view at once.
-				m.chatExpandAll = !m.chatExpandAll
-				if m.ready {
-					m.chatVP.SetContent(m.chatBody())
-				}
-				return m, nil
-			}
-			// Other keys (j/k/ctrl+d/ctrl+u/pgup/pgdn) fall through to the
-			// chat viewport to scroll the transcript.
+
+		// Dispatch keys to the focused region first (ADR 0002): a focused gate
+		// consumes its keys; only Steps-focus reads j/k as select and only
+		// Transcript-focus reads them as scroll.
+		switch m.focus {
+		case focusGate:
+			return m.updateGate(msg)
+		case focusSteps:
+			return m.updateSteps(msg)
+		case focusTranscript:
+			return m.updateTranscript(msg)
 		}
 	}
 
@@ -486,20 +316,341 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 	if m.pendingPrompt != nil || m.composingMessage || m.pendingInput != nil {
 		var taCmd tea.Cmd
 		m.promptTextarea, taCmd = m.promptTextarea.Update(msg)
-		if m.ready {
-			m.vp.SetContent(m.listBody())
-		}
+		m.refreshPanels()
 		return m, taCmd
 	}
 
-	// Route remaining messages (scroll keys, mouse wheel) to the active viewport.
+	// Route remaining messages (scroll keys, mouse wheel) to the focused panel.
 	var cmd tea.Cmd
-	if m.mode == modeChat {
+	if m.focus == focusTranscript {
 		m.chatVP, cmd = m.chatVP.Update(msg)
 	} else {
 		m.vp, cmd = m.vp.Update(msg)
 	}
 	return m, cmd
+}
+
+// hasGate reports whether any human-in-the-loop gate is currently pending.
+func (m monitorModel) hasGate() bool {
+	return m.pendingReview != nil || m.pendingInput != nil ||
+		m.pendingQuestion != nil || m.pendingPrompt != nil || m.composingMessage
+}
+
+// refreshPanels re-renders both always-visible panels into their viewports. A
+// no-op until the first resize makes the model ready.
+func (m *monitorModel) refreshPanels() {
+	if !m.ready {
+		return
+	}
+	m.vp.SetContent(m.listBody())
+	m.chatVP.SetContent(m.chatBody())
+}
+
+// cycleFocus advances focus by dir (+1 next, -1 previous) across the regions
+// currently present: Steps and Transcript are always present; Gate only when a
+// gate is pending. In the narrow single-panel fallback the two panels still
+// cycle (toggling which one is shown), so both remain present.
+func (m monitorModel) cycleFocus(dir int) focusRegion {
+	regions := []focusRegion{focusSteps, focusTranscript}
+	if m.hasGate() {
+		regions = append(regions, focusGate)
+	}
+	cur := 0
+	for i, r := range regions {
+		if r == m.focus {
+			cur = i
+			break
+		}
+	}
+	next := (cur + dir + len(regions)) % len(regions)
+	return regions[next]
+}
+
+// aliasPanelFocus maps left/right to the two side-by-side panels: right focuses
+// Transcript, left focuses Steps. From the Gate, left/right returns to a panel so
+// the user can leave the gate the same way tab does.
+func (m monitorModel) aliasPanelFocus(key string) focusRegion {
+	if key == "right" {
+		return focusTranscript
+	}
+	return focusSteps
+}
+
+// updateSteps handles keys when the Steps panel holds focus: j/k move the
+// selection cursor (eagerly reloading the Transcript per Resolved Decision 10),
+// and esc/q leave to the runs list.
+func (m monitorModel) updateSteps(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
+	switch msg.String() {
+	case "j", "down":
+		if m.cursor < len(m.steps)-1 {
+			m.cursor++
+			m.ensureCursorVisible()
+			m.reloadTranscript()
+			m.refreshPanels()
+		}
+		return m, nil
+	case "k", "up":
+		if m.cursor > 0 {
+			m.cursor--
+			m.ensureCursorVisible()
+			m.reloadTranscript()
+			m.refreshPanels()
+		}
+		return m, nil
+	case "enter", "l":
+		// enter/l cross into the Transcript panel (the step is already loaded).
+		m.focus = focusTranscript
+		m.refreshPanels()
+		return m, nil
+	case "esc", "q", "backspace", "h":
+		return m, func() tea.Msg { return showRunsMsg{} }
+	}
+	// Other keys (scroll wheel, ctrl+d/u) scroll the Steps viewport.
+	var cmd tea.Cmd
+	m.vp, cmd = m.vp.Update(msg)
+	return m, cmd
+}
+
+// updateTranscript handles keys when the Transcript panel holds focus: n/N move
+// the block cursor, enter/space toggle the cursored block, o toggles all, and
+// h/esc return focus to the Steps panel. Remaining keys
+// (j/k/ctrl+d/ctrl+u/pgup/pgdn) scroll the transcript viewport.
+func (m monitorModel) updateTranscript(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "h":
+		m.focus = focusSteps
+		m.refreshPanels()
+		return m, nil
+	case "q":
+		return m, func() tea.Msg { return showRunsMsg{} }
+	case "n":
+		// Move the block cursor to the next collapsible block.
+		if n := len(m.chatBlocks); n > 0 {
+			m.chatBlockCursor = (m.chatBlockCursor + 1) % n
+			m.refreshPanels()
+		}
+		return m, nil
+	case "N":
+		if n := len(m.chatBlocks); n > 0 {
+			m.chatBlockCursor = (m.chatBlockCursor - 1 + n) % n
+			m.refreshPanels()
+		}
+		return m, nil
+	case "enter", " ":
+		// Toggle the block under the cursor.
+		if n := len(m.chatBlocks); n > 0 && m.chatBlockCursor < n {
+			k := m.chatBlocks[m.chatBlockCursor]
+			m.chatExpand[k] = !m.chatExpand[k]
+			m.refreshPanels()
+		}
+		return m, nil
+	case "o":
+		// Expand/collapse everything in view at once.
+		m.chatExpandAll = !m.chatExpandAll
+		m.refreshPanels()
+		return m, nil
+	}
+	// Other keys (j/k/ctrl+d/ctrl+u/pgup/pgdn) scroll the transcript viewport.
+	var cmd tea.Cmd
+	m.chatVP, cmd = m.chatVP.Update(msg)
+	return m, cmd
+}
+
+// updateGate handles keys when a gate holds focus. It retains every existing
+// gate-resolution semantic (verdict digits, multi-select toggle+confirm, m
+// compose, textarea submit on enter) and, on cancellation (esc/q), delivers the
+// appropriate response so no reporter goroutine hangs. Because gates are
+// non-blocking, cancellation returns focus to the Steps panel rather than leaving
+// the whole monitor — the run continues; only the gate is dismissed where a
+// response is owed. (A review/prompt cancellation still leaves to the runs list,
+// matching prior behavior, since it has no owed tool_result.)
+func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
+	// block_on input: enter submits, esc leaves to runs list, other keys go to textarea.
+	if m.pendingInput != nil {
+		if msg.String() == "esc" {
+			return m, func() tea.Msg { return showRunsMsg{} }
+		}
+		if msg.String() == "enter" {
+			text := m.promptTextarea.Value()
+			if text == "" {
+				return m, nil
+			}
+			inp := m.pendingInput
+			m.pendingInput = nil
+			m.promptTextarea = textarea.Model{}
+			m.focus = focusSteps
+			m.refreshPanels()
+			return m, func() tea.Msg {
+				return agentInputMsg{runID: inp.RunID, stepID: inp.StepID, text: text}
+			}
+		}
+		var taCmd tea.Cmd
+		m.promptTextarea, taCmd = m.promptTextarea.Update(msg)
+		m.refreshPanels()
+		return m, taCmd
+	}
+
+	// AskUserQuestion: digit keys select / toggle options; enter confirms multiSelect.
+	if m.pendingQuestion != nil {
+		if s := msg.String(); s == "esc" || s == "q" {
+			// Deliver a cancellation answer so the blocked reporter goroutine
+			// unblocks and Claude receives a tool_result instead of hanging.
+			q := m.pendingQuestion
+			m.pendingQuestion = nil
+			m.questionAnswers = nil
+			return m, tea.Batch(
+				func() tea.Msg {
+					return agentQuestionResponseMsg{
+						runID:     q.RunID,
+						stepID:    q.StepID,
+						toolUseID: q.ToolUseID,
+						answer:    "cancelled",
+					}
+				},
+				func() tea.Msg { return showRunsMsg{} },
+			)
+		}
+		if m.questionIdx < len(m.pendingQuestion.Questions) {
+			q := m.pendingQuestion.Questions[m.questionIdx]
+			if q.MultiSelect {
+				for i := range q.Options {
+					if msg.String() == fmt.Sprintf("%d", i+1) {
+						m.questionSelected[i] = !m.questionSelected[i]
+						m.refreshPanels()
+						return m, nil
+					}
+				}
+				if s := msg.String(); s == "enter" || s == " " {
+					var selected []string
+					for i, opt := range q.Options {
+						if m.questionSelected[i] {
+							selected = append(selected, opt.Label)
+						}
+					}
+					if len(selected) == 0 {
+						return m, nil
+					}
+					return m.advanceQuestion(strings.Join(selected, ", "))
+				}
+			} else {
+				for i, opt := range q.Options {
+					if msg.String() == fmt.Sprintf("%d", i+1) {
+						return m.advanceQuestion(opt.Label)
+					}
+				}
+			}
+		}
+		return m, nil
+	}
+
+	// When awaiting user text input or composing a message, route keys to the textarea.
+	if m.pendingPrompt != nil || m.composingMessage {
+		if msg.String() == "esc" && m.composingMessage {
+			// Cancel compose — return to the verdict picker.
+			m.composingMessage = false
+			m.promptTextarea = textarea.Model{}
+			m.refreshPanels()
+			return m, nil
+		}
+		if msg.String() == "enter" {
+			text := m.promptTextarea.Value()
+			if m.composingMessage {
+				if text == "" {
+					return m, nil
+				}
+				rev := m.pendingReview
+				m.composingMessage = false
+				m.pendingReview = nil
+				m.promptTextarea = textarea.Model{}
+				m.focus = focusSteps
+				m.refreshPanels()
+				return m, func() tea.Msg {
+					return reviewMessageMsg{
+						runID:  rev.RunID,
+						stepID: rev.StepID,
+						text:   text,
+					}
+				}
+			}
+			pr := m.pendingPrompt
+			m.pendingPrompt = nil
+			m.promptTextarea = textarea.Model{}
+			m.focus = focusSteps
+			m.refreshPanels()
+			return m, func() tea.Msg {
+				return userInputResponseMsg{
+					runID:  pr.RunID,
+					stepID: pr.StepID,
+					as:     pr.As,
+					text:   text,
+				}
+			}
+		}
+		var taCmd tea.Cmd
+		m.promptTextarea, taCmd = m.promptTextarea.Update(msg)
+		m.refreshPanels()
+		return m, taCmd
+	}
+
+	// Review verdict: digit keys 1–9 select a choice; m composes a message; esc/q
+	// leaves to the runs list.
+	if m.pendingReview != nil {
+		if msg.String() == "m" && m.pendingReview.AllowMessage {
+			m.composingMessage = true
+			m.promptTextarea = newInputTextarea("Message to agent…", m.gateInnerWidth(), 4)
+			m.refreshPanels()
+			return m, textarea.Blink
+		}
+		choices := m.pendingReview.Choices
+		for i, ch := range choices {
+			key := fmt.Sprintf("%d", i+1)
+			if msg.String() == key {
+				rev := m.pendingReview
+				m.pendingReview = nil
+				m.focus = focusSteps
+				m.refreshPanels()
+				return m, func() tea.Msg {
+					return reviewVerdictMsg{
+						runID:   rev.RunID,
+						stepID:  rev.StepID,
+						verdict: ch,
+					}
+				}
+			}
+		}
+		if s := msg.String(); s == "esc" || s == "q" {
+			return m, func() tea.Msg { return showRunsMsg{} }
+		}
+		return m, nil
+	}
+
+	return m, nil
+}
+
+// reloadTranscript re-points the Transcript panel at the cursor's step and reads
+// its transcript eagerly (Resolved Decision 10), resetting per-step view state so
+// block-cursor/expand toggles never carry over between steps (seq keys are only
+// meaningful within one step's transcript).
+func (m *monitorModel) reloadTranscript() {
+	if m.cursor >= len(m.steps) {
+		return
+	}
+	id := m.steps[m.cursor].id
+	if id == m.chatStep {
+		return
+	}
+	m.chatStep = id
+	m.chatBlockCursor = 0
+	m.chatExpandAll = false
+	m.chatExpand = make(map[blockKey]bool)
+	// blockKey is (seq, block) and seq restarts per step-file, so cached renders
+	// from the previous step would collide with the new step's same-seq blocks.
+	// Reset the render cache along with the other per-step view state.
+	m.chatRendered = make(map[blockKey]string)
+	m.loadChat()
+	if m.ready {
+		m.chatVP.GotoTop()
+	}
 }
 
 func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) {
@@ -568,17 +719,18 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		// Retain the request so the step's chat drill-in can show the diff/choices
 		// after the verdict clears pendingReview.
 		m.reviews[ev.StepID] = ev
-		// A human-input gate must never be ambiguous: surface it in the list
-		// view where the overlay renders and keys are unambiguous.
-		m.mode = modeList
+		// A gate auto-focuses on arrival so answering is a zero-navigation default,
+		// but it is non-blocking — the user can tab away to read the transcript and
+		// tab back (ADR 0002).
+		m.focus = focusGate
 
 	case engine.InputRequest:
 		if ev.RunID != m.runID {
 			return m, nil
 		}
 		m.pendingInput = &ev
-		m.mode = modeList
-		m.promptTextarea = newInputTextarea("Your response to the agent…", m.width-4, 4)
+		m.focus = focusGate
+		m.promptTextarea = newInputTextarea("Your response to the agent…", m.gateInnerWidth(), 4)
 		return m, textarea.Blink
 
 	case engine.AgentQuestion:
@@ -589,7 +741,7 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		m.questionIdx = 0
 		m.questionSelected = make(map[int]bool)
 		m.questionAnswers = nil
-		m.mode = modeList
+		m.focus = focusGate
 		// Update the step badge immediately — the scheduler inbox notification
 		// may be dropped under load, so drive the display from this reliable event.
 		if idx, ok := m.index[ev.StepID]; ok {
@@ -613,7 +765,9 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		if buf, ok := m.stepOutput[ev.StepID]; ok {
 			buf.Reset()
 		}
-		if m.mode == modeChat && ev.StepID == m.chatStep {
+		// The Transcript panel always shows the cursor's step, so re-read whenever
+		// the finalized entry belongs to it.
+		if ev.StepID == m.chatStep {
 			m.loadChat()
 		}
 
@@ -622,9 +776,9 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 			return m, nil
 		}
 		m.pendingPrompt = &ev
-		m.mode = modeList
+		m.focus = focusGate
 		// enter submits the response; newlines are inserted with alt/shift+enter.
-		m.promptTextarea = newInputTextarea(ev.Label, m.width-4, 4)
+		m.promptTextarea = newInputTextarea(ev.Label, m.gateInnerWidth(), 4)
 		return m, textarea.Blink
 
 	case engine.StepOutput:
@@ -660,56 +814,93 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 	return m, nil
 }
 
+// resize fits both panels to the width split (Resolved Decision 11) minus the
+// footer and gate-strip rows. In the narrow fallback (Decision 14) each panel is
+// sized full-width, since only the focused one renders.
 func (m *monitorModel) resize() {
+	hFrame, vFrame := panelFrame()
+
 	footerH := lipgloss.Height(m.footerView())
-	vpH := m.height - footerH
-	if vpH < 1 {
-		vpH = 1
+	gateH := lipgloss.Height(m.gateStrip())
+	panelH := m.height - footerH - gateH
+	if panelH < 1 {
+		panelH = 1
 	}
+	innerH := panelH - vFrame
+	if innerH < 1 {
+		innerH = 1
+	}
+
+	stepsOuter, transcriptOuter, narrow := panelSplit(m.width)
+	m.narrow = narrow
+	if narrow {
+		// Only the focused panel renders, full-width; size both to the full width
+		// so whichever is shown fits.
+		stepsOuter, transcriptOuter = m.width, m.width
+	}
+	m.stepsInnerW = stepsOuter - hFrame
+	if m.stepsInnerW < 1 {
+		m.stepsInnerW = 1
+	}
+	m.transcriptInnerW = transcriptOuter - hFrame
+	if m.transcriptInnerW < 1 {
+		m.transcriptInnerW = 1
+	}
+
 	if !m.ready {
-		m.vp = viewport.New(viewport.WithWidth(m.width), viewport.WithHeight(vpH))
-		m.chatVP = viewport.New(viewport.WithWidth(m.width), viewport.WithHeight(vpH))
+		m.vp = viewport.New(viewport.WithWidth(m.stepsInnerW), viewport.WithHeight(innerH))
+		m.chatVP = viewport.New(viewport.WithWidth(m.transcriptInnerW), viewport.WithHeight(innerH))
 		m.ready = true
 	} else {
-		m.vp.SetWidth(m.width)
-		m.vp.SetHeight(vpH)
-		m.chatVP.SetWidth(m.width)
-		m.chatVP.SetHeight(vpH)
+		m.vp.SetWidth(m.stepsInnerW)
+		m.vp.SetHeight(innerH)
+		m.chatVP.SetWidth(m.transcriptInnerW)
+		m.chatVP.SetHeight(innerH)
 	}
 	if m.pendingPrompt != nil || m.composingMessage || m.pendingInput != nil {
-		m.promptTextarea.SetWidth(m.width - 4)
+		m.promptTextarea.SetWidth(m.gateInnerWidth())
 	}
 	m.rebuildRenderer()
 	m.vp.SetContent(m.listBody())
 	m.chatVP.SetContent(m.chatBody())
 }
 
-// rebuildRenderer (re)constructs the markdown renderer for the current width and
-// invalidates the per-block render cache when the width actually changed —
-// glamour bakes its word-wrap width in at construction, so a stale cache would
-// wrap to the old width (see turn.go / viewer.go for the same house rule). A
-// static style (not AutoStyle) avoids the OSC-11 stdin race documented in
-// main.go; the background was detected once before Bubble Tea started.
+// gateInnerWidth is the content width available to a gate strip's textarea: the
+// full terminal width minus the textarea's own border frame.
+func (m monitorModel) gateInnerWidth() int {
+	w := m.width - theme.Textarea.Base.GetHorizontalFrameSize()
+	if w < 1 {
+		w = 1
+	}
+	return w
+}
+
+// rebuildRenderer (re)constructs the markdown renderer for the *Transcript
+// panel's* inner width — the transcript occupies only part of the terminal, so
+// wrapping to the full width would overflow the panel. It invalidates the
+// per-block render cache when that inner width changes: glamour bakes its
+// word-wrap width in at construction, so a stale cache would wrap to the old
+// width (see turn.go / viewer.go for the same house rule). A static style (not
+// AutoStyle) avoids the OSC-11 stdin race documented in main.go.
 func (m *monitorModel) rebuildRenderer() {
-	wordWrap := m.width - 4
+	wordWrap := m.transcriptInnerW
 	if wordWrap < 1 {
 		wordWrap = 1
 	}
-	// A themed Charmtone style (not a stock "dark"/"light" one, and not
-	// AutoStyle): AutoStyle performs a live OSC-11 query that races Bubble Tea's
-	// stdin reader (see main.go). The theme is dark-only, so m.dark is unused.
 	m.renderer, _ = glamour.NewTermRenderer(
 		glamour.WithStyles(theme.Markdown),
 		glamour.WithWordWrap(wordWrap),
 	)
-	if m.renderWidth != m.width {
+	if m.lastTranscriptW != m.transcriptInnerW {
 		m.chatRendered = make(map[blockKey]string)
-		m.renderWidth = m.width
+		m.lastTranscriptW = m.transcriptInnerW
 	}
 }
 
 // ensureCursorVisible nudges the viewport so the selected step stays on screen
-// as the cursor moves, keeping a small margin from the top and bottom edges.
+// as the cursor moves, keeping a small margin from the top and bottom edges. The
+// step rows now start at line 0 (the panel border carries the "Steps" title), so
+// the cursor index maps directly to a viewport row.
 func (m *monitorModel) ensureCursorVisible() {
 	if !m.ready {
 		return
@@ -726,29 +917,20 @@ func (m *monitorModel) ensureCursorVisible() {
 	}
 }
 
-// body dispatches on the current mode: the step list or one step's chat chain.
+// body returns the Steps-panel body. Retained for tests that assert list content
+// directly; View() renders both panels. transcriptText returns the Transcript
+// panel body.
 func (m monitorModel) body() string {
-	if m.mode == modeChat {
-		return m.chatBody()
-	}
 	return m.listBody()
 }
 
 // listBodyHeaderLines is the number of lines listBody renders above the step
-// table (a leading blank, the title row, a trailing blank). ensureCursorVisible
-// uses it to map a cursor index to a viewport row.
-const listBodyHeaderLines = 3
+// table. The workflow/run header moved to the panel border, so the table now
+// starts at line 0; this stays 0 to keep the ensureCursorVisible row math honest.
+const listBodyHeaderLines = 0
 
 func (m monitorModel) listBody() string {
 	var b strings.Builder
-
-	wfName := m.workflow
-	if wfName == "" {
-		wfName = m.runID
-	}
-
-	b.WriteString("\n  " + theme.Title.Render(wfName) + "  " +
-		theme.Path.Render(m.runID) + "\n\n")
 
 	if len(m.steps) == 0 {
 		b.WriteString("  " + theme.Question.Render("Waiting for run to start…") + "\n")
@@ -801,76 +983,9 @@ func (m monitorModel) listBody() string {
 		}
 	}
 
-	// User input: show textarea when a step needs free-form text.
-	if m.pendingPrompt != nil {
-		b.WriteString("\n")
-		b.WriteString("  " + theme.Marker.Render("Input required — step: "+m.pendingPrompt.StepID) + "\n")
-		b.WriteString("  " + theme.Question.Render(m.pendingPrompt.Label) + "\n\n")
-		b.WriteString(m.promptTextarea.View() + "\n")
-	}
-
-	// Review picker: show when a step is awaiting human input.
-	if m.pendingReview != nil {
-		b.WriteString("\n")
-		b.WriteString("  " + theme.Marker.Render("Review required — step: "+m.pendingReview.StepID) + "\n\n")
-
-		if m.pendingReview.Diff != "" {
-			writeDiff(&b, m.pendingReview.Diff)
-			b.WriteString("\n")
-		}
-
-		if m.composingMessage {
-			b.WriteString(m.promptTextarea.View() + "\n")
-		} else {
-			for i, ch := range m.pendingReview.Choices {
-				b.WriteString(fmt.Sprintf("    [%d] %s\n", i+1, ch))
-			}
-			if m.pendingReview.AllowMessage {
-				b.WriteString("    [m] message\n")
-			}
-		}
-		b.WriteString("\n")
-	}
-
-	// block_on input: show textarea when an agent step is blocked awaiting human input.
-	if m.pendingInput != nil {
-		b.WriteString("\n")
-		b.WriteString("  " + theme.Marker.Render("Agent input required — step: "+m.pendingInput.StepID) + "\n\n")
-		b.WriteString(m.promptTextarea.View() + "\n")
-	}
-
-	// AskUserQuestion: show selectable options when an in-flight agent asks a question.
-	if m.pendingQuestion != nil && m.questionIdx < len(m.pendingQuestion.Questions) {
-		q := m.pendingQuestion.Questions[m.questionIdx]
-		b.WriteString("\n")
-		b.WriteString("  " + theme.Marker.Render("Agent question — step: "+m.pendingQuestion.StepID) + "\n\n")
-		if q.Header != "" {
-			b.WriteString("  " + theme.Question.Render("["+q.Header+"]") + "\n")
-		}
-		b.WriteString("  " + q.Question + "\n\n")
-		for i, opt := range q.Options {
-			if q.MultiSelect {
-				mark := "[ ]"
-				if m.questionSelected[i] {
-					mark = "[x]"
-				}
-				b.WriteString(fmt.Sprintf("    %s [%d] %s", mark, i+1, opt.Label))
-			} else {
-				b.WriteString(fmt.Sprintf("    [%d] %s", i+1, opt.Label))
-			}
-			if opt.Description != "" {
-				b.WriteString("  —  " + opt.Description)
-			}
-			b.WriteString("\n")
-		}
-		if q.MultiSelect {
-			b.WriteString("\n    " + theme.Chat.Hint.Render("enter to confirm selection") + "\n")
-		}
-		if len(m.pendingQuestion.Questions) > 1 {
-			b.WriteString("    " + theme.Chat.Hint.Render(
-				fmt.Sprintf("question %d of %d", m.questionIdx+1, len(m.pendingQuestion.Questions))) + "\n")
-		}
-	}
+	// Human-in-the-loop gates (review/input/question/prompt) render in the
+	// gate strip beneath the panels (gateStrip), not inline here — the strip is a
+	// non-blocking focus region (ADR 0002).
 
 	// Streaming output: show last outputMaxLines lines for any running agent step.
 	for _, s := range m.steps {
@@ -924,6 +1039,97 @@ func (m monitorModel) writeFailureReasons(b *strings.Builder) {
 	}
 }
 
+// gateStrip renders the currently-pending human-in-the-loop gate (review verdict
+// picker, block_on input textarea, AskUserQuestion option list, or from="user"
+// prompt) as a full-width titled panel beneath the two panels, above the footer.
+// It is a non-blocking focus region (ADR 0002): its border is primary only when
+// the Gate holds focus. Returns "" when no gate is pending (no strip is rendered
+// and resize accounts for zero height). At most one gate is pending at a time.
+func (m monitorModel) gateStrip() string {
+	if !m.hasGate() {
+		return ""
+	}
+	hFrame, vFrame := panelFrame()
+	innerW := m.width - hFrame
+	if innerW < 1 {
+		innerW = 1
+	}
+
+	var title string
+	var b strings.Builder
+
+	switch {
+	case m.pendingInput != nil:
+		title = "Agent input — " + m.pendingInput.StepID
+		b.WriteString(m.promptTextarea.View())
+
+	case m.pendingQuestion != nil && m.questionIdx < len(m.pendingQuestion.Questions):
+		q := m.pendingQuestion.Questions[m.questionIdx]
+		title = "Agent question — " + m.pendingQuestion.StepID
+		if q.Header != "" {
+			b.WriteString("  " + theme.Question.Render("["+q.Header+"]") + "\n")
+		}
+		b.WriteString("  " + q.Question + "\n\n")
+		for i, opt := range q.Options {
+			if q.MultiSelect {
+				mark := "[ ]"
+				if m.questionSelected[i] {
+					mark = "[x]"
+				}
+				b.WriteString(fmt.Sprintf("    %s [%d] %s", mark, i+1, opt.Label))
+			} else {
+				b.WriteString(fmt.Sprintf("    [%d] %s", i+1, opt.Label))
+			}
+			if opt.Description != "" {
+				b.WriteString("  —  " + opt.Description)
+			}
+			b.WriteString("\n")
+		}
+		if q.MultiSelect {
+			b.WriteString("\n    " + theme.Chat.Hint.Render("enter to confirm selection") + "\n")
+		}
+		if len(m.pendingQuestion.Questions) > 1 {
+			b.WriteString("    " + theme.Chat.Hint.Render(
+				fmt.Sprintf("question %d of %d", m.questionIdx+1, len(m.pendingQuestion.Questions))) + "\n")
+		}
+
+	case m.pendingPrompt != nil:
+		title = "Input — " + m.pendingPrompt.StepID
+		b.WriteString("  " + theme.Question.Render(m.pendingPrompt.Label) + "\n\n")
+		b.WriteString(m.promptTextarea.View())
+
+	case m.pendingReview != nil:
+		title = "Review — " + m.pendingReview.StepID
+		if m.pendingReview.Diff != "" {
+			writeDiff(&b, m.pendingReview.Diff)
+			b.WriteString("\n")
+		}
+		if m.composingMessage {
+			b.WriteString(m.promptTextarea.View())
+		} else {
+			for i, ch := range m.pendingReview.Choices {
+				b.WriteString(fmt.Sprintf("    [%d] %s\n", i+1, ch))
+			}
+			if m.pendingReview.AllowMessage {
+				b.WriteString("    [m] message\n")
+			}
+		}
+	}
+
+	// Fit the body height to its natural content, bounded so a huge diff never
+	// pushes the panels off screen. The panel height is body height + frame.
+	body := b.String()
+	bodyH := lipgloss.Height(body)
+	const maxGateBodyH = 14
+	if bodyH > maxGateBodyH {
+		bodyH = maxGateBodyH
+	}
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	return panel(title, body, m.width, bodyH+vFrame, m.focus == focusGate)
+}
+
 // advanceQuestion records the answer for the current question and advances the
 // question index. When all questions are answered it clears pendingQuestion and
 // returns a command emitting agentQuestionResponseMsg with the formatted answer.
@@ -933,9 +1139,7 @@ func (m monitorModel) advanceQuestion(answer string) (monitorModel, tea.Cmd) {
 	m.questionSelected = make(map[int]bool)
 
 	if m.questionIdx < len(m.pendingQuestion.Questions) {
-		if m.ready {
-			m.vp.SetContent(m.listBody())
-		}
+		m.refreshPanels()
 		return m, nil
 	}
 
@@ -943,9 +1147,8 @@ func (m monitorModel) advanceQuestion(answer string) (monitorModel, tea.Cmd) {
 	answers := m.questionAnswers
 	m.pendingQuestion = nil
 	m.questionAnswers = nil
-	if m.ready {
-		m.vp.SetContent(m.listBody())
-	}
+	m.focus = focusSteps
+	m.refreshPanels()
 	formatted := formatQuestionAnswers(q.Questions, answers)
 	return m, func() tea.Msg {
 		return agentQuestionResponseMsg{
@@ -1033,17 +1236,20 @@ func collapsible(t transcript.BlockType) bool {
 func (m monitorModel) chatBody() string {
 	var b strings.Builder
 
-	b.WriteString("\n  " + gradientTitle("chat") + "  " +
-		theme.Path.Render(m.chatStep) + "\n\n")
-
+	// The step id now titles the Transcript panel border, so no in-body title
+	// row (task 2.4). A compact status line gives at-a-glance state.
 	i, ok := m.index[m.chatStep]
 	if !ok {
-		b.WriteString("  " + theme.Question.Render("no such step") + "\n")
+		if m.chatStep == "" {
+			b.WriteString("  " + theme.Question.Render("select a step") + "\n")
+		} else {
+			b.WriteString("  " + theme.Question.Render("no such step") + "\n")
+		}
 		return b.String()
 	}
 	s := m.steps[i]
-	indicator, style := stepIndicator(s.status)
-	b.WriteString("  " + indicator + "  " + style.Render(s.id) + "  " +
+	indicator, _ := stepIndicator(s.status)
+	b.WriteString("  " + indicator + "  " +
 		statusStyle(s.status).Render(string(s.status)) + "\n\n")
 
 	running := s.status == step.StatusRunning
@@ -1404,39 +1610,85 @@ func (m monitorModel) footerView() string {
 	}
 	var hint string
 	switch {
-	case m.pendingInput != nil:
-		hint = "enter submit  •  alt+enter newline  •  esc runs list  •  ctrl+c quit"
-	case m.pendingQuestion != nil:
+	case m.focus == focusGate && m.pendingInput != nil:
+		hint = "enter submit  •  alt+enter newline  •  tab focus  •  esc runs list"
+	case m.focus == focusGate && m.pendingQuestion != nil:
 		if m.questionIdx < len(m.pendingQuestion.Questions) && m.pendingQuestion.Questions[m.questionIdx].MultiSelect {
-			hint = "1-9 toggle  •  enter confirm  •  esc runs list  •  ctrl+c quit"
+			hint = "1-9 toggle  •  enter confirm  •  tab focus  •  esc runs list"
 		} else {
-			hint = "1-9 select answer  •  esc runs list  •  ctrl+c quit"
+			hint = "1-9 select answer  •  tab focus  •  esc runs list"
 		}
-	case m.pendingPrompt != nil:
-		hint = "enter submit  •  alt+enter newline  •  esc runs list  •  ctrl+c quit"
-	case m.composingMessage:
-		hint = "enter submit  •  alt+enter newline  •  esc cancel  •  ctrl+c quit"
-	case m.pendingReview != nil:
+	case m.focus == focusGate && m.composingMessage:
+		hint = "enter submit  •  alt+enter newline  •  esc cancel"
+	case m.focus == focusGate && m.pendingPrompt != nil:
+		hint = "enter submit  •  alt+enter newline  •  tab focus  •  esc runs list"
+	case m.focus == focusGate && m.pendingReview != nil:
 		if m.pendingReview.AllowMessage {
-			hint = "1-9 select verdict  •  m message  •  esc runs list  •  ctrl+c quit"
+			hint = "1-9 verdict  •  m message  •  tab focus  •  esc runs list"
 		} else {
-			hint = "1-9 select verdict  •  esc runs list  •  ctrl+c quit"
+			hint = "1-9 verdict  •  tab focus  •  esc runs list"
 		}
-	case m.mode == modeChat:
-		hint = "esc back  •  j/k scroll  •  tab block  •  enter expand  •  o all"
-	default:
-		hint = "j/k select  •  enter open  •  esc runs list  •  ctrl+c quit"
+	case m.focus == focusTranscript:
+		hint = "tab/←/→ focus  •  j/k scroll  •  n/N block  •  enter expand  •  o all"
+	default: // focusSteps
+		hint = "tab/←/→ focus  •  j/k select  •  esc runs list  •  ctrl+c quit"
 	}
-	return theme.Footer.Render("  " + status + "  ·  " + hint)
+	// When a gate is pending but the user has focused a panel, remind them a gate
+	// is waiting (it is non-blocking — tab returns to it).
+	if m.hasGate() && m.focus != focusGate {
+		hint = "tab to gate  •  " + hint
+	}
+	// Clip to the terminal width so a long hint line never overflows the panels
+	// and skews JoinVertical's per-line width (which would break the box borders).
+	f := theme.Footer
+	if m.width > 0 {
+		f = f.MaxWidth(m.width)
+	}
+	return f.Render("  " + status + "  ·  " + hint)
 }
 
+// View lays the monitor out as two side-by-side titled panels (Steps + the
+// selected step's transcript) with the gate strip and footer beneath. Below the
+// narrow threshold only the focused panel renders full-width (Resolved
+// Decision 14). Only the focused region's border is drawn primary.
 func (m monitorModel) View() string {
 	if !m.ready {
 		return "\n  Loading…\n"
 	}
-	vp := m.vp
-	if m.mode == modeChat {
-		vp = m.chatVP
+
+	footer := m.footerView()
+	gate := m.gateStrip()
+
+	panelH := m.height - lipgloss.Height(footer) - lipgloss.Height(gate)
+	if panelH < 1 {
+		panelH = 1
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, vp.View(), m.footerView())
+
+	rightTitle := m.chatStep
+	if rightTitle == "" {
+		rightTitle = "Transcript"
+	}
+
+	var panels string
+	if m.narrow {
+		// Single-panel fallback: render only the focused panel full-width.
+		if m.focus == focusTranscript {
+			panels = panel(rightTitle, m.chatVP.View(), m.width, panelH, true)
+		} else {
+			// Steps or Gate focus shows the Steps panel (the gate has its own strip).
+			panels = panel("Steps", m.vp.View(), m.width, panelH, m.focus == focusSteps)
+		}
+	} else {
+		stepsW, transcriptW, _ := panelSplit(m.width)
+		left := panel("Steps", m.vp.View(), stepsW, panelH, m.focus == focusSteps)
+		right := panel(rightTitle, m.chatVP.View(), transcriptW, panelH, m.focus == focusTranscript)
+		panels = lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+	}
+
+	parts := []string{panels}
+	if gate != "" {
+		parts = append(parts, gate)
+	}
+	parts = append(parts, footer)
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }

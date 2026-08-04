@@ -1,0 +1,25 @@
+╭─ Steps ──────────────────────╮╭─ generate ───────────────────────────────────────────────────╮
+│   ✓  plan      succeeded     ││   ●  running                                                 │
+│ ▌ ●  generate  running       ││                                                              │
+│   ○  review    pending       ││   #1 assistant                                               │
+│   ○  test      pending       ││   ▌ ▸ ◇ reasoning  Planning the change                       │
+│                              ││                                                              │
+│                              ││   I'll add the new field and wire up validation.             │
+│                              ││                                                              │
+│                              ││   ▌ ▸ ▸ Edit  {"file_path":"workflow.go"}                    │
+│                              ││                                                              │
+│                              ││   #2 user                                                    │
+│                              ││   ▌ ▸ ↳ result  edit applied                                 │
+│                              ││                                                              │
+│                              ││                                                              │
+│                              ││                                                              │
+│                              ││                                                              │
+│                              ││                                                              │
+│                              ││                                                              │
+│                              ││                                                              │
+│                              ││                                                              │
+│                              ││                                                              │
+│                              ││                                                              │
+│                              ││                                                              │
+╰──────────────────────────────╯╰──────────────────────────────────────────────────────────────╯
+  running  ·  tab/←/→ focus  •  j/k scroll  •  n/N block  •  enter expand  •  o all             
