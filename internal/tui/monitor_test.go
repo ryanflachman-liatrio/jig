@@ -892,6 +892,200 @@ func TestMonitorEagerReload(t *testing.T) {
 	}
 }
 
+// TestGateSubmitRouting verifies that submitting an InputRequest entry emits
+// agentInputMsg for that entry's stepID and shrinks the queue by one, and that
+// submitting the next entry routes to the second stepID.
+func TestGateSubmitRouting(t *testing.T) {
+	m := newMonitorWithSteps(t)
+
+	// Enqueue two InputRequest entries from distinct steps.
+	m, _ = m.Update(engineEventMsg{event: engine.InputRequest{RunID: "run-1", StepID: "a"}})
+	m, _ = m.Update(engineEventMsg{event: engine.InputRequest{RunID: "run-1", StepID: "b"}})
+	if len(m.inputQueue) != 2 {
+		t.Fatalf("expected 2 queue entries, got %d", len(m.inputQueue))
+	}
+
+	// Focus gate and pre-load text so submit is non-empty.
+	m.focus = focusGate
+	m.inputQueue[0].draft = "hello"
+	m.loadActiveTextarea()
+
+	// Submit active entry → should emit agentInputMsg for step "a".
+	m2, cmd := m.Update(key("enter"))
+	if cmd == nil {
+		t.Fatal("submit produced no command")
+	}
+	msg, ok := cmd().(agentInputMsg)
+	if !ok {
+		t.Fatalf("expected agentInputMsg, got %T", cmd())
+	}
+	if msg.stepID != "a" {
+		t.Fatalf("expected stepID a, got %q", msg.stepID)
+	}
+	if msg.text != "hello" {
+		t.Fatalf("expected text hello, got %q", msg.text)
+	}
+	if len(m2.inputQueue) != 1 {
+		t.Fatalf("expected queue length 1 after submit, got %d", len(m2.inputQueue))
+	}
+
+	// Submit the now-active entry → should route to step "b".
+	m2.focus = focusGate
+	m2.inputQueue[0].draft = "world"
+	m2.loadActiveTextarea()
+	_, cmd2 := m2.Update(key("enter"))
+	if cmd2 == nil {
+		t.Fatal("second submit produced no command")
+	}
+	msg2, ok := cmd2().(agentInputMsg)
+	if !ok {
+		t.Fatalf("expected agentInputMsg for second submit, got %T", cmd2())
+	}
+	if msg2.stepID != "b" {
+		t.Fatalf("expected stepID b, got %q", msg2.stepID)
+	}
+}
+
+// TestQuestionCancel verifies that pressing q on an inputKindQuestion entry
+// emits agentQuestionResponseMsg with answer=="cancelled", removes the entry,
+// and does not emit showRunsMsg.
+func TestQuestionCancel(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	m, _ = m.Update(engineEventMsg{event: engine.AgentQuestion{
+		RunID:  "run-1",
+		StepID: "a",
+		Questions: []engine.AgentQuestionItem{
+			{Question: "Pick one", Options: []engine.AgentQuestionOption{
+				{Label: "Alpha"}, {Label: "Beta"},
+			}},
+		},
+	}})
+
+	if len(m.inputQueue) == 0 || m.inputQueue[0].kind != inputKindQuestion {
+		t.Fatal("expected inputKindQuestion in queue")
+	}
+
+	m.focus = focusGate
+	m, cmd := m.Update(key("q"))
+	if cmd == nil {
+		t.Fatal("q produced no command")
+	}
+	// Must not emit showRunsMsg.
+	if _, isRuns := cmd().(showRunsMsg); isRuns {
+		t.Fatal("q must not emit showRunsMsg — user stays in monitor")
+	}
+	// Rerun cmd() to get the actual message (cmd() may only be called once — use a copy).
+	m2 := newMonitorWithSteps(t)
+	m2, _ = m2.Update(engineEventMsg{event: engine.AgentQuestion{
+		RunID:  "run-1",
+		StepID: "a",
+		Questions: []engine.AgentQuestionItem{
+			{Question: "Pick one", Options: []engine.AgentQuestionOption{
+				{Label: "Alpha"}, {Label: "Beta"},
+			}},
+		},
+	}})
+	m2.focus = focusGate
+	_, cmd2 := m2.Update(key("q"))
+	resp, ok := cmd2().(agentQuestionResponseMsg)
+	if !ok {
+		t.Fatalf("expected agentQuestionResponseMsg, got %T", cmd2())
+	}
+	if resp.answer != "cancelled" {
+		t.Fatalf("expected answer cancelled, got %q", resp.answer)
+	}
+	if resp.stepID != "a" {
+		t.Fatalf("expected stepID a, got %q", resp.stepID)
+	}
+	// Queue should be empty after cancel.
+	if len(m.inputQueue) != 0 {
+		t.Fatalf("expected empty queue after cancel, got %d entries", len(m.inputQueue))
+	}
+}
+
+// TestReviewComposeIsolation verifies that composing a message on one review
+// entry does not affect another entry's composing state or draft.
+func TestReviewComposeIsolation(t *testing.T) {
+	m := newMonitorWithSteps(t)
+
+	// Enqueue two ReviewRequests from distinct steps.
+	m, _ = m.Update(engineEventMsg{event: engine.ReviewRequest{
+		RunID:        "run-1",
+		StepID:       "a",
+		Choices:      []string{"approve", "reject"},
+		AllowMessage: true,
+	}})
+	m, _ = m.Update(engineEventMsg{event: engine.ReviewRequest{
+		RunID:        "run-1",
+		StepID:       "b",
+		Choices:      []string{"approve", "reject"},
+		AllowMessage: true,
+	}})
+
+	if len(m.inputQueue) != 2 {
+		t.Fatalf("expected 2 queue entries, got %d", len(m.inputQueue))
+	}
+
+	// Focus gate on entry 0 (step "a") and start composing.
+	m.focus = focusGate
+	m, _ = m.Update(key("m")) // press [m] to start compose
+	if !m.inputQueue[0].composing {
+		t.Fatal("expected composing=true on entry 0 after [m]")
+	}
+
+	// Tab to entry 1 (step "b").
+	m, _ = m.Update(key("tab"))
+	if m.activeInputIdx != 1 {
+		t.Fatalf("expected activeInputIdx 1, got %d", m.activeInputIdx)
+	}
+	// Entry 1 must not be composing.
+	if m.inputQueue[1].composing {
+		t.Fatal("tab to entry 1 must not carry over composing state")
+	}
+	// Entry 1's draft must be empty.
+	if m.inputQueue[1].draft != "" {
+		t.Fatalf("entry 1 draft should be empty, got %q", m.inputQueue[1].draft)
+	}
+}
+
+// TestCaptureUnit4Drain captures View() frames draining a two-entry InputRequest
+// queue to a single entry and then to the empty placeholder, writing the result
+// to docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit4-drain.txt.
+func TestCaptureUnit4Drain(t *testing.T) {
+	const artifactPath = "../../docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit4-drain.txt"
+	m := newMonitorWithSteps(t)
+	m, _ = m.Update(engineEventMsg{event: engine.InputRequest{RunID: "run-1", StepID: "a"}})
+	m, _ = m.Update(engineEventMsg{event: engine.InputRequest{RunID: "run-1", StepID: "b"}})
+	m.focus = focusGate
+
+	var frames []string
+
+	// Frame 1: [1 / 2] — two entries, first active.
+	frames = append(frames, ansiStrip(m.View()))
+
+	// Submit entry "a" (pre-load draft so enter fires).
+	m.inputQueue[0].draft = "answer-a"
+	m.loadActiveTextarea()
+	m, _ = m.Update(key("enter"))
+
+	// Frame 2: [1 / 1] — one entry remaining, focus advances.
+	m.focus = focusGate
+	frames = append(frames, ansiStrip(m.View()))
+
+	// Submit entry "b".
+	m.inputQueue[0].draft = "answer-b"
+	m.loadActiveTextarea()
+	m, _ = m.Update(key("enter"))
+
+	// Frame 3: empty placeholder, focus=focusSteps.
+	frames = append(frames, ansiStrip(m.View()))
+
+	out := strings.Join(frames, "\n--- frame ---\n\n")
+	if err := os.WriteFile(artifactPath, []byte(out), 0o644); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+}
+
 // TestMonitorResizeRefits asserts a second WindowSizeMsg re-fits both panels with
 // no line exceeding the new terminal width (no overflow, borders intact).
 func TestMonitorResizeRefits(t *testing.T) {

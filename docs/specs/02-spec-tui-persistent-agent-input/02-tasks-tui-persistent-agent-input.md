@@ -225,7 +225,7 @@ regions; per-entry `draft` survives navigation; a themed `[N / M]  step-id
   re-enter via `tab`, and assert the draft is restored — proving arrow-exit calls
   `syncActiveTextarea()` (task 3.3), not only `tab`.
 
-### [ ] 4.0 Per-kind entry rendering & response routing
+### [x] 4.0 Per-kind entry rendering & response routing
 
 `gateStrip()` renders by the active entry's `kind`; `updateGate` dispatches keys
 by kind; submits emit the existing routing `*Msg` from the entry's stored IDs,
@@ -246,46 +246,46 @@ remove the entry, and auto-advance. (Spec Unit 4.)
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Rewrite the body of `gateStrip()` (`monitor.go:1070–1126`) to `switch
+- [x] 4.1 Rewrite the body of `gateStrip()` (`monitor.go:1070–1126`) to `switch
   entry.kind` on the **active** entry: `inputKindRequest`/`inputKindPrompt` →
   label + `m.promptTextarea.View()`; `inputKindQuestion` → header + question +
   numbered options (multi-select `[x]` marks + `question N of M` hint) reading the
   entry's own `questionIdx`/`questionSelected`; `inputKindReview` → numbered
   verdict choices + `[m]` affordance + the diff-location hint (**no diff** — Unit
   5), or the compose textarea when `entry.composing`.
-- [ ] 4.2 Rewrite `updateGate` (`monitor.go:470`) to dispatch by
+- [x] 4.2 Rewrite `updateGate` (`monitor.go:470`) to dispatch by
   `entry.kind` via `activeEntry()`. Fold the four former single-pointer branches
   into a `switch entry.kind`, preserving each existing behavior: textarea
   input + `Submit` (request/prompt), digit toggle/select + `QConfirm` + multi-step
   advance (question), `Verdict` digits + `Message` compose (review).
-- [ ] 4.3 Update the submit paths to read `runID`/`stepID`/`toolUseID` from the
+- [x] 4.3 Update the submit paths to read `runID`/`stepID`/`toolUseID` from the
   entry and emit the unchanged routing messages — `agentInputMsg`,
   `agentQuestionResponseMsg` (with `toolUseID`), `userInputResponseMsg`,
   `reviewVerdictMsg`/`reviewMessageMsg` — then call `removeEntryAt(activeInputIdx)`
   and `loadActiveTextarea()` (auto-advance). Delete `m.focus = focusSteps` from
   individual submits — `removeEntryAt` owns focus-on-empty.
-- [ ] 4.4 Rework `advanceQuestion` (`monitor.go:1145`) to operate on the active
+- [x] 4.4 Rework `advanceQuestion` (`monitor.go:1145`) to operate on the active
   entry's per-entry `questionIdx`/`questionSelected`/`questionAnswers` (mutate via
   `m.inputQueue[activeInputIdx].…`), and on the final answer emit
   `agentQuestionResponseMsg` then `removeEntryAt` + auto-advance (not
   `focusSteps` directly).
-- [ ] 4.5 Change the `q`/`QuestionCancel` path so it delivers
+- [x] 4.5 Change the `q`/`QuestionCancel` path so it delivers
   `agentQuestionResponseMsg{answer:"cancelled"}`, `removeEntryAt`, auto-advances,
   and does **not** emit `showRunsMsg` (stays in Monitor). Other kinds have no
   per-entry decline.
-- [ ] 4.6 Move the review compose sub-flow onto `entry.composing` (bool on the
+- [x] 4.6 Move the review compose sub-flow onto `entry.composing` (bool on the
   entry): `[m]` sets `entry.composing = true` and builds the compose textarea;
   `ComposeCancel` clears it; submit emits `reviewMessageMsg` and removes the
   entry. Composing on one review must not affect another entry.
-- [ ] 4.7 Rewrite `footerView()` gate hints (`monitor.go:1620–1644`) to switch on
+- [x] 4.7 Rewrite `footerView()` gate hints (`monitor.go:1620–1644`) to switch on
   the active entry's kind, and the status line (1607–1618) to read from the queue
   (e.g. "awaiting N input(s)"). Add the gate-context entry-cycle hint
   (`tab/⇧tab entries`, `←/→ panel`, `esc blur`, per-kind actions).
-- [ ] 4.8 Write `TestGateSubmitRouting` and `TestQuestionCancel`; capture the
+- [x] 4.8 Write `TestGateSubmitRouting` and `TestQuestionCancel`; capture the
   drain sequence `View()` to `artifacts/unit4-drain.txt`. Update/replace the
   existing `TestMonitorReviewAutoFocusesGate` (auto-focus is removed — Decision 6)
   and any other tests asserting the old single-pointer fields or focus-steal.
-- [ ] 4.9 (F1) Write `TestReviewComposeIsolation`: enqueue two `ReviewRequest`
+- [x] 4.9 (F1) Write `TestReviewComposeIsolation`: enqueue two `ReviewRequest`
   entries, press `[m]` on the active one and type a message, `tab` to the other
   review entry, and assert the second entry's `composing == false` and its
   `draft` is empty — proving the compose sub-flow is per-entry (task 4.6), not a

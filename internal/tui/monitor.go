@@ -662,8 +662,7 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 				return m, nil
 			}
 			inp := entry.request
-			m.removeEntryAt(m.activeInputIdx)
-			m.promptTextarea = textarea.Model{}
+			m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
 			m.refreshPanels()
 			return m, func() tea.Msg {
 				return agentInputMsg{runID: inp.RunID, stepID: inp.StepID, text: text}
@@ -676,6 +675,21 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 
 	case inputKindQuestion:
 		idx := m.activeInputIdx
+		// q cancels the question and delivers a "cancelled" answer so the engine
+		// can continue; esc is caught by GateBlur above (blurs without cancelling).
+		if keybind.Matches(msg, m.keys.QuestionCancel) && msg.String() == "q" {
+			q := entry.question
+			m.removeEntryAt(idx)
+			m.refreshPanels()
+			return m, func() tea.Msg {
+				return agentQuestionResponseMsg{
+					runID:     q.RunID,
+					stepID:    q.StepID,
+					toolUseID: q.ToolUseID,
+					answer:    "cancelled",
+				}
+			}
+		}
 		if m.inputQueue[idx].questionIdx < len(entry.question.Questions) {
 			q := entry.question.Questions[m.inputQueue[idx].questionIdx]
 			if q.MultiSelect {
@@ -715,8 +729,7 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 				return m, nil
 			}
 			pr := entry.prompt
-			m.removeEntryAt(m.activeInputIdx)
-			m.promptTextarea = textarea.Model{}
+			m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
 			m.refreshPanels()
 			return m, func() tea.Msg {
 				return userInputResponseMsg{
@@ -736,7 +749,7 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 		if entry.composing {
 			if keybind.Matches(msg, m.keys.ComposeCancel) {
 				m.inputQueue[m.activeInputIdx].composing = false
-				m.promptTextarea = textarea.Model{}
+				m.loadActiveTextarea()
 				m.refreshPanels()
 				return m, nil
 			}
@@ -746,8 +759,7 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 					return m, nil
 				}
 				rev := entry.review
-				m.removeEntryAt(m.activeInputIdx)
-				m.promptTextarea = textarea.Model{}
+				m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
 				m.refreshPanels()
 				return m, func() tea.Msg {
 					return reviewMessageMsg{runID: rev.RunID, stepID: rev.StepID, text: text}
@@ -767,7 +779,7 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 		for i, ch := range entry.review.Choices {
 			if msg.String() == fmt.Sprintf("%d", i+1) {
 				rev := entry.review
-				m.removeEntryAt(m.activeInputIdx)
+				m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
 				m.refreshPanels()
 				return m, func() tea.Msg {
 					return reviewVerdictMsg{runID: rev.RunID, stepID: rev.StepID, verdict: ch}
@@ -1312,10 +1324,6 @@ func (m monitorModel) gateStrip() string {
 			b.WriteString(m.promptTextarea.View())
 
 		case inputKindReview:
-			if entry.review.Diff != "" {
-				writeDiff(&b, entry.review.Diff)
-				b.WriteString("\n")
-			}
 			if entry.composing {
 				b.WriteString(m.promptTextarea.View())
 			} else {
