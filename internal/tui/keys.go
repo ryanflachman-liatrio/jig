@@ -186,6 +186,7 @@ type monitorKeys struct {
 	ToggleOpt      keybind.Binding // display-only ("1-9 toggle", multiSelect)
 	QConfirm       keybind.Binding // matched (enter/space, multiSelect confirm)
 	QuestionCancel keybind.Binding // retained; esc caught by GateBlur; q → task 4.5
+	QuestionScroll keybind.Binding // display-only ("↑/↓ scroll", question option list overflow)
 }
 
 func defaultMonitorKeys() monitorKeys {
@@ -225,5 +226,6 @@ func defaultMonitorKeys() monitorKeys {
 		ToggleOpt:      keybind.NewBinding(keybind.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"), keybind.WithHelp("1-9", "toggle")),
 		QConfirm:       keybind.NewBinding(keybind.WithKeys("enter", " "), keybind.WithHelp("enter", "confirm")),
 		QuestionCancel: keybind.NewBinding(keybind.WithKeys("esc", "q"), keybind.WithHelp("esc", "blur")),
+		QuestionScroll: keybind.NewBinding(keybind.WithKeys("j", "k", "down", "up"), keybind.WithHelp("↑/↓", "scroll")),
 	}
 }

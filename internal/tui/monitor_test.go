@@ -2,6 +2,7 @@ package tui
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1089,6 +1090,119 @@ func TestReviewDiffInTranscript(t *testing.T) {
 		if strings.Contains(body, notWant) {
 			t.Fatalf("verdict choice %q must not appear in Transcript:\n%s", notWant, body)
 		}
+	}
+}
+
+// TestQuestionScroll verifies that ↓/↑ (j/k) scroll the option list within the
+// fixed strip height, that the height is constant regardless of scroll position,
+// and that digit keys select the correct absolute option index even when scrolled.
+func TestQuestionScroll(t *testing.T) {
+	m := newMonitorWithSteps(t)
+
+	// Build a question with enough options to overflow the fixed gate height.
+	var opts []engine.AgentQuestionOption
+	for i := 1; i <= 10; i++ {
+		opts = append(opts, engine.AgentQuestionOption{Label: fmt.Sprintf("Option%d", i)})
+	}
+	m, _ = m.Update(engineEventMsg{event: engine.AgentQuestion{
+		RunID:  "run-1",
+		StepID: "a",
+		Questions: []engine.AgentQuestionItem{
+			{Question: "Pick one", Options: opts},
+		},
+	}})
+	m.focus = focusGate
+
+	// Verify scroll is actually needed (budget < len(options)).
+	budget := m.gateBodyHeight() - gateHeaderRows - 2 // gateHeaderRows + question + blank
+	if len(opts) <= budget {
+		t.Skipf("options (%d) don't exceed budget (%d) — increase option count", len(opts), budget)
+	}
+
+	stripH := func() int { return lipgloss.Height(m.gateStrip()) }
+	h0 := stripH()
+
+	// Initial state: Option1 visible, Option10 not.
+	strip0 := ansiStrip(m.gateStrip())
+	if !strings.Contains(strip0, "Option1") {
+		t.Fatalf("Option1 not visible at scrollOffset=0:\n%s", strip0)
+	}
+
+	// Press ↓ (j) to scroll down.
+	m, _ = m.Update(key("j"))
+	if m.inputQueue[0].scrollOffset != 1 {
+		t.Fatalf("expected scrollOffset 1 after j, got %d", m.inputQueue[0].scrollOffset)
+	}
+	// Height must be unchanged.
+	if stripH() != h0 {
+		t.Fatalf("gate strip height changed after scroll: was %d, now %d", h0, stripH())
+	}
+	strip1 := ansiStrip(m.gateStrip())
+	// Option1 should now be scrolled off; a higher-indexed option should appear.
+	if strings.Contains(strip1, "[1] Option1") {
+		t.Fatalf("Option1 still in view after scrolling down:\n%s", strip1)
+	}
+	// ▲ more indicator must be present.
+	if !strings.Contains(strip1, "▲ more") {
+		t.Fatalf("▲ more indicator missing after scroll:\n%s", strip1)
+	}
+
+	// Press ↑ (k) to scroll back up.
+	m, _ = m.Update(key("k"))
+	if m.inputQueue[0].scrollOffset != 0 {
+		t.Fatalf("expected scrollOffset 0 after k, got %d", m.inputQueue[0].scrollOffset)
+	}
+	if stripH() != h0 {
+		t.Fatalf("gate strip height changed after scroll up: was %d, now %d", h0, stripH())
+	}
+
+	// Scroll down past the first visible window so Option1 is off-screen.
+	for i := 0; i < 3; i++ {
+		m, _ = m.Update(key("j"))
+	}
+	// Digit "1" must still select Option1 (absolute index, not visible-relative).
+	m2, cmd := m.Update(key("1"))
+	if cmd == nil {
+		t.Fatal("digit 1 produced no command while scrolled")
+	}
+	resp, ok := cmd().(agentQuestionResponseMsg)
+	if !ok {
+		t.Fatalf("expected agentQuestionResponseMsg from digit 1, got %T", cmd())
+	}
+	if !strings.Contains(resp.answer, "Option1") {
+		t.Fatalf("digit 1 selected wrong option: %q", resp.answer)
+	}
+	if len(m2.inputQueue) != 0 {
+		t.Fatalf("queue should be empty after answering, got %d", len(m2.inputQueue))
+	}
+}
+
+// TestCaptureUnit6Scroll captures View() of a scrollable AgentQuestion,
+// showing the windowed option list with ▲/▼ indicators.
+func TestCaptureUnit6Scroll(t *testing.T) {
+	const artifactPath = "../../docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit6-scroll.txt"
+	m := newMonitorWithSteps(t)
+
+	var opts []engine.AgentQuestionOption
+	for i := 1; i <= 10; i++ {
+		opts = append(opts, engine.AgentQuestionOption{Label: fmt.Sprintf("Option%d", i)})
+	}
+	m, _ = m.Update(engineEventMsg{event: engine.AgentQuestion{
+		RunID:  "run-1",
+		StepID: "a",
+		Questions: []engine.AgentQuestionItem{
+			{Question: "Pick one", Options: opts},
+		},
+	}})
+	m.focus = focusGate
+
+	// Scroll down so both ▲ and ▼ are visible.
+	m, _ = m.Update(key("j"))
+	m, _ = m.Update(key("j"))
+
+	view := ansiStrip(m.View())
+	if err := os.WriteFile(artifactPath, []byte(view), 0o644); err != nil {
+		t.Fatalf("write artifact: %v", err)
 	}
 }
 

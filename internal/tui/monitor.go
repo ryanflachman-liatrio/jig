@@ -693,6 +693,31 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 				}
 			}
 		}
+		// j/↓ and k/↑ scroll the option list (Unit 6). These do not collide with
+		// tab (entry cycle), left/right (panel exit), digits (option select), q
+		// (cancel), or enter/space (QConfirm).
+		switch msg.String() {
+		case "j", "down":
+			if idx >= 0 && idx < len(m.inputQueue) {
+				qIdx := m.inputQueue[idx].questionIdx
+				if qIdx < len(entry.question.Questions) {
+					opts := entry.question.Questions[qIdx].Options
+					if m.inputQueue[idx].scrollOffset < len(opts)-1 {
+						m.inputQueue[idx].scrollOffset++
+						m.refreshPanels()
+					}
+				}
+			}
+			return m, nil
+		case "k", "up":
+			if idx >= 0 && idx < len(m.inputQueue) {
+				if m.inputQueue[idx].scrollOffset > 0 {
+					m.inputQueue[idx].scrollOffset--
+					m.refreshPanels()
+				}
+			}
+			return m, nil
+		}
 		if m.inputQueue[idx].questionIdx < len(entry.question.Questions) {
 			q := entry.question.Questions[m.inputQueue[idx].questionIdx]
 			if q.MultiSelect {
@@ -1294,11 +1319,68 @@ func (m monitorModel) gateStrip() string {
 		case inputKindQuestion:
 			if entry.questionIdx < len(entry.question.Questions) {
 				q := entry.question.Questions[entry.questionIdx]
+
+				// Compute rows consumed by fixed chrome so we know how many option
+				// rows fit in the fixed body height. gateHeaderRows is already consumed
+				// by the [N/M] header written above; count the remaining chrome here.
+				overhead := gateHeaderRows // [N/M] header already written
+				if q.Header != "" {
+					overhead++
+				}
+				overhead += 2 // question text + blank line
+				if q.MultiSelect {
+					overhead++ // "enter to confirm" hint
+				}
+				if len(entry.question.Questions) > 1 {
+					overhead++ // "question N of M" hint
+				}
+
+				budget := m.gateBodyHeight() - overhead
+				if budget < 1 {
+					budget = 1
+				}
+				scrollable := len(q.Options) > budget
+				visibleCount := budget
+				if scrollable {
+					// Reserve one row each for ▲ / ▼ indicators (always shown when
+					// the list overflows to prevent height jitter as offset changes).
+					visibleCount = budget - 2
+					if visibleCount < 1 {
+						visibleCount = 1
+					}
+				}
+
+				// Clamp scrollOffset so the last option is always reachable.
+				maxOffset := len(q.Options) - visibleCount
+				if maxOffset < 0 {
+					maxOffset = 0
+				}
+				scrollOffset := entry.scrollOffset
+				if scrollOffset > maxOffset {
+					scrollOffset = maxOffset
+				}
+
 				if q.Header != "" {
 					b.WriteString("  " + theme.Question.Render("["+q.Header+"]") + "\n")
 				}
 				b.WriteString("  " + q.Question + "\n\n")
-				for i, opt := range q.Options {
+
+				if scrollable {
+					if scrollOffset > 0 {
+						b.WriteString("    " + theme.Chat.Hint.Render("▲ more") + "\n")
+					} else {
+						b.WriteString("\n") // placeholder keeps height stable
+					}
+				}
+
+				end := scrollOffset + visibleCount
+				if end > len(q.Options) {
+					end = len(q.Options)
+				}
+				for i := scrollOffset; i < end; i++ {
+					opt := q.Options[i]
+					// Label uses absolute [N] so blind-typing selects correctly even
+					// when the visible window is scrolled (Unit 6 FR).
 					if q.MultiSelect {
 						mark := "[ ]"
 						if entry.questionSelected[i] {
@@ -1313,6 +1395,15 @@ func (m monitorModel) gateStrip() string {
 					}
 					b.WriteString("\n")
 				}
+
+				if scrollable {
+					if end < len(q.Options) {
+						b.WriteString("    " + theme.Chat.Hint.Render("▼ more") + "\n")
+					} else {
+						b.WriteString("\n") // placeholder keeps height stable
+					}
+				}
+
 				if q.MultiSelect {
 					b.WriteString("\n    " + theme.Chat.Hint.Render("enter to confirm selection") + "\n")
 				}
@@ -1846,9 +1937,9 @@ func (m monitorModel) footerView() string {
 			hint = hintString(m.keys.Submit, m.keys.Newline, entryNav, m.keys.GateBlur)
 		case inputKindQuestion:
 			if entry.questionIdx < len(entry.question.Questions) && entry.question.Questions[entry.questionIdx].MultiSelect {
-				hint = hintString(m.keys.ToggleOpt, m.keys.QConfirm, entryNav, m.keys.GateBlur)
+				hint = hintString(m.keys.ToggleOpt, m.keys.QConfirm, m.keys.QuestionScroll, entryNav, m.keys.GateBlur)
 			} else {
-				hint = hintString(m.keys.Answer, entryNav, m.keys.GateBlur)
+				hint = hintString(m.keys.Answer, m.keys.QuestionScroll, entryNav, m.keys.GateBlur)
 			}
 		case inputKindReview:
 			if entry.composing {

@@ -327,7 +327,7 @@ keep queue navigation and Steps-list selection independent; add an in-entry hint
   `artifacts/unit5-review-diff.txt`. Adapt the existing
   `TestMonitorChatReviewFallback` if its expectations change.
 
-### [ ] 6.0 AgentQuestion option-list overflow scrolling
+### [x] 6.0 AgentQuestion option-list overflow scrolling
 
 A long `inputKindQuestion` option list scrolls within the fixed strip height via
 a per-entry `scrollOffset`, driven by `↑`/`↓` (`j`/`k`) while the gate is focused
@@ -345,21 +345,21 @@ and the active entry is a question, without colliding with existing gate keys.
 
 #### 6.0 Tasks
 
-- [ ] 6.1 In the `inputKindQuestion` branch of `gateStrip()`, compute how many
+- [x] 6.1 In the `inputKindQuestion` branch of `gateStrip()`, compute how many
   option rows fit in `gateBodyHeight()` (minus the header/question/hint rows) and
   render only `options[scrollOffset : scrollOffset+visible]`, with a `▲`/`▼` more
   indicator when clipped. Keep the option's original `[N]` number label so
   blind-typing a number still selects the right option even when scrolled.
-- [ ] 6.2 Add a `ScrollUp`/`ScrollDown` (or reuse `Up`/`Down`) key handling in
+- [x] 6.2 Add a `ScrollUp`/`ScrollDown` (or reuse `Up`/`Down`) key handling in
   `updateGate`'s question branch that adjusts `m.inputQueue[activeInputIdx].scrollOffset`
   within `[0, maxOffset]`; ensure these keys do not collide with `tab` (entries),
   `left`/`right` (exit), digit selection, `enter`/`space` (`QConfirm`), or `q`.
   Add the binding(s) to `keys.go` and the footer hint for question entries.
-- [ ] 6.3 Guarantee no option is truncated away: `maxOffset` is bounded so the
+- [x] 6.3 Guarantee no option is truncated away: `maxOffset` is bounded so the
   last option is always reachable; digit selection maps to the absolute option
   index regardless of `scrollOffset` (Unit 6 FR "never … hides a
   blind-selectable numbered option").
-- [ ] 6.4 Write `TestQuestionScroll`: enqueue an `AgentQuestion` with more options
+- [x] 6.4 Write `TestQuestionScroll`: enqueue an `AgentQuestion` with more options
   than fit, assert `scrollOffset` changes the visible range on `↓`/`↑`, the strip
   height (`lipgloss.Height(m.gateStrip())`) is constant, and a digit still selects
   the correct absolute option after scrolling. Capture `artifacts/unit6-scroll.txt`.
