@@ -210,6 +210,26 @@ func panelSplit(width int) (stepsW, transcriptW int, narrow bool) {
 const outputMaxLines = 10
 
 const (
+	// gateTextareaRows is the content-row count passed to newInputTextarea for
+	// every gate entry that uses a textarea (inputKindRequest, inputKindPrompt,
+	// and review compose). Changing it here propagates to gateBodyHeight().
+	gateTextareaRows = 4
+
+	// gateHeaderRows is the number of rows reserved for the [N / M] step-id (kind)
+	// header that task 3.4 renders above each non-empty gate entry. Reserved in the
+	// fixed height calculation now so gateBodyHeight() is stable before that task
+	// lands.
+	gateHeaderRows = 1
+
+	// maxReviewChoices is the bounded maximum number of verdict-choice lines a
+	// review entry can render without overflowing the fixed gate height. A value
+	// of 4 covers the common approve/reject/defer/escalate pattern; the review
+	// panel height is validated against this bound in the unit5-review-diff.txt
+	// proof capture (task 5.4).
+	maxReviewChoices = 4
+)
+
+const (
 	// chatCollapseWidth is the render-time collapse: large blocks (thinking,
 	// tool input, tool result) show at most this many characters on one line
 	// until expanded. Distinct from the writer's byte cap (Truncated).
@@ -778,11 +798,17 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		}
 		// Decision 6: no focus steal on arrival.
 		evCopy := ev
+		wasEmpty := len(m.inputQueue) == 0
 		m.inputQueue = append(m.inputQueue, pendingInputEntry{
 			kind:    inputKindRequest,
 			stepID:  ev.StepID,
 			request: &evCopy,
 		})
+		// Initialize promptTextarea for the first entry only; loadActiveTextarea
+		// (task 3.2) will handle subsequent navigation.
+		if wasEmpty {
+			m.promptTextarea = newInputTextarea("Message to agent…", m.gateInnerWidth(), gateTextareaRows)
+		}
 
 	case engine.AgentQuestion:
 		if ev.RunID != m.runID {
@@ -832,11 +858,21 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		}
 		// Decision 6: no focus steal on arrival.
 		evCopy := ev
+		wasEmpty := len(m.inputQueue) == 0
 		m.inputQueue = append(m.inputQueue, pendingInputEntry{
 			kind:   inputKindPrompt,
 			stepID: ev.StepID,
 			prompt: &evCopy,
 		})
+		// Initialize promptTextarea for the first entry; loadActiveTextarea (task 3.2)
+		// handles subsequent navigation.
+		if wasEmpty {
+			label := evCopy.Label
+			if label == "" {
+				label = "Input…"
+			}
+			m.promptTextarea = newInputTextarea(label, m.gateInnerWidth(), gateTextareaRows)
+		}
 
 	case engine.StepOutput:
 		if ev.RunID != m.runID {
@@ -878,7 +914,9 @@ func (m *monitorModel) resize() {
 	hFrame, vFrame := panelFrame()
 
 	footerH := lipgloss.Height(m.footerView())
-	gateH := lipgloss.Height(m.gateStrip())
+	// The gate strip is always rendered at a fixed height (Unit 2 — no layout shift
+	// when input arrives or departs). Use the derived constant, not a measurement.
+	gateH := m.gateBodyHeight() + vFrame
 	panelH := m.height - footerH - gateH
 	if panelH < 1 {
 		panelH = 1
@@ -931,13 +969,40 @@ func (m *monitorModel) resize() {
 }
 
 // gateInnerWidth is the content width available to a gate strip's textarea: the
-// full terminal width minus the textarea's own border frame.
+// the gate panel's inner width minus the textarea's own border+padding frame.
+// The gate panel has its own hFrame, so the textarea must be sized to
+// panelInner-taFrame rather than width-taFrame to avoid overflowing the panel.
 func (m monitorModel) gateInnerWidth() int {
-	w := m.width - theme.Textarea.Base.GetHorizontalFrameSize()
+	panelHFrame, _ := panelFrame()
+	w := m.width - panelHFrame - theme.Textarea.Base.GetHorizontalFrameSize()
 	if w < 1 {
 		w = 1
 	}
 	return w
+}
+
+// gateBodyHeight returns the fixed body height (inside the panel border, excluding
+// the panel's own vFrame) reserved for the gate strip unconditionally — whether
+// the queue is empty or not. It is the maximum of the two bounded per-kind
+// natural body heights:
+//
+//   - textarea kinds (inputKindRequest/inputKindPrompt): gateHeaderRows + label
+//     row + gateTextareaRows content rows + the textarea's own border vFrame.
+//   - review kind (inputKindReview, non-composing): gateHeaderRows + label row
+//   - maxReviewChoices verdict lines + [m] affordance + diff-location hint.
+//
+// inputKindQuestion is the only unbounded kind; its option list scrolls within
+// this height (Unit 6) and is therefore excluded from the max.
+func (m monitorModel) gateBodyHeight() int {
+	taVFrame := theme.Textarea.Base.GetVerticalFrameSize()
+	// textarea case: header + label + textarea (content rows + border)
+	textareaCaseH := gateHeaderRows + 1 + gateTextareaRows + taVFrame
+	// review case: header + label + bounded choices + [m] affordance + hint (Unit 5)
+	reviewCaseH := gateHeaderRows + 1 + maxReviewChoices + 1 + 1
+	if textareaCaseH > reviewCaseH {
+		return textareaCaseH
+	}
+	return reviewCaseH
 }
 
 // rebuildRenderer (re)constructs the markdown renderer for the *Transcript
@@ -1104,17 +1169,20 @@ func (m monitorModel) writeFailureReasons(b *strings.Builder) {
 	}
 }
 
-// gateStrip renders the currently-active human-in-the-loop gate entry as a
-// full-width titled panel beneath the two panels, above the footer. It is a
-// non-blocking focus region (ADR 0002): its border is primary only when the Gate
-// holds focus. Returns "" when no gate is pending (empty queue). The full
-// per-kind rendering and fixed-height layout land in tasks 2.0–4.0; this version
-// preserves the prior single-entry rendering semantics via activeEntry().
+// gateStrip renders the human-in-the-loop gate as a full-width titled panel
+// beneath the two main panels, above the footer. It always renders — even when
+// the queue is empty — so the Steps and Transcript panels never resize on input
+// arrival or departure (Spec Unit 2). The panel height is always
+// gateBodyHeight()+vFrame, and the border is blurred when focus != focusGate.
 func (m monitorModel) gateStrip() string {
-	if !m.hasGate() {
-		return ""
-	}
 	_, vFrame := panelFrame()
+	fixedH := m.gateBodyHeight() + vFrame
+
+	// Empty queue: render a placeholder panel with a blurred border.
+	if !m.hasGate() {
+		placeholder := "\n  " + theme.Chat.Hint.Render("No pending agent inputs")
+		return panel("Agent input", placeholder, m.width, fixedH, false)
+	}
 
 	entry, _ := m.activeEntry()
 	var title string
@@ -1182,18 +1250,7 @@ func (m monitorModel) gateStrip() string {
 		}
 	}
 
-	// Fit the body height to its natural content, bounded so a huge diff never
-	// pushes the panels off screen. The panel height is body height + frame.
-	body := b.String()
-	bodyH := lipgloss.Height(body)
-	const maxGateBodyH = 14
-	if bodyH > maxGateBodyH {
-		bodyH = maxGateBodyH
-	}
-	if bodyH < 1 {
-		bodyH = 1
-	}
-	return panel(title, body, m.width, bodyH+vFrame, m.focus == focusGate)
+	return panel(title, b.String(), m.width, fixedH, m.focus == focusGate)
 }
 
 // advanceQuestion records the answer for the current question and advances the
@@ -1736,7 +1793,10 @@ func (m monitorModel) View() string {
 	footer := m.footerView()
 	gate := m.gateStrip()
 
-	panelH := m.height - lipgloss.Height(footer) - lipgloss.Height(gate)
+	// The gate is always rendered at a fixed height (Unit 2); mirror resize().
+	_, vFrame := panelFrame()
+	gateH := m.gateBodyHeight() + vFrame
+	panelH := m.height - lipgloss.Height(footer) - gateH
 	if panelH < 1 {
 		panelH = 1
 	}
@@ -1762,10 +1822,5 @@ func (m monitorModel) View() string {
 		panels = lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 	}
 
-	parts := []string{panels}
-	if gate != "" {
-		parts = append(parts, gate)
-	}
-	parts = append(parts, footer)
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+	return lipgloss.JoinVertical(lipgloss.Left, panels, gate, footer)
 }

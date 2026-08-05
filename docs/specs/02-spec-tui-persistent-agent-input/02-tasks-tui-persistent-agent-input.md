@@ -113,7 +113,7 @@ end of this task only through the accessor helpers below. (Spec Unit 1.)
   temporarily stub `gateStrip`/`updateGate`/`footerView` reads against the new
   shape only as far as needed to compile (full rendering lands in 2.0–4.0).
 
-### [ ] 2.0 Persistent, fixed-height panel & empty-state placeholder
+### [x] 2.0 Persistent, fixed-height panel & empty-state placeholder
 
 Make `gateStrip()` always render (remove the early `return ""`); show a
 `No pending agent inputs` placeholder + blurred, inert textarea when the queue is
@@ -134,7 +134,7 @@ Unit 2; Design "Layout height".)
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Add a `gateBodyHeight()` helper (or `const gateBodyH`) on `monitorModel`
+- [x] 2.1 Add a `gateBodyHeight()` helper (or `const gateBodyH`) on `monitorModel`
   that returns the fixed reserved **body** height as the **max of the bounded
   per-kind natural body heights** so no bounded kind clips (F2): the textarea
   case (label row + 4-row textarea + `[N/M]` header) vs. the review case
@@ -145,7 +145,7 @@ Unit 2; Design "Layout height".)
   (Unit 6) — document that in the doc-comment alongside the derivation. Verify
   the review verdict list fits this height in the `unit5-review-diff.txt`
   capture (5.4).
-- [ ] 2.2 Rewrite `gateStrip()` (`monitor.go:1057`): remove `if !m.hasGate() {
+- [x] 2.2 Rewrite `gateStrip()` (`monitor.go:1057`): remove `if !m.hasGate() {
   return "" }`. When `len(m.inputQueue) == 0`, render title `Agent input` (or
   similar), a `No pending agent inputs` placeholder line, and a blurred textarea
   (or an empty body sized to `gateBodyHeight()`); the panel border must be blurred
@@ -153,17 +153,17 @@ Unit 2; Design "Layout height".)
   per-entry rendering (completed in 3.0/4.0). Fit the panel to
   `gateBodyHeight()+vFrame` — a **fixed** height, replacing the current
   `maxGateBodyH`/`lipgloss.Height(body)` measurement.
-- [ ] 2.3 In `resize()` (`monitor.go:823–827`), replace `gateH :=
+- [x] 2.3 In `resize()` (`monitor.go:823–827`), replace `gateH :=
   lipgloss.Height(m.gateStrip())` with `gateH := m.gateBodyHeight() + vFrame`
   (the fixed reserved height), so panels never resize on input arrival. Update
   the doc-comment noting the strip is always reserved.
-- [ ] 2.4 In `View()` (`monitor.go:1669–1700`), the gate is now always non-empty;
+- [x] 2.4 In `View()` (`monitor.go:1669–1700`), the gate is now always non-empty;
   simplify the `if gate != "" { parts = append… }` to always append `gate`, and
   recompute `panelH` from the fixed reserved height (mirror `resize()`).
-- [ ] 2.5 Confirm `cycleFocus()` (`monitor.go:356–360`) still guards
+- [x] 2.5 Confirm `cycleFocus()` (`monitor.go:356–360`) still guards
   `focusGate` behind `if m.hasGate()` (now `len > 0`) so an empty gate is skipped
   by `tab` — no change expected, just verify.
-- [ ] 2.6 Write `TestGateFixedHeight` (capture `View()`, split into panel lines,
+- [x] 2.6 Write `TestGateFixedHeight` (capture `View()`, split into panel lines,
   compare Steps/Transcript heights before/after an `InputRequest`) and
   `TestCycleFocusSkipsEmptyGate`. Capture the empty-strip `View()` to
   `artifacts/unit2-empty-strip.txt` (create the `artifacts/` dir).

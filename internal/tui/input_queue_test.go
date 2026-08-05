@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"os"
+	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
 	"jig/internal/engine"
 	"jig/internal/step"
 )
@@ -135,4 +138,92 @@ func TestInputQueuePruneOnStatus(t *testing.T) {
 		RunID: "run-1", StepID: "a", From: step.StatusRunning, To: step.StatusSucceeded,
 	}})
 	// No panic = pass.
+}
+
+// TestGateFixedHeight verifies that the Steps and Transcript panel heights
+// (derived from View()) are the same before and after an InputRequest arrives.
+// This proves the layout does not shift when the gate transitions from
+// empty-placeholder to an active entry (Spec Unit 2, Success Metric 4).
+func TestGateFixedHeight(t *testing.T) {
+	m := newMonitorWithSteps(t)
+
+	// Capture heights with an empty queue.
+	gateHBefore := lipgloss.Height(m.gateStrip())
+	footerHBefore := lipgloss.Height(m.footerView())
+	totalHBefore := lipgloss.Height(m.View())
+	panelHBefore := totalHBefore - footerHBefore - gateHBefore
+
+	if gateHBefore == 0 {
+		t.Fatal("gate strip height is 0 — gate is not rendering when queue is empty")
+	}
+
+	// Send an InputRequest so the gate switches from placeholder to active.
+	m, _ = m.Update(engineEventMsg{event: engine.InputRequest{
+		RunID:  "run-1",
+		StepID: "a",
+	}})
+
+	gateHAfter := lipgloss.Height(m.gateStrip())
+	footerHAfter := lipgloss.Height(m.footerView())
+	totalHAfter := lipgloss.Height(m.View())
+	panelHAfter := totalHAfter - footerHAfter - gateHAfter
+
+	if gateHAfter != gateHBefore {
+		t.Fatalf("gate height changed on InputRequest arrival: %d → %d", gateHBefore, gateHAfter)
+	}
+	if panelHAfter != panelHBefore {
+		t.Fatalf("panel height changed on InputRequest arrival: %d → %d", panelHBefore, panelHAfter)
+	}
+
+	// Capture empty-strip View() as artifact.
+	m2 := newMonitorWithSteps(t)
+	emptyView := m2.View()
+	_ = os.MkdirAll("../../docs/specs/02-spec-tui-persistent-agent-input/artifacts", 0o755)
+	_ = os.WriteFile(
+		"../../docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit2-empty-strip.txt",
+		[]byte(stripANSI(emptyView)),
+		0o644,
+	)
+}
+
+// stripANSI removes ANSI escape codes from s for plain-text artifact storage.
+func stripANSI(s string) string {
+	var b strings.Builder
+	i := 0
+	for i < len(s) {
+		if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == '[' {
+			i += 2
+			for i < len(s) && s[i] != 'm' {
+				i++
+			}
+			if i < len(s) {
+				i++ // consume 'm'
+			}
+			continue
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
+// TestCycleFocusSkipsEmptyGate verifies that with an empty queue, cycling focus
+// from focusTranscript wraps back to focusSteps without landing on focusGate
+// (Unit 2: the empty gate is inert, not focusable via tab).
+func TestCycleFocusSkipsEmptyGate(t *testing.T) {
+	m := newMonitorWithSteps(t)
+
+	if m.hasGate() {
+		t.Fatal("expected empty gate at start")
+	}
+
+	// Start at focusTranscript and cycle forward (+1).
+	m.focus = focusTranscript
+	next := m.cycleFocus(+1)
+	if next == focusGate {
+		t.Fatalf("cycleFocus(+1) landed on focusGate with empty queue")
+	}
+	if next != focusSteps {
+		t.Fatalf("cycleFocus(+1) from focusTranscript with empty queue: got %v, want focusSteps", next)
+	}
 }
