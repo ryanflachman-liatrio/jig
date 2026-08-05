@@ -344,6 +344,9 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 		case keybind.Matches(msg, m.keys.FocusNext):
 			// When the gate has focus, tab cycles queue entries instead of regions
 			// (ADR 0005 §entry-navigation). With a single entry the index is stable.
+			// Entry cycling intentionally does NOT call reloadTranscript or move
+			// cursor — queue navigation and Steps/Transcript navigation are
+			// independent (Decision 2).
 			if m.focus == focusGate {
 				if n := len(m.inputQueue); n > 1 {
 					m.syncActiveTextarea()
@@ -1333,6 +1336,7 @@ func (m monitorModel) gateStrip() string {
 				if entry.review.AllowMessage {
 					b.WriteString("    [m] message\n")
 				}
+				b.WriteString("\n    " + theme.Chat.Hint.Render("diff shown in Transcript — select this step") + "\n")
 			}
 		}
 	}
@@ -1471,15 +1475,13 @@ func (m monitorModel) chatBody() string {
 	}
 
 	if len(m.chatEntries) == 0 {
-		// Review steps have no transcript; drilling in shows the diff and choices
-		// instead of a dead end (Phase 6).
+		// Review steps have no transcript. Show the diff here so the reviewer can
+		// read it while the verdict choices live in the gate entry (Decision 2/ADR 0005).
 		if rev, ok := m.reviews[m.chatStep]; ok {
+			b.WriteString("  " + theme.Chat.Hint.Render("proposed changes") + "\n\n")
 			if rev.Diff != "" {
 				writeDiff(&b, rev.Diff)
 				b.WriteString("\n")
-			}
-			for i, ch := range rev.Choices {
-				b.WriteString(fmt.Sprintf("    [%d] %s\n", i+1, ch))
 			}
 			return b.String()
 		}

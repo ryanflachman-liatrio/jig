@@ -207,24 +207,31 @@ func TestMonitorChatCommandOutput(t *testing.T) {
 }
 
 // TestMonitorChatReviewFallback checks drilling into a review step shows its
-// retained diff and choices rather than a dead end (Phase 6).
+// diff in the Transcript panel. Verdict choices live in the gate strip, not here
+// (Decision 2 / ADR 0005).
 func TestMonitorChatReviewFallback(t *testing.T) {
 	m := newMonitorWithSteps(t) // no runDir: review steps have no transcript
 
-	// A review arrives (auto-focuses the gate) then is resolved, retaining the request.
+	// A review arrives; Decision 6 means no auto-focus.
 	m, _ = m.Update(engineEventMsg{event: engine.ReviewRequest{
 		RunID:   "run-1",
 		StepID:  "a",
 		Diff:    "@@ -1 +1 @@\n-old line\n+new line",
 		Choices: []string{"approve", "reject"},
 	}})
-	m, _ = m.Update(key("1")) // verdict clears pendingReview
 
 	m = enterChatStep(t, m, "a")
 	body := m.chatBody()
-	for _, want := range []string{"new line", "old line", "[1] approve", "[2] reject"} {
+	// Diff markers must appear in the Transcript body.
+	for _, want := range []string{"new line", "old line", "proposed changes"} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("review drill-in missing %q:\n%s", want, body)
+			t.Fatalf("review Transcript missing %q:\n%s", want, body)
+		}
+	}
+	// Verdict choices must NOT appear in the Transcript body (they live in the gate).
+	for _, notWant := range []string{"[1] approve", "[2] reject"} {
+		if strings.Contains(body, notWant) {
+			t.Fatalf("verdict choices must not appear in Transcript body, found %q:\n%s", notWant, body)
 		}
 	}
 }
@@ -1045,6 +1052,65 @@ func TestReviewComposeIsolation(t *testing.T) {
 	// Entry 1's draft must be empty.
 	if m.inputQueue[1].draft != "" {
 		t.Fatalf("entry 1 draft should be empty, got %q", m.inputQueue[1].draft)
+	}
+}
+
+// TestReviewDiffInTranscript verifies that selecting a review step shows its diff
+// in the Transcript panel (chatBody) while activeInputIdx is unaffected.
+func TestReviewDiffInTranscript(t *testing.T) {
+	m := newMonitorWithSteps(t)
+
+	// Enqueue a review with a diff.
+	m, _ = m.Update(engineEventMsg{event: engine.ReviewRequest{
+		RunID:   "run-1",
+		StepID:  "a",
+		Diff:    "@@ -1 +1 @@\n-removed\n+added",
+		Choices: []string{"approve", "reject"},
+	}})
+
+	idxBefore := m.activeInputIdx
+
+	// Select the review step in Steps — this triggers reloadTranscript.
+	m = enterChatStep(t, m, "a")
+
+	// activeInputIdx must be unchanged (Decision 2: navigations are independent).
+	if m.activeInputIdx != idxBefore {
+		t.Fatalf("reloadTranscript must not touch activeInputIdx: was %d, now %d", idxBefore, m.activeInputIdx)
+	}
+
+	body := m.chatBody()
+	for _, want := range []string{"removed", "added", "proposed changes"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("chatBody missing %q:\n%s", want, body)
+		}
+	}
+	// Choices must not appear in Transcript.
+	for _, notWant := range []string{"[1] approve", "[2] reject"} {
+		if strings.Contains(body, notWant) {
+			t.Fatalf("verdict choice %q must not appear in Transcript:\n%s", notWant, body)
+		}
+	}
+}
+
+// TestCaptureUnit5ReviewDiff captures View() with a review step selected,
+// showing the diff in the Transcript panel and the gate entry with verdict choices.
+func TestCaptureUnit5ReviewDiff(t *testing.T) {
+	const artifactPath = "../../docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit5-review-diff.txt"
+	m := newMonitorWithSteps(t)
+	m, _ = m.Update(engineEventMsg{event: engine.ReviewRequest{
+		RunID:        "run-1",
+		StepID:       "a",
+		Diff:         "@@ -1,3 +1,3 @@\n context\n-old line\n+new line\n context",
+		Choices:      []string{"approve", "reject"},
+		AllowMessage: true,
+	}})
+	// Select the review step so Transcript shows the diff.
+	m = enterChatStep(t, m, "a")
+	m.focus = focusGate
+
+	view := ansiStrip(m.View())
+	if err := os.WriteFile(artifactPath, []byte(view), 0o644); err != nil {
+		t.Fatalf("write artifact: %v", err)
 	}
 }
 

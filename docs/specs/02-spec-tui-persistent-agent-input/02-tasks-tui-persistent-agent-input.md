@@ -291,7 +291,7 @@ remove the entry, and auto-advance. (Spec Unit 4.)
   `draft` is empty — proving the compose sub-flow is per-entry (task 4.6), not a
   shared model field.
 
-### [ ] 5.0 Review diff rendered in the Transcript panel
+### [x] 5.0 Review diff rendered in the Transcript panel
 
 When the Steps-list-selected step is a review step, render its diff in the
 Transcript panel via `writeDiff` on the verbatim path from the `reviews` map;
@@ -310,18 +310,18 @@ keep queue navigation and Steps-list selection independent; add an in-entry hint
 
 #### 5.0 Tasks
 
-- [ ] 5.1 Confirm/extend the existing review-diff branch in `chatBody`
+- [x] 5.1 Confirm/extend the existing review-diff branch in `chatBody`
   (`monitor.go:1270–1288`): when the selected step has an entry in
   `m.reviews[m.chatStep]` and no transcript entries, `writeDiff(&b, rev.Diff)` on
   the verbatim path. Keep the verdict-choice list out of the Transcript (choices
   live in the gate entry now) — render only the diff (+ a short heading).
-- [ ] 5.2 Verify `reloadTranscript`/`updateSteps` selection does **not** touch
+- [x] 5.2 Verify `reloadTranscript`/`updateSteps` selection does **not** touch
   `m.activeInputIdx`, and that `tab` cycling entries (3.1) does **not** call
   `reloadTranscript` or move `m.cursor`. Add a guard/comment asserting the two
   navigations are independent (Decision 2).
-- [ ] 5.3 In the `inputKindReview` gate body (4.1), add a one-line hint:
+- [x] 5.3 In the `inputKindReview` gate body (4.1), add a one-line hint:
   `diff shown in Transcript — select this step`. Style it with `theme.Chat.Hint`.
-- [ ] 5.4 Write `TestReviewDiffInTranscript`: enqueue a `ReviewRequest` with a
+- [x] 5.4 Write `TestReviewDiffInTranscript`: enqueue a `ReviewRequest` with a
   diff, select the review step in Steps, assert `chatBody()`/`View()` contains the
   diff markers and that `m.activeInputIdx` is unchanged. Capture
   `artifacts/unit5-review-diff.txt`. Adapt the existing
