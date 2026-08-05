@@ -340,10 +340,10 @@ func TestMonitorChatScrolls(t *testing.T) {
 	}
 }
 
-// TestMonitorReviewAutoFocusesGate verifies a review gate arriving auto-focuses
-// the Gate region, renders the verdict picker in the gate strip, and that digit
-// keys select a verdict.
-func TestMonitorReviewAutoFocusesGate(t *testing.T) {
+// TestMonitorReviewQueued verifies a review gate arriving is enqueued without
+// stealing focus (Decision 6), renders the verdict picker in the gate strip, and
+// that digit keys select a verdict once the user tabs to the gate.
+func TestMonitorReviewQueued(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	m, _ = m.Update(key("enter")) // focus the Transcript panel for step "a"
 	if m.focus != focusTranscript {
@@ -355,13 +355,22 @@ func TestMonitorReviewAutoFocusesGate(t *testing.T) {
 		StepID:  "a",
 		Choices: []string{"approve", "reject"},
 	}})
-	if m.focus != focusGate {
-		t.Fatalf("review gate did not auto-focus the Gate, got %v", m.focus)
+	// Decision 6: arrivals do not steal focus.
+	if m.focus != focusTranscript {
+		t.Fatalf("review arrival must not steal focus, got %v", m.focus)
+	}
+	if len(m.inputQueue) == 0 {
+		t.Fatal("review event not added to input queue")
 	}
 	if !strings.Contains(m.gateStrip(), "Review") {
 		t.Fatalf("review gate strip not shown:\n%s", m.gateStrip())
 	}
 
+	// Tab from Transcript → Gate, then send verdict.
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.focus != focusGate {
+		t.Fatalf("expected focusGate after tab, got %v", m.focus)
+	}
 	_, cmd := m.Update(key("1"))
 	if cmd == nil {
 		t.Fatal("digit key produced no verdict command")
@@ -386,6 +395,8 @@ func TestMonitorGateConsumesKeys(t *testing.T) {
 		StepID:  "a",
 		Choices: []string{"approve", "reject"},
 	}})
+	// Decision 6: no auto-focus — manually focus the gate to test key consumption.
+	m.focus = focusGate
 	before := m.cursor
 	m, _ = m.Update(key("j"))
 	if m.cursor != before {
@@ -436,11 +447,15 @@ func TestMonitorAgentQuestionShowsPanel(t *testing.T) {
 		},
 	}})
 
-	if m.pendingQuestion == nil {
-		t.Fatal("pendingQuestion not set after AgentQuestion event")
+	if len(m.inputQueue) == 0 {
+		t.Fatal("AgentQuestion not added to input queue")
 	}
-	if m.focus != focusGate {
-		t.Fatalf("expected focusGate after AgentQuestion, got %v", m.focus)
+	if m.inputQueue[0].kind != inputKindQuestion {
+		t.Fatalf("expected inputKindQuestion, got %v", m.inputQueue[0].kind)
+	}
+	// Decision 6: arrivals do not steal focus.
+	if m.focus != focusSteps {
+		t.Fatalf("question arrival must not steal focus, got %v", m.focus)
 	}
 
 	body := m.gateStrip()
@@ -474,6 +489,8 @@ func TestMonitorAgentQuestionSelectEmits(t *testing.T) {
 		},
 	}})
 
+	// Decision 6: no auto-focus — manually focus the gate to answer.
+	m.focus = focusGate
 	m, cmd := m.Update(key("2"))
 	if cmd == nil {
 		t.Fatal("digit key produced no command")
@@ -488,8 +505,8 @@ func TestMonitorAgentQuestionSelectEmits(t *testing.T) {
 	if !strings.Contains(msg.answer, "Beta") {
 		t.Fatalf("expected answer to contain 'Beta', got %q", msg.answer)
 	}
-	if m.pendingQuestion != nil {
-		t.Fatal("pendingQuestion should be cleared after answer is submitted")
+	if len(m.inputQueue) > 0 {
+		t.Fatal("question entry should be removed from queue after answer is submitted")
 	}
 }
 
@@ -514,6 +531,9 @@ func TestMonitorAgentQuestionMultiSelect(t *testing.T) {
 			},
 		},
 	}})
+
+	// Decision 6: no auto-focus — manually focus the gate.
+	m.focus = focusGate
 
 	// Toggle options 1 and 3.
 	m, _ = m.Update(key("1"))
@@ -563,6 +583,8 @@ func TestMonitorAgentQuestionConsumesKeys(t *testing.T) {
 			{Question: "Q?", Options: []engine.AgentQuestionOption{{Label: "A"}}},
 		},
 	}})
+	// Decision 6: no auto-focus — manually focus the gate to test key consumption.
+	m.focus = focusGate
 
 	before := m.cursor
 	m, _ = m.Update(key("j"))
@@ -625,8 +647,8 @@ func TestMonitorStepSubtypeBadge(t *testing.T) {
 	}
 }
 
-// TestMonitorAgentQuestionClearsOnResume verifies that pendingQuestion is cleared
-// when the step transitions away from StatusNeedsInput.
+// TestMonitorAgentQuestionClearsOnResume verifies that a queued question entry is
+// removed when the step transitions away from StatusNeedsInput.
 func TestMonitorAgentQuestionClearsOnResume(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
@@ -638,8 +660,8 @@ func TestMonitorAgentQuestionClearsOnResume(t *testing.T) {
 			{Question: "Q?", Options: []engine.AgentQuestionOption{{Label: "A"}}},
 		},
 	}})
-	if m.pendingQuestion == nil {
-		t.Fatal("pendingQuestion should be set")
+	if len(m.inputQueue) == 0 {
+		t.Fatal("question entry should be queued after AgentQuestion event")
 	}
 
 	// Simulate the step resuming after the answer is delivered.
@@ -649,8 +671,8 @@ func TestMonitorAgentQuestionClearsOnResume(t *testing.T) {
 		From:   step.StatusNeedsInput,
 		To:     step.StatusRunning,
 	}})
-	if m.pendingQuestion != nil {
-		t.Fatal("pendingQuestion should be cleared when step leaves StatusNeedsInput")
+	if len(m.inputQueue) > 0 {
+		t.Fatal("question entry should be removed from queue when step leaves StatusNeedsInput")
 	}
 }
 
@@ -758,25 +780,30 @@ func TestMonitorGateNonBlocking(t *testing.T) {
 		return m
 	}
 
-	// 1) Navigation is not frozen: tab moves focus off the gate.
+	// 1) Navigation is not frozen: with a gate pending but not focused, j/k
+	// navigate the Steps panel as normal (Decision 6: no auto-focus).
 	m := makeGate()
-	if m.focus != focusGate {
-		t.Fatalf("gate should auto-focus, got %v", m.focus)
+	if m.focus != focusSteps {
+		t.Fatalf("question arrival must not steal focus (Decision 6), got %v", m.focus)
 	}
-	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
-	if m.focus == focusGate {
-		t.Fatalf("tab did not move focus away from the gate (still %v)", m.focus)
+	if len(m.inputQueue) == 0 {
+		t.Fatal("question entry should be queued after AgentQuestion event")
 	}
-	// The gate is still pending (moving focus did not resolve it).
-	if m.pendingQuestion == nil {
-		t.Fatal("moving focus off the gate should not resolve it")
-	}
-	// With focus on a panel, j/k navigate (Steps) rather than answering.
-	m.focus = focusSteps
+	// j/k navigate Steps even while a gate entry is pending.
 	before := m.cursor
 	m, _ = m.Update(key("j"))
 	if m.cursor == before {
 		t.Fatal("j did not move the Steps cursor while a gate was pending (navigation frozen)")
+	}
+	// Tab cycles regions as normal; a second tab reaches the Gate.
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	if m.focus != focusGate {
+		t.Fatalf("expected focusGate after two tabs, got %v", m.focus)
+	}
+	// The entry is still pending (moving focus did not resolve it).
+	if len(m.inputQueue) == 0 {
+		t.Fatal("moving focus off the gate should not resolve the entry")
 	}
 
 	// 2) Returning focus to the gate and answering resolves it with the response.
@@ -793,9 +820,10 @@ func TestMonitorGateNonBlocking(t *testing.T) {
 		t.Fatalf("expected answer Beta, got %q", resp.answer)
 	}
 
-	// 3) Cancellation (esc) delivers the cancellation response so the reporter
-	// goroutine unblocks rather than hanging.
+	// 3) Cancellation (esc/q) while gate-focused delivers the cancellation response
+	// so the reporter goroutine unblocks rather than hanging.
 	m = makeGate()
+	m.focus = focusGate
 	_, cmd = m.Update(key("esc"))
 	if cmd == nil {
 		t.Fatal("esc produced no command")

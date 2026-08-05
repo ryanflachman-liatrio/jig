@@ -37,6 +37,49 @@ const (
 	focusGate
 )
 
+// pendingInputKind discriminates the four human-in-the-loop request types that
+// can live in the input queue simultaneously.
+type pendingInputKind int
+
+const (
+	inputKindRequest  pendingInputKind = iota // block_on InputRequest
+	inputKindQuestion                         // AskUserQuestion AgentQuestion
+	inputKindPrompt                           // from="user" PromptRequest
+	inputKindReview                           // ReviewRequest (verdict + message)
+)
+
+// pendingInputEntry is one element of the persistent input queue. Exactly one
+// payload pointer is non-nil, matching kind. Per-entry state (draft text,
+// question progress, compose flag, scroll position) is preserved across queue
+// navigation so the user can return to a partially-answered entry.
+type pendingInputEntry struct {
+	kind      pendingInputKind
+	stepID    string
+	toolUseID string // non-empty only for inputKindQuestion
+
+	// Exactly one payload pointer is non-nil, matching kind.
+	request  *engine.InputRequest
+	question *engine.AgentQuestion
+	prompt   *engine.PromptRequest
+	review   *engine.ReviewRequest
+
+	// draft is the in-progress textarea text (request/prompt, and review compose),
+	// preserved across navigation.
+	draft string
+
+	// composing is true while composing a message on a review entry.
+	composing bool
+
+	// AgentQuestion multi-step flow, preserved per entry (Decision 9).
+	questionIdx      int
+	questionSelected map[int]bool
+	questionAnswers  []string
+
+	// scrollOffset windows a long AgentQuestion option list within the fixed
+	// strip height (Unit 6).
+	scrollOffset int
+}
+
 // monitorModel is the per-run view: a live step-status table for one run,
 // updated as engine events arrive. The user can press esc to return to the
 // runs list.
@@ -91,29 +134,20 @@ type monitorModel struct {
 	// StepMessage liveness events), used as a message count in the list.
 	msgCount map[string]int
 
-	// Phase 3: review steps park here until a verdict is delivered.
-	pendingReview    *engine.ReviewRequest
-	composingMessage bool // true while the user is composing a message to the agent
+	// inputQueue holds every step currently blocked on a human, in arrival order.
+	// activeInputIdx is the entry currently shown in the gate strip. hasGate() is
+	// len(inputQueue) > 0; an empty queue still renders (placeholder) but is not
+	// focusable via cycleFocus.
+	inputQueue     []pendingInputEntry
+	activeInputIdx int
 
-	// block_on: set when an agent step needs human input before it can proceed.
-	pendingInput *engine.InputRequest
-
-	// AskUserQuestion: set when an in-flight agent step calls AskUserQuestion
-	// mid-execution. questionIdx tracks which question we're currently presenting;
-	// questionSelected tracks toggled options for multiSelect questions;
-	// questionAnswers accumulates formatted answers for already-answered questions.
-	pendingQuestion  *engine.AgentQuestion
-	questionIdx      int
-	questionSelected map[int]bool
-	questionAnswers  []string
-
-	// reviews retains the last ReviewRequest seen per step so drilling into a
-	// review step (modeChat) can show its diff/choices — review steps have no
-	// transcript. Kept after the verdict clears pendingReview (Phase 6).
+	// reviews retains the last ReviewRequest seen per step so the Transcript panel
+	// can show the diff when a review step is selected — review steps have no
+	// transcript. Kept after the queue entry is removed (Unit 5).
 	reviews map[string]engine.ReviewRequest
 
-	// from="user" input collection: the active prompt and its textarea.
-	pendingPrompt  *engine.PromptRequest
+	// promptTextarea is the active textarea, rebuilt from the current entry's draft
+	// via newInputTextarea on every entry switch (request/prompt/review-compose kinds).
 	promptTextarea textarea.Model
 
 	// Phase 4: rolling output buffer per step (last outputMaxLines lines).
@@ -315,8 +349,11 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 		}
 	}
 
-	// Route non-key messages to the textarea (blink timer, focus events) when active.
-	if m.pendingPrompt != nil || m.composingMessage || m.pendingInput != nil {
+	// Route non-key messages to the textarea (blink timer, focus events) for entry
+	// kinds that use the textarea (request, prompt, or a composing review entry).
+	if entry, ok := m.activeEntry(); ok &&
+		(entry.kind == inputKindRequest || entry.kind == inputKindPrompt ||
+			(entry.kind == inputKindReview && entry.composing)) {
 		var taCmd tea.Cmd
 		m.promptTextarea, taCmd = m.promptTextarea.Update(msg)
 		m.refreshPanels()
@@ -333,10 +370,37 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 	return m, cmd
 }
 
-// hasGate reports whether any human-in-the-loop gate is currently pending.
+// hasGate reports whether the input queue has any pending entries.
 func (m monitorModel) hasGate() bool {
-	return m.pendingReview != nil || m.pendingInput != nil ||
-		m.pendingQuestion != nil || m.pendingPrompt != nil || m.composingMessage
+	return len(m.inputQueue) > 0
+}
+
+// activeEntry returns a pointer to the entry at activeInputIdx, or (nil, false)
+// when the queue is empty or the index is out of range.
+func (m monitorModel) activeEntry() (*pendingInputEntry, bool) {
+	if len(m.inputQueue) == 0 || m.activeInputIdx < 0 || m.activeInputIdx >= len(m.inputQueue) {
+		return nil, false
+	}
+	return &m.inputQueue[m.activeInputIdx], true
+}
+
+// removeEntryAt deletes the entry at index i, then clamps/advances activeInputIdx:
+// the next entry stays at position i (entries shift left); if the removed entry
+// was last, activeInputIdx clamps to the new last; if the queue empties, focus
+// returns to Steps.
+func (m *monitorModel) removeEntryAt(i int) {
+	if i < 0 || i >= len(m.inputQueue) {
+		return
+	}
+	m.inputQueue = append(m.inputQueue[:i], m.inputQueue[i+1:]...)
+	if len(m.inputQueue) == 0 {
+		m.activeInputIdx = 0
+		m.focus = focusSteps
+		return
+	}
+	if m.activeInputIdx >= len(m.inputQueue) {
+		m.activeInputIdx = len(m.inputQueue) - 1
+	}
 }
 
 // refreshPanels re-renders both always-visible panels into their viewports. A
@@ -459,17 +523,17 @@ func (m monitorModel) updateTranscript(msg tea.KeyPressMsg) (monitorModel, tea.C
 	return m, cmd
 }
 
-// updateGate handles keys when a gate holds focus. It retains every existing
-// gate-resolution semantic (verdict digits, multi-select toggle+confirm, m
-// compose, textarea submit on enter) and, on cancellation (esc/q), delivers the
-// appropriate response so no reporter goroutine hangs. Because gates are
-// non-blocking, cancellation returns focus to the Steps panel rather than leaving
-// the whole monitor — the run continues; only the gate is dismissed where a
-// response is owed. (A review/prompt cancellation still leaves to the runs list,
-// matching prior behavior, since it has no owed tool_result.)
+// updateGate handles keys when the gate holds focus. Dispatches by the active
+// entry's kind; each submit path reads routing IDs from the entry, emits the
+// unchanged routing message, and removes the entry (auto-advance via removeEntryAt).
 func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
-	// block_on input: enter submits, esc leaves to runs list, other keys go to textarea.
-	if m.pendingInput != nil {
+	entry, ok := m.activeEntry()
+	if !ok {
+		return m, nil
+	}
+
+	switch entry.kind {
+	case inputKindRequest:
 		if keybind.Matches(msg, m.keys.InputLeave) {
 			return m, func() tea.Msg { return showRunsMsg{} }
 		}
@@ -478,10 +542,9 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 			if text == "" {
 				return m, nil
 			}
-			inp := m.pendingInput
-			m.pendingInput = nil
+			inp := entry.request
+			m.removeEntryAt(m.activeInputIdx)
 			m.promptTextarea = textarea.Model{}
-			m.focus = focusSteps
 			m.refreshPanels()
 			return m, func() tea.Msg {
 				return agentInputMsg{runID: inp.RunID, stepID: inp.StepID, text: text}
@@ -491,16 +554,13 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 		m.promptTextarea, taCmd = m.promptTextarea.Update(msg)
 		m.refreshPanels()
 		return m, taCmd
-	}
 
-	// AskUserQuestion: digit keys select / toggle options; enter confirms multiSelect.
-	if m.pendingQuestion != nil {
+	case inputKindQuestion:
 		if keybind.Matches(msg, m.keys.QuestionCancel) {
 			// Deliver a cancellation answer so the blocked reporter goroutine
 			// unblocks and Claude receives a tool_result instead of hanging.
-			q := m.pendingQuestion
-			m.pendingQuestion = nil
-			m.questionAnswers = nil
+			q := entry.question
+			m.removeEntryAt(m.activeInputIdx)
 			return m, tea.Batch(
 				func() tea.Msg {
 					return agentQuestionResponseMsg{
@@ -513,12 +573,13 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 				func() tea.Msg { return showRunsMsg{} },
 			)
 		}
-		if m.questionIdx < len(m.pendingQuestion.Questions) {
-			q := m.pendingQuestion.Questions[m.questionIdx]
+		idx := m.activeInputIdx
+		if m.inputQueue[idx].questionIdx < len(entry.question.Questions) {
+			q := entry.question.Questions[m.inputQueue[idx].questionIdx]
 			if q.MultiSelect {
 				for i := range q.Options {
 					if msg.String() == fmt.Sprintf("%d", i+1) {
-						m.questionSelected[i] = !m.questionSelected[i]
+						m.inputQueue[idx].questionSelected[i] = !m.inputQueue[idx].questionSelected[i]
 						m.refreshPanels()
 						return m, nil
 					}
@@ -526,7 +587,7 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 				if keybind.Matches(msg, m.keys.QConfirm) {
 					var selected []string
 					for i, opt := range q.Options {
-						if m.questionSelected[i] {
+						if m.inputQueue[idx].questionSelected[i] {
 							selected = append(selected, opt.Label)
 						}
 					}
@@ -544,41 +605,16 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 			}
 		}
 		return m, nil
-	}
 
-	// When awaiting user text input or composing a message, route keys to the textarea.
-	if m.pendingPrompt != nil || m.composingMessage {
-		if m.composingMessage && keybind.Matches(msg, m.keys.ComposeCancel) {
-			// Cancel compose — return to the verdict picker.
-			m.composingMessage = false
-			m.promptTextarea = textarea.Model{}
-			m.refreshPanels()
-			return m, nil
-		}
+	case inputKindPrompt:
 		if keybind.Matches(msg, m.keys.Submit) {
 			text := m.promptTextarea.Value()
-			if m.composingMessage {
-				if text == "" {
-					return m, nil
-				}
-				rev := m.pendingReview
-				m.composingMessage = false
-				m.pendingReview = nil
-				m.promptTextarea = textarea.Model{}
-				m.focus = focusSteps
-				m.refreshPanels()
-				return m, func() tea.Msg {
-					return reviewMessageMsg{
-						runID:  rev.RunID,
-						stepID: rev.StepID,
-						text:   text,
-					}
-				}
+			if text == "" {
+				return m, nil
 			}
-			pr := m.pendingPrompt
-			m.pendingPrompt = nil
+			pr := entry.prompt
+			m.removeEntryAt(m.activeInputIdx)
 			m.promptTextarea = textarea.Model{}
-			m.focus = focusSteps
 			m.refreshPanels()
 			return m, func() tea.Msg {
 				return userInputResponseMsg{
@@ -593,31 +629,46 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 		m.promptTextarea, taCmd = m.promptTextarea.Update(msg)
 		m.refreshPanels()
 		return m, taCmd
-	}
 
-	// Review verdict: digit keys 1–9 select a choice; m composes a message; esc/q
-	// leaves to the runs list.
-	if m.pendingReview != nil {
-		if m.pendingReview.AllowMessage && keybind.Matches(msg, m.keys.Message) {
-			m.composingMessage = true
+	case inputKindReview:
+		if entry.composing {
+			if keybind.Matches(msg, m.keys.ComposeCancel) {
+				m.inputQueue[m.activeInputIdx].composing = false
+				m.promptTextarea = textarea.Model{}
+				m.refreshPanels()
+				return m, nil
+			}
+			if keybind.Matches(msg, m.keys.Submit) {
+				text := m.promptTextarea.Value()
+				if text == "" {
+					return m, nil
+				}
+				rev := entry.review
+				m.removeEntryAt(m.activeInputIdx)
+				m.promptTextarea = textarea.Model{}
+				m.refreshPanels()
+				return m, func() tea.Msg {
+					return reviewMessageMsg{runID: rev.RunID, stepID: rev.StepID, text: text}
+				}
+			}
+			var taCmd tea.Cmd
+			m.promptTextarea, taCmd = m.promptTextarea.Update(msg)
+			m.refreshPanels()
+			return m, taCmd
+		}
+		if entry.review.AllowMessage && keybind.Matches(msg, m.keys.Message) {
+			m.inputQueue[m.activeInputIdx].composing = true
 			m.promptTextarea = newInputTextarea("Message to agent…", m.gateInnerWidth(), 4)
 			m.refreshPanels()
 			return m, textarea.Blink
 		}
-		choices := m.pendingReview.Choices
-		for i, ch := range choices {
-			key := fmt.Sprintf("%d", i+1)
-			if msg.String() == key {
-				rev := m.pendingReview
-				m.pendingReview = nil
-				m.focus = focusSteps
+		for i, ch := range entry.review.Choices {
+			if msg.String() == fmt.Sprintf("%d", i+1) {
+				rev := entry.review
+				m.removeEntryAt(m.activeInputIdx)
 				m.refreshPanels()
 				return m, func() tea.Msg {
-					return reviewVerdictMsg{
-						runID:   rev.RunID,
-						stepID:  rev.StepID,
-						verdict: ch,
-					}
+					return reviewVerdictMsg{runID: rev.RunID, stepID: rev.StepID, verdict: ch}
 				}
 			}
 		}
@@ -689,67 +740,68 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		if ev.To == step.StatusSucceeded || ev.To == step.StatusFailed || ev.To == step.StatusSkipped {
 			m.steps[i].end = time.Now()
 		}
-		// Clear stale review or prompt when the step reaches a terminal state.
-		if ev.To == step.StatusSucceeded || ev.To == step.StatusFailed || ev.To == step.StatusSkipped {
-			if m.pendingReview != nil && m.pendingReview.StepID == ev.StepID {
-				m.pendingReview = nil
+		// Remove every queue entry for a step that is no longer blocked. Prune on any
+		// transition away from StatusNeedsInput, and on all terminal transitions.
+		if ev.To != step.StatusNeedsInput {
+			for i := len(m.inputQueue) - 1; i >= 0; i-- {
+				if m.inputQueue[i].stepID == ev.StepID {
+					m.removeEntryAt(i)
+				}
 			}
-			if m.pendingPrompt != nil && m.pendingPrompt.StepID == ev.StepID {
-				m.pendingPrompt = nil
+			// If the pruned step had an active textarea entry, clear the textarea.
+			if len(m.inputQueue) == 0 {
 				m.promptTextarea = textarea.Model{}
 			}
-		}
-		// Clear pending input when the step is no longer blocked (e.g. resumed or failed).
-		if m.pendingInput != nil && m.pendingInput.StepID == ev.StepID && ev.To != step.StatusNeedsInput {
-			m.pendingInput = nil
-			m.promptTextarea = textarea.Model{}
-		}
-		// Clear pending question when the step resumes or reaches a terminal state.
-		if m.pendingQuestion != nil && m.pendingQuestion.StepID == ev.StepID && ev.To != step.StatusNeedsInput {
-			m.pendingQuestion = nil
-			m.questionSelected = nil
-			m.questionAnswers = nil
 		}
 
 	case engine.ReviewRequest:
 		if ev.RunID != m.runID {
 			return m, nil
 		}
-		m.pendingReview = &ev
+		// Retain the request so the Transcript panel can show the diff when the step
+		// is selected (Unit 5), even after the queue entry is answered.
 		if m.reviews == nil {
 			m.reviews = make(map[string]engine.ReviewRequest)
 		}
-		// Retain the request so the step's chat drill-in can show the diff/choices
-		// after the verdict clears pendingReview.
 		m.reviews[ev.StepID] = ev
-		// A gate auto-focuses on arrival so answering is a zero-navigation default,
-		// but it is non-blocking — the user can tab away to read the transcript and
-		// tab back (ADR 0002).
-		m.focus = focusGate
+		// Append a queue entry. Decision 6: no focus steal on arrival.
+		evCopy := ev
+		m.inputQueue = append(m.inputQueue, pendingInputEntry{
+			kind:   inputKindReview,
+			stepID: ev.StepID,
+			review: &evCopy,
+		})
 
 	case engine.InputRequest:
 		if ev.RunID != m.runID {
 			return m, nil
 		}
-		m.pendingInput = &ev
-		m.focus = focusGate
-		m.promptTextarea = newInputTextarea("Your response to the agent…", m.gateInnerWidth(), 4)
-		return m, textarea.Blink
+		// Decision 6: no focus steal on arrival.
+		evCopy := ev
+		m.inputQueue = append(m.inputQueue, pendingInputEntry{
+			kind:    inputKindRequest,
+			stepID:  ev.StepID,
+			request: &evCopy,
+		})
 
 	case engine.AgentQuestion:
 		if ev.RunID != m.runID {
 			return m, nil
 		}
-		m.pendingQuestion = &ev
-		m.questionIdx = 0
-		m.questionSelected = make(map[int]bool)
-		m.questionAnswers = nil
-		m.focus = focusGate
 		// Update the step badge immediately — the scheduler inbox notification
 		// may be dropped under load, so drive the display from this reliable event.
 		if idx, ok := m.index[ev.StepID]; ok {
 			m.steps[idx].status = step.StatusNeedsInput
 		}
+		// Decision 6: no focus steal on arrival.
+		evCopy := ev
+		m.inputQueue = append(m.inputQueue, pendingInputEntry{
+			kind:             inputKindQuestion,
+			stepID:           ev.StepID,
+			toolUseID:        ev.ToolUseID,
+			question:         &evCopy,
+			questionSelected: make(map[int]bool),
+		})
 
 	case engine.StepMessage:
 		if ev.RunID != m.runID {
@@ -778,11 +830,13 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		if ev.RunID != m.runID {
 			return m, nil
 		}
-		m.pendingPrompt = &ev
-		m.focus = focusGate
-		// enter submits the response; newlines are inserted with alt/shift+enter.
-		m.promptTextarea = newInputTextarea(ev.Label, m.gateInnerWidth(), 4)
-		return m, textarea.Blink
+		// Decision 6: no focus steal on arrival.
+		evCopy := ev
+		m.inputQueue = append(m.inputQueue, pendingInputEntry{
+			kind:   inputKindPrompt,
+			stepID: ev.StepID,
+			prompt: &evCopy,
+		})
 
 	case engine.StepOutput:
 		if ev.RunID != m.runID {
@@ -866,7 +920,9 @@ func (m *monitorModel) resize() {
 		m.chatVP.SetWidth(m.transcriptInnerW)
 		m.chatVP.SetHeight(innerH)
 	}
-	if m.pendingPrompt != nil || m.composingMessage || m.pendingInput != nil {
+	if entry, ok := m.activeEntry(); ok &&
+		(entry.kind == inputKindRequest || entry.kind == inputKindPrompt ||
+			(entry.kind == inputKindReview && entry.composing)) {
 		m.promptTextarea.SetWidth(m.gateInnerWidth())
 	}
 	m.rebuildRenderer()
@@ -1048,79 +1104,80 @@ func (m monitorModel) writeFailureReasons(b *strings.Builder) {
 	}
 }
 
-// gateStrip renders the currently-pending human-in-the-loop gate (review verdict
-// picker, block_on input textarea, AskUserQuestion option list, or from="user"
-// prompt) as a full-width titled panel beneath the two panels, above the footer.
-// It is a non-blocking focus region (ADR 0002): its border is primary only when
-// the Gate holds focus. Returns "" when no gate is pending (no strip is rendered
-// and resize accounts for zero height). At most one gate is pending at a time.
+// gateStrip renders the currently-active human-in-the-loop gate entry as a
+// full-width titled panel beneath the two panels, above the footer. It is a
+// non-blocking focus region (ADR 0002): its border is primary only when the Gate
+// holds focus. Returns "" when no gate is pending (empty queue). The full
+// per-kind rendering and fixed-height layout land in tasks 2.0–4.0; this version
+// preserves the prior single-entry rendering semantics via activeEntry().
 func (m monitorModel) gateStrip() string {
 	if !m.hasGate() {
 		return ""
 	}
-	hFrame, vFrame := panelFrame()
-	innerW := m.width - hFrame
-	if innerW < 1 {
-		innerW = 1
-	}
+	_, vFrame := panelFrame()
 
+	entry, _ := m.activeEntry()
 	var title string
 	var b strings.Builder
 
-	switch {
-	case m.pendingInput != nil:
-		title = "Agent input — " + m.pendingInput.StepID
-		b.WriteString(m.promptTextarea.View())
-
-	case m.pendingQuestion != nil && m.questionIdx < len(m.pendingQuestion.Questions):
-		q := m.pendingQuestion.Questions[m.questionIdx]
-		title = "Agent question — " + m.pendingQuestion.StepID
-		if q.Header != "" {
-			b.WriteString("  " + theme.Question.Render("["+q.Header+"]") + "\n")
-		}
-		b.WriteString("  " + q.Question + "\n\n")
-		for i, opt := range q.Options {
-			if q.MultiSelect {
-				mark := "[ ]"
-				if m.questionSelected[i] {
-					mark = "[x]"
-				}
-				b.WriteString(fmt.Sprintf("    %s [%d] %s", mark, i+1, opt.Label))
-			} else {
-				b.WriteString(fmt.Sprintf("    [%d] %s", i+1, opt.Label))
-			}
-			if opt.Description != "" {
-				b.WriteString("  —  " + opt.Description)
-			}
-			b.WriteString("\n")
-		}
-		if q.MultiSelect {
-			b.WriteString("\n    " + theme.Chat.Hint.Render("enter to confirm selection") + "\n")
-		}
-		if len(m.pendingQuestion.Questions) > 1 {
-			b.WriteString("    " + theme.Chat.Hint.Render(
-				fmt.Sprintf("question %d of %d", m.questionIdx+1, len(m.pendingQuestion.Questions))) + "\n")
-		}
-
-	case m.pendingPrompt != nil:
-		title = "Input — " + m.pendingPrompt.StepID
-		b.WriteString("  " + theme.Question.Render(m.pendingPrompt.Label) + "\n\n")
-		b.WriteString(m.promptTextarea.View())
-
-	case m.pendingReview != nil:
-		title = "Review — " + m.pendingReview.StepID
-		if m.pendingReview.Diff != "" {
-			writeDiff(&b, m.pendingReview.Diff)
-			b.WriteString("\n")
-		}
-		if m.composingMessage {
+	if entry != nil {
+		switch entry.kind {
+		case inputKindRequest:
+			title = "Agent input — " + entry.stepID
 			b.WriteString(m.promptTextarea.View())
-		} else {
-			for i, ch := range m.pendingReview.Choices {
-				b.WriteString(fmt.Sprintf("    [%d] %s\n", i+1, ch))
+
+		case inputKindQuestion:
+			if entry.questionIdx < len(entry.question.Questions) {
+				q := entry.question.Questions[entry.questionIdx]
+				title = "Agent question — " + entry.stepID
+				if q.Header != "" {
+					b.WriteString("  " + theme.Question.Render("["+q.Header+"]") + "\n")
+				}
+				b.WriteString("  " + q.Question + "\n\n")
+				for i, opt := range q.Options {
+					if q.MultiSelect {
+						mark := "[ ]"
+						if entry.questionSelected[i] {
+							mark = "[x]"
+						}
+						b.WriteString(fmt.Sprintf("    %s [%d] %s", mark, i+1, opt.Label))
+					} else {
+						b.WriteString(fmt.Sprintf("    [%d] %s", i+1, opt.Label))
+					}
+					if opt.Description != "" {
+						b.WriteString("  —  " + opt.Description)
+					}
+					b.WriteString("\n")
+				}
+				if q.MultiSelect {
+					b.WriteString("\n    " + theme.Chat.Hint.Render("enter to confirm selection") + "\n")
+				}
+				if len(entry.question.Questions) > 1 {
+					b.WriteString("    " + theme.Chat.Hint.Render(
+						fmt.Sprintf("question %d of %d", entry.questionIdx+1, len(entry.question.Questions))) + "\n")
+				}
 			}
-			if m.pendingReview.AllowMessage {
-				b.WriteString("    [m] message\n")
+
+		case inputKindPrompt:
+			title = "Input — " + entry.stepID
+			b.WriteString("  " + theme.Question.Render(entry.prompt.Label) + "\n\n")
+			b.WriteString(m.promptTextarea.View())
+
+		case inputKindReview:
+			title = "Review — " + entry.stepID
+			if entry.review.Diff != "" {
+				writeDiff(&b, entry.review.Diff)
+				b.WriteString("\n")
+			}
+			if entry.composing {
+				b.WriteString(m.promptTextarea.View())
+			} else {
+				for i, ch := range entry.review.Choices {
+					b.WriteString(fmt.Sprintf("    [%d] %s\n", i+1, ch))
+				}
+				if entry.review.AllowMessage {
+					b.WriteString("    [m] message\n")
+				}
 			}
 		}
 	}
@@ -1140,23 +1197,25 @@ func (m monitorModel) gateStrip() string {
 }
 
 // advanceQuestion records the answer for the current question and advances the
-// question index. When all questions are answered it clears pendingQuestion and
-// returns a command emitting agentQuestionResponseMsg with the formatted answer.
+// question index on the active entry. When all questions are answered it removes
+// the entry and emits agentQuestionResponseMsg with the formatted answer.
 func (m monitorModel) advanceQuestion(answer string) (monitorModel, tea.Cmd) {
-	m.questionAnswers = append(m.questionAnswers, answer)
-	m.questionIdx++
-	m.questionSelected = make(map[int]bool)
+	idx := m.activeInputIdx
+	if idx < 0 || idx >= len(m.inputQueue) || m.inputQueue[idx].kind != inputKindQuestion {
+		return m, nil
+	}
+	m.inputQueue[idx].questionAnswers = append(m.inputQueue[idx].questionAnswers, answer)
+	m.inputQueue[idx].questionIdx++
+	m.inputQueue[idx].questionSelected = make(map[int]bool)
 
-	if m.questionIdx < len(m.pendingQuestion.Questions) {
+	if m.inputQueue[idx].questionIdx < len(m.inputQueue[idx].question.Questions) {
 		m.refreshPanels()
 		return m, nil
 	}
 
-	q := m.pendingQuestion
-	answers := m.questionAnswers
-	m.pendingQuestion = nil
-	m.questionAnswers = nil
-	m.focus = focusSteps
+	q := m.inputQueue[idx].question
+	answers := m.inputQueue[idx].questionAnswers
+	m.removeEntryAt(idx)
 	m.refreshPanels()
 	formatted := formatQuestionAnswers(q.Questions, answers)
 	return m, func() tea.Msg {
@@ -1604,38 +1663,47 @@ func (m monitorModel) footerView() string {
 		} else {
 			status = theme.Valid.Render("done")
 		}
-	} else if m.pendingInput != nil {
-		status = theme.Marker.Render("awaiting agent input")
-	} else if m.pendingQuestion != nil {
-		status = theme.Marker.Render("awaiting answer")
-	} else if m.pendingPrompt != nil {
-		status = theme.Marker.Render("awaiting user input")
-	} else if m.composingMessage {
-		status = theme.Marker.Render("composing message")
-	} else if m.pendingReview != nil {
-		status = theme.Marker.Render("awaiting review")
+	} else if entry, ok := m.activeEntry(); ok {
+		switch entry.kind {
+		case inputKindRequest:
+			status = theme.Marker.Render("awaiting agent input")
+		case inputKindQuestion:
+			status = theme.Marker.Render("awaiting answer")
+		case inputKindPrompt:
+			status = theme.Marker.Render("awaiting user input")
+		case inputKindReview:
+			if entry.composing {
+				status = theme.Marker.Render("composing message")
+			} else {
+				status = theme.Marker.Render("awaiting review")
+			}
+		}
 	} else {
 		status = theme.Running.Render("running")
 	}
 	var hint string
 	switch {
-	case m.focus == focusGate && m.pendingInput != nil:
-		hint = hintString(m.keys.Submit, m.keys.Newline, m.keys.FocusHint, m.keys.InputLeave)
-	case m.focus == focusGate && m.pendingQuestion != nil:
-		if m.questionIdx < len(m.pendingQuestion.Questions) && m.pendingQuestion.Questions[m.questionIdx].MultiSelect {
-			hint = hintString(m.keys.ToggleOpt, m.keys.QConfirm, m.keys.FocusHint, m.keys.QuestionCancel)
-		} else {
-			hint = hintString(m.keys.Answer, m.keys.FocusHint, m.keys.QuestionCancel)
-		}
-	case m.focus == focusGate && m.composingMessage:
-		hint = hintString(m.keys.Submit, m.keys.Newline, m.keys.ComposeCancel)
-	case m.focus == focusGate && m.pendingPrompt != nil:
-		hint = hintString(m.keys.Submit, m.keys.Newline, m.keys.FocusHint, m.keys.PromptLeave)
-	case m.focus == focusGate && m.pendingReview != nil:
-		if m.pendingReview.AllowMessage {
-			hint = hintString(m.keys.Verdict, m.keys.Message, m.keys.FocusHint, m.keys.ReviewLeave)
-		} else {
-			hint = hintString(m.keys.Verdict, m.keys.FocusHint, m.keys.ReviewLeave)
+	case m.focus == focusGate && m.hasGate():
+		entry := m.inputQueue[m.activeInputIdx]
+		switch entry.kind {
+		case inputKindRequest:
+			hint = hintString(m.keys.Submit, m.keys.Newline, m.keys.FocusHint, m.keys.InputLeave)
+		case inputKindQuestion:
+			if entry.questionIdx < len(entry.question.Questions) && entry.question.Questions[entry.questionIdx].MultiSelect {
+				hint = hintString(m.keys.ToggleOpt, m.keys.QConfirm, m.keys.FocusHint, m.keys.QuestionCancel)
+			} else {
+				hint = hintString(m.keys.Answer, m.keys.FocusHint, m.keys.QuestionCancel)
+			}
+		case inputKindReview:
+			if entry.composing {
+				hint = hintString(m.keys.Submit, m.keys.Newline, m.keys.ComposeCancel)
+			} else if entry.review.AllowMessage {
+				hint = hintString(m.keys.Verdict, m.keys.Message, m.keys.FocusHint, m.keys.ReviewLeave)
+			} else {
+				hint = hintString(m.keys.Verdict, m.keys.FocusHint, m.keys.ReviewLeave)
+			}
+		case inputKindPrompt:
+			hint = hintString(m.keys.Submit, m.keys.Newline, m.keys.FocusHint, m.keys.PromptLeave)
 		}
 	case m.focus == focusTranscript:
 		hint = hintString(m.keys.FocusFull, m.keys.Scroll, m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll)
