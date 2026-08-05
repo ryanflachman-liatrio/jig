@@ -249,6 +249,14 @@ func key(s string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyEsc}
 	case "enter":
 		return tea.KeyPressMsg{Code: tea.KeyEnter}
+	case "tab":
+		return tea.KeyPressMsg{Code: tea.KeyTab}
+	case "shift+tab":
+		return tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift}
+	case "left":
+		return tea.KeyPressMsg{Code: tea.KeyLeft}
+	case "right":
+		return tea.KeyPressMsg{Code: tea.KeyRight}
 	default:
 		return tea.KeyPressMsg{Code: []rune(s)[0], Text: s}
 	}
@@ -362,7 +370,7 @@ func TestMonitorReviewQueued(t *testing.T) {
 	if len(m.inputQueue) == 0 {
 		t.Fatal("review event not added to input queue")
 	}
-	if !strings.Contains(m.gateStrip(), "Review") {
+	if !strings.Contains(m.gateStrip(), "(review)") {
 		t.Fatalf("review gate strip not shown:\n%s", m.gateStrip())
 	}
 
@@ -459,7 +467,7 @@ func TestMonitorAgentQuestionShowsPanel(t *testing.T) {
 	}
 
 	body := m.gateStrip()
-	for _, want := range []string{"Agent question", "Which format should we use?", "[Format]", "[1] JSON", "[2] Text", "structured output"} {
+	for _, want := range []string{"(question)", "Which format should we use?", "[Format]", "[1] JSON", "[2] Text", "structured output"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("question body missing %q:\n%s", want, body)
 		}
@@ -820,30 +828,16 @@ func TestMonitorGateNonBlocking(t *testing.T) {
 		t.Fatalf("expected answer Beta, got %q", resp.answer)
 	}
 
-	// 3) Cancellation (esc/q) while gate-focused delivers the cancellation response
-	// so the reporter goroutine unblocks rather than hanging.
+	// 3) esc while gate-focused blurs to Steps (ADR 0005 §esc-blurs). The entry
+	// stays queued; cancellation delivery is task 4.5 (q key → "cancelled").
 	m = makeGate()
 	m.focus = focusGate
-	_, cmd = m.Update(key("esc"))
-	if cmd == nil {
-		t.Fatal("esc produced no command")
+	m, _ = m.Update(key("esc"))
+	if m.focus != focusSteps {
+		t.Fatalf("esc did not blur gate to Steps, focus=%v", m.focus)
 	}
-	var gotCancel bool
-	msg := cmd()
-	if batch, ok := msg.(tea.BatchMsg); ok {
-		for _, c := range batch {
-			if c == nil {
-				continue
-			}
-			if r, ok := c().(agentQuestionResponseMsg); ok && r.answer == "cancelled" {
-				gotCancel = true
-			}
-		}
-	} else if r, ok := msg.(agentQuestionResponseMsg); ok && r.answer == "cancelled" {
-		gotCancel = true
-	}
-	if !gotCancel {
-		t.Fatalf("esc cancellation did not emit agentQuestionResponseMsg{answer:\"cancelled\"}: %T", msg)
+	if len(m.inputQueue) == 0 {
+		t.Fatal("esc must not clear the queue — entry must remain for later answer")
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"jig/internal/engine"
 	"jig/internal/step"
@@ -226,4 +227,177 @@ func TestCycleFocusSkipsEmptyGate(t *testing.T) {
 	if next != focusSteps {
 		t.Fatalf("cycleFocus(+1) from focusTranscript with empty queue: got %v, want focusSteps", next)
 	}
+}
+
+// TestGateDraftPreservation verifies that per-entry drafts survive tab/shift+tab
+// navigation: typing into entry 2, tabbing to entry 1, and tabbing back restores
+// the text. Task 3.8 adds an arrow-exit variant to prove syncActiveTextarea is
+// also called on left/right panel exit.
+func TestGateDraftPreservation(t *testing.T) {
+	m := newMonitorWithSteps(t)
+
+	// Enqueue two InputRequest entries for distinct steps.
+	for _, id := range []string{"a", "b"} {
+		m, _ = m.Update(engineEventMsg{event: engine.InputRequest{RunID: "run-1", StepID: id}})
+	}
+	if len(m.inputQueue) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(m.inputQueue))
+	}
+
+	// Focus the gate so key events route there.
+	m.focus = focusGate
+	m.loadActiveTextarea() // sync textarea to active entry (idx 0)
+
+	// Tab to entry 2 (idx 1). Entry 1 draft should remain "".
+	m, _ = m.Update(key("tab"))
+	if m.activeInputIdx != 1 {
+		t.Fatalf("after tab: activeInputIdx = %d, want 1", m.activeInputIdx)
+	}
+
+	// Type "hello" into entry 2's textarea via the promptTextarea path.
+	m.promptTextarea.SetValue("hello")
+
+	// Tab back to entry 1. Entry 2's draft must be saved.
+	m, _ = m.Update(key("tab"))
+	if m.activeInputIdx != 0 {
+		t.Fatalf("after second tab: activeInputIdx = %d, want 0", m.activeInputIdx)
+	}
+	if got := m.inputQueue[1].draft; got != "hello" {
+		t.Fatalf("entry 2 draft after tab-away = %q, want %q", got, "hello")
+	}
+
+	// Tab back to entry 2 and confirm textarea is restored.
+	m, _ = m.Update(key("tab"))
+	if m.activeInputIdx != 1 {
+		t.Fatalf("after third tab: activeInputIdx = %d, want 1", m.activeInputIdx)
+	}
+	if got := m.promptTextarea.Value(); got != "hello" {
+		t.Fatalf("textarea value after returning to entry 2 = %q, want %q", got, "hello")
+	}
+
+	// 3.8 arrow-exit variant: type into entry 2, exit with right arrow, re-enter
+	// via tab, and confirm the draft is restored.
+	m.promptTextarea.SetValue("world")
+	m, _ = m.Update(key("right"))
+	if m.focus == focusGate {
+		t.Fatalf("right arrow did not exit the gate")
+	}
+	// Draft must be saved on panel exit.
+	if got := m.inputQueue[1].draft; got != "world" {
+		t.Fatalf("entry 2 draft after right-arrow exit = %q, want %q", got, "world")
+	}
+
+	// Tab back into gate (focuses gate region via cycleFocus since queue is non-empty).
+	m, _ = m.Update(key("tab"))
+	// Tab cycles region here (from focusSteps → focusTranscript → focusGate) until
+	// we land on the gate. Keep tabbing until focusGate.
+	for m.focus != focusGate {
+		m, _ = m.Update(key("tab"))
+	}
+	// Now tab within the gate to return to entry 2 (if not already there).
+	for m.activeInputIdx != 1 {
+		m, _ = m.Update(key("tab"))
+	}
+	if got := m.promptTextarea.Value(); got != "world" {
+		t.Fatalf("textarea value after re-entering gate entry 2 = %q, want %q", got, "world")
+	}
+}
+
+// TestGateEscBlurs verifies that esc while focusGate sets m.focus == focusSteps,
+// leaves the queue unchanged, and emits no showRunsMsg (Decision 6 / ADR 0005).
+func TestGateEscBlurs(t *testing.T) {
+	m := newMonitorWithSteps(t)
+
+	m, _ = m.Update(engineEventMsg{event: engine.InputRequest{RunID: "run-1", StepID: "a"}})
+	if len(m.inputQueue) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(m.inputQueue))
+	}
+	m.focus = focusGate
+
+	var runsNavigated bool
+	m2, cmd := m.Update(key("esc"))
+	if cmd != nil {
+		// Execute the command and check it does not produce a showRunsMsg.
+		result := cmd()
+		if _, ok := result.(showRunsMsg); ok {
+			runsNavigated = true
+		}
+	}
+
+	if m2.focus != focusSteps {
+		t.Fatalf("after esc: focus = %v, want focusSteps", m2.focus)
+	}
+	if got := len(m2.inputQueue); got != 1 {
+		t.Fatalf("after esc: inputQueue len = %d, want 1 (queue must not be cleared)", got)
+	}
+	if runsNavigated {
+		t.Fatal("esc emitted showRunsMsg — gate blur must not navigate away")
+	}
+}
+
+// captureUnit3Nav captures View() frames for the unit3-nav.txt proof artifact:
+// a two-entry queue showing [1/2], after tab → [2/2], after shift+tab → [1/2]
+// wrapping back from [1/2] to [2/2].
+func init() {
+	// Captured by TestGateDraftPreservation's setup above; we capture separately
+	// via TestGateNavFrames so it doesn't slow the draft test.
+	_ = captureUnit3NavFrames // called by TestGateNavFrames
+}
+
+func captureUnit3NavFrames(m monitorModel) {
+	frames := make([]string, 0, 3)
+
+	// Frame 1: [1 / 2] active.
+	frames = append(frames, stripANSI(m.View()))
+
+	// Frame 2: after tab → [2 / 2].
+	m2, _ := m.Update(key("tab"))
+	frames = append(frames, stripANSI(m2.View()))
+
+	// Frame 3: from [1/2] after shift+tab wraps to [2/2].
+	m3, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	frames = append(frames, stripANSI(m3.View()))
+
+	combined := strings.Join(frames, "\n\n--- frame ---\n\n")
+	_ = os.MkdirAll("../../docs/specs/02-spec-tui-persistent-agent-input/artifacts", 0o755)
+	_ = os.WriteFile(
+		"../../docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit3-nav.txt",
+		[]byte(combined),
+		0o644,
+	)
+}
+
+func TestGateNavFrames(t *testing.T) {
+	m := newMonitorWithSteps(t)
+
+	for _, id := range []string{"a", "b"} {
+		m, _ = m.Update(engineEventMsg{event: engine.InputRequest{RunID: "run-1", StepID: id}})
+	}
+	m.focus = focusGate
+	m.loadActiveTextarea()
+
+	// Verify [1 / 2] header is visible.
+	if !strings.Contains(m.View(), "[1 / 2]") {
+		t.Fatalf("expected [1 / 2] header in view:\n%s", stripANSI(m.View()))
+	}
+
+	// Tab → [2 / 2].
+	m2, _ := m.Update(key("tab"))
+	if m2.activeInputIdx != 1 {
+		t.Fatalf("after tab: activeInputIdx = %d, want 1", m2.activeInputIdx)
+	}
+	if !strings.Contains(m2.View(), "[2 / 2]") {
+		t.Fatalf("expected [2 / 2] header after tab:\n%s", stripANSI(m2.View()))
+	}
+
+	// shift+tab from [1/2] wraps to [2/2].
+	m3, _ := m.Update(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
+	if m3.activeInputIdx != 1 {
+		t.Fatalf("shift+tab from idx 0: activeInputIdx = %d, want 1 (wrap)", m3.activeInputIdx)
+	}
+	if !strings.Contains(m3.View(), "[2 / 2]") {
+		t.Fatalf("expected [2 / 2] after shift+tab wrap:\n%s", stripANSI(m3.View()))
+	}
+
+	captureUnit3NavFrames(m)
 }

@@ -174,16 +174,18 @@ type monitorKeys struct {
 	// gates
 	Submit         keybind.Binding // matched (enter: input/prompt/compose submit)
 	Newline        keybind.Binding // display-only (textarea-owned)
-	InputLeave     keybind.Binding // matched (esc, block_on gate → runs list)
-	PromptLeave    keybind.Binding // display-only ("esc runs list", prompt gate)
-	ComposeCancel  keybind.Binding // matched (esc, while composing)
+	GateBlur       keybind.Binding // matched (esc: blurs gate → Steps, all kinds; ADR 0005)
+	GateEntryNav   keybind.Binding // display-only ("tab/⇧tab entries", multi-entry queue)
+	InputLeave     keybind.Binding // retained for legacy footer refs; no longer triggers showRunsMsg
+	PromptLeave    keybind.Binding // display-only ("esc blur", prompt gate)
+	ComposeCancel  keybind.Binding // matched (esc, while composing — caught by GateBlur at top)
 	Message        keybind.Binding // matched (m, review gate)
-	ReviewLeave    keybind.Binding // matched (esc/q, review gate → runs list)
+	ReviewLeave    keybind.Binding // retained; esc caught by GateBlur; q unhandled until task 4
 	Verdict        keybind.Binding // display-only ("1-9 verdict")
 	Answer         keybind.Binding // display-only ("1-9 select answer")
 	ToggleOpt      keybind.Binding // display-only ("1-9 toggle", multiSelect)
 	QConfirm       keybind.Binding // matched (enter/space, multiSelect confirm)
-	QuestionCancel keybind.Binding // matched (esc/q, question gate)
+	QuestionCancel keybind.Binding // retained; esc caught by GateBlur; q → task 4.5
 }
 
 func defaultMonitorKeys() monitorKeys {
@@ -211,15 +213,17 @@ func defaultMonitorKeys() monitorKeys {
 
 		Submit:         keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "submit")),
 		Newline:        keybind.NewBinding(keybind.WithKeys("alt+enter", "shift+enter"), keybind.WithHelp("alt+enter", "newline")),
-		InputLeave:     keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "runs list")),
-		PromptLeave:    keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "runs list")),
-		ComposeCancel:  keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "cancel")),
+		GateBlur:       keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "blur")),
+		GateEntryNav:   keybind.NewBinding(keybind.WithKeys("tab", "shift+tab"), keybind.WithHelp("tab/⇧tab", "entries")),
+		InputLeave:     keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "blur")),
+		PromptLeave:    keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "blur")),
+		ComposeCancel:  keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "blur")),
 		Message:        keybind.NewBinding(keybind.WithKeys("m"), keybind.WithHelp("m", "message")),
-		ReviewLeave:    keybind.NewBinding(keybind.WithKeys("esc", "q"), keybind.WithHelp("esc", "runs list")),
+		ReviewLeave:    keybind.NewBinding(keybind.WithKeys("esc", "q"), keybind.WithHelp("esc", "blur")),
 		Verdict:        keybind.NewBinding(keybind.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"), keybind.WithHelp("1-9", "verdict")),
 		Answer:         keybind.NewBinding(keybind.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"), keybind.WithHelp("1-9", "select answer")),
 		ToggleOpt:      keybind.NewBinding(keybind.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"), keybind.WithHelp("1-9", "toggle")),
 		QConfirm:       keybind.NewBinding(keybind.WithKeys("enter", " "), keybind.WithHelp("enter", "confirm")),
-		QuestionCancel: keybind.NewBinding(keybind.WithKeys("esc", "q"), keybind.WithHelp("esc", "runs list")),
+		QuestionCancel: keybind.NewBinding(keybind.WithKeys("esc", "q"), keybind.WithHelp("esc", "blur")),
 	}
 }

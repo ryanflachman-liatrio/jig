@@ -168,7 +168,7 @@ Unit 2; Design "Layout height".)
   `TestCycleFocusSkipsEmptyGate`. Capture the empty-strip `View()` to
   `artifacts/unit2-empty-strip.txt` (create the `artifacts/` dir).
 
-### [ ] 3.0 Queue navigation, focus & per-entry draft preservation
+### [x] 3.0 Queue navigation, focus & per-entry draft preservation
 
 With the gate focused, `tab`/`shift+tab` cycle `activeInputIdx` (mod len), not
 regions; per-entry `draft` survives navigation; a themed `[N / M]  step-id
@@ -189,38 +189,38 @@ regions; per-entry `draft` survives navigation; a themed `[N / M]  step-id
 
 #### 3.0 Tasks
 
-- [ ] 3.1 In `Update`'s `tea.KeyPressMsg` block (`monitor.go:289–303`), intercept
+- [x] 3.1 In `Update`'s `tea.KeyPressMsg` block (`monitor.go:289–303`), intercept
   `FocusNext`/`FocusPrev` **before** the `cycleFocus` calls **only when**
   `m.focus == focusGate`: advance/retreat `m.activeInputIdx = (idx ± 1 + n) % n`
   (no-op when `n == 1`), save the outgoing entry's textarea value to its `draft`,
   rebuild `m.promptTextarea` from the new entry's `draft` via `newInputTextarea`,
   `refreshPanels()`, return. When `m.focus != focusGate`, fall through to the
   existing `cycleFocus` handling unchanged.
-- [ ] 3.2 Add a `syncActiveTextarea()` helper: saves
+- [x] 3.2 Add a `syncActiveTextarea()` helper: saves
   `m.promptTextarea.Value()` into `m.inputQueue[activeInputIdx].draft` (guarded
   for request/prompt/review-compose kinds), used on every navigate/blur. Add its
   inverse `loadActiveTextarea()` that rebuilds `m.promptTextarea` from the active
   entry's `draft` with the correct placeholder/rows for its kind.
-- [ ] 3.3 In `PanelFocus` (`left`/`right`, `monitor.go:298`) handling and the
+- [x] 3.3 In `PanelFocus` (`left`/`right`, `monitor.go:298`) handling and the
   `esc`-in-gate path, call `syncActiveTextarea()` before leaving so drafts
   persist. `esc` in the gate sets `m.focus = focusSteps` and returns `nil` (no
   `showRunsMsg`) — see 3.5.
-- [ ] 3.4 Add a `[N / M]  step-id  (kind)` header line at the top of the non-empty
+- [x] 3.4 Add a `[N / M]  step-id  (kind)` header line at the top of the non-empty
   `gateStrip()` body, styled with a theme token (reuse `theme.Title` or add
   `theme.GateHeader` in `styles.go` from existing tokens — never a bare
   `lipgloss.NewStyle()`). `N` is `activeInputIdx+1`, `M` is `len(inputQueue)`,
   `kind` is a short label per `pendingInputKind` (`review`/`input`/`question`/`prompt`).
-- [ ] 3.5 In `updateGate` (`monitor.go:470`), replace the per-field `InputLeave`/
+- [x] 3.5 In `updateGate` (`monitor.go:470`), replace the per-field `InputLeave`/
   `ReviewLeave`/`QuestionCancel`→`showRunsMsg` branches with a single `esc`
   (blur) handler: `syncActiveTextarea()`, `m.focus = focusSteps`,
   `refreshPanels()`, `return m, nil`. `left`/`right` continue to be handled at the
   top level (298) and exit to panels.
-- [ ] 3.6 Ensure `removeEntryAt` (1.3) is the single place that advances/clamps
+- [x] 3.6 Ensure `removeEntryAt` (1.3) is the single place that advances/clamps
   `activeInputIdx` and rebuilds the active textarea after a removal; emptying the
   queue sets `m.focus = focusSteps`.
-- [ ] 3.7 Write `TestGateDraftPreservation` and `TestGateEscBlurs`. Capture the
+- [x] 3.7 Write `TestGateDraftPreservation` and `TestGateEscBlurs`. Capture the
   two-entry `tab`/`shift+tab` `View()` frames to `artifacts/unit3-nav.txt`.
-- [ ] 3.8 (F1) Add a `left`/`right`-exit variant to `TestGateDraftPreservation`
+- [x] 3.8 (F1) Add a `left`/`right`-exit variant to `TestGateDraftPreservation`
   (or a sibling case): type a partial answer, exit the gate with `right`/`left`,
   re-enter via `tab`, and assert the draft is restored — proving arrow-exit calls
   `syncActiveTextarea()` (task 3.3), not only `tab`.

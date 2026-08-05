@@ -342,15 +342,38 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 		// cursor moved off tab to n/N (Resolved Decision 9), so tab is unambiguous.
 		switch {
 		case keybind.Matches(msg, m.keys.FocusNext):
+			// When the gate has focus, tab cycles queue entries instead of regions
+			// (ADR 0005 §entry-navigation). With a single entry the index is stable.
+			if m.focus == focusGate {
+				if n := len(m.inputQueue); n > 1 {
+					m.syncActiveTextarea()
+					m.activeInputIdx = (m.activeInputIdx + 1) % n
+					m.loadActiveTextarea()
+					m.refreshPanels()
+				}
+				return m, nil
+			}
 			m.focus = m.cycleFocus(+1)
 			m.refreshPanels()
 			return m, nil
 		case keybind.Matches(msg, m.keys.FocusPrev):
+			if m.focus == focusGate {
+				if n := len(m.inputQueue); n > 1 {
+					m.syncActiveTextarea()
+					m.activeInputIdx = (m.activeInputIdx - 1 + n) % n
+					m.loadActiveTextarea()
+					m.refreshPanels()
+				}
+				return m, nil
+			}
 			m.focus = m.cycleFocus(-1)
 			m.refreshPanels()
 			return m, nil
 		case keybind.Matches(msg, m.keys.PanelFocus):
-			// left/right alias for moving between the two side-by-side panels.
+			// left/right exits the gate first — save the draft before leaving.
+			if m.focus == focusGate {
+				m.syncActiveTextarea()
+			}
 			m.focus = m.aliasPanelFocus(msg.String())
 			m.refreshPanels()
 			return m, nil
@@ -407,7 +430,8 @@ func (m monitorModel) activeEntry() (*pendingInputEntry, bool) {
 // removeEntryAt deletes the entry at index i, then clamps/advances activeInputIdx:
 // the next entry stays at position i (entries shift left); if the removed entry
 // was last, activeInputIdx clamps to the new last; if the queue empties, focus
-// returns to Steps.
+// returns to Steps. Always rebuilds promptTextarea via loadActiveTextarea so the
+// textarea tracks the new active entry without callers needing to know.
 func (m *monitorModel) removeEntryAt(i int) {
 	if i < 0 || i >= len(m.inputQueue) {
 		return
@@ -416,10 +440,79 @@ func (m *monitorModel) removeEntryAt(i int) {
 	if len(m.inputQueue) == 0 {
 		m.activeInputIdx = 0
 		m.focus = focusSteps
+		m.loadActiveTextarea()
 		return
 	}
 	if m.activeInputIdx >= len(m.inputQueue) {
 		m.activeInputIdx = len(m.inputQueue) - 1
+	}
+	m.loadActiveTextarea()
+}
+
+// syncActiveTextarea saves the current textarea content into the active entry's
+// draft field so it survives tab-navigation between entries or a gate blur.
+func (m *monitorModel) syncActiveTextarea() {
+	if m.activeInputIdx < 0 || m.activeInputIdx >= len(m.inputQueue) {
+		return
+	}
+	entry := &m.inputQueue[m.activeInputIdx]
+	switch entry.kind {
+	case inputKindRequest, inputKindPrompt:
+		entry.draft = m.promptTextarea.Value()
+	case inputKindReview:
+		if entry.composing {
+			entry.draft = m.promptTextarea.Value()
+		}
+	}
+}
+
+// loadActiveTextarea rebuilds m.promptTextarea from the active entry's draft
+// with the correct placeholder and height for its kind. Called after entry
+// navigation (tab/shift+tab) and after removeEntryAt advances the index.
+func (m *monitorModel) loadActiveTextarea() {
+	if m.activeInputIdx < 0 || m.activeInputIdx >= len(m.inputQueue) {
+		m.promptTextarea = textarea.Model{}
+		return
+	}
+	entry := &m.inputQueue[m.activeInputIdx]
+	switch entry.kind {
+	case inputKindRequest:
+		ta := newInputTextarea("Message to agent…", m.gateInnerWidth(), gateTextareaRows)
+		ta.SetValue(entry.draft)
+		m.promptTextarea = ta
+	case inputKindPrompt:
+		label := entry.prompt.Label
+		if label == "" {
+			label = "Input…"
+		}
+		ta := newInputTextarea(label, m.gateInnerWidth(), gateTextareaRows)
+		ta.SetValue(entry.draft)
+		m.promptTextarea = ta
+	case inputKindReview:
+		if entry.composing {
+			ta := newInputTextarea("Message to agent…", m.gateInnerWidth(), gateTextareaRows)
+			ta.SetValue(entry.draft)
+			m.promptTextarea = ta
+		} else {
+			m.promptTextarea = textarea.Model{}
+		}
+	default: // inputKindQuestion
+		m.promptTextarea = textarea.Model{}
+	}
+}
+
+// kindName returns the short display label for a gate entry kind used in the
+// [N / M]  step-id  (kind) header.
+func kindName(k pendingInputKind) string {
+	switch k {
+	case inputKindReview:
+		return "review"
+	case inputKindQuestion:
+		return "question"
+	case inputKindPrompt:
+		return "prompt"
+	default:
+		return "input"
 	}
 }
 
@@ -552,11 +645,17 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 		return m, nil
 	}
 
+	// esc blurs the gate to Steps without navigating away (ADR 0005 §esc-blurs).
+	// Handled before the per-kind switch so all kinds share one blur path.
+	if keybind.Matches(msg, m.keys.GateBlur) {
+		m.syncActiveTextarea()
+		m.focus = focusSteps
+		m.refreshPanels()
+		return m, nil
+	}
+
 	switch entry.kind {
 	case inputKindRequest:
-		if keybind.Matches(msg, m.keys.InputLeave) {
-			return m, func() tea.Msg { return showRunsMsg{} }
-		}
 		if keybind.Matches(msg, m.keys.Submit) {
 			text := m.promptTextarea.Value()
 			if text == "" {
@@ -576,23 +675,6 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 		return m, taCmd
 
 	case inputKindQuestion:
-		if keybind.Matches(msg, m.keys.QuestionCancel) {
-			// Deliver a cancellation answer so the blocked reporter goroutine
-			// unblocks and Claude receives a tool_result instead of hanging.
-			q := entry.question
-			m.removeEntryAt(m.activeInputIdx)
-			return m, tea.Batch(
-				func() tea.Msg {
-					return agentQuestionResponseMsg{
-						runID:     q.RunID,
-						stepID:    q.StepID,
-						toolUseID: q.ToolUseID,
-						answer:    "cancelled",
-					}
-				},
-				func() tea.Msg { return showRunsMsg{} },
-			)
-		}
 		idx := m.activeInputIdx
 		if m.inputQueue[idx].questionIdx < len(entry.question.Questions) {
 			q := entry.question.Questions[m.inputQueue[idx].questionIdx]
@@ -691,9 +773,6 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 					return reviewVerdictMsg{runID: rev.RunID, stepID: rev.StepID, verdict: ch}
 				}
 			}
-		}
-		if keybind.Matches(msg, m.keys.ReviewLeave) {
-			return m, func() tea.Msg { return showRunsMsg{} }
 		}
 		return m, nil
 	}
@@ -1185,19 +1264,21 @@ func (m monitorModel) gateStrip() string {
 	}
 
 	entry, _ := m.activeEntry()
-	var title string
 	var b strings.Builder
 
 	if entry != nil {
+		// [N / M]  step-id  (kind) header above every active entry body (task 3.4).
+		n := len(m.inputQueue)
+		header := fmt.Sprintf("[%d / %d]  %s  (%s)", m.activeInputIdx+1, n, entry.stepID, kindName(entry.kind))
+		b.WriteString(theme.Title.Render(header) + "\n")
+
 		switch entry.kind {
 		case inputKindRequest:
-			title = "Agent input — " + entry.stepID
 			b.WriteString(m.promptTextarea.View())
 
 		case inputKindQuestion:
 			if entry.questionIdx < len(entry.question.Questions) {
 				q := entry.question.Questions[entry.questionIdx]
-				title = "Agent question — " + entry.stepID
 				if q.Header != "" {
 					b.WriteString("  " + theme.Question.Render("["+q.Header+"]") + "\n")
 				}
@@ -1227,12 +1308,10 @@ func (m monitorModel) gateStrip() string {
 			}
 
 		case inputKindPrompt:
-			title = "Input — " + entry.stepID
 			b.WriteString("  " + theme.Question.Render(entry.prompt.Label) + "\n\n")
 			b.WriteString(m.promptTextarea.View())
 
 		case inputKindReview:
-			title = "Review — " + entry.stepID
 			if entry.review.Diff != "" {
 				writeDiff(&b, entry.review.Diff)
 				b.WriteString("\n")
@@ -1250,7 +1329,7 @@ func (m monitorModel) gateStrip() string {
 		}
 	}
 
-	return panel(title, b.String(), m.width, fixedH, m.focus == focusGate)
+	return panel("Agent input", b.String(), m.width, fixedH, m.focus == focusGate)
 }
 
 // advanceQuestion records the answer for the current question and advances the
@@ -1721,13 +1800,18 @@ func (m monitorModel) footerView() string {
 			status = theme.Valid.Render("done")
 		}
 	} else if entry, ok := m.activeEntry(); ok {
+		n := len(m.inputQueue)
+		queueSuffix := ""
+		if n > 1 {
+			queueSuffix = fmt.Sprintf(" (%d pending)", n)
+		}
 		switch entry.kind {
 		case inputKindRequest:
-			status = theme.Marker.Render("awaiting agent input")
+			status = theme.Marker.Render("awaiting agent input" + queueSuffix)
 		case inputKindQuestion:
-			status = theme.Marker.Render("awaiting answer")
+			status = theme.Marker.Render("awaiting answer" + queueSuffix)
 		case inputKindPrompt:
-			status = theme.Marker.Render("awaiting user input")
+			status = theme.Marker.Render("awaiting user input" + queueSuffix)
 		case inputKindReview:
 			if entry.composing {
 				status = theme.Marker.Render("composing message")
@@ -1742,25 +1826,30 @@ func (m monitorModel) footerView() string {
 	switch {
 	case m.focus == focusGate && m.hasGate():
 		entry := m.inputQueue[m.activeInputIdx]
+		// Show the entry-cycle hint only when there is more than one entry.
+		entryNav := m.keys.GateEntryNav
+		if len(m.inputQueue) < 2 {
+			entryNav.SetEnabled(false)
+		}
 		switch entry.kind {
 		case inputKindRequest:
-			hint = hintString(m.keys.Submit, m.keys.Newline, m.keys.FocusHint, m.keys.InputLeave)
+			hint = hintString(m.keys.Submit, m.keys.Newline, entryNav, m.keys.GateBlur)
 		case inputKindQuestion:
 			if entry.questionIdx < len(entry.question.Questions) && entry.question.Questions[entry.questionIdx].MultiSelect {
-				hint = hintString(m.keys.ToggleOpt, m.keys.QConfirm, m.keys.FocusHint, m.keys.QuestionCancel)
+				hint = hintString(m.keys.ToggleOpt, m.keys.QConfirm, entryNav, m.keys.GateBlur)
 			} else {
-				hint = hintString(m.keys.Answer, m.keys.FocusHint, m.keys.QuestionCancel)
+				hint = hintString(m.keys.Answer, entryNav, m.keys.GateBlur)
 			}
 		case inputKindReview:
 			if entry.composing {
-				hint = hintString(m.keys.Submit, m.keys.Newline, m.keys.ComposeCancel)
+				hint = hintString(m.keys.Submit, m.keys.Newline, m.keys.GateBlur)
 			} else if entry.review.AllowMessage {
-				hint = hintString(m.keys.Verdict, m.keys.Message, m.keys.FocusHint, m.keys.ReviewLeave)
+				hint = hintString(m.keys.Verdict, m.keys.Message, entryNav, m.keys.GateBlur)
 			} else {
-				hint = hintString(m.keys.Verdict, m.keys.FocusHint, m.keys.ReviewLeave)
+				hint = hintString(m.keys.Verdict, entryNav, m.keys.GateBlur)
 			}
 		case inputKindPrompt:
-			hint = hintString(m.keys.Submit, m.keys.Newline, m.keys.FocusHint, m.keys.PromptLeave)
+			hint = hintString(m.keys.Submit, m.keys.Newline, entryNav, m.keys.GateBlur)
 		}
 	case m.focus == focusTranscript:
 		hint = hintString(m.keys.FocusFull, m.keys.Scroll, m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll)
