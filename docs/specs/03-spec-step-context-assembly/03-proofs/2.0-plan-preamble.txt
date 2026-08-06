@@ -1,0 +1,15 @@
+## Workflow context
+
+You are step `plan` in workflow `feature`.
+
+Upstream (already complete):
+- `research_backend` (succeeded)
+- `research_frontend` (succeeded)
+- `security_scan` (succeeded)
+These reach you as the inputs listed below; this section is orientation only.
+
+Downstream (what your output feeds):
+- `plan_review` (human review) — a person reviews your output
+- `implement` (agent) — consumes your `tasks`, `approach` (conditional on `plan_review == 'approve'`)
+
+---
