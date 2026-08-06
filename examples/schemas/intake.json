@@ -1,16 +1,8 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["summary", "status", "complexity", "areas"],
+  "required": ["complexity", "areas"],
   "properties": {
-    "summary": {
-      "type": "string",
-      "description": "Human-facing markdown summary of the request."
-    },
-    "status": {
-      "type": "string",
-      "enum": ["ready", "needs_info", "rejected"]
-    },
     "complexity": {
       "type": "string",
       "enum": ["small", "medium", "large"]

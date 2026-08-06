@@ -175,7 +175,8 @@ func (v *validator) resolveSchemas() {
 }
 
 // checkSchema enforces that a step has at most one output shape and that
-// structured output is only declared on producer (agent) steps.
+// structured output is only declared on producer (agent) steps. It also
+// rejects declared field names that collide with the base schema.
 func (v *validator) checkSchema(s *Step) {
 	hasScalar := s.OutputType.Kind == OutputBool || s.OutputType.Kind == OutputEnum
 	// After resolveSchemas an inline schema has File=="" while a file-loaded one
@@ -196,6 +197,15 @@ func (v *validator) checkSchema(s *Step) {
 	}
 	if inline && len(s.Schema.Fields) == 0 {
 		v.errf("step %q [step.schema] declares no fields", s.ID)
+	}
+	// Base schema fields are reserved across all agent steps; collisions are
+	// caught here so the merged schema at dispatch time is always unambiguous.
+	if s.Schema != nil {
+		for _, f := range s.Schema.Fields {
+			if BaseFieldNames[f.Name] {
+				v.errf("step %q [step.schema] field %q is reserved by the base schema", s.ID, f.Name)
+			}
+		}
 	}
 }
 
@@ -255,11 +265,9 @@ func (v *validator) checkAgent(s *Step) {
 		} else if cond.Step != s.ID {
 			v.errf("agent step %q block_on: condition must reference this step's own output (got %q, want %q)", s.ID, cond.Step, s.ID)
 		} else if len(cond.Field) > 0 {
-			if s.Schema == nil {
-				v.errf("agent step %q block_on references field %q but step has no [step.schema]", s.ID, strings.Join(cond.Field, "."))
-			} else {
-				v.checkFieldRef(s.ID, "block_on", s, cond.Field)
-			}
+			// Agent steps always have the base schema; checkFieldRef resolves
+			// against the merged (base + declared) schema.
+			v.checkFieldRef(s.ID, "block_on", s, cond.Field)
 		}
 	}
 }
@@ -354,17 +362,26 @@ func (v *validator) checkUserInput(s *Step, in Input) {
 }
 
 // checkFieldRef verifies a dotted field path resolves in the target step's
-// output schema, returning the named Field. A target whose schema_file is still
-// unresolved (baseDir == "") is skipped rather than flagged.
+// output schema, returning the named Field. For agent steps the effective
+// schema is the merged base + declared schema, so base fields (summary, status,
+// etc.) are always reachable without a declared [step.schema]. A target whose
+// schema_file is still unresolved (baseDir == "") is skipped rather than flagged.
 func (v *validator) checkFieldRef(stepID, ctx string, target *Step, path []string) (*Field, bool) {
 	name := strings.Join(path, ".")
-	if target.Schema == nil {
+	var sc *Schema
+	if target.Type == StepAgent {
+		// Agent steps always have at least the base schema.
+		sc = MergedSchema(target.Schema)
+	} else {
+		sc = target.Schema
+	}
+	if sc == nil {
 		if target.SchemaFile == "" {
 			v.errf("step %q %s references field %q but step %q declares no schema", stepID, ctx, name, target.ID)
 		}
 		return nil, false
 	}
-	f, ok := target.Schema.lookup(path)
+	f, ok := sc.lookup(path)
 	if !ok {
 		v.errf("step %q %s: step %q schema has no field %q", stepID, ctx, target.ID, name)
 		return nil, false

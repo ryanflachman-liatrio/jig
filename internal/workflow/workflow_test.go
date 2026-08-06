@@ -499,7 +499,7 @@ run = "true"`,
 			want: "must reference this step's own output",
 		},
 		{
-			name: "block_on field without schema",
+			name: "block_on field not in schema",
 			toml: `
 [workflow]
 name = "x"
@@ -509,7 +509,7 @@ id = "a"
 type = "agent"
 skill = "s"
 block_on = "a.needs_input == 'true'"`,
-			want: "no [step.schema]",
+			want: `schema has no field "needs_input"`,
 		},
 		{
 			name: "block_on parse error",
@@ -600,10 +600,7 @@ skill = "skills/research"
 allowed_tools = ["Read", "Grep"]
 
   [step.schema]
-  summary    = "text"
-  status     = { enum = ["complete", "partial", "blocked"] }
-  confidence = "number"
-  sources    = { list = { url = "text", relevance = "number" } }
+  sources = { list = { url = "text", relevance = "number" } }
 
 [[step]]
 id = "report"
@@ -611,7 +608,7 @@ type = "agent"
 depends_on = ["research"]
 skill = "skills/report"
 inputs = ["@research.summary", { ref = "@research.status", inline = true }]
-when = "research.status == 'complete'"
+when = "research.status == 'succeeded'"
 allowed_tools = ["Read"]
 `
 
@@ -630,12 +627,13 @@ func TestDecodeProducerSchema(t *testing.T) {
 	if research.Schema == nil {
 		t.Fatal("research.Schema is nil")
 	}
-	// Fields are name-sorted.
+	// Only the declared fields are in Schema.Fields; base fields are injected
+	// automatically at dispatch and are not stored on the step.
 	gotNames := make([]string, len(research.Schema.Fields))
 	for i, f := range research.Schema.Fields {
 		gotNames[i] = f.Name
 	}
-	want := []string{"confidence", "sources", "status", "summary"}
+	want := []string{"sources"}
 	if strings.Join(gotNames, ",") != strings.Join(want, ",") {
 		t.Errorf("field names = %v, want %v", gotNames, want)
 	}
@@ -673,8 +671,8 @@ func TestDecodeProducerSchema(t *testing.T) {
 	if js["type"] != "object" || js["additionalProperties"] != false {
 		t.Errorf("compiled schema = %s, want closed object", raw)
 	}
-	if req, _ := js["required"].([]any); len(req) != 4 {
-		t.Errorf("required = %v, want 4 fields", js["required"])
+	if req, _ := js["required"].([]any); len(req) != 1 {
+		t.Errorf("required = %v, want 1 declared field (sources)", js["required"])
 	}
 }
 
@@ -687,10 +685,9 @@ func TestDecodeSchemaFile(t *testing.T) {
 	mustWrite(t, filepath.Join(dir, "schemas/triage.json"), `{
 	  "type": "object",
 	  "properties": {
-	    "priority": { "type": "string", "enum": ["low", "high"] },
-	    "summary":  { "type": "string" }
+	    "priority": { "type": "string", "enum": ["low", "high"] }
 	  },
-	  "required": ["priority", "summary"]
+	  "required": ["priority"]
 	}`)
 
 	src := `

@@ -64,3 +64,17 @@ func ResultPath(runDir, stepID string) string {
 func TranscriptPath(runDir, stepID string) string {
 	return filepath.Join(runDir, "steps", stepID, "transcript.jsonl")
 }
+
+// OutputPath returns the canonical path to output.md for a step inside runDir.
+// Content is the agent's raw_result base-schema field — the clean prose answer
+// written by the agent as its primary deliverable.
+func OutputPath(runDir, stepID string) string {
+	return filepath.Join(runDir, "steps", stepID, "output.md")
+}
+
+// OutputJSONPath returns the canonical path to output.json for a step inside
+// runDir. Content is the full structured output JSON (base fields + any
+// declared [step.schema] fields).
+func OutputJSONPath(runDir, stepID string) string {
+	return filepath.Join(runDir, "steps", stepID, "output.json")
+}

@@ -115,7 +115,7 @@ schema_file    = "schemas/intake.json"
 allowed_tools  = ["Read", "Grep", "Glob"]
 effort         = "medium"      # override [defaults] "high" — triage is cheap
 max_budget_usd = 1.0           # tighter ceiling for this lightweight step
-block_on       = "intake.status == 'needs_info'"  # pause and ask the user when the request is ambiguous
+block_on       = "intake.status == 'blocked'"  # pause and ask the user when the request is ambiguous
 
 # ─── 2–3. Research (parallel fan-out) ───────────────────────────────────────
 # Two producer agents fan out once intake finishes; they share the research skill
@@ -129,7 +129,7 @@ block_on       = "intake.status == 'needs_info'"  # pause and ask the user when 
 id                   = "research_backend"
 type                 = "agent"
 depends_on           = ["intake"]
-when                 = "intake.status == 'ready'"
+when                 = "intake.status == 'succeeded'"
 skill                = "skills/research"
 inputs               = ["@intake.areas"]
 allowed_tools        = ["Read", "Grep", "Glob", "WebSearch"]
@@ -137,17 +137,14 @@ append_system_prompt = "Focus on backend concerns only: data models, API contrac
 block_on             = "research_backend.status == 'blocked'"
 
   [step.schema]
-  summary    = "text"
-  status     = { enum = ["complete", "partial", "blocked"] }
-  confidence = "number"
-  findings   = { list = "text" }
-  sources    = { list = { url = "text", relevance = "number" } }
+  findings = { list = "text" }
+  sources  = { list = { url = "text", relevance = "number" } }
 
 [[step]]
 id               = "research_frontend"
 type             = "agent"
 depends_on       = ["intake"]
-when             = "intake.status == 'ready'"
+when             = "intake.status == 'succeeded'"
 skill            = "skills/research"
 inputs           = ["@intake.areas"]
 allowed_tools    = ["Read", "Grep", "Glob", "WebSearch"]
@@ -155,11 +152,8 @@ disallowed_tools = ["Bash"]    # belt-and-suspenders: this read-only step must n
 block_on         = "research_frontend.status == 'blocked'"
 
   [step.schema]
-  summary    = "text"
-  status     = { enum = ["complete", "partial", "blocked"] }
-  confidence = "number"
-  findings   = { list = "text" }
-  sources    = { list = { url = "text", relevance = "number" } }
+  findings = { list = "text" }
+  sources  = { list = { url = "text", relevance = "number" } }
 
 # ─── 4. Security scan ────────────────────────────────────────────────────────
 # Runs in parallel with research; reads intake areas and flags security concerns.
@@ -176,14 +170,13 @@ block_on         = "research_frontend.status == 'blocked'"
 id         = "security_scan"
 type       = "agent"
 depends_on = ["intake"]
-when       = "intake.status == 'ready'"
+when       = "intake.status == 'succeeded'"
 agent_file = "agents/security-reviewer.md"
 inputs     = ["@intake.areas"]
 isolation  = "none"                    # explicit: read-only analysis, no mutation
 block_on   = "security_scan.needs_input"
 
   [step.schema]
-  summary     = "text"
   passed      = "bool"
   needs_input = "bool"     # set true by the agent when it has a question for the human
   question    = "text"     # surfaced in the TUI compose box when needs_input is true
@@ -216,7 +209,6 @@ allowed_tools = ["Read", "Grep", "Glob"]
 output        = ".jig/artifacts/plan.md"
 
   [step.schema]
-  summary  = "text"
   approach = "text"
   risk     = { enum = ["low", "medium", "high"] }
   tasks    = { list = { title = "text", area = "text", estimate = "number" } }
@@ -303,9 +295,8 @@ allowed_tools = ["Read", "Grep", "Glob"]
 isolation     = "none"
 
   [step.schema]
-  summary = "text"
-  passed  = "bool"
-  issues  = { list = { severity = { enum = ["low", "high"] }, detail = "text" } }
+  passed      = "bool"
+  qa_findings = { list = { severity = { enum = ["low", "high"] }, detail = "text" } }
 
   [step.loop]
   when           = "qa.passed == 'false'"

@@ -1864,9 +1864,6 @@ id       = "mystep"
 type     = "agent"
 skill    = "test"
 block_on = "mystep.status == 'blocked'"
-
-  [step.schema]
-  status = { enum = ["ready", "blocked"] }
 `
 	wf, err := workflow.Decode(toml, "")
 	if err != nil {

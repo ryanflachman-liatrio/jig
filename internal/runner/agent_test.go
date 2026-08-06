@@ -184,38 +184,62 @@ func TestCaptureStream_StructuredToolResultTruncated(t *testing.T) {
 	}
 }
 
-// TestCaptureStream_Artifact verifies the output artifact is derived from the
-// final assistant text blocks (not intermediate turns).
+// TestCaptureStream_Artifact verifies output.md is written from the raw_result
+// base-schema field (not the streaming assistant text), and that an explicit
+// step.Output path receives the same content as a named artifact copy.
 func TestCaptureStream_Artifact(t *testing.T) {
 	dir := t.TempDir()
-	outPath := filepath.Join(dir, "out.md")
+	explicitOut := filepath.Join(dir, "explicit.md")
+	tPath := filepath.Join(dir, "transcript.jsonl")
 
-	first := &claudecode.AssistantMessage{Content: []claudecode.ContentBlock{
-		&claudecode.TextBlock{Text: "working on it"},
-		&claudecode.ToolUseBlock{ToolUseID: "t1", Name: "Read", Input: map[string]any{}},
-	}}
-	final := &claudecode.AssistantMessage{Content: []claudecode.ContentBlock{
-		&claudecode.TextBlock{Text: "# Done\n"},
-		&claudecode.TextBlock{Text: "final answer"},
-	}}
+	result := &claudecode.ResultMessage{
+		StructuredOutput: map[string]any{
+			"raw_result":  "# Done\nthe prose answer",
+			"summary":     "did the thing",
+			"status":      "succeeded",
+			"confidence":  "high",
+			"issues":      []any{},
+			"assumptions": []any{},
+		},
+	}
 	req := engine.StepRequest{
-		Step:           &workflow.Step{Output: outPath},
-		TranscriptPath: filepath.Join(dir, "transcript.jsonl"),
+		Step:           &workflow.Step{Output: explicitOut},
+		TranscriptPath: tPath,
 	}
 
-	res, err := captureStream(scriptChan(first, final, &claudecode.ResultMessage{}), req, &captureReporter{}, time.Now(), "")
+	res, err := captureStream(scriptChan(result), req, &captureReporter{}, time.Now(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.OutputPath != outPath {
-		t.Errorf("OutputPath = %q, want %q", res.OutputPath, outPath)
+
+	// OutputPath points to the canonical run-dir output.md.
+	wantOutputMD := filepath.Join(dir, "output.md")
+	if res.OutputPath != wantOutputMD {
+		t.Errorf("OutputPath = %q, want %q", res.OutputPath, wantOutputMD)
 	}
-	got, err := os.ReadFile(outPath)
+
+	// Canonical output.md contains raw_result.
+	got, err := os.ReadFile(wantOutputMD)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("output.md not written: %v", err)
 	}
-	if string(got) != "# Done\nfinal answer" {
-		t.Errorf("artifact = %q, want final assistant text", got)
+	if string(got) != "# Done\nthe prose answer" {
+		t.Errorf("output.md = %q, want raw_result prose", got)
+	}
+
+	// output.json contains the full structured envelope.
+	outJSON := filepath.Join(dir, "output.json")
+	if _, err := os.Stat(outJSON); err != nil {
+		t.Errorf("output.json not written: %v", err)
+	}
+
+	// The explicit output path also receives raw_result.
+	gotExplicit, err := os.ReadFile(explicitOut)
+	if err != nil {
+		t.Fatalf("explicit output not written: %v", err)
+	}
+	if string(gotExplicit) != "# Done\nthe prose answer" {
+		t.Errorf("explicit output = %q, want raw_result prose", gotExplicit)
 	}
 }
 
@@ -293,7 +317,8 @@ func TestBuildOptions(t *testing.T) {
 }
 
 // TestBuildOptions_Empty verifies a zero-value step leaves every optional SDK
-// field unset so the SDK's own defaults apply, rather than sending zero values.
+// field unset so the SDK's own defaults apply, but always sets OutputFormat
+// to enforce the base schema.
 func TestBuildOptions_Empty(t *testing.T) {
 	opts, err := buildOptions(&workflow.Step{})
 	if err != nil {
@@ -313,17 +338,28 @@ func TestBuildOptions_Empty(t *testing.T) {
 	if len(got.AllowedTools) != 0 || len(got.DisallowedTools) != 0 {
 		t.Errorf("zero-value step should leave tool lists empty: %+v", got)
 	}
-	if got.OutputFormat != nil {
-		t.Errorf("zero-value step should leave OutputFormat unset: %+v", got.OutputFormat)
+	// Base schema is always enforced — OutputFormat must be set even with no
+	// declared [step.schema].
+	if got.OutputFormat == nil || got.OutputFormat.Type != "json_schema" {
+		t.Errorf("OutputFormat = %v, want json_schema (base schema always applied)", got.OutputFormat)
+	}
+	props, ok := got.OutputFormat.Schema["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("base schema properties missing: %v", got.OutputFormat.Schema)
+	}
+	for _, base := range []string{"summary", "status", "raw_result", "confidence", "issues", "assumptions"} {
+		if _, ok := props[base]; !ok {
+			t.Errorf("base schema missing required field %q: %v", base, props)
+		}
 	}
 }
 
-// TestBuildOptions_Schema verifies a step.schema is translated into a
-// WithJSONSchema option carrying the equivalent JSON Schema document.
+// TestBuildOptions_Schema verifies a step.schema is merged with the base schema
+// and translated into a WithJSONSchema option. Both base and declared fields
+// must appear in the compiled JSON Schema.
 func TestBuildOptions_Schema(t *testing.T) {
 	st := &workflow.Step{
 		Schema: &workflow.Schema{Fields: []*workflow.Field{
-			{Name: "summary", Type: workflow.FieldText},
 			{Name: "passed", Type: workflow.FieldBool},
 		}},
 	}
@@ -342,11 +378,15 @@ func TestBuildOptions_Schema(t *testing.T) {
 	if !ok {
 		t.Fatalf("schema properties missing or wrong type: %v", got.OutputFormat.Schema)
 	}
-	if _, ok := props["summary"]; !ok {
-		t.Errorf("schema missing summary field: %v", props)
-	}
+	// Declared field must be present.
 	if _, ok := props["passed"]; !ok {
-		t.Errorf("schema missing passed field: %v", props)
+		t.Errorf("schema missing declared field 'passed': %v", props)
+	}
+	// Base schema fields must also be present.
+	for _, base := range []string{"summary", "status", "raw_result", "confidence", "issues", "assumptions"} {
+		if _, ok := props[base]; !ok {
+			t.Errorf("schema missing base field %q: %v", base, props)
+		}
 	}
 }
 

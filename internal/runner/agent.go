@@ -125,17 +125,19 @@ func buildOptions(st *workflow.Step) ([]claudecode.Option, error) {
 	if len(st.DisallowedTools) > 0 {
 		opts = append(opts, claudecode.WithDisallowedTools(st.DisallowedTools...))
 	}
-	if st.Schema != nil {
-		raw, err := st.Schema.JSONSchema()
-		if err != nil {
-			return nil, fmt.Errorf("schema: %w", err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal(raw, &m); err != nil {
-			return nil, fmt.Errorf("schema: %w", err)
-		}
-		opts = append(opts, claudecode.WithJSONSchema(m))
+	// Every agent step is constrained by the merged schema (base + declared).
+	// The base schema guarantees a minimum set of fields regardless of whether
+	// the step declares a [step.schema].
+	merged := workflow.MergedSchema(st.Schema)
+	raw, err := merged.JSONSchema()
+	if err != nil {
+		return nil, fmt.Errorf("schema: %w", err)
 	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, fmt.Errorf("schema: %w", err)
+	}
+	opts = append(opts, claudecode.WithJSONSchema(m))
 	return opts, nil
 }
 
@@ -265,18 +267,10 @@ func captureStream(
 		appendEntry(transcript.RoleUser, []transcript.Block{{Type: transcript.BlockText, Text: initialUserMsg}})
 	}
 
-	// finalText holds the text of the most recent assistant message that carried
-	// any — it becomes the output artifact (the agent's final answer). The
-	// transcript, not this buffer, is the durable record.
-	var finalText string
-
 	for msg := range msgChan {
 		switch m := msg.(type) {
 		case *claudecode.AssistantMessage:
-			blocks, text := assistantBlocks(m)
-			if text != "" {
-				finalText = text
-			}
+			blocks, _ := assistantBlocks(m)
 			appendEntry(transcript.RoleAssistant, blocks)
 			if m.HasError() {
 				appendEntry(transcript.RoleSystem, []transcript.Block{{
@@ -306,18 +300,49 @@ func captureStream(
 				SessionID: m.SessionID,
 				Subtype:   m.Subtype,
 			}
+
+			// Marshal the structured output and extract raw_result, which is
+			// the agent's prose answer and becomes the content of output.md.
+			var rawResult string
 			if m.StructuredOutput != nil {
 				if raw, err := json.Marshal(m.StructuredOutput); err == nil {
 					result.Structured = raw
+					var obj map[string]any
+					if err := json.Unmarshal(raw, &obj); err == nil {
+						if rr, ok := obj["raw_result"].(string); ok {
+							rawResult = rr
+						}
+					}
 				}
 			}
-			if req.Step.Output != "" && finalText != "" {
+
+			// Auto-capture to the canonical step directory whenever persistence
+			// is on (TranscriptPath is set). The step dir is already created by
+			// the engine before dispatch. output.json holds the full structured
+			// envelope; output.md holds the prose raw_result for downstream
+			// agents and human review.
+			if req.TranscriptPath != "" {
+				stepDir := filepath.Dir(req.TranscriptPath)
+				if result.Structured != nil {
+					_ = os.WriteFile(filepath.Join(stepDir, "output.json"), result.Structured, 0o644)
+				}
+				if rawResult != "" {
+					outMD := filepath.Join(stepDir, "output.md")
+					if err := os.WriteFile(outMD, []byte(rawResult), 0o644); err == nil {
+						result.OutputPath = outMD
+					}
+				}
+			}
+
+			// Also write raw_result to the explicitly declared output path so
+			// humans have a stable, named artifact alongside the run-dir copy.
+			if req.Step.Output != "" && rawResult != "" {
 				outPath := req.Step.Output
 				if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err == nil {
-					_ = os.WriteFile(outPath, []byte(finalText), 0o644)
+					_ = os.WriteFile(outPath, []byte(rawResult), 0o644)
 				}
-				result.OutputPath = outPath
 			}
+
 			return result, nil
 		}
 	}
@@ -403,7 +428,7 @@ func toolResultContent(c any) string {
 // buildAgentPrompt constructs the prompt sent to Claude. It concatenates:
 //   - the agent-file body (if any) from the workflow step
 //   - the append_system_prompt annotation (if any)
-//   - the resolved inputs (file paths or inlined content)
+//   - a labeled input section (preamble + per-input provenance labels)
 //   - the feedback artifact (if the step is re-running inside a loop)
 func buildAgentPrompt(req engine.StepRequest) string {
 	var b strings.Builder
@@ -418,14 +443,23 @@ func buildAgentPrompt(req engine.StepRequest) string {
 		b.WriteString("\n\n")
 	}
 
-	for _, inp := range req.Inputs {
-		if inp.Ref.Inline {
-			b.WriteString(inp.Value)
-			b.WriteString("\n\n")
-		} else {
-			b.WriteString(inp.Value)
-			b.WriteString("\n")
+	if len(req.Inputs) > 0 {
+		b.WriteString("The following inputs are provided for your task:\n\n")
+		for _, inp := range req.Inputs {
+			label := resolvedInputLabel(inp)
+			if inp.Ref.Inline {
+				b.WriteString(label)
+				b.WriteString(":\n")
+				b.WriteString(inp.Value)
+				b.WriteString("\n\n")
+			} else {
+				b.WriteString(label)
+				b.WriteString(": ")
+				b.WriteString(inp.Value)
+				b.WriteString("\n")
+			}
 		}
+		b.WriteString("\n")
 	}
 
 	if req.Feedback != "" {
@@ -435,6 +469,24 @@ func buildAgentPrompt(req engine.StepRequest) string {
 	}
 
 	return strings.TrimSpace(b.String())
+}
+
+// resolvedInputLabel returns a bracketed provenance label for one input entry.
+func resolvedInputLabel(inp engine.ResolvedInput) string {
+	ref := inp.Ref
+	switch {
+	case ref.From == "user":
+		if ref.As != "" {
+			return "[Human input — '" + ref.As + "']"
+		}
+		return "[Human input]"
+	case ref.Ref != "" && len(ref.RefField) > 0:
+		return "[Field '" + strings.Join(ref.RefField, ".") + "' from step '" + ref.Ref + "']"
+	case ref.Ref != "":
+		return "[Previous step output — '" + ref.Ref + "']"
+	default:
+		return "[Reference document]"
+	}
 }
 
 func failResult(msg string, start time.Time) *step.Result {
