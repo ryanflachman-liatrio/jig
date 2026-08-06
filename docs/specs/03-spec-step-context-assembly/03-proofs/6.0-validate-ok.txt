@@ -1,0 +1,6 @@
+Proof 6.5 — examples/feature.toml still validates after adding inject_context
+and [step.context]. Command + output:
+
+$ go run ./cmd/jig validate examples/feature.toml
+ok: "feature" v1 — 15 step(s)
+exit=0

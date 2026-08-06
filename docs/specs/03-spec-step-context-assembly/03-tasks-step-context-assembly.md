@@ -431,7 +431,7 @@ line. (Spec Unit 5.)
 - [x] 5.6 Produced `03-proofs/5.0-context-block-preamble.txt` — a real assembled
   preamble pair showing own-injection and a propagated neighbor `purpose`.
 
-### [ ] 6.0 Docs, example alignment, ADR 0006, and skill-narration removal
+### [x] 6.0 Docs, example alignment, ADR 0006, and skill-narration removal
 
 Update the spec-of-record and prove the payoff. Add to `docs/workflow-schema.md`
 a "Step context (engine-assembled)" section (always-on preamble + framing-only
@@ -466,35 +466,29 @@ automated equivalence gate. (Spec Unit 6.)
 
 #### 6.0 Tasks
 
-- [ ] 6.1 In `docs/workflow-schema.md`, add a "Step context (engine-assembled)"
-  section describing the always-on preamble, its framing-only guarantee, and the
-  rendered format (link/quote the spec). Add `inject_context` to the `[defaults]`
-  and agent-step field tables and the `[step.context]` block to the agent-step
-  section.
-- [ ] 6.2 In `examples/feature.toml`, add at least one explicit per-step
-  `inject_context` override and a `[step.context]` block (`purpose` + `notes`) on at
-  least one agent step; refresh the top-of-file "features not yet in the schema /
-  undocumented" comments. Keep `go run ./cmd/jig validate examples/feature.toml`
-  green.
-- [ ] 6.3 Author `docs/adr/0006-engine-assembles-step-context-preamble.md`,
-  mirroring the structure and doc-comment style of `0001`–`0004`; record the
-  decision (engine-owned deterministic preamble), the honored ADR 0003
-  (extensibility in engine + schema; runner stays thin), and the rejected
-  alternatives (author template, content injection, live-sibling status).
-- [ ] 6.4 Remove the hand-authored upstream/downstream/loop narration from
-  `.agents/skills/plan/SKILL.md` (the "you receive research from two agents" /
-  "reviewer feedback present only when…" passages) and
-  `.agents/skills/implement/SKILL.md` (the "QA feedback present only when…"
-  passage), keeping only *how to do the job*. Capture the diff to
-  `03-proofs/6.0-skill-narration-removed.txt`.
-- [ ] 6.5 Capture `go run ./cmd/jig validate examples/feature.toml` (exit 0) to
+- [x] 6.1 In `docs/workflow-schema.md`, added a "Step context (engine-assembled)"
+  section (always-on preamble, framing-only guarantee, rendered format) and put
+  `inject_context` in the `[defaults]` block + agent-step table and `[step.context]`
+  in the agent-step table.
+- [x] 6.2 In `examples/feature.toml`, added an explicit `inject_context = false`
+  override (`research_frontend`) and `[step.context]` blocks (`plan` purpose+notes;
+  `research_backend` purpose, to demo upstream propagation); refreshed the header
+  "exercises every construct" list. Example still validates. (Left the unrelated
+  "not yet in schema / undocumented" blocks alone — see the proof's scoping note.)
+- [x] 6.3 Authored `docs/adr/0006-engine-assembles-step-context-preamble.md`,
+  mirroring `0001`–`0004`; records the decision, the honored ADR 0003, and the
+  rejected alternatives (author template, content injection, live-sibling status).
+- [x] 6.4 Removed the hand-authored upstream/downstream/loop narration from
+  `.agents/skills/plan/SKILL.md` (four passages) and
+  `.agents/skills/implement/SKILL.md` (two), keeping only *how to do the job*.
+  Captured the diff to `03-proofs/6.0-skill-narration-removed.txt`.
+- [x] 6.5 Captured `go run ./cmd/jig validate examples/feature.toml` (exit 0) to
   `03-proofs/6.0-validate-ok.txt`.
-- [ ] 6.6 Run the `plan` step both ways (old prose vs. new preamble) and record the
-  human orientation spot-check in `03-proofs/6.0-preamble-spotcheck.md` — explicitly
-  a manual review, not an equivalence assertion.
-- [ ] 6.7 Full regression: `gofmt -l -w . && go vet ./... && go test ./... -race`
-  and the example `validate`; record that all pass (spec Success Metric 6).
-- [ ] 6.8 (audit FLAG-2) Refresh `README.md`: correct the stale "Requires Go 1.24"
-  to **1.25** (match `mise.toml`) and the stale "execution engine … Not built yet"
-  status to reflect that the engine runs today (per `CLAUDE.md` "Current state").
-  Doc-hygiene only, folded in alongside the Unit 6 docs work.
+- [x] 6.6 Recorded the human orientation spot-check (old prose vs. new preamble) in
+  `03-proofs/6.0-preamble-spotcheck.md` — explicitly a manual review; the live-run
+  sign-off is a checkbox left for the reviewer.
+- [x] 6.7 Full regression: `gofmt -l -w . && go vet ./... && go test ./... -race`
+  and the example `validate` — all pass (spec Success Metric 6). Regenerated the
+  Unit 2/3 preamble goldens to track the example's new `[step.context]` blocks.
+- [x] 6.8 (audit FLAG-2) Refreshed `README.md`: "Requires Go 1.24" → **1.25**;
+  "execution engine … Not built yet" → engine + runner run today.

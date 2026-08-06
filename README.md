@@ -14,22 +14,23 @@ instructions, its input files, and the tools you allow it.
 
 ## Status
 
-Early. What works today:
+Early, but the core loop runs end to end. What works today:
 
 - **Workflow schema + validator** (`internal/workflow`) — write a `.toml`
   workflow and `jig validate` catches dangling references, cycles, type
   mismatches in guards, unbounded loops, and missing files *before* anything
   runs.
-- **Streaming chat TUI** (`internal/tui`) — a Bubble Tea interface that streams
-  responses from the Claude Agent SDK.
-
-Not built yet: the **execution engine** that traverses the DAG, manages git
-worktrees, runs command steps, and invokes agents. The schema fully describes
-this runtime behavior; the executor is the next milestone.
+- **Execution engine** (`internal/engine` + `internal/runner`) — traverses the
+  DAG, dispatches agent and command steps, drives bounded loops and
+  human-in-the-loop review gates, and assembles a deterministic step-context
+  preamble for each agent.
+- **Streaming chat + run-monitor TUI** (`internal/tui`) — a Bubble Tea interface
+  that streams responses from the Claude Agent SDK and renders a navigable
+  per-step transcript.
 
 ## Install & run
 
-Requires Go 1.24 (see [`mise.toml`](mise.toml)).
+Requires Go 1.25 (see [`mise.toml`](mise.toml)).
 
 ```bash
 go build ./cmd/jig            # build ./jig

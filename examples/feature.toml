@@ -27,6 +27,10 @@
 #   - three bounded loops: human revise loop on plan, automated QA loop on implement
 #   - deterministic gates ([step.validate]) and on_failure policies
 #   - inline inputs, worktree isolation, and [defaults] inheritance
+#   - inject_context — explicit per-step opt-out of the engine-assembled
+#     step-context preamble (research_frontend)
+#   - [step.context] — author-supplied purpose/notes supplementing that preamble;
+#     purpose propagates onto neighbor lines (plan, research_backend)
 #
 # ─── FEATURES NOT YET IN THE SCHEMA ─────────────────────────────────────────
 #   Listed here to prompt future design; each entry is a real gap in the current
@@ -124,7 +128,9 @@ block_on       = "intake.status == 'blocked'"  # pause and ask the user when the
 # Shows (backend): append_system_prompt narrows the agent's focus without
 #   touching the shared skill file.
 # Shows (frontend): disallowed_tools as a belt-and-suspenders denylist to
-#   ensure a read-only step never runs shell commands.
+#   ensure a read-only step never runs shell commands; inject_context = false
+#   opts this step out of the engine-assembled preamble (its skill + @intake.areas
+#   input are sufficient framing).
 [[step]]
 id                   = "research_backend"
 type                 = "agent"
@@ -135,6 +141,10 @@ inputs               = ["@intake.areas"]
 allowed_tools        = ["Read", "Grep", "Glob", "WebSearch"]
 append_system_prompt = "Focus on backend concerns only: data models, API contracts, storage, and service boundaries. Ignore frontend and UI details."
 block_on             = "research_backend.status == 'blocked'"
+
+  # [step.context].purpose propagates onto plan's Upstream line for this step.
+  [step.context]
+  purpose = "surface backend findings (engine, storage, schema) that shape the plan"
 
   [step.schema]
   findings = { list = "text" }
@@ -149,6 +159,7 @@ skill            = "skills/research"
 inputs           = ["@intake.areas"]
 allowed_tools    = ["Read", "Grep", "Glob", "WebSearch"]
 disallowed_tools = ["Bash"]    # belt-and-suspenders: this read-only step must never run shell commands
+inject_context   = false       # explicit opt-out of the engine-assembled step-context preamble
 block_on         = "research_frontend.status == 'blocked'"
 
   [step.schema]
@@ -207,6 +218,12 @@ inputs        = [
 ]
 allowed_tools = ["Read", "Grep", "Glob"]
 output        = ".jig/artifacts/plan.md"
+
+  # [step.context] supplements the graph-derived framing: purpose + notes render on
+  # plan's own preamble, and purpose propagates onto plan_review/implement lines.
+  [step.context]
+  purpose = "turn research into an ordered, reviewable implementation plan"
+  notes   = "cross-check every file path and type name before emitting a task"
 
   [step.schema]
   approach = "text"

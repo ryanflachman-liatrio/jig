@@ -43,6 +43,7 @@ cwd                 = "."
 permission_mode     = "acceptEdits"
 max_parallel        = 4
 artifacts_dir       = ".jig/artifacts"   # run artifacts live outside the working tree
+inject_context      = true               # engine-assembled step-context preamble on agent steps (default true)
 ```
 
 ---
@@ -98,6 +99,8 @@ Claude agent file** (exactly one of `skill` / `agent_file`).
 | `[step.schema]`        | table    | Structured output contract (TOML-native). See "Structured outputs". |
 | `schema_file`          | path     | Alternative to `[step.schema]`: a raw JSON Schema file.     |
 | `block_on`             | string   | Condition referencing the step's **own** schema output. See "Interactive input". |
+| `inject_context`       | bool     | Opt out of the engine-assembled step-context preamble (default `true`; overrides `[defaults]`). Agent-only. See "Step context". |
+| `[step.context]`       | table    | Author-supplied `purpose` / `notes` that *supplement* the preamble. See "Step context". |
 | `model` / `fallback_model` / `effort` / `max_turns` / `max_thinking_tokens` / `max_budget_usd` / `permission_mode` | | Override `[defaults]`. |
 
 **`SKILL.md` contract.** Agent Skills convention: YAML frontmatter (`name`,
@@ -264,6 +267,89 @@ branches on `@research.status`. Both come from one artifact; nothing is scraped.
 
 For **review** steps, the verdict is still captured from the human's choice in
 the TUI (a scalar `output_type`), not from a model.
+
+---
+
+## Step context (engine-assembled)
+
+Every agent step's single user turn is prefixed with a short, **engine-assembled
+"Workflow context" preamble** — a deterministic block telling the agent where it
+sits in the graph. It is the input/position counterpart to the deterministic
+*output* contract (structured outputs, above): the author writes the skill body
+about *how to do the job*, and jig supplies *where the job sits* — which steps ran
+before it, which steps consume its output, and whether it is a loop re-run.
+
+The preamble is **framing only.** It never inlines an upstream artifact body or a
+live sibling status — content still reaches a step through its declared `@ref`
+inputs. It carries only ids, statuses, declared purposes, and run state, so it is
+deterministic: the same graph position always renders the same bytes (fixed
+neighbor ordering — upstream in `depends_on` order, downstream in declaration
+order — and no map iteration into the output). It is assembled for **agent steps
+only** (command and review steps get none) and prepended ahead of the
+skill/agent-file body, separated by a `---` delimiter.
+
+### Rendered format
+
+```
+## Workflow context
+
+You are step `plan` in workflow `feature` (iteration 2 of 3).
+Purpose: produce the ordered implementation plan
+Notes: prefer the smallest change that satisfies the spec
+
+Upstream (already complete):
+- `research_backend` (succeeded) — backend findings
+- `research_frontend` (succeeded)
+These reach you as the inputs listed below; this section is orientation only.
+
+Downstream (what your output feeds):
+- `plan_review` (human review) — a person reviews your `summary`
+- `implement` (agent) — consumes your `tasks`, `approach` (conditional on `plan_review == 'approve'`)
+
+State: re-running because `plan_review` requested revisions on the previous iteration. Address the reviewer feedback in your inputs.
+
+---
+```
+
+Each part is emitted only when it applies: the `(iteration N of M)` clause only on
+a genuine re-run, the `Purpose`/`Notes` lines only when a `[step.context]` block
+supplies them, the Upstream/Downstream blocks only when the step has neighbors,
+and the `State:` line only on a loop re-run.
+
+### `inject_context` — the opt-out
+
+The preamble is **on by default.** Set `inject_context = false` on a step to
+suppress it (or in `[defaults]` to flip the default for the whole workflow); a
+per-step value overrides `[defaults]`. With it off, the step dispatches with a
+byte-identical no-context prompt. `inject_context` is agent-only — it is a
+load-time error on a command or review step.
+
+### `[step.context]` — author-supplied context (optional)
+
+An agent step may add a `[step.context]` table to *supplement* (never replace) the
+graph-derived framing:
+
+```toml
+[[step]]
+id    = "plan"
+type  = "agent"
+skill = "skills/plan"
+
+  [step.context]
+  purpose = "produce the ordered implementation plan"           # why this step exists
+  notes   = "prefer the smallest change that satisfies the spec" # local guidance
+```
+
+- `purpose` renders as a `Purpose:` line on the step's own preamble **and**
+  propagates onto a consumer's neighbor line: an upstream bullet gains
+  `— <purpose>`, and a downstream bullet's derived clause is *replaced* by it. A
+  neighbor that declares no purpose stays graph-derived — jig never guesses a
+  description.
+- `notes` renders as a `Notes:` line on the step's own preamble only.
+
+Both fields are optional; an absent or empty block changes nothing. A
+`[step.context]` block together with `inject_context = false` on the same step is
+a load-time error (the block would be inert).
 
 ---
 

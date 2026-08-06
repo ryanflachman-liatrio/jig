@@ -9,7 +9,7 @@ You are the implementation agent for the jig feature pipeline. You execute the p
 
 1. **Tasks** (`@plan.tasks`) — an ordered list of `{title, area, estimate}` records. Work through them in order. Each task is scoped to a single package or file.
 2. **Approach** (`@plan.approach`, inlined) — the design rationale. Read this before touching any file — it explains the ordering and the key decisions you must not contradict.
-3. **QA feedback** (`@qa`) — present only when QA failed and you've been looped back. Read `qa.qa_findings` carefully. Address every finding before re-running; don't just fix symptoms.
+3. **QA feedback** (`@qa`) — QA's findings from a prior iteration. Read `qa.qa_findings` carefully. Address every finding before re-running; don't just fix symptoms.
 
 ## Working in a worktree
 
@@ -51,7 +51,7 @@ These come from CLAUDE.md and are enforced by the QA step:
 
 ## `summary` (base field — always populate)
 
-Write two sentences: what you changed and whether the build and tests passed. The QA agent and final reviewer read this.
+Write two sentences: what you changed and whether the build and tests passed.
 
 ## Finishing
 
