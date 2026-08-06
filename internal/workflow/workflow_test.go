@@ -421,6 +421,34 @@ run = "true"
 max_messages = 3`,
 			want: "max_messages is only valid on review steps",
 		},
+		{
+			name: "inject_context on command step",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "command"
+run = "true"
+inject_context = false`,
+			want: "inject_context is only valid on agent steps",
+		},
+		{
+			name: "context block with explicit inject_context false",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "agent"
+skill = "s"
+inject_context = false
+[step.context]
+purpose = "why this step exists"`,
+			want: "contradiction (the block would be inert)",
+		},
 	}
 
 	for _, tc := range cases {
@@ -450,6 +478,44 @@ output_type = { enum = ["ok"] }
 `
 	if _, err := Decode(toml, ""); err != nil {
 		t.Fatalf("expected valid, got error: %v", err)
+	}
+}
+
+// TestDecodeInjectContext proves the [defaults]/per-step precedence of the
+// inject_context toggle: an explicit per-step `= true` overrides a
+// `[defaults].inject_context = false`, while a step that sets nothing inherits
+// the (false) default. Exercises the effective read InjectContextEnabled().
+func TestDecodeInjectContext(t *testing.T) {
+	toml := `
+[workflow]
+name = "x"
+version = "1"
+
+[defaults]
+inject_context = false
+
+[[step]]
+id = "override_on"
+type = "agent"
+skill = "s"
+inject_context = true
+allowed_tools = ["Read"]
+
+[[step]]
+id = "inherit_off"
+type = "agent"
+skill = "s"
+allowed_tools = ["Read"]
+`
+	wf, err := Decode(toml, "") // "" skips skill-dir existence checks
+	if err != nil {
+		t.Fatalf("expected valid, got error: %v", err)
+	}
+	if got := wf.Steps[wf.index["override_on"]]; !got.InjectContextEnabled() {
+		t.Errorf("override_on: per-step inject_context = true must beat [defaults] = false (want enabled)")
+	}
+	if got := wf.Steps[wf.index["inherit_off"]]; got.InjectContextEnabled() {
+		t.Errorf("inherit_off: unset step must inherit [defaults].inject_context = false (want disabled)")
 	}
 }
 

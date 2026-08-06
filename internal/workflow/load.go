@@ -115,6 +115,18 @@ func (wf *Workflow) applyDefaults() {
 			s.PermissionMode = wf.Defaults.PermissionMode
 		}
 
+		// inject_context resolves to a plain bool: an explicit per-step value
+		// wins, else the [defaults] value, else true. The raw *bool is left
+		// untouched (not collapsed like the fields above) so the validator can
+		// still tell an explicit per-step false from an inherited one when
+		// rejecting the [step.context] + inject_context = false contradiction.
+		s.injectContext = true
+		if s.InjectContext != nil {
+			s.injectContext = *s.InjectContext
+		} else if wf.Defaults.InjectContext != nil {
+			s.injectContext = *wf.Defaults.InjectContext
+		}
+
 		// Worktree isolation is defaulted on for agent steps that carry
 		// mutating tools; everything else runs in place unless asked otherwise.
 		if s.Type == StepAgent && s.Isolation == "" {

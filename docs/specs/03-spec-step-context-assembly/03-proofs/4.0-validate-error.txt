@@ -1,0 +1,22 @@
+Proof 4.0 — `jig validate` rejects `inject_context` on a non-agent step.
+
+Maps Unit 4 FR: "the validator rejects, at load time, inject_context on
+command/review steps." Captured verbatim from the CLI (exit status 1).
+
+--- fixture (command step carries inject_context) ---
+[workflow]
+name = "bad-inject-context"
+version = "1"
+
+[[step]]
+id = "build"
+type = "command"
+run = "go build ./..."
+inject_context = false
+
+--- command ---
+$ go run ./cmd/jig validate bad-inject-context.toml
+
+--- output ---
+invalid workflow: step "build": inject_context is only valid on agent steps
+exit status 1

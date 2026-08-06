@@ -308,7 +308,7 @@ reason. (Spec Unit 3.)
   its revise iteration (topology from 2.8 plus the iteration clause and `State`
   line).
 
-### [ ] 4.0 `inject_context` opt-out toggle
+### [x] 4.0 `inject_context` opt-out toggle
 
 Add `inject_context` to the schema as a `bool` on `[defaults]` (default `true`)
 and a per-step `*bool` override on agent steps (nil = inherit, distinguishable
@@ -340,38 +340,42 @@ resolves to enabled. (Spec Unit 4.)
 
 #### 4.0 Tasks
 
-- [ ] 4.1 In `schema.go`, add `InjectContext *bool` `toml:"inject_context"` to the
+- [x] 4.1 In `schema.go`, add `InjectContext *bool` `toml:"inject_context"` to the
   `Step` agent-only field group (lines 169–194) and to `Defaults` (line 143).
   Doc-comment: parsed as `*bool` so "unset (inherit)" is distinguishable from
-  explicit `false`; default is `true`.
-- [ ] 4.2 In `load.go` `applyDefaults` (line 71), after the existing field
-  propagation, set `s.InjectContext = wf.Defaults.InjectContext` when the step's is
-  `nil` (inherit). Add a `func (s *Step) InjectContextEnabled() bool` returning
-  `true` unless `s.InjectContext != nil && !*s.InjectContext` — the engine's
-  effective read (unset ⇒ enabled).
-- [ ] 4.3 In `validate.go`, reject `inject_context` on non-agent steps: in
+  explicit `false`; default is `true`. (Also defined `StepContextSpec` + the
+  `Context *StepContextSpec` field here — task 4.4's contradiction check depends
+  on the field existing; Unit 5 wires up its behavior.)
+- [x] 4.2 In `load.go` `applyDefaults` (line 71), after the existing field
+  propagation, resolve the effective toggle into an unexported `Step.injectContext`
+  (step > `[defaults]` > true). Added `func (s *Step) InjectContextEnabled() bool`
+  returning that effective value — the engine's read (unset ⇒ enabled).
+  **Deviation from the literal wording:** the raw `*bool` is *not* overwritten with
+  the default (that would erase the explicit/inherited distinction the validator
+  needs); the effective value lives in a load-time field instead (mirrors the
+  existing `agentPrompt` field). Required to honor the audit's Open-Question
+  resolution (4.4). Recorded in `03-task-04-proofs.md`.
+- [x] 4.3 In `validate.go`, reject `inject_context` on non-agent steps: in
   `checkCommand` (line 275) and `checkReview` (line 295), if `s.InjectContext != nil`
-  emit `errf("step %q: inject_context is only valid on agent steps", s.ID)`. Add a
+  emit `errf("step %q: inject_context is only valid on agent steps", s.ID)`. Added a
   `TestDecodeInvalid` row per the shared message.
-- [ ] 4.4 In `validate.go` (a new `checkContext(s)` called from `checkAgent`, or
-  inline in `checkAgent` line 234), reject the contradiction: a `[step.context]`
-  block present together with an explicit `inject_context = false` on the same step
-  →
+- [x] 4.4 In `validate.go`, added a new `checkContext(s)` called from `checkAgent`,
+  rejecting the contradiction: a `[step.context]` block present together with an
+  explicit `inject_context = false` on the same step →
   `errf("agent step %q: [step.context] with inject_context = false is a contradiction (the block would be inert)", s.ID)`.
-  **Decision to record for the audit:** check the *explicit* per-step value
-  (`s.InjectContext != nil && !*s.InjectContext`) evaluated **before** defaulting
-  collapses it, so an inherited-false step with a context block is not falsely
-  flagged — see the Open Question in the audit.
-- [ ] 4.5 In `buildRequest`/`buildStepContext` (Unit 2), gate assembly on
-  `st.InjectContextEnabled()`: when it returns `false`, skip assembly and leave
-  `req.WorkflowContext == ""`.
-- [ ] 4.6 Tests: `TestDecodeInjectContext` (valid — `[defaults].inject_context =
-  false` + per-step `= true` resolves enabled via `InjectContextEnabled()`); two
+  **Decision recorded for the audit:** checks the *explicit* per-step value
+  (`s.InjectContext != nil && !*s.InjectContext`), which survives because
+  `applyDefaults` no longer collapses it, so an inherited-false step with a context
+  block is not falsely flagged — see the Open Question in the audit.
+- [x] 4.5 In `buildRequest` (Unit 2), gated assembly on `st.InjectContextEnabled()`:
+  when it returns `false`, skip assembly and leave `req.WorkflowContext == ""`.
+- [x] 4.6 Tests: `TestDecodeInjectContext` (valid — `[defaults].inject_context =
+  false` + per-step `= true` resolves enabled, unset inherits disabled); two
   `TestDecodeInvalid` rows (non-agent; contradiction);
   `TestBuildRequestInjectContextOff` in the engine (effective `false` → empty
-  context, prompt equals baseline).
-- [ ] 4.7 Add a small invalid fixture (command step with `inject_context`) and
-  capture `go run ./cmd/jig validate <fixture>` output to
+  context; sibling with toggle on stays non-empty).
+- [x] 4.7 Added a small invalid fixture (command step with `inject_context`) and
+  captured `go run ./cmd/jig validate <fixture>` output to
   `03-proofs/4.0-validate-error.txt`.
 
 ### [ ] 5.0 Optional `[step.context]` authoring block

@@ -151,6 +151,12 @@ type Defaults struct {
 	PermissionMode    string      `toml:"permission_mode"`
 	MaxParallel       int         `toml:"max_parallel"`
 	ArtifactsDir      string      `toml:"artifacts_dir"`
+
+	// InjectContext is the workflow-wide default for the engine-assembled
+	// "Workflow context" preamble on agent steps. Parsed as *bool so "unset"
+	// (nil ⇒ enabled) stays distinct from an explicit false; a per-step
+	// inject_context overrides it.
+	InjectContext *bool `toml:"inject_context"`
 }
 
 // Step is one node in the workflow graph. Fields are grouped by the step type
@@ -172,6 +178,21 @@ type Step struct {
 	Profile   string    `toml:"profile"`    // "@id" references a named AgentProfile
 	Inputs    []Input   `toml:"inputs"`
 	Isolation Isolation `toml:"isolation"`
+
+	// InjectContext toggles the engine-assembled "Workflow context" preamble
+	// for this agent step. Parsed as *bool so an unset value (inherit from
+	// [defaults]) is distinguishable from an explicit false; the effective value
+	// (defaulting to true) is resolved at load time into injectContext. The raw
+	// pointer is deliberately preserved so the validator can reject an explicit
+	// inject_context = false alongside a [step.context] block (the block would
+	// be inert) without an inherited false being mistaken for the same thing.
+	InjectContext *bool `toml:"inject_context"`
+	injectContext bool  // effective value resolved by applyDefaults (step > [defaults] > true)
+
+	// Context is the optional [step.context] authoring block: author-supplied
+	// purpose/notes that supplement — never replace — the engine's graph-derived
+	// framing. Agent-only; see StepContextSpec.
+	Context *StepContextSpec `toml:"context"`
 
 	// Tool access: AllowedTools is the allowlist; DisallowedTools is the
 	// complementary denylist (e.g. everything but Bash).
@@ -223,6 +244,13 @@ type Step struct {
 // The getter exists so runner.AgentExecutor can access it without importing
 // the workflow package's unexported fields directly.
 func (s *Step) AgentPrompt() string { return s.agentPrompt }
+
+// InjectContextEnabled reports whether the engine should assemble and prepend
+// the deterministic "Workflow context" preamble for this agent step. The
+// effective value is resolved once at load time by applyDefaults (an explicit
+// per-step inject_context wins, else [defaults], else the default of true), so
+// the engine gets a single boolean read and never has to re-consult [defaults].
+func (s *Step) InjectContextEnabled() bool { return s.injectContext }
 
 // isMutating reports whether the step's tool allowlist implies it edits the
 // working tree.
@@ -552,6 +580,17 @@ func (sc *Schema) lookup(path []string) (*Field, bool) {
 		fields = cur.Fields // only non-nil for objects; deeper paths then miss
 	}
 	return cur, true
+}
+
+// StepContextSpec is an optional [step.context] table on an agent step. It is
+// author-supplied context that *supplements, never replaces*, the graph-derived
+// framing the engine assembles into the step-context preamble: Purpose says why
+// the step exists (rendered on the step's own preamble and propagated onto a
+// consumer's neighbor line), Notes is local free-form guidance for the step.
+// Both are optional; an absent or empty block changes nothing.
+type StepContextSpec struct {
+	Purpose string `toml:"purpose"`
+	Notes   string `toml:"notes"`
 }
 
 // Validate is a [step.validate] table: the deterministic gate a step must pass

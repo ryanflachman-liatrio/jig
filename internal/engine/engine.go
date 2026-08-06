@@ -841,9 +841,11 @@ func (s *scheduler) buildRequest(
 ) StepRequest {
 	state := s.states[st.ID]
 	// Agent steps get the engine-assembled "Workflow context" preamble; command
-	// and review steps carry none, leaving their prompt untouched.
+	// and review steps carry none, leaving their prompt untouched. An agent step
+	// with inject_context off (explicitly, or inherited from [defaults]) also
+	// opts out, dispatching with a byte-identical no-context prompt.
 	var workflowContext string
-	if st.Type == workflow.StepAgent {
+	if st.Type == workflow.StepAgent && st.InjectContextEnabled() {
 		workflowContext = s.buildStepContext(st).Render()
 	}
 	return StepRequest{

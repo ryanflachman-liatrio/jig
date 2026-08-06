@@ -164,6 +164,42 @@ func TestBuildRequestNonAgentEmpty(t *testing.T) {
 	}
 }
 
+// TestBuildRequestInjectContextOff proves the inject_context opt-out: an agent
+// step with the effective toggle off dispatches with an empty WorkflowContext
+// (byte-identical to the no-context baseline), while a sibling with the toggle
+// on still gets its assembled preamble.
+func TestBuildRequestInjectContextOff(t *testing.T) {
+	const toml = `
+[workflow]
+name = "fixture"
+version = "1"
+
+[[step]]
+id = "a"
+type = "agent"
+skill = "skills/research"
+
+[[step]]
+id = "b"
+type = "agent"
+depends_on = ["a"]
+skill = "skills/plan"
+inject_context = false
+inputs = ["@a.summary"]
+`
+	s := fixtureScheduler(t, toml)
+	s.states["a"].Status = step.StatusSucceeded
+
+	if got := s.buildRequest(s.stepByID("b"), "run1", "", "", "").WorkflowContext; got != "" {
+		t.Errorf("inject_context = false: WorkflowContext = %q, want empty", got)
+	}
+	// Sanity: `a` (inject_context defaulted on) still gets a non-empty preamble,
+	// so the empty result above is the toggle, not an assembly bug.
+	if got := s.buildRequest(s.stepByID("a"), "run1", "", "", "").WorkflowContext; got == "" {
+		t.Errorf("step a (inject_context default on) should have a non-empty preamble")
+	}
+}
+
 const (
 	// examplePreamblePath is the committed 2.0 proof (assembled `plan` preamble,
 	// first-run form); reviseLoopPreamblePath is the 3.0 proof (revise iteration).

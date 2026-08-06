@@ -233,6 +233,7 @@ func (v *validator) checkProfile(s *Step) {
 
 func (v *validator) checkAgent(s *Step) {
 	v.checkProfile(s)
+	v.checkContext(s)
 	// A step is driven by exactly one of a skill dir or a Claude agent file.
 	switch {
 	case s.Skill == "" && s.AgentFile == "":
@@ -272,6 +273,19 @@ func (v *validator) checkAgent(s *Step) {
 	}
 }
 
+// checkContext validates the optional [step.context] block on an agent step.
+// Its load-time rule here is the contradiction guard: an explicit per-step
+// inject_context = false together with a [step.context] block would render the
+// block inert, so it is rejected. The check reads the *explicit* per-step
+// pointer (not the inherited/effective value), so a step that merely inherits
+// false from [defaults] is not flagged — its block is inert but the author may
+// be mid-edit. (Unit 5 extends this helper with the block's own field checks.)
+func (v *validator) checkContext(s *Step) {
+	if s.Context != nil && s.InjectContext != nil && !*s.InjectContext {
+		v.errf("agent step %q: [step.context] with inject_context = false is a contradiction (the block would be inert)", s.ID)
+	}
+}
+
 func (v *validator) checkCommand(s *Step) {
 	switch {
 	case s.Run == "" && s.Script == "":
@@ -289,6 +303,9 @@ func (v *validator) checkCommand(s *Step) {
 	}
 	if s.MaxMessages != 0 {
 		v.errf("command step %q: max_messages is only valid on review steps", s.ID)
+	}
+	if s.InjectContext != nil {
+		v.errf("step %q: inject_context is only valid on agent steps", s.ID)
 	}
 }
 
@@ -314,6 +331,9 @@ func (v *validator) checkReview(s *Step) {
 	}
 	if s.MaxMessages < 0 {
 		v.errf("review step %q: max_messages must be >= 0", s.ID)
+	}
+	if s.InjectContext != nil {
+		v.errf("step %q: inject_context is only valid on agent steps", s.ID)
 	}
 }
 
