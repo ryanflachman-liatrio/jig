@@ -378,7 +378,7 @@ resolves to enabled. (Spec Unit 4.)
   captured `go run ./cmd/jig validate <fixture>` output to
   `03-proofs/4.0-validate-error.txt`.
 
-### [ ] 5.0 Optional `[step.context]` authoring block
+### [x] 5.0 Optional `[step.context]` authoring block
 
 Add an optional `[step.context]` table on agent steps with two string fields,
 `purpose` (why this step exists) and `notes` (local free-form guidance); both
@@ -409,29 +409,27 @@ line. (Spec Unit 5.)
 
 #### 5.0 Tasks
 
-- [ ] 5.1 In `schema.go`, define
-  `type StepContextSpec struct { Purpose string \`toml:"purpose"\`; Notes string \`toml:"notes"\` }`
-  and add `Context *StepContextSpec` `toml:"context"` to the `Step` agent-only
-  group. Doc-comment: author-supplied context that *supplements, never replaces*,
-  the graph-derived framing.
-- [ ] 5.2 In `buildStepContext`, when `st.Context != nil` set `ctx.Purpose =
-  st.Context.Purpose` and `ctx.Notes = st.Context.Notes`. When building each
-  neighbor, set `neighbor.Purpose` from that neighbor step's `Context.Purpose`
-  (propagation) when present; leave empty otherwise (graph-derived only — never a
-  guess).
-- [ ] 5.3 Confirm `Render()` (Unit 1) already emits the own `Purpose`/`Notes` lines
-  and the neighbor purpose clause (upstream `— <purpose>`; downstream purpose
-  *replaces* the derived clause). No new render code; assert via 5.5 tests.
-- [ ] 5.4 In `validate.go`, extend `checkContext` (from 4.4) to reject a
-  `[step.context]` on non-agent steps (shared with `inject_context`) and to surface
-  a clear load-time error for a non-string `purpose`/`notes` (TOML type mismatch).
-  Add the required rows.
-- [ ] 5.5 Tests: `TestWorkflowContextPurposePropagation` (engine — own `Purpose:`
-  line + a downstream consumer's preamble showing this step's `purpose` on its
-  Upstream line); `TestDecodeStepContext` (valid parse lands `Purpose`/`Notes`); a
-  `TestDecodeInvalid` row for a non-string field type.
-- [ ] 5.6 Produce `03-proofs/5.0-context-block-preamble.txt` — a preamble showing a
-  propagated neighbor `purpose`.
+- [x] 5.1 In `schema.go`, defined `type StepContextSpec struct { Purpose; Notes }`
+  and added `Context *StepContextSpec` `toml:"context"` to the `Step` agent-only
+  group. (Done in Task 4.0 — 4.4's contradiction check depends on the field; the
+  doc-comment states it *supplements, never replaces* the graph-derived framing.)
+- [x] 5.2 In `buildStepContext`, when `st.Context != nil` set `ctx.Purpose` /
+  `ctx.Notes`. When building each neighbor, set `neighbor.Purpose` from that
+  neighbor step's `Context.Purpose` (propagation) when present; empty otherwise
+  (graph-derived only — never a guess).
+- [x] 5.3 Confirmed `Render()` (Unit 1) already emits the own `Purpose`/`Notes`
+  lines and the neighbor purpose clause (upstream `— <purpose>`; downstream purpose
+  *replaces* the derived clause). No new render code; asserted via the 5.5 tests.
+- [x] 5.4 In `validate.go`, moved `checkContext` to the shared per-step check list
+  and extended it to reject a `[step.context]` on non-agent steps. A non-string
+  `purpose`/`notes` is a TOML decoder error surfaced before validation
+  (`incompatible types …`); the test asserts it. Added the rows.
+- [x] 5.5 Tests: `TestWorkflowContextPurposePropagation` (engine — own `Purpose:`
+  line + a downstream consumer showing this step's `purpose` on its Upstream line);
+  `TestDecodeStepContext` (valid parse lands `Purpose`/`Notes`); two
+  `TestDecodeInvalid` rows (non-agent block; non-string field type).
+- [x] 5.6 Produced `03-proofs/5.0-context-block-preamble.txt` — a real assembled
+  preamble pair showing own-injection and a propagated neighbor `purpose`.
 
 ### [ ] 6.0 Docs, example alignment, ADR 0006, and skill-narration removal
 

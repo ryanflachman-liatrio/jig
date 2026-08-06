@@ -200,6 +200,59 @@ inputs = ["@a.summary"]
 	}
 }
 
+// TestWorkflowContextPurposePropagation proves the [step.context] authoring
+// block flows two ways: a step's own purpose/notes render on its own preamble,
+// and its declared purpose propagates onto a downstream consumer's Upstream line
+// (author-supplied, never a guess).
+func TestWorkflowContextPurposePropagation(t *testing.T) {
+	const toml = `
+[workflow]
+name = "fixture"
+version = "1"
+
+[[step]]
+id = "plan"
+type = "agent"
+skill = "skills/plan"
+
+  [step.context]
+  purpose = "produce the implementation plan"
+  notes = "focus on the public API surface"
+
+  [step.schema]
+  approach = "text"
+  tasks = { list = "text" }
+
+[[step]]
+id = "implement"
+type = "agent"
+depends_on = ["plan"]
+skill = "skills/implement"
+inputs = ["@plan.tasks"]
+`
+	s := fixtureScheduler(t, toml)
+	s.states["plan"].Status = step.StatusSucceeded
+
+	// Own injection: plan's preamble carries its own Purpose and Notes lines.
+	planCtx := s.buildRequest(s.stepByID("plan"), "run1", "", "", "").WorkflowContext
+	for _, want := range []string{
+		"Purpose: produce the implementation plan",
+		"Notes: focus on the public API surface",
+	} {
+		if !strings.Contains(planCtx, want) {
+			t.Errorf("plan preamble missing %q\n--- got ---\n%s", want, planCtx)
+		}
+	}
+
+	// Neighbor propagation: implement's Upstream line for plan shows plan's
+	// declared purpose after the status.
+	implCtx := s.buildRequest(s.stepByID("implement"), "run1", "", "", "").WorkflowContext
+	wantUpstream := "- `plan` (succeeded) — produce the implementation plan"
+	if !strings.Contains(implCtx, wantUpstream) {
+		t.Errorf("implement preamble missing propagated purpose %q\n--- got ---\n%s", wantUpstream, implCtx)
+	}
+}
+
 const (
 	// examplePreamblePath is the committed 2.0 proof (assembled `plan` preamble,
 	// first-run form); reviseLoopPreamblePath is the 3.0 proof (revise iteration).

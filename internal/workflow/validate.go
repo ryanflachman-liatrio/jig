@@ -119,6 +119,7 @@ func (v *validator) checkStep(s *Step) {
 	v.checkWhen(s)
 	v.checkValidate(s)
 	v.checkLoop(s)
+	v.checkContext(s)
 }
 
 // checkTuning validates the model/reasoning knobs. These are inherited onto
@@ -233,7 +234,6 @@ func (v *validator) checkProfile(s *Step) {
 
 func (v *validator) checkAgent(s *Step) {
 	v.checkProfile(s)
-	v.checkContext(s)
 	// A step is driven by exactly one of a skill dir or a Claude agent file.
 	switch {
 	case s.Skill == "" && s.AgentFile == "":
@@ -273,15 +273,24 @@ func (v *validator) checkAgent(s *Step) {
 	}
 }
 
-// checkContext validates the optional [step.context] block on an agent step.
-// Its load-time rule here is the contradiction guard: an explicit per-step
-// inject_context = false together with a [step.context] block would render the
-// block inert, so it is rejected. The check reads the *explicit* per-step
-// pointer (not the inherited/effective value), so a step that merely inherits
-// false from [defaults] is not flagged — its block is inert but the author may
-// be mid-edit. (Unit 5 extends this helper with the block's own field checks.)
+// checkContext validates the optional [step.context] block. The block is
+// agent-only (shared with inject_context); a non-string purpose/notes is already
+// rejected by the TOML decoder before validation, so nothing to re-check here.
+// On an agent step it additionally cannot be combined with an explicit per-step
+// inject_context = false — the block would be inert, so that is a contradiction.
+// The contradiction reads the *explicit* per-step pointer (not the
+// inherited/effective value), so a step that merely inherits false from
+// [defaults] is not flagged — its block is inert but the author may be mid-edit
+// (audit Open Question, resolved to explicit-false).
 func (v *validator) checkContext(s *Step) {
-	if s.Context != nil && s.InjectContext != nil && !*s.InjectContext {
+	if s.Context == nil {
+		return
+	}
+	if s.Type != StepAgent {
+		v.errf("step %q: [step.context] is only valid on agent steps", s.ID)
+		return
+	}
+	if s.InjectContext != nil && !*s.InjectContext {
 		v.errf("agent step %q: [step.context] with inject_context = false is a contradiction (the block would be inert)", s.ID)
 	}
 }

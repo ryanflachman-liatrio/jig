@@ -449,6 +449,34 @@ inject_context = false
 purpose = "why this step exists"`,
 			want: "contradiction (the block would be inert)",
 		},
+		{
+			name: "context block on command step",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "command"
+run = "true"
+[step.context]
+purpose = "why"`,
+			want: "[step.context] is only valid on agent steps",
+		},
+		{
+			name: "context purpose non-string",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "agent"
+skill = "s"
+[step.context]
+purpose = 5`,
+			want: "incompatible types",
+		},
 	}
 
 	for _, tc := range cases {
@@ -516,6 +544,38 @@ allowed_tools = ["Read"]
 	}
 	if got := wf.Steps[wf.index["inherit_off"]]; got.InjectContextEnabled() {
 		t.Errorf("inherit_off: unset step must inherit [defaults].inject_context = false (want disabled)")
+	}
+}
+
+// TestDecodeStepContext proves a valid [step.context] block parses and its
+// purpose/notes land on the step.
+func TestDecodeStepContext(t *testing.T) {
+	toml := `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "agent"
+skill = "s"
+allowed_tools = ["Read"]
+[step.context]
+purpose = "why a exists"
+notes = "local guidance for a"
+`
+	wf, err := Decode(toml, "")
+	if err != nil {
+		t.Fatalf("expected valid, got error: %v", err)
+	}
+	a := wf.Steps[wf.index["a"]]
+	if a.Context == nil {
+		t.Fatalf("step a: Context is nil, want parsed [step.context]")
+	}
+	if a.Context.Purpose != "why a exists" {
+		t.Errorf("step a purpose = %q, want %q", a.Context.Purpose, "why a exists")
+	}
+	if a.Context.Notes != "local guidance for a" {
+		t.Errorf("step a notes = %q, want %q", a.Context.Notes, "local guidance for a")
 	}
 }
 

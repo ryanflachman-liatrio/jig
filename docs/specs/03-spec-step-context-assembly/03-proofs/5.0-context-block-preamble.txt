@@ -1,0 +1,24 @@
+=== `plan` preamble (own [step.context] purpose + notes) ===
+
+## Workflow context
+
+You are step `plan` in workflow `fixture`.
+Purpose: produce the implementation plan
+Notes: focus on the public API surface
+
+Downstream (what your output feeds):
+- `implement` (agent) — consumes your `tasks`
+
+---
+
+=== `implement` preamble (plan's purpose propagated onto the Upstream line) ===
+
+## Workflow context
+
+You are step `implement` in workflow `fixture`.
+
+Upstream (already complete):
+- `plan` (succeeded) — produce the implementation plan
+These reach you as the inputs listed below; this section is orientation only.
+
+---

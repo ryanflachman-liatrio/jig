@@ -25,6 +25,14 @@ func (s *scheduler) buildStepContext(st *workflow.Step) step.StepContext {
 		StepID:       st.ID,
 	}
 
+	// Author-supplied [step.context]: the step's own purpose/notes supplement the
+	// graph-derived framing (they never replace the topology). An absent block
+	// leaves both empty, so Render omits the Purpose/Notes lines.
+	if st.Context != nil {
+		ctx.Purpose = st.Context.Purpose
+		ctx.Notes = st.Context.Notes
+	}
+
 	// Run-state framing (loops & re-runs). A rerunSource entry means a loop fired
 	// and re-dispatched this step (the goto target), so we know both the current
 	// iteration and the firing loop's cap and can name why. Iteration is populated
@@ -49,6 +57,11 @@ func (s *scheduler) buildStepContext(st *workflow.Step) step.StepContext {
 		n := step.ContextNeighbor{ID: depID}
 		if dep := s.stepByID(depID); dep != nil {
 			n.Kind = string(dep.Type)
+			// Propagate the neighbor's own declared purpose (never a guess); an
+			// undeclared purpose leaves the bullet graph-derived only.
+			if dep.Context != nil {
+				n.Purpose = dep.Context.Purpose
+			}
 		}
 		if ds := s.states[depID]; ds != nil {
 			n.Status = string(ds.Status)
@@ -69,6 +82,11 @@ func (s *scheduler) buildStepContext(st *workflow.Step) step.StepContext {
 			ID:     consumer.ID,
 			Kind:   neighborKind(consumer.Type),
 			Fields: consumedFields(consumer, st.ID),
+		}
+		// The consumer's own declared purpose replaces the derived "consumes
+		// your <fields>" clause (see downstreamBullet); absent ⇒ graph-derived.
+		if consumer.Context != nil {
+			n.Purpose = consumer.Context.Purpose
 		}
 		// A guarded consumer may be when-skipped at runtime on output we cannot
 		// see at assembly, so record the static guard and let the renderer note
