@@ -16,12 +16,17 @@ type Executor interface {
 // StepRequest is the data a worker needs to execute one step.
 // @ref inputs are resolved to paths / inlined values before dispatch.
 type StepRequest struct {
-	RunID       string
-	Step        *workflow.Step
-	Inputs      []ResolvedInput
-	Feedback    string // loop feedback step ID, when re-running via [step.loop]
-	Worktree    string // "" when isolation = none (Phase 5+)
-	ArtifactDir string // absolute path under .jig/runs/<runID>/artifacts; "" disables file writes
+	RunID    string
+	Step     *workflow.Step
+	Inputs   []ResolvedInput
+	Feedback string // loop feedback step ID, when re-running via [step.loop]
+	// WorkflowContext is the pre-rendered "Workflow context" preamble, prepended
+	// at the front of the agent's single user turn. It is "" when there is none:
+	// a non-agent step, or an agent step with inject_context off (Unit 4). An
+	// empty value leaves the built prompt byte-identical to the pre-feature form.
+	WorkflowContext string
+	Worktree        string // "" when isolation = none (Phase 5+)
+	ArtifactDir     string // absolute path under .jig/runs/<runID>/artifacts; "" disables file writes
 
 	// TranscriptPath is the absolute path to this step's transcript.jsonl. When
 	// non-empty the runner captures the full message stream there; "" disables

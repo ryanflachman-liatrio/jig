@@ -834,16 +834,23 @@ func (s *scheduler) buildRequest(
 	runID, worktreePath, artifactDir, transcriptPath string,
 ) StepRequest {
 	state := s.states[st.ID]
+	// Agent steps get the engine-assembled "Workflow context" preamble; command
+	// and review steps carry none, leaving their prompt untouched.
+	var workflowContext string
+	if st.Type == workflow.StepAgent {
+		workflowContext = s.buildStepContext(st).Render()
+	}
 	return StepRequest{
-		RunID:          runID,
-		Step:           st,
-		Inputs:         s.preResolvedInputs[st.ID],
-		Feedback:       s.stepFeedback[st.ID],
-		ArtifactDir:    artifactDir,
-		Worktree:       worktreePath,
-		TranscriptPath: transcriptPath,
-		Iteration:      state.Iteration,
-		Attempt:        state.Attempt,
+		RunID:           runID,
+		Step:            st,
+		Inputs:          s.preResolvedInputs[st.ID],
+		Feedback:        s.stepFeedback[st.ID],
+		WorkflowContext: workflowContext,
+		ArtifactDir:     artifactDir,
+		Worktree:        worktreePath,
+		TranscriptPath:  transcriptPath,
+		Iteration:       state.Iteration,
+		Attempt:         state.Attempt,
 	}
 }
 

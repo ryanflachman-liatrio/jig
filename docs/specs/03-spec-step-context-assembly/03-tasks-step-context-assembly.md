@@ -141,7 +141,7 @@ a fully-populated struct into the committed golden string, byte-for-byte.
   omits optional lines; entry-only → position line + `---`). Table-driven where
   the shape fits.
 
-### [ ] 2.0 Engine assembly of topology + runner prepend
+### [x] 2.0 Engine assembly of topology + runner prepend
 
 Add `WorkflowContext string` to `engine.StepRequest`
 (`internal/engine/executor.go`); in `buildRequest` (`engine.go:832`) build a
@@ -187,18 +187,18 @@ bodies, no live sibling status. Demoable: the assembled `plan` preamble for
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Add `WorkflowContext string` to `StepRequest` in
+- [x] 2.1 Add `WorkflowContext string` to `StepRequest` in
   `internal/engine/executor.go` (after `Feedback`), with a doc comment: pre-rendered
   preamble, `""` when none (non-agent step or `inject_context` off), prepended at
   the front of the agent's user turn.
-- [ ] 2.2 Create `internal/engine/context.go` with
+- [x] 2.2 Create `internal/engine/context.go` with
   `func (s *scheduler) buildStepContext(st *workflow.Step) step.StepContext`. Set
   `WorkflowName = s.wf.Meta.Name`, `StepID = st.ID`. Build `Upstream` by iterating
   `st.DependsOn` in order: for each dep, `ID`, `Kind` = `s.stepByID(dep).Type`, and
   `Status` = string of `s.states[dep].Status`. Comment that the status token is
   retained because a `on_failure = "continue"` dep can be `failed` yet dispatched
   (`depsReady`, engine.go:561).
-- [ ] 2.3 In `buildStepContext`, build `Downstream` by iterating `s.wf.Steps` in
+- [x] 2.3 In `buildStepContext`, build `Downstream` by iterating `s.wf.Steps` in
   declaration order and selecting steps whose `DependsOn` contains `st.ID`. For each
   consumer set `Kind` (`review` → `human`, else the step's `Type`), `Conditional` =
   `consumer.When` (when non-empty), and `Fields` = the field name(s) it consumes from
@@ -206,15 +206,15 @@ bodies, no live sibling status. Demoable: the assembled `plan` preamble for
   `Input.RefField`) **and** — for a `review` consumer — from its `review = "@st.field"`
   ref (so `plan_review` yields `summary`). Preserve the consumer's input-declaration
   order; a bare `@st` with no field leaves `Fields` empty (renders `output`).
-- [ ] 2.4 In `buildRequest` (`engine.go:832`), for `st.Type == StepAgent` only, call
+- [x] 2.4 In `buildRequest` (`engine.go:832`), for `st.Type == StepAgent` only, call
   `buildStepContext`, `Render()` it, and set `req.WorkflowContext`; leave it `""` for
   command/review steps. Keep the rest of the `StepRequest` construction unchanged.
-- [ ] 2.5 In `buildAgentPrompt` (`agent.go:433`), when `req.WorkflowContext != ""`,
+- [x] 2.5 In `buildAgentPrompt` (`agent.go:433`), when `req.WorkflowContext != ""`,
   write it followed by `"\n\n"` **before** the `req.Step.AgentPrompt()` body block,
   leaving the body → append → inputs → feedback order intact. Update the function's
   doc comment to list the preamble as the new first piece; comment that it rides at
   the front of the single user turn (there is no separate system prompt).
-- [ ] 2.6 Add `internal/engine/context_test.go`:
+- [x] 2.6 Add `internal/engine/context_test.go`:
   `TestBuildRequestWorkflowContext` builds a fixture DAG mirroring the `plan`
   neighborhood (3 upstream agents, `plan_review` review consuming `summary`,
   `implement` agent consuming `tasks`/`approach` guarded by
@@ -224,11 +224,11 @@ bodies, no live sibling status. Demoable: the assembled `plan` preamble for
   non-dependency sibling id and no artifact-body text appear. Add
   `TestBuildRequestNonAgentEmpty` asserting a `command` step and a `review` step
   each dispatch with `req.WorkflowContext == ""` (Unit 2 non-agent FR).
-- [ ] 2.7 Add runner tests in `internal/runner/agent_test.go`:
+- [x] 2.7 Add runner tests in `internal/runner/agent_test.go`:
   `TestBuildAgentPromptPrependsContext` (non-empty context at the front with `---`
   before the body, order preserved) and `TestBuildAgentPromptEmptyContext`
   (byte-identical to the pre-feature four-part prompt for `WorkflowContext == ""`).
-- [ ] 2.8 Produce `03-proofs/2.0-plan-preamble.txt` — capture the assembled `plan`
+- [x] 2.8 Produce `03-proofs/2.0-plan-preamble.txt` — capture the assembled `plan`
   preamble for `examples/feature.toml` (e.g. a small `-run` test or a golden-writer
   helper that renders the real step), first-run form (no iteration clause, no
   `State`).

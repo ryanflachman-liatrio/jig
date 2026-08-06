@@ -426,12 +426,23 @@ func toolResultContent(c any) string {
 }
 
 // buildAgentPrompt constructs the prompt sent to Claude. It concatenates:
+//   - the engine-assembled "Workflow context" preamble (if any), ended by its
+//     `---` delimiter — this rides at the front of the agent's single user turn
+//     (jig passes no separate system prompt)
 //   - the agent-file body (if any) from the workflow step
 //   - the append_system_prompt annotation (if any)
 //   - a labeled input section (preamble + per-input provenance labels)
 //   - the feedback artifact (if the step is re-running inside a loop)
+//
+// When WorkflowContext is empty the output is byte-identical to the pre-feature
+// four-part prompt (the persistence-off / inject_context = false path).
 func buildAgentPrompt(req engine.StepRequest) string {
 	var b strings.Builder
+
+	if req.WorkflowContext != "" {
+		b.WriteString(req.WorkflowContext)
+		b.WriteString("\n\n")
+	}
 
 	if body := req.Step.AgentPrompt(); body != "" {
 		b.WriteString(body)

@@ -567,3 +567,53 @@ func TestBuildOptions_AskUserQuestion(t *testing.T) {
 		t.Errorf("AllowedTools = %v, want %v", got.AllowedTools, want)
 	}
 }
+
+// TestBuildAgentPromptEmptyContext is the regression lock: with an empty
+// WorkflowContext the built prompt is byte-identical to the pre-feature
+// four-part prompt (body → append → inputs → feedback). This guards the
+// persistence-off / inject_context = false path.
+func TestBuildAgentPromptEmptyContext(t *testing.T) {
+	req := engine.StepRequest{
+		Step:   &workflow.Step{AppendSystemPrompt: "Be concise."},
+		Inputs: []engine.ResolvedInput{{Ref: workflow.Input{Path: "notes.md"}, Value: "/abs/notes.md"}},
+	}
+	const want = "Be concise.\n\n" +
+		"The following inputs are provided for your task:\n\n" +
+		"[Reference document]: /abs/notes.md"
+	got := buildAgentPrompt(req)
+	if got != want {
+		t.Errorf("empty-context prompt changed (regression):\n--- got ---\n%q\n--- want ---\n%q", got, want)
+	}
+	if strings.Contains(got, "## Workflow context") || strings.HasPrefix(got, "\n") {
+		t.Errorf("empty-context prompt must carry no preamble, got:\n%q", got)
+	}
+}
+
+// TestBuildAgentPromptPrependsContext verifies a non-empty WorkflowContext is
+// prepended at the very front, ended by its `---` delimiter, ahead of the body —
+// and that it leaves the remaining four pieces byte-identical to the no-context
+// prompt.
+func TestBuildAgentPromptPrependsContext(t *testing.T) {
+	const preamble = "## Workflow context\n\nYou are step `x` in workflow `y`.\n\n---"
+	req := engine.StepRequest{
+		Step:            &workflow.Step{AppendSystemPrompt: "Be concise."},
+		Inputs:          []engine.ResolvedInput{{Ref: workflow.Input{Path: "notes.md"}, Value: "/abs/notes.md"}},
+		WorkflowContext: preamble,
+	}
+	got := buildAgentPrompt(req)
+
+	// Preamble at the front, delimiter then a blank line before the body.
+	if !strings.HasPrefix(got, preamble+"\n\n") {
+		t.Errorf("preamble not prepended at front with delimiter:\n%q", got)
+	}
+	// Everything after the preamble equals the no-context prompt, byte-for-byte.
+	reqEmpty := req
+	reqEmpty.WorkflowContext = ""
+	if want := preamble + "\n\n" + buildAgentPrompt(reqEmpty); got != want {
+		t.Errorf("prepend changed the body:\n--- got ---\n%q\n--- want ---\n%q", got, want)
+	}
+	// Order preserved: context precedes the body.
+	if strings.Index(got, "Workflow context") > strings.Index(got, "Be concise.") {
+		t.Error("preamble must appear before the body")
+	}
+}
