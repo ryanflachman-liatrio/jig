@@ -480,7 +480,7 @@ func (m *monitorModel) loadActiveTextarea() {
 	entry := &m.inputQueue[m.activeInputIdx]
 	switch entry.kind {
 	case inputKindRequest:
-		ta := newInputTextarea("Message to agent…", m.gateInnerWidth(), gateTextareaRows)
+		ta := newInputTextarea("Message to agent…", m.gateInnerWidth(), gateTextareaRows, withoutBorder())
 		ta.SetValue(entry.draft)
 		m.promptTextarea = ta
 	case inputKindPrompt:
@@ -488,12 +488,12 @@ func (m *monitorModel) loadActiveTextarea() {
 		if label == "" {
 			label = "Input…"
 		}
-		ta := newInputTextarea(label, m.gateInnerWidth(), gateTextareaRows)
+		ta := newInputTextarea(label, m.gateInnerWidth(), gateTextareaRows, withoutBorder())
 		ta.SetValue(entry.draft)
 		m.promptTextarea = ta
 	case inputKindReview:
 		if entry.composing {
-			ta := newInputTextarea("Message to agent…", m.gateInnerWidth(), gateTextareaRows)
+			ta := newInputTextarea("Message to agent…", m.gateInnerWidth(), gateTextareaRows, withoutBorder())
 			ta.SetValue(entry.draft)
 			m.promptTextarea = ta
 		} else {
@@ -800,7 +800,7 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 		}
 		if entry.review.AllowMessage && keybind.Matches(msg, m.keys.Message) {
 			m.inputQueue[m.activeInputIdx].composing = true
-			m.promptTextarea = newInputTextarea("Message to agent…", m.gateInnerWidth(), 4)
+			m.loadActiveTextarea() // review-composing branch builds the message textarea
 			m.refreshPanels()
 			return m, textarea.Blink
 		}
@@ -923,10 +923,11 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 			stepID:  ev.StepID,
 			request: &evCopy,
 		})
-		// Initialize promptTextarea for the first entry only; loadActiveTextarea
-		// (task 3.2) will handle subsequent navigation.
+		// Build the textarea for the first entry only (it becomes active at index 0;
+		// loadActiveTextarea reads activeInputIdx). A non-empty arrival leaves the
+		// active entry — and its in-progress textarea — untouched.
 		if wasEmpty {
-			m.promptTextarea = newInputTextarea("Message to agent…", m.gateInnerWidth(), gateTextareaRows)
+			m.loadActiveTextarea()
 		}
 
 	case engine.AgentQuestion:
@@ -983,14 +984,11 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 			stepID: ev.StepID,
 			prompt: &evCopy,
 		})
-		// Initialize promptTextarea for the first entry; loadActiveTextarea (task 3.2)
-		// handles subsequent navigation.
+		// Build the textarea for the first entry only (it becomes active at index 0);
+		// loadActiveTextarea derives the placeholder from the prompt label. A
+		// non-empty arrival leaves the active entry's textarea untouched.
 		if wasEmpty {
-			label := evCopy.Label
-			if label == "" {
-				label = "Input…"
-			}
-			m.promptTextarea = newInputTextarea(label, m.gateInnerWidth(), gateTextareaRows)
+			m.loadActiveTextarea()
 		}
 
 	case engine.StepOutput:
@@ -1087,13 +1085,13 @@ func (m *monitorModel) resize() {
 	m.chatVP.SetContent(m.chatBody())
 }
 
-// gateInnerWidth is the content width available to a gate strip's textarea: the
-// the gate panel's inner width minus the textarea's own border+padding frame.
-// The gate panel has its own hFrame, so the textarea must be sized to
-// panelInner-taFrame rather than width-taFrame to avoid overflowing the panel.
+// gateInnerWidth is the content width available to a gate strip's textarea. The
+// gate textarea is borderless (the "Agent input" panel owns the frame, so a
+// bordered textarea would double-box), so it fills the panel's full inner width
+// — no textarea frame to subtract, only the panel's own hFrame.
 func (m monitorModel) gateInnerWidth() int {
 	panelHFrame, _ := panelFrame()
-	w := m.width - panelHFrame - theme.Textarea.Base.GetHorizontalFrameSize()
+	w := m.width - panelHFrame - theme.Textarea.Borderless.GetHorizontalFrameSize()
 	if w < 1 {
 		w = 1
 	}
@@ -1106,15 +1104,16 @@ func (m monitorModel) gateInnerWidth() int {
 // natural body heights:
 //
 //   - textarea kinds (inputKindRequest/inputKindPrompt): gateHeaderRows + label
-//     row + gateTextareaRows content rows + the textarea's own border vFrame.
+//     row + gateTextareaRows content rows. The textarea is borderless (the panel
+//     owns the frame), so it adds no vertical frame of its own.
 //   - review kind (inputKindReview, non-composing): gateHeaderRows + label row
 //   - maxReviewChoices verdict lines + [m] affordance + diff-location hint.
 //
 // inputKindQuestion is the only unbounded kind; its option list scrolls within
 // this height (Unit 6) and is therefore excluded from the max.
 func (m monitorModel) gateBodyHeight() int {
-	taVFrame := theme.Textarea.Base.GetVerticalFrameSize()
-	// textarea case: header + label + textarea (content rows + border)
+	taVFrame := theme.Textarea.Borderless.GetVerticalFrameSize()
+	// textarea case: header + label + textarea content rows (borderless: no frame)
 	textareaCaseH := gateHeaderRows + 1 + gateTextareaRows + taVFrame
 	// review case: header + label + bounded choices + [m] affordance + hint (Unit 5)
 	reviewCaseH := gateHeaderRows + 1 + maxReviewChoices + 1 + 1
