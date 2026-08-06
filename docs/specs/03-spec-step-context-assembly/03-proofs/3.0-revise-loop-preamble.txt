@@ -9,7 +9,7 @@ Upstream (already complete):
 These reach you as the inputs listed below; this section is orientation only.
 
 Downstream (what your output feeds):
-- `plan_review` (human review) — a person reviews your output
+- `plan_review` (human review) — a person reviews your `summary`
 - `implement` (agent) — consumes your `tasks`, `approach` (conditional on `plan_review == 'approve'`)
 
 State: re-running because `plan_review` requested revisions on the previous iteration. Address the reviewer feedback in your inputs.

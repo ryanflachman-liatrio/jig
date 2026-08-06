@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 
@@ -22,6 +23,21 @@ func (s *scheduler) buildStepContext(st *workflow.Step) step.StepContext {
 	ctx := step.StepContext{
 		WorkflowName: s.wf.Meta.Name,
 		StepID:       st.ID,
+	}
+
+	// Run-state framing (loops & re-runs). A rerunSource entry means a loop fired
+	// and re-dispatched this step (the goto target), so we know both the current
+	// iteration and the firing loop's cap and can name why. Iteration is populated
+	// alongside MaxIterations because the clause "iteration N of M" needs both — a
+	// first run (no entry) leaves all three zero, so Render omits the iteration
+	// clause and the State line. Scoped to loop re-runs: a block_on resume
+	// continues the existing SDK conversation and never re-runs buildAgentPrompt.
+	if src, ok := s.rerunSource[st.ID]; ok {
+		if srcStep := s.stepByID(src); srcStep != nil && srcStep.Loop != nil {
+			ctx.Iteration = s.states[st.ID].Iteration
+			ctx.MaxIterations = srcStep.Loop.MaxIterations
+			ctx.RerunReason = rerunReason(src, srcStep.Type)
+		}
 	}
 
 	// Upstream = this step's depends_on, in declared order, each tagged with its
@@ -94,6 +110,17 @@ func consumedFields(consumer *workflow.Step, producerID string) []string {
 		}
 	}
 	return fields
+}
+
+// rerunReason composes the pre-punctuated State-line body naming why a step is
+// re-running, keyed off the firing loop source's type: a review verdict requested
+// revisions, versus an agent/command gate that reported a failure. Both direct
+// the agent to the feedback already present in its inputs.
+func rerunReason(src string, kind workflow.StepType) string {
+	if kind == workflow.StepReview {
+		return fmt.Sprintf("re-running because `%s` requested revisions on the previous iteration. Address the reviewer feedback in your inputs.", src)
+	}
+	return fmt.Sprintf("re-running because the `%s` gate reported a failure. Address the feedback in your inputs.", src)
 }
 
 // parseReviewRef splits a review string like "@plan.summary" into the target

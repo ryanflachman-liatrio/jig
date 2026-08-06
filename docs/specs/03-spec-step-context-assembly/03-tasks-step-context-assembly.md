@@ -233,7 +233,7 @@ bodies, no live sibling status. Demoable: the assembled `plan` preamble for
   helper that renders the real step), first-run form (no iteration clause, no
   `State`).
 
-### [ ] 3.0 Run-state framing (loops & re-runs)
+### [x] 3.0 Run-state framing (loops & re-runs)
 
 Populate the **state** part of `StepContext` so a re-run agent is told it is
 iterating and why — scoped to loop re-runs (the only re-dispatch that re-runs
@@ -269,42 +269,42 @@ reason. (Spec Unit 3.)
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Add `rerunSource map[string]string` to the `scheduler` struct
+- [x] 3.1 Add `rerunSource map[string]string` to the `scheduler` struct
   (`engine.go:329`, beside `stepFeedback` at line 340) with a comment: `goto →
   firing source step id; last-fired wins per re-run; in-memory only, never
   persisted (mirrors stepFeedback)`. Initialize it with `make(...)` in the scheduler
   constructor (~line 406).
-- [ ] 3.2 In `fireLoop` (`engine.go`, at the `stepFeedback[loop.Goto] = content`
+- [x] 3.2 In `fireLoop` (`engine.go`, at the `stepFeedback[loop.Goto] = content`
   write, line 1398), also record `s.rerunSource[loop.Goto] = stepID`. Place it
   **outside** the `if loop.Feedback != ""` block so the re-run reason is recorded
   even when no feedback ref is wired. Comment why last-write-wins is correct (only
   one loop fires per re-run).
-- [ ] 3.3 In `buildStepContext`, set `Iteration = state.Iteration`. When
+- [x] 3.3 In `buildStepContext`, set `Iteration = state.Iteration`. When
   `src, ok := s.rerunSource[st.ID]` is present, set `MaxIterations` from that source
   step's firing loop (`s.stepByID(src).Loop.MaxIterations`) — the loop whose `Goto`
   targets `st.ID`.
-- [ ] 3.4 In `buildStepContext`, derive `RerunReason` only when a `rerunSource`
+- [x] 3.4 In `buildStepContext`, derive `RerunReason` only when a `rerunSource`
   entry exists: look up the source step's `Type` — `review` →
   `` "re-running because `<src>` requested revisions on the previous iteration.
   Address the reviewer feedback in your inputs." ``; `agent`/`command` →
   `` "re-running because the `<src>` gate reported a failure. …" `` (the complete,
   pre-punctuated string per the spec's State-line rule). Leave `RerunReason == ""`
   on a first run so `Render()` omits the `State` line.
-- [ ] 3.5 Confirm the render-side guards from Unit 1 hold end-to-end: iteration
+- [x] 3.5 Confirm the render-side guards from Unit 1 hold end-to-end: iteration
   clause only when `Iteration > 0`; `State` line only when `RerunReason != ""`. No
   new render code — assert via the engine tests below.
-- [ ] 3.6 Add engine tests: `TestWorkflowContextReviseIteration` (drive the fixture
+- [x] 3.6 Add engine tests: `TestWorkflowContextReviseIteration` (drive the fixture
   through a `plan_review == 'revise'` loop fire so `plan` re-dispatches at
   `Iteration == 1`; assert `iteration 2 of 3` and the revise `State` line),
   `TestWorkflowContextGateRerun` (a command/agent gate loop → gate-failure
   phrasing), and `TestWorkflowContextFirstRun` (`Iteration == 0`, empty
   `rerunSource` → no `State`, no iteration clause).
-- [ ] 3.8 (audit FLAG-1) Add `TestWorkflowContextMultipleLoops`: a fixture with
+- [x] 3.8 (audit FLAG-1) Add `TestWorkflowContextMultipleLoops`: a fixture with
   **two** loops whose `goto` both target the same step; fire them in sequence and
   assert the **last-fired** source drives `RerunReason` (last-write-wins on
   `rerunSource`). Hardens the multiple-loops-target-one-step case beyond the
   structural guarantee in task 3.4.
-- [ ] 3.7 Produce `03-proofs/3.0-revise-loop-preamble.txt` — the `plan` preamble on
+- [x] 3.7 Produce `03-proofs/3.0-revise-loop-preamble.txt` — the `plan` preamble on
   its revise iteration (topology from 2.8 plus the iteration clause and `State`
   line).
 

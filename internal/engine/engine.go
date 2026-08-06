@@ -338,9 +338,14 @@ type scheduler struct {
 	runDir       string                    // .jig/runs/<runID>/; "" when persistence is disabled
 	structured   map[string]map[string]any // cached JSON decode of step Result.Structured
 	stepFeedback map[string]string         // gotoStepID → feedback step ID for loop replay
-	aborted      bool                      // true when the run was explicitly aborted (loop cap, etc.)
-	inFlight     int
-	seq          int
+	// rerunSource maps a loop's goto target → the firing source step id
+	// (last-fired wins per re-run; only one loop fires per re-run event). It lets
+	// buildStepContext name why a step is re-running. In-memory only, never
+	// persisted — it mirrors stepFeedback.
+	rerunSource map[string]string
+	aborted     bool // true when the run was explicitly aborted (loop cap, etc.)
+	inFlight    int
+	seq         int
 
 	// Phase 5: worktree lifecycle.
 	jigRoot    string            // .jig/ root; "" when persistence is disabled
@@ -404,6 +409,7 @@ func newScheduler(
 		runDir:              runDir,
 		structured:          make(map[string]map[string]any),
 		stepFeedback:        make(map[string]string),
+		rerunSource:         make(map[string]string),
 		jigRoot:             jigRoot,
 		repoRoot:            repoRoot,
 		worktrees:           make(map[string]string),
@@ -1404,6 +1410,13 @@ func (s *scheduler) fireLoop(stepID string, wfStep *workflow.Step) {
 		}
 		s.stepFeedback[loop.Goto] = content
 	}
+
+	// Record which step's loop fired this re-run so buildStepContext can name the
+	// reason. Kept outside the feedback block so it is recorded even when the loop
+	// wires no feedback ref. Last-write-wins is correct: only one loop fires per
+	// re-run event, so the last write to rerunSource[goto] names the loop that
+	// caused this dispatch (the multiple-loops-target-one-step case).
+	s.rerunSource[loop.Goto] = stepID
 
 	// Reset every step in the loop body to pending with the new iteration count.
 	for _, id := range s.loopBody(loop.Goto, stepID) {
