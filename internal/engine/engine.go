@@ -490,6 +490,7 @@ func newScheduler(
 			phCaptureWorktreeDiff,
 			phRunValidateGate,
 			phCheckBlockOn,
+			phSquashMergeIntegration,
 		},
 		onDone: onDone,
 	}
@@ -772,6 +773,13 @@ func (s *scheduler) setupRunBranch() error {
 	return nil
 }
 
+// stepBranchName is the stable per-step worktree branch name
+// jig/<workflow>/<stepID>. Used both to create the step worktree and to
+// squash-merge it into the run branch, so the two must agree.
+func (s *scheduler) stepBranchName(stepID string) string {
+	return "jig/" + sanitizeBranchName(s.wf.Meta.Name) + "/" + stepID
+}
+
 // dispatch launches a worker goroutine for one step. The worker sends a
 // stepDoneMsg to the inbox when it finishes; only the scheduler reads state.
 func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
@@ -783,9 +791,17 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 		if existing, ok := s.worktrees[st.ID]; ok {
 			worktreePath = existing
 		} else {
-			branch := "jig/" + sanitizeBranchName(s.wf.Meta.Name) + "/" + st.ID
+			branch := s.stepBranchName(st.ID)
 			wtPath := filepath.Join(s.jigRoot, "worktrees", s.runID, st.ID)
-			baseSHA, err := createWorktree(s.repoRoot, wtPath, branch)
+			// Branch off the run branch's current HEAD at dispatch time (spec 06) so
+			// the step sees the code upstream steps already integrated. Fall back to
+			// repo HEAD when there is no run branch (non-git path, where this whole
+			// block only runs if createWorktree can still find a HEAD to fail against).
+			base := "HEAD"
+			if s.runBranch != "" {
+				base = s.runBranch
+			}
+			baseSHA, err := createWorktreeAt(s.repoRoot, wtPath, branch, base)
 			if err != nil {
 				// Setup failure (e.g. a git error creating the branch). Park for a
 				// human recovery decision rather than tearing down the run — a retry

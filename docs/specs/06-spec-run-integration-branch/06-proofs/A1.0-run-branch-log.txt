@@ -1,10 +1,19 @@
-# A1.0 run-branch log — proof that the run branch is created at working-branch HEAD
+# A1.0 run-branch log — one jig-step-tagged commit per mutating step, in declaration order
 
-$ git rev-parse HEAD   # working-branch HEAD before any step runs
-f849cdbfd31bfd74873423add204e14fb3ef5bfd
+$ git log --format='%s' jig/compose/run-20260807-190000-compose1
+b
+a
+init
 
-$ git branch --list 'jig/*'
-+ jig/compose/run-20260807-183000-abc123de
+$ git log --format='%H  jig-step=%(trailers:key=jig-step,valueonly)' jig/compose/run-20260807-190000-compose1
+0f1ce3c37cca694871975787d7ddcf27c1d77ea6  jig-step=b
 
-$ git log --format='%H %s' -1 jig/compose/run-20260807-183000-abc123de   # run-branch tip == working HEAD, message 'init'
-f849cdbfd31bfd74873423add204e14fb3ef5bfd init
+1547388084d32d15295495785bebacd8c2653cac  jig-step=a
+
+82ee77cb4452a445d55d77c6119925903d18ac25  jig-step=
+
+# step b's worktree branched off the run branch AFTER a integrated, so it contains file_a:
+$ git ls-tree --name-only jig/compose/b
+file_a
+file_b
+seed.txt

@@ -117,7 +117,7 @@ a run with persistence off behaves exactly as today.
   `integration_test.go` (temp git repo via the `worktree_test.go` init pattern); run under `-race`.
   Generate `06-proofs/A1.0-run-branch-log.txt` (`git branch --list 'jig/*'` + run-branch tip).
 
-### [ ] 2.0 Step worktrees off run HEAD + squash-per-step integration + step→commit map
+### [x] 2.0 Step worktrees off run HEAD + squash-per-step integration + step→commit map
 
 Change a mutating step's worktree to branch off the **run branch's current HEAD at dispatch time**
 (not repo-root HEAD); read-only steps get no worktree. On a step's successful completion,
@@ -143,28 +143,28 @@ history. This is the core code-composition slice.
 
 #### 2.0 Tasks
 
-- [ ] 2.1 In `dispatch` (`engine.go:721-742`), change a mutating step's worktree so it branches off the
+- [x] 2.1 In `dispatch` (`engine.go:721-742`), change a mutating step's worktree so it branches off the
   run branch's current HEAD (`currentHEAD(s.runWorktree)` / the `s.runBranch` ref) instead of repo-root
   HEAD. Leave read-only steps worktree-less and preserve worktree reuse on retry/loop (`engine.go:722-723`).
-- [ ] 2.2 In `worktree.go`, add `squashMergeStep(repoRoot, runWorktree, stepBranch, stepID string) (sha
+- [x] 2.2 In `worktree.go`, add `squashMergeStep(repoRoot, runWorktree, stepBranch, stepID string) (sha
   string, conflict bool, err error)`: squash-merge `stepBranch` into the run branch as one commit whose
   message carries the trailer `jig-step: <stepID>`; return the new sha, or `conflict=true` (no commit) on
   a merge conflict. Follow the `gitCmd` style.
-- [ ] 2.3 Add a `phSquashMergeIntegration` post-exec handler (`handlers.go`, signature at
+- [x] 2.3 Add a `phSquashMergeIntegration` post-exec handler (`handlers.go`, signature at
   `handlers.go:20`) that runs on a succeeding mutating step: call `squashMergeStep`, set
   `s.stepCommits[stepID]=sha`. Register it in the `postExecChain` init (`handlers.go:478`) after
   `phCaptureWorktreeDiff`/`phRunValidateGate`. No-op when `s.repoRoot == ""`. On conflict, hand off to 3.0.
-- [ ] 2.4 Confirm integration is serialized: `stepDoneMsg` already funnels through the single-writer inbox
+- [x] 2.4 Confirm integration is serialized: `stepDoneMsg` already funnels through the single-writer inbox
   (`engine.go:813,921-1051`), so the handler runs on the scheduler goroutine. Add a comment explaining this
   is what guarantees the run branch's single linear history; if parallel completions can interleave,
   integrate in declaration order via `wf.index`.
-- [ ] 2.5 Add `stepCommitsFromLog(runWorktree string) (map[string]string, error)` in `worktree.go` that
+- [x] 2.5 Add `stepCommitsFromLog(runWorktree string) (map[string]string, error)` in `worktree.go` that
   parses `jig-step:` trailers from the run-branch history, so the map is reconstructable from history.
-- [ ] 2.6 Add `TestStepsComposeOnCode` (A writes `file_a`; B reads it and writes `file_b`; assert B's
+- [x] 2.6 Add `TestStepsComposeOnCode` (A writes `file_a`; B reads it and writes `file_b`; assert B's
   worktree contains `file_a` and the run branch has two `jig-step:`-tagged commits),
   `TestReadOnlyStepProducesNoCommit`, and `TestStepCommitMapReconstructable` to `integration_test.go`;
   extend the fake executor to write files into the step worktree. Refresh `06-proofs/A1.0-run-branch-log.txt`.
-- [ ] 2.7 **Regression guard (audit FLAG 1):** because 2.1 repoints every mutating step's worktree base,
+- [x] 2.7 **Regression guard (audit FLAG 1):** because 2.1 repoints every mutating step's worktree base,
   confirm the existing engine suites still pass under `go test ./internal/engine -race`
   (`engine_test.go`, `recovery_test.go`, `replay_test.go`, `worktree_test.go`), and add a loop/retry case
   asserting a re-run step re-integrates correctly onto the run branch (worktree reuse at `engine.go:722-723`
