@@ -8,9 +8,18 @@ import (
 	"strings"
 )
 
-// createWorktree creates a git worktree at wtPath on a new branch branchName,
-// ensuring the parent directory exists first. It returns the HEAD SHA at
-// creation time so callers can diff against it later.
+// createWorktree creates a git worktree at wtPath on branch branchName, ensuring
+// the parent directory exists first. It returns the HEAD SHA at creation time so
+// callers can diff against it later.
+//
+// The branch name is stable across runs (jig/<workflow>/<step-id>) so downstream
+// merge steps can reference it by a predictable name, and removeWorktree keeps
+// the branch after the run. That makes a re-run collide with the leftover branch,
+// so we use `-B` (reset-or-create) rather than `-b` (create-only): a re-run
+// resets the step branch to the current HEAD — clean-slate scratch space for this
+// step's work — instead of failing with "branch already exists". Any leftover
+// commits on the old branch are discarded; a step's edits are meant to be merged
+// within its run, not carried across runs.
 func createWorktree(repoRoot, wtPath, branchName string) (baseSHA string, err error) {
 	out, err := gitCmd(repoRoot, "rev-parse", "HEAD")
 	if err != nil {
@@ -22,14 +31,16 @@ func createWorktree(repoRoot, wtPath, branchName string) (baseSHA string, err er
 		return "", fmt.Errorf("mkdir worktree parent: %w", err)
 	}
 
-	if out, err = gitCmd(repoRoot, "worktree", "add", wtPath, "-b", branchName); err != nil {
+	if out, err = gitCmd(repoRoot, "worktree", "add", "-B", branchName, wtPath); err != nil {
 		return "", fmt.Errorf("git worktree add: %w — %s", err, strings.TrimSpace(out))
 	}
 	return baseSHA, nil
 }
 
 // removeWorktree removes the git worktree at wtPath, keeping the branch so
-// downstream merge steps can still reference it.
+// downstream merge steps can still reference it. The branch outlives the run by
+// design; a subsequent run of the same workflow resets it via createWorktree's
+// `-B` (see there).
 func removeWorktree(repoRoot, wtPath string) error {
 	out, err := gitCmd(repoRoot, "worktree", "remove", "--force", wtPath)
 	if err != nil {

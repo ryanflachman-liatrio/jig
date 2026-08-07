@@ -114,6 +114,34 @@ func collectEvents(t *testing.T, ch <-chan Event, timeout time.Duration) []Event
 	}
 }
 
+// collectEventsAborting drains ch until RunFinished, and on the first
+// RecoveryRequest it aborts the run via run.Recover. Since an unrecoverable
+// failure now parks the step for a human decision instead of tearing down the
+// run, this reproduces the pre-recovery "a failed step fails the run" contract
+// for tests that assert terminal failure.
+func collectEventsAborting(t *testing.T, ch <-chan Event, run *Run, timeout time.Duration) []Event {
+	t.Helper()
+	var events []Event
+	aborted := false
+	deadline := time.After(timeout)
+	for {
+		select {
+		case e := <-ch:
+			events = append(events, e)
+			if rr, ok := e.(RecoveryRequest); ok && !aborted {
+				aborted = true
+				run.Recover(rr.StepID, RecoverAbort, "")
+			}
+			if _, ok := e.(RunFinished); ok {
+				return events
+			}
+		case <-deadline:
+			t.Fatal("timeout waiting for RunFinished")
+			return nil
+		}
+	}
+}
+
 // findEvents filters events by type name.
 func findStatus(events []Event, stepID string) []step.Status {
 	var out []step.Status
@@ -318,12 +346,14 @@ run = "false"
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 
-	_, err = mgr.Start(wf)
+	run, err := mgr.Start(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	events := collectEvents(t, ch, 5*time.Second)
+	// A failure now parks the step in awaiting_recovery; aborting at the recovery
+	// gate reproduces the terminal-failure outcome.
+	events := collectEventsAborting(t, ch, run, 5*time.Second)
 
 	got := findStatus(events, "bad")
 	if len(got) == 0 || got[len(got)-1] != step.StatusFailed {
@@ -360,11 +390,14 @@ run = "false"
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 
-	if _, err = mgr.Start(wf); err != nil {
+	run, err := mgr.Start(wf)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	events := collectEvents(t, ch, 5*time.Second)
+	// The failure reason rides the Failed transition, which now occurs when the
+	// recovery gate is aborted.
+	events := collectEventsAborting(t, ch, run, 5*time.Second)
 
 	var failEv *StepStatus
 	for i := range events {
@@ -463,12 +496,14 @@ depends_on = ["a"]
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 
-	_, err = mgr.Start(wf)
+	run, err := mgr.Start(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	events := collectEvents(t, ch, 5*time.Second)
+	// a fails and parks for recovery; aborting there fails the run without ever
+	// running b.
+	events := collectEventsAborting(t, ch, run, 5*time.Second)
 
 	// b should never have run.
 	gotB := findStatus(events, "b")
@@ -672,12 +707,14 @@ max_retries = 2
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 
-	_, err = mgr.Start(wf)
+	run, err := mgr.Start(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	events := collectEvents(t, ch, 5*time.Second)
+	// After exhausting automatic retries the step parks for recovery; aborting
+	// there yields the terminal failure this test asserts.
+	events := collectEventsAborting(t, ch, run, 5*time.Second)
 
 	// With max_retries=2 the step should be dispatched 3 times (1 original + 2 retries).
 	if callCount != 3 {
@@ -873,12 +910,14 @@ command = "false"
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 
-	_, err = mgr.Start(wf)
+	run, err := mgr.Start(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	events := collectEvents(t, ch, 5*time.Second)
+	// A failed gate parks the step for recovery; aborting there fails the run and
+	// carries the gate detail onto the Failed transition.
+	events := collectEventsAborting(t, ch, run, 5*time.Second)
 
 	// GateResult must be emitted with Passed=false.
 	var gateResult *GateResult

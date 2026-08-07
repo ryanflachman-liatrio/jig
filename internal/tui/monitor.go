@@ -46,6 +46,7 @@ const (
 	inputKindQuestion                         // AskUserQuestion AgentQuestion
 	inputKindPrompt                           // from="user" PromptRequest
 	inputKindReview                           // ReviewRequest (verdict + message)
+	inputKindRecovery                         // RecoveryRequest (retry / resume / abort)
 )
 
 // pendingInputEntry is one element of the persistent input queue. Exactly one
@@ -62,12 +63,14 @@ type pendingInputEntry struct {
 	question *engine.AgentQuestion
 	prompt   *engine.PromptRequest
 	review   *engine.ReviewRequest
+	recovery *engine.RecoveryRequest
 
-	// draft is the in-progress textarea text (request/prompt, and review compose),
-	// preserved across navigation.
+	// draft is the in-progress textarea text (request/prompt, review compose, and
+	// recovery guidance), preserved across navigation.
 	draft string
 
-	// composing is true while composing a message on a review entry.
+	// composing is true while composing a message on a review entry, or guidance
+	// on a recovery entry.
 	composing bool
 
 	// AgentQuestion multi-step flow, preserved per entry (Decision 9).
@@ -399,7 +402,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 	// kinds that use the textarea (request, prompt, or a composing review entry).
 	if entry, ok := m.activeEntry(); ok &&
 		(entry.kind == inputKindRequest || entry.kind == inputKindPrompt ||
-			(entry.kind == inputKindReview && entry.composing)) {
+			((entry.kind == inputKindReview || entry.kind == inputKindRecovery) && entry.composing)) {
 		var taCmd tea.Cmd
 		m.promptTextarea, taCmd = m.promptTextarea.Update(msg)
 		m.refreshPanels()
@@ -462,7 +465,7 @@ func (m *monitorModel) syncActiveTextarea() {
 	switch entry.kind {
 	case inputKindRequest, inputKindPrompt:
 		entry.draft = m.promptTextarea.Value()
-	case inputKindReview:
+	case inputKindReview, inputKindRecovery:
 		if entry.composing {
 			entry.draft = m.promptTextarea.Value()
 		}
@@ -499,6 +502,14 @@ func (m *monitorModel) loadActiveTextarea() {
 		} else {
 			m.promptTextarea = textarea.Model{}
 		}
+	case inputKindRecovery:
+		if entry.composing {
+			ta := newInputTextarea("Guidance for the retry (optional)…", m.gateInnerWidth(), gateTextareaRows, withoutBorder())
+			ta.SetValue(entry.draft)
+			m.promptTextarea = ta
+		} else {
+			m.promptTextarea = textarea.Model{}
+		}
 	default: // inputKindQuestion
 		m.promptTextarea = textarea.Model{}
 	}
@@ -514,6 +525,8 @@ func kindName(k pendingInputKind) string {
 		return "question"
 	case inputKindPrompt:
 		return "prompt"
+	case inputKindRecovery:
+		return "recovery"
 	default:
 		return "input"
 	}
@@ -815,6 +828,46 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 			}
 		}
 		return m, nil
+
+	case inputKindRecovery:
+		rec := entry.recovery
+		if entry.composing {
+			// Composing guidance: enter resumes the failed session with the error
+			// and this text folded in. Empty is allowed (resume with just the error).
+			if keybind.Matches(msg, m.keys.Submit) {
+				text := m.promptTextarea.Value()
+				m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
+				m.refreshPanels()
+				return m, func() tea.Msg {
+					return recoverResponseMsg{runID: rec.RunID, stepID: rec.StepID, action: engine.RecoverResume, text: text}
+				}
+			}
+			var taCmd tea.Cmd
+			m.promptTextarea, taCmd = m.promptTextarea.Update(msg)
+			m.refreshPanels()
+			return m, taCmd
+		}
+		if keybind.Matches(msg, m.keys.RecoverRetry) {
+			m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
+			m.refreshPanels()
+			return m, func() tea.Msg {
+				return recoverResponseMsg{runID: rec.RunID, stepID: rec.StepID, action: engine.RecoverRetry}
+			}
+		}
+		if rec.CanResume && keybind.Matches(msg, m.keys.RecoverGuide) {
+			m.inputQueue[m.activeInputIdx].composing = true
+			m.loadActiveTextarea() // recovery-composing branch builds the guidance textarea
+			m.refreshPanels()
+			return m, textarea.Blink
+		}
+		if keybind.Matches(msg, m.keys.RecoverAbort) {
+			m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
+			m.refreshPanels()
+			return m, func() tea.Msg {
+				return recoverResponseMsg{runID: rec.RunID, stepID: rec.StepID, action: engine.RecoverAbort}
+			}
+		}
+		return m, nil
 	}
 
 	return m, nil
@@ -879,9 +932,11 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		if ev.To == step.StatusSucceeded || ev.To == step.StatusFailed || ev.To == step.StatusSkipped {
 			m.steps[i].end = time.Now()
 		}
-		// Remove every queue entry for a step that is no longer blocked. Prune on any
-		// transition away from StatusNeedsInput, and on all terminal transitions.
-		if ev.To != step.StatusNeedsInput {
+		// Remove every queue entry for a step that is no longer blocked. Prune on
+		// any transition away from a parked state (needs_input, awaiting_recovery)
+		// and on all terminal transitions — but not the entry into a parked state,
+		// whose gate entry arrives on the following ctrl event.
+		if ev.To != step.StatusNeedsInput && ev.To != step.StatusAwaitingRecovery {
 			for i := len(m.inputQueue) - 1; i >= 0; i-- {
 				if m.inputQueue[i].stepID == ev.StepID {
 					m.removeEntryAt(i)
@@ -909,6 +964,19 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 			kind:   inputKindReview,
 			stepID: ev.StepID,
 			review: &evCopy,
+		})
+
+	case engine.RecoveryRequest:
+		if ev.RunID != m.runID {
+			return m, nil
+		}
+		// A step failed and parked for a recovery decision. Append a gate entry; no
+		// focus steal on arrival (Decision 6), consistent with the other kinds.
+		evCopy := ev
+		m.inputQueue = append(m.inputQueue, pendingInputEntry{
+			kind:     inputKindRecovery,
+			stepID:   ev.StepID,
+			recovery: &evCopy,
 		})
 
 	case engine.InputRequest:
@@ -1077,7 +1145,7 @@ func (m *monitorModel) resize() {
 	}
 	if entry, ok := m.activeEntry(); ok &&
 		(entry.kind == inputKindRequest || entry.kind == inputKindPrompt ||
-			(entry.kind == inputKindReview && entry.composing)) {
+			((entry.kind == inputKindReview || entry.kind == inputKindRecovery) && entry.composing)) {
 		m.promptTextarea.SetWidth(m.gateInnerWidth())
 	}
 	m.rebuildRenderer()
@@ -1427,6 +1495,29 @@ func (m monitorModel) gateStrip() string {
 					b.WriteString("    [m] message\n")
 				}
 				b.WriteString("\n    " + theme.Chat.Hint.Render("diff shown in Transcript — select this step") + "\n")
+			}
+
+		case inputKindRecovery:
+			if entry.composing {
+				b.WriteString(m.promptTextarea.View())
+			} else {
+				// Failure reason, bounded to two rows so the strip height is fixed.
+				reason := clipReason(entry.recovery.Err, m.gateInnerWidth()-2, 2)
+				reasonLines := strings.Split(reason, "\n")
+				for i := 0; i < 2; i++ {
+					if i < len(reasonLines) {
+						b.WriteString("  " + theme.Error.Render(reasonLines[i]) + "\n")
+					} else {
+						b.WriteString("\n") // pad to keep height stable
+					}
+				}
+				b.WriteString("    [r] retry\n")
+				if entry.recovery.CanResume {
+					b.WriteString("    [g] retry with guidance\n")
+				} else {
+					b.WriteString("\n") // keep height stable when resume is unavailable
+				}
+				b.WriteString("    [a] abort run\n")
 			}
 		}
 	}
@@ -1829,6 +1920,32 @@ func writeVerbatim(b *strings.Builder, text string) {
 	}
 }
 
+// clipReason wraps s to width and truncates to at most maxLines, appending an
+// ellipsis to the last kept line when content was dropped. It bounds the
+// recovery gate's error message to a fixed number of rows so the gate strip
+// never shifts the surrounding panels.
+func clipReason(s string, width, maxLines int) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if width < 1 {
+		width = 1
+	}
+	wrapped := lipgloss.NewStyle().Width(width).Render(s)
+	lines := strings.Split(wrapped, "\n")
+	if len(lines) <= maxLines {
+		return wrapped
+	}
+	lines = lines[:maxLines]
+	r := []rune(strings.TrimRight(lines[maxLines-1], " "))
+	if len(r) > 0 {
+		r = r[:len(r)-1]
+	}
+	lines[maxLines-1] = string(r) + "…"
+	return strings.Join(lines, "\n")
+}
+
 func stepIndicator(s step.Status) (string, lipgloss.Style) {
 	switch s {
 	case step.StatusPending:
@@ -1847,6 +1964,8 @@ func stepIndicator(s step.Status) (string, lipgloss.Style) {
 		return "?", theme.Marker
 	case step.StatusNeedsInput:
 		return "⊙", theme.Marker
+	case step.StatusAwaitingRecovery:
+		return "⚠", theme.Error
 	default:
 		return "·", theme.Question
 	}
@@ -1918,6 +2037,12 @@ func (m monitorModel) footerView() string {
 			} else {
 				status = theme.Marker.Render("awaiting review")
 			}
+		case inputKindRecovery:
+			if entry.composing {
+				status = theme.Marker.Render("composing guidance")
+			} else {
+				status = theme.Error.Render("step failed — recovery" + queueSuffix)
+			}
 		}
 	} else {
 		status = theme.Running.Render("running")
@@ -1950,6 +2075,14 @@ func (m monitorModel) footerView() string {
 			}
 		case inputKindPrompt:
 			hint = hintString(m.keys.Submit, m.keys.Newline, entryNav, m.keys.GateBlur)
+		case inputKindRecovery:
+			if entry.composing {
+				hint = hintString(m.keys.Submit, m.keys.Newline, m.keys.GateBlur)
+			} else if entry.recovery.CanResume {
+				hint = hintString(m.keys.RecoverRetry, m.keys.RecoverGuide, m.keys.RecoverAbort, entryNav, m.keys.GateBlur)
+			} else {
+				hint = hintString(m.keys.RecoverRetry, m.keys.RecoverAbort, entryNav, m.keys.GateBlur)
+			}
 		}
 	case m.focus == focusTranscript:
 		hint = hintString(m.keys.FocusFull, m.keys.Scroll, m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll)

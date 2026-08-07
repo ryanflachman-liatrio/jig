@@ -109,13 +109,15 @@ Responsibilities:
 type Status string
 
 const (
-    StatusPending        Status = "pending"         // deps not yet satisfied
-    StatusRunning        Status = "running"
-    StatusValidating     Status = "validating"      // [step.validate] in progress
-    StatusAwaitingReview Status = "awaiting_review" // parked on a human verdict
-    StatusSucceeded      Status = "succeeded"
-    StatusFailed         Status = "failed"
-    StatusSkipped        Status = "skipped"         // `when` false, or dep skipped
+    StatusPending          Status = "pending"           // deps not yet satisfied
+    StatusRunning          Status = "running"
+    StatusValidating       Status = "validating"        // [step.validate] in progress
+    StatusAwaitingReview   Status = "awaiting_review"   // parked on a human verdict
+    StatusNeedsInput       Status = "needs_input"       // parked on block_on / AskUserQuestion
+    StatusAwaitingRecovery Status = "awaiting_recovery" // failed, parked for a human recovery decision
+    StatusSucceeded        Status = "succeeded"
+    StatusFailed           Status = "failed"
+    StatusSkipped          Status = "skipped"           // `when` false, or dep skipped
 )
 
 // State is the scheduler's mutable record for one step. Only the scheduler
@@ -255,7 +257,12 @@ The logic lives in three independently table-testable methods:
 - **`handle(stepDone)`** — run `[step.validate]` (emit `GateResult` either
   way); on failure apply `on_failure`: `retry` → `Attempt++`, back to
   `pending` while under `max_retries`; `continue` → `failed` but dependents
-  stay eligible; `abort` → fail the run, cancel in-flight workers. On success,
+  stay eligible; `abort` (and `retry` past its cap) → **park in
+  `awaiting_recovery` and emit `RecoveryRequest`** rather than cancelling — the
+  run and any in-flight siblings stay alive until a human retries, resumes the
+  failed session, or aborts via `Run.Recover` (see "Failure recovery" in
+  workflow-schema.md). Worktree/step-dir setup failures route through the same
+  gate. On success,
   evaluate `[step.loop]`: if `when` holds and `Iteration < max_iterations`,
   emit `LoopFired`, reset the goto target *and every step on a path between
   goto and the looping step* to `pending` with `Iteration+1`, and record the

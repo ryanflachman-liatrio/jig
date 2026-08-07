@@ -83,6 +83,17 @@ type agentQuestionResponseMsg struct {
 	answer    string
 }
 
+// recoverResponseMsg is emitted by the monitor when the user picks a recovery
+// action for a step parked in awaiting_recovery. The root delivers it via
+// Run.Recover. action is engine.RecoverRetry / RecoverResume / RecoverAbort;
+// text is optional guidance for the resume path.
+type recoverResponseMsg struct {
+	runID  string
+	stepID string
+	action string
+	text   string
+}
+
 // engineEventMsg wraps one engine.Event for delivery as a tea.Msg.
 // isLive distinguishes which channel the event arrived on so the root can
 // re-arm the correct drain loop after processing.
@@ -234,6 +245,12 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case agentQuestionResponseMsg:
 		if run, ok := m.handles[msg.runID]; ok {
 			run.AnswerQuestion(msg.stepID, msg.toolUseID, msg.answer)
+		}
+		return m, nil
+
+	case recoverResponseMsg:
+		if run, ok := m.handles[msg.runID]; ok {
+			run.Recover(msg.stepID, msg.action, msg.text)
 		}
 		return m, nil
 

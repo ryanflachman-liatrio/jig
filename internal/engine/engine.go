@@ -207,6 +207,19 @@ func (r *Run) AnswerQuestion(stepID, toolUseID, answer string) {
 	r.inbox <- agentQuestionAnswerMsg{stepID: stepID, toolUseID: toolUseID, answer: answer}
 }
 
+// Recover delivers a human recovery decision for a step parked in
+// step.StatusAwaitingRecovery after an unrecoverable failure. action is one of:
+//
+//   - RecoverRetry  — re-run the step fresh (a new agent session / full prompt).
+//   - RecoverResume — re-run the failed agent session, feeding the captured
+//     error plus the optional text as guidance so it doesn't repeat the mistake.
+//   - RecoverAbort  — fail the step and abort the run (the old default behaviour).
+//
+// text is optional guidance, used only by RecoverResume.
+func (r *Run) Recover(stepID, action, text string) {
+	r.inbox <- recoverMsg{stepID: stepID, action: action, text: text}
+}
+
 // Snapshot returns a point-in-time view of the run's state. For a live run
 // the request routes through the scheduler's inbox (single-writer invariant).
 // For a completed run it returns the cached final snapshot immediately,
@@ -288,6 +301,25 @@ type agentQuestionAnswerMsg struct {
 	answer    string
 }
 
+// Recovery actions delivered via Run.Recover for a step parked in
+// step.StatusAwaitingRecovery.
+const (
+	RecoverRetry  = "retry"  // re-run fresh (new session, full prompt)
+	RecoverResume = "resume" // resume the failed agent session with the error + guidance
+	RecoverAbort  = "abort"  // fail the step and abort the run
+)
+
+// maxRecoverRounds bounds how many times a single step may be retried/resumed
+// through the recovery gate, preserving jig's static termination guarantee even
+// though the gate is human-driven. The human can always abort instead.
+const maxRecoverRounds = 20
+
+type recoverMsg struct {
+	stepID string
+	action string // RecoverRetry | RecoverResume | RecoverAbort
+	text   string // optional guidance, used by RecoverResume
+}
+
 func (stepDoneMsg) isSchedMsg()            {}
 func (verdictMsg) isSchedMsg()             {}
 func (userInputMsg) isSchedMsg()           {}
@@ -296,6 +328,7 @@ func (humanMessageMsg) isSchedMsg()        {}
 func (agentInputMsg) isSchedMsg()          {}
 func (agentQuestionNotifyMsg) isSchedMsg() {}
 func (agentQuestionAnswerMsg) isSchedMsg() {}
+func (recoverMsg) isSchedMsg()             {}
 
 // ── reporter ─────────────────────────────────────────────────────────────────
 
@@ -371,6 +404,10 @@ type scheduler struct {
 	// block_on: tracks how many times a human has provided input to a blocked step.
 	stepInputCount map[string]int // stepID → input rounds delivered so far
 
+	// recovery gate: tracks retry/resume rounds per step so the human-driven
+	// recovery loop stays bounded (maxRecoverRounds).
+	recoverCount map[string]int // stepID → recovery rounds taken so far
+
 	// reporters holds the active reporter for each in-flight step so
 	// agentQuestionAnswerMsg can route the answer to the correct channel.
 	reporters map[string]*reporter
@@ -422,6 +459,7 @@ func newScheduler(
 		stepMessage:         make(map[string]string),
 		reviewMessages:      make(map[string]int),
 		stepInputCount:      make(map[string]int),
+		recoverCount:        make(map[string]int),
 		reporters:           make(map[string]*reporter),
 		postExecChain: []postExecHandler{
 			phCaptureWorktreeDiff,
@@ -639,6 +677,11 @@ func (s *scheduler) anyPendingRunnable() bool {
 		if st.Status == step.StatusNeedsInput {
 			return true
 		}
+		// A step parked for a recovery decision keeps the run alive: the human
+		// will retry, resume, or abort.
+		if st.Status == step.StatusAwaitingRecovery {
+			return true
+		}
 	}
 	return false
 }
@@ -670,13 +713,14 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 			wtPath := filepath.Join(s.jigRoot, "worktrees", s.runID, st.ID)
 			baseSHA, err := createWorktree(s.repoRoot, wtPath, branch)
 			if err != nil {
-				from := s.states[st.ID].Status
-				s.transition(st.ID, from, step.StatusFailed)
-				s.emit(RunError{
-					RunID: s.runID,
-					Err:   fmt.Sprintf("create worktree for step %q: %v", st.ID, err),
-				})
-				s.cancel()
+				// Setup failure (e.g. a git error creating the branch). Park for a
+				// human recovery decision rather than tearing down the run — a retry
+				// re-runs createWorktree. There is no agent session to resume here.
+				s.states[st.ID].Result = &step.Result{
+					Status: step.StatusFailed,
+					Err:    fmt.Sprintf("create worktree for step %q: %v", st.ID, err),
+				}
+				s.enterRecovery(st.ID)
 				return
 			}
 			s.worktrees[st.ID] = wtPath
@@ -691,13 +735,11 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 	// writes, which would otherwise fail with "no such file or directory".
 	if s.runDir != "" {
 		if _, err := datastore.StepDir(s.runDir, st.ID); err != nil {
-			from := s.states[st.ID].Status
-			s.transition(st.ID, from, step.StatusFailed)
-			s.emit(RunError{
-				RunID: s.runID,
-				Err:   fmt.Sprintf("create step dir for %q: %v", st.ID, err),
-			})
-			s.cancel()
+			s.states[st.ID].Result = &step.Result{
+				Status: step.StatusFailed,
+				Err:    fmt.Sprintf("create step dir for %q: %v", st.ID, err),
+			}
+			s.enterRecovery(st.ID)
 			return
 		}
 	}
@@ -963,6 +1005,9 @@ func (s *scheduler) handle(msg schedMsg) {
 	case agentInputMsg:
 		s.handleAgentInput(m)
 
+	case recoverMsg:
+		s.handleRecover(m)
+
 	case agentQuestionNotifyMsg:
 		// The agent step called AskUserQuestion; transition to StatusNeedsInput so
 		// the TUI can surface the question. The goroutine is still alive, blocked on
@@ -1017,9 +1062,9 @@ func (s *scheduler) applyFailurePolicy(stepID string, wfStep *workflow.Step) {
 			s.transition(stepID, from, step.StatusPending)
 			return
 		}
-		// Exhausted retries — treat as abort so the run fails.
-		s.transition(stepID, from, step.StatusFailed)
-		s.cancel()
+		// Exhausted automatic retries — hand off to the human recovery gate rather
+		// than tearing down the run.
+		s.enterRecovery(stepID)
 
 	case workflow.FailContinue:
 		// Mark failed but don't cancel; dependents with depsReady() will treat
@@ -1027,9 +1072,90 @@ func (s *scheduler) applyFailurePolicy(stepID string, wfStep *workflow.Step) {
 		s.transition(stepID, from, step.StatusFailed)
 
 	default: // FailAbort or unrecognised
-		s.transition(stepID, from, step.StatusFailed)
-		s.cancel()
+		// Pause for a human recovery decision (retry / resume / abort) instead of
+		// the old hair-trigger s.cancel(): the run and any in-flight sibling steps
+		// stay alive. Choosing RecoverAbort at the gate performs the real teardown.
+		s.enterRecovery(stepID)
 	}
+}
+
+// enterRecovery parks a failed step in step.StatusAwaitingRecovery and emits a
+// RecoveryRequest so a human can retry (fresh), resume the failed agent session
+// with the error fed back in, or abort. It replaces the previous s.cancel()
+// teardown on unrecoverable failure: the run and any in-flight sibling steps
+// keep running while the human decides. state.Result must already carry the
+// failure (Err, and SessionID when an agent session ran).
+func (s *scheduler) enterRecovery(stepID string) {
+	state := s.states[stepID]
+	if state.Result == nil {
+		state.Result = &step.Result{Status: step.StatusFailed}
+	}
+	s.transition(stepID, state.Status, step.StatusAwaitingRecovery)
+	s.emit(RecoveryRequest{
+		RunID:     s.runID,
+		StepID:    stepID,
+		Err:       state.Result.Err,
+		CanResume: state.Result.SessionID != "",
+	})
+}
+
+// handleRecover applies a human recovery decision to a step parked in
+// step.StatusAwaitingRecovery.
+func (s *scheduler) handleRecover(m recoverMsg) {
+	state := s.states[m.stepID]
+	if state == nil || state.Status != step.StatusAwaitingRecovery {
+		return // stale or duplicate
+	}
+
+	switch m.action {
+	case RecoverAbort:
+		s.aborted = true
+		s.transition(m.stepID, state.Status, step.StatusFailed)
+		s.cancel()
+
+	case RecoverRetry, RecoverResume:
+		if s.recoverCount[m.stepID] >= maxRecoverRounds {
+			s.emit(RunError{
+				RunID: s.runID,
+				Err:   fmt.Sprintf("step %q: exceeded maximum recovery rounds (%d)", m.stepID, maxRecoverRounds),
+			})
+			return // stay parked; the human can still abort
+		}
+		if m.action == RecoverResume {
+			// Resume requires a captured session. Without one, the TUI should not
+			// have offered resume; ignore rather than silently doing a fresh retry.
+			if state.Result == nil || state.Result.SessionID == "" {
+				return
+			}
+			s.resumeSessions[m.stepID] = state.Result.SessionID
+			s.stepMessage[m.stepID] = composeRecoveryMessage(state.Result.Err, m.text)
+		}
+		s.recoverCount[m.stepID]++
+		state.Attempt++
+		// Back to pending: the main loop re-dispatches. For an agent step that ran
+		// in a worktree, dispatch reuses the existing worktree; a setup-failure
+		// retry has no stored worktree, so dispatch re-runs createWorktree.
+		s.transition(m.stepID, state.Status, step.StatusPending)
+	}
+}
+
+// composeRecoveryMessage builds the resume prompt for RecoverResume: the failed
+// step's captured error plus any operator guidance, framed so the agent revisits
+// its approach instead of repeating the mistake.
+func composeRecoveryMessage(errText, guidance string) string {
+	var b strings.Builder
+	b.WriteString("Your previous attempt failed with this error:\n\n")
+	if strings.TrimSpace(errText) != "" {
+		b.WriteString(errText)
+	} else {
+		b.WriteString("(no error detail was captured)")
+	}
+	if strings.TrimSpace(guidance) != "" {
+		b.WriteString("\n\nAdditional guidance from the operator:\n")
+		b.WriteString(guidance)
+	}
+	b.WriteString("\n\nReview what went wrong and take a different approach to complete the task.")
+	return b.String()
 }
 
 // runGate evaluates the [step.validate] block for wfStep synchronously.

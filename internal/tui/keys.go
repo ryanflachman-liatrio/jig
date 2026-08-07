@@ -187,6 +187,10 @@ type monitorKeys struct {
 	QConfirm       keybind.Binding // matched (enter/space, multiSelect confirm)
 	QuestionCancel keybind.Binding // retained; esc caught by GateBlur; q → task 4.5
 	QuestionScroll keybind.Binding // display-only ("↑/↓ scroll", question option list overflow)
+
+	RecoverRetry keybind.Binding // matched (r, recovery gate: re-run fresh)
+	RecoverGuide keybind.Binding // matched (g, recovery gate: compose guidance + resume session)
+	RecoverAbort keybind.Binding // matched (a, recovery gate: fail the step and abort the run)
 }
 
 func defaultMonitorKeys() monitorKeys {
@@ -227,5 +231,9 @@ func defaultMonitorKeys() monitorKeys {
 		QConfirm:       keybind.NewBinding(keybind.WithKeys("enter", " "), keybind.WithHelp("enter", "confirm")),
 		QuestionCancel: keybind.NewBinding(keybind.WithKeys("esc", "q"), keybind.WithHelp("esc", "blur")),
 		QuestionScroll: keybind.NewBinding(keybind.WithKeys("j", "k", "down", "up"), keybind.WithHelp("↑/↓", "scroll")),
+
+		RecoverRetry: keybind.NewBinding(keybind.WithKeys("r"), keybind.WithHelp("r", "retry")),
+		RecoverGuide: keybind.NewBinding(keybind.WithKeys("g"), keybind.WithHelp("g", "guide+retry")),
+		RecoverAbort: keybind.NewBinding(keybind.WithKeys("a"), keybind.WithHelp("a", "abort")),
 	}
 }

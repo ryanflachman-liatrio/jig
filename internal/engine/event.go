@@ -116,6 +116,21 @@ type RunError struct {
 	Err   string
 }
 
+// RecoveryRequest is emitted when a step fails unrecoverably and the run pauses
+// for a human recovery decision instead of aborting. The step is parked in
+// step.StatusAwaitingRecovery; the run and any in-flight sibling steps stay
+// alive. The TUI surfaces Err and offers: retry (re-run fresh), resume (re-run
+// the failed agent session with the error fed back in — only when CanResume),
+// or abort the run. The decision is delivered via Run.Recover.
+type RecoveryRequest struct {
+	RunID  string
+	StepID string
+	Err    string
+	// CanResume is true when the failed step has a resumable agent session id —
+	// i.e. an agent step that ran (vs. a worktree/setup failure with no session).
+	CanResume bool
+}
+
 // PromptRequest asks the human to supply free-form text for a from="user" input.
 // Multiple user inputs on one step are requested sequentially, each replacing
 // the previous PromptRequest.
@@ -147,16 +162,17 @@ type AgentQuestionOption struct {
 	Description string
 }
 
-func (RunStarted) isEvent()    {}
-func (RunFinished) isEvent()   {}
-func (StepStatus) isEvent()    {}
-func (StepOutput) isEvent()    {}
-func (StepToolCall) isEvent()  {}
-func (StepMessage) isEvent()   {}
-func (GateResult) isEvent()    {}
-func (LoopFired) isEvent()     {}
-func (ReviewRequest) isEvent() {}
-func (InputRequest) isEvent()  {}
-func (RunError) isEvent()      {}
-func (PromptRequest) isEvent() {}
-func (AgentQuestion) isEvent() {}
+func (RunStarted) isEvent()      {}
+func (RunFinished) isEvent()     {}
+func (StepStatus) isEvent()      {}
+func (StepOutput) isEvent()      {}
+func (StepToolCall) isEvent()    {}
+func (StepMessage) isEvent()     {}
+func (GateResult) isEvent()      {}
+func (LoopFired) isEvent()       {}
+func (ReviewRequest) isEvent()   {}
+func (InputRequest) isEvent()    {}
+func (RunError) isEvent()        {}
+func (RecoveryRequest) isEvent() {}
+func (PromptRequest) isEvent()   {}
+func (AgentQuestion) isEvent()   {}

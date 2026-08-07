@@ -77,7 +77,7 @@ Steps are declared with `[[step]]`. Three types: `agent`, `command`, `review`.
 | `when`        | string   | Guard expression; step runs only if true. See "Conditionals".    |
 | `output`      | path     | Single output file (content). **Optional.**                     |
 | `output_type` | see below| `"text"` (default) or a scalar verdict. See "Structured outputs". |
-| `on_failure`  | string   | `"abort"` (default), `"retry"`, `"continue"`.                    |
+| `on_failure`  | string   | `"abort"` (default), `"retry"`, `"continue"`. See "Failure recovery". |
 | `max_retries` | int      | With `on_failure = "retry"`. Default 1.                          |
 | `[step.validate]` | table| Deterministic gate. See "Validation".                            |
 | `[step.loop]` | table    | Bounded loop-back. See "Loops".                                  |
@@ -469,6 +469,36 @@ don't need it: their structured output is already schema-enforced by constructio
 (see "Structured outputs"), so declare `[step.schema]` / `schema_file` instead.
 
 On failure the step's `on_failure` policy applies.
+
+---
+
+## Failure recovery
+
+`on_failure` governs the *automatic* response to a step failure (a non-zero
+command, a failed `[step.validate]` gate, or an agent that errors out):
+
+- **`retry`** re-runs the step up to `max_retries` times.
+- **`continue`** marks the step failed but lets its dependents run anyway (they
+  treat it as a satisfied node).
+- **`abort`** (the default) stops scheduling new work for the run.
+
+When the automatic policy is exhausted — `abort`, or `retry` past `max_retries`
+— the step does **not** silently tear the run down. It parks in
+`awaiting_recovery` and the engine emits a `RecoveryRequest`, keeping the run and
+any in-flight sibling steps alive while a human decides. The run monitor surfaces
+a recovery gate with three actions:
+
+- **retry** — re-run the step fresh (a new agent session / full prompt).
+- **retry with guidance** — resume the *failed agent's* session, feeding the
+  captured error plus optional operator guidance back in so it doesn't repeat the
+  mistake. Offered only when the failed step has a resumable session (an agent
+  step that ran; not a worktree/setup failure).
+- **abort** — fail the step and tear the run down (the pre-recovery default).
+
+The retry/resume round-trip is bounded (an internal cap) so the static
+termination guarantee holds; the human can always abort instead. Worktree setup
+failures (e.g. a git error creating the step branch) route through the same gate
+rather than aborting — a retry re-attempts the setup.
 
 ---
 

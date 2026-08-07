@@ -45,6 +45,8 @@ func eventKind(e Event) string {
 		return "review_request"
 	case RunError:
 		return "run_error"
+	case RecoveryRequest:
+		return "recovery_request"
 	default:
 		return "unknown"
 	}
@@ -106,6 +108,10 @@ var decoders = map[string]func([]byte) (Event, error){
 	},
 	"run_error": func(b []byte) (Event, error) {
 		var e RunError
+		return e, json.Unmarshal(b, &e)
+	},
+	"recovery_request": func(b []byte) (Event, error) {
+		var e RecoveryRequest
 		return e, json.Unmarshal(b, &e)
 	},
 }

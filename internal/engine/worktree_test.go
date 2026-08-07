@@ -229,6 +229,78 @@ done:
 	}
 }
 
+// TestScheduler_WorktreeBranchReuseAcrossRuns is the regression for the reported
+// bug: the branch name (jig/<workflow>/<step>) is stable and kept after a run, so
+// a second run of the same workflow used to fail worktree creation with "branch
+// already exists" and tear the run down. createWorktree now uses `-B` (reset), so
+// the second run resets the branch to HEAD and succeeds — no collision, no
+// recovery gate, no teardown.
+func TestScheduler_WorktreeBranchReuseAcrossRuns(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not in PATH")
+	}
+
+	repoDir := t.TempDir()
+	initRepo(t, repoDir)
+	jigRoot := filepath.Join(repoDir, ".jig")
+	if err := os.MkdirAll(jigRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	const toml = `
+[workflow]
+name = "rerun-test"
+version = "0.1"
+
+[[step]]
+id = "mutate"
+type = "agent"
+isolation = "worktree"
+allowed_tools = ["Write"]
+skill = "skills/mutate"
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManager(newCaptureExec(), jigRoot)
+	_, ch := mgr.Subscribe()
+
+	// Run the same workflow twice against the same repo. Both must succeed and
+	// neither may enter the recovery gate (which is where a branch collision would
+	// now surface instead of a hard teardown).
+	for i := 0; i < 2; i++ {
+		if _, err := mgr.Start(wf); err != nil {
+			t.Fatalf("run %d start: %v", i+1, err)
+		}
+		deadline := time.After(10 * time.Second)
+	drain:
+		for {
+			select {
+			case e := <-ch:
+				switch ev := e.(type) {
+				case RecoveryRequest:
+					t.Fatalf("run %d entered recovery (branch collision not handled): %s", i+1, ev.Err)
+				case RunFinished:
+					if ev.Failed {
+						t.Fatalf("run %d finished failed; want success on re-run", i+1)
+					}
+					break drain
+				}
+			case <-deadline:
+				t.Fatalf("run %d: timeout waiting for RunFinished", i+1)
+			}
+		}
+	}
+
+	// The branch persists after both runs for downstream merge steps to reference.
+	out, err := gitCmd(repoDir, "branch", "--list", "jig/rerun-test/mutate")
+	if err != nil || !contains(string(out), "jig/rerun-test/mutate") {
+		t.Errorf("branch jig/rerun-test/mutate not found after re-runs: %v %s", err, out)
+	}
+}
+
 // contains checks whether sub appears in s.
 func contains(s, sub string) bool {
 	return len(sub) > 0 && len(s) >= len(sub) && func() bool {

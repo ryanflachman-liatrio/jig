@@ -292,6 +292,10 @@ func captureStream(
 				appendEntry(transcript.RoleResult, []transcript.Block{{Type: transcript.BlockText, Text: errStr}})
 				res := failResult(errStr, start)
 				res.Subtype = m.Subtype
+				// Retain the session id even on failure so the engine can offer a
+				// recovery that resumes this exact conversation (feeding the error
+				// back in) rather than starting over blind.
+				res.SessionID = m.SessionID
 				return res, nil
 			}
 			result := &step.Result{

@@ -400,6 +400,97 @@ func TestMonitorReviewQueued(t *testing.T) {
 	}
 }
 
+// TestMonitorRecoveryGate verifies that a RecoveryRequest surfaces a recovery
+// gate whose r/a actions emit recoverResponseMsg, and that guidance ([g]) is
+// hidden when the failed step has no resumable session.
+func TestMonitorRecoveryGate(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	m, _ = m.Update(engineEventMsg{event: engine.RecoveryRequest{
+		RunID:     "run-1",
+		StepID:    "a",
+		Err:       "git worktree add: fatal: a branch named 'jig/x/a' already exists",
+		CanResume: false,
+	}})
+	if len(m.inputQueue) == 0 {
+		t.Fatal("recovery event not added to input queue")
+	}
+	strip := m.gateStrip()
+	if !strings.Contains(strip, "(recovery)") {
+		t.Fatalf("recovery gate strip not shown:\n%s", strip)
+	}
+	if !strings.Contains(strip, "[r] retry") || !strings.Contains(strip, "[a] abort") {
+		t.Fatalf("recovery actions not rendered:\n%s", strip)
+	}
+	// CanResume=false ⇒ no guidance affordance.
+	if strings.Contains(strip, "[g] retry with guidance") {
+		t.Fatalf("guidance shown despite CanResume=false:\n%s", strip)
+	}
+
+	m.focus = focusGate
+	_, cmd := m.Update(key("r"))
+	if cmd == nil {
+		t.Fatal("r produced no command")
+	}
+	rr, ok := cmd().(recoverResponseMsg)
+	if !ok {
+		t.Fatalf("expected recoverResponseMsg, got %T", cmd())
+	}
+	if rr.action != engine.RecoverRetry || rr.stepID != "a" {
+		t.Fatalf("got action=%q stepID=%q; want retry/a", rr.action, rr.stepID)
+	}
+
+	// Abort routes to RecoverAbort.
+	m2 := newMonitorWithSteps(t)
+	m2, _ = m2.Update(engineEventMsg{event: engine.RecoveryRequest{RunID: "run-1", StepID: "a", Err: "boom"}})
+	m2.focus = focusGate
+	_, cmd = m2.Update(key("a"))
+	if cmd == nil {
+		t.Fatal("a produced no command")
+	}
+	if rr, ok := cmd().(recoverResponseMsg); !ok || rr.action != engine.RecoverAbort {
+		t.Fatalf("expected RecoverAbort, got %+v (%T)", cmd(), cmd())
+	}
+}
+
+// TestMonitorRecoveryGuidance verifies the [g] guidance path: it opens a compose
+// box and submitting emits a RecoverResume with the typed text, but only when the
+// failed step is resumable.
+func TestMonitorRecoveryGuidance(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	m, _ = m.Update(engineEventMsg{event: engine.RecoveryRequest{
+		RunID:     "run-1",
+		StepID:    "a",
+		Err:       "agent gave up",
+		CanResume: true,
+	}})
+	if !strings.Contains(m.gateStrip(), "[g] retry with guidance") {
+		t.Fatalf("guidance affordance missing when CanResume=true:\n%s", m.gateStrip())
+	}
+
+	m.focus = focusGate
+	m, _ = m.Update(key("g")) // enter compose
+	if entry, ok := m.activeEntry(); !ok || !entry.composing {
+		t.Fatal("g did not enter guidance compose mode")
+	}
+	// Type guidance, then submit.
+	m, _ = m.Update(key("h"))
+	m, _ = m.Update(key("i"))
+	_, cmd := m.Update(key("enter"))
+	if cmd == nil {
+		t.Fatal("enter produced no command while composing guidance")
+	}
+	rr, ok := cmd().(recoverResponseMsg)
+	if !ok {
+		t.Fatalf("expected recoverResponseMsg, got %T", cmd())
+	}
+	if rr.action != engine.RecoverResume || rr.stepID != "a" {
+		t.Fatalf("got action=%q stepID=%q; want resume/a", rr.action, rr.stepID)
+	}
+	if rr.text != "hi" {
+		t.Fatalf("guidance text = %q, want %q", rr.text, "hi")
+	}
+}
+
 // TestMonitorGateConsumesKeys confirms that with the Gate focused, a review
 // verdict picker consumes j/k (they are not a review action) so the Steps cursor
 // does not move — but focus can still be switched away (see

@@ -17,9 +17,14 @@ const (
 	StatusValidating     Status = "validating"      // [step.validate] in progress
 	StatusAwaitingReview Status = "awaiting_review" // parked on a human verdict
 	StatusNeedsInput     Status = "needs_input"     // blocked by block_on, waiting for human input
-	StatusSucceeded      Status = "succeeded"
-	StatusFailed         Status = "failed"
-	StatusSkipped        Status = "skipped" // when=false, or dep skipped/failed
+	// StatusAwaitingRecovery is a failed step parked for a human recovery
+	// decision instead of aborting the run: retry fresh, resume the failed agent
+	// session with the error fed back in, or abort. It keeps the run and any
+	// in-flight sibling steps alive while the human decides.
+	StatusAwaitingRecovery Status = "awaiting_recovery"
+	StatusSucceeded        Status = "succeeded"
+	StatusFailed           Status = "failed"
+	StatusSkipped          Status = "skipped" // when=false, or dep skipped/failed
 )
 
 // State is the scheduler's mutable record for one step.
