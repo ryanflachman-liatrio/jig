@@ -239,6 +239,48 @@ func TestMonitorChatReviewFallback(t *testing.T) {
 
 // newMonitorWithSteps returns a sized monitor primed with a three-step run so
 // tests can exercise list navigation without the engine.
+// TestMonitorWithJournal rebuilds a monitor from a replayed journal — the
+// recovery path for a run from a previous session with no in-memory handle. It
+// must reconstruct the step list, terminal statuses, and run state, and point the
+// Transcript panel at the first step's content read from disk.
+func TestMonitorWithJournal(t *testing.T) {
+	runDir := writeTranscript(t, "a", []transcript.Entry{
+		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+			{Type: transcript.BlockText, Text: "recovered from disk"},
+		}},
+	})
+
+	m := newMonitorModel("r1")
+	m.runDir = runDir
+	m = m.withJournal([]engine.Event{
+		engine.RunStarted{RunID: "r1", Workflow: "feature", Steps: []string{"a", "b"}},
+		engine.StepStatus{RunID: "r1", StepID: "a", To: step.StatusSucceeded},
+		engine.StepStatus{RunID: "r1", StepID: "b", To: step.StatusFailed, Err: "boom"},
+		engine.RunFinished{RunID: "r1", Failed: true},
+	})
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	if len(m.steps) != 2 {
+		t.Fatalf("steps: want 2, got %d", len(m.steps))
+	}
+	if m.workflow != "feature" {
+		t.Errorf("workflow: want %q, got %q", "feature", m.workflow)
+	}
+	if !m.done || !m.failed {
+		t.Errorf("run state: want done && failed, got done=%v failed=%v", m.done, m.failed)
+	}
+	if m.steps[1].status != step.StatusFailed || m.steps[1].err != "boom" {
+		t.Errorf("step b: want failed/%q, got %v/%q", "boom", m.steps[1].status, m.steps[1].err)
+	}
+	// The Transcript panel points at the first step and shows its recovered text.
+	if m.chatStep != "a" {
+		t.Errorf("chatStep: want %q, got %q", "a", m.chatStep)
+	}
+	if body := ansiStrip(m.chatBody()); !strings.Contains(body, "recovered from disk") {
+		t.Errorf("transcript body missing recovered text:\n%s", body)
+	}
+}
+
 func newMonitorWithSteps(t *testing.T) monitorModel {
 	t.Helper()
 	m := newMonitorModel("run-1")

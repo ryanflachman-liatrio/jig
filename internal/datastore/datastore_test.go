@@ -3,6 +3,7 @@ package datastore
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -46,6 +47,49 @@ func TestRunDir_Idempotent(t *testing.T) {
 	}
 	if _, err := RunDir(root, runID); err != nil {
 		t.Fatalf("second call: %v", err)
+	}
+}
+
+func TestListRunIDs(t *testing.T) {
+	root := t.TempDir()
+	// Create run dirs out of order; ListRunIDs must return them sorted ascending
+	// (chronological, since run IDs are timestamp-prefixed).
+	for _, id := range []string{"20260731-121054-c", "20260731-114852-a", "20260731-121049-b"} {
+		if _, err := RunDir(root, id); err != nil {
+			t.Fatalf("RunDir %q: %v", id, err)
+		}
+	}
+	// A stray file in runs/ must be ignored — only directories are runs.
+	if err := os.WriteFile(filepath.Join(root, "runs", "stray.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ListRunIDs(root)
+	if err != nil {
+		t.Fatalf("ListRunIDs: %v", err)
+	}
+	want := []string{"20260731-114852-a", "20260731-121049-b", "20260731-121054-c"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ListRunIDs: want %v, got %v", want, got)
+	}
+}
+
+func TestListRunIDs_MissingAndEmptyRoot(t *testing.T) {
+	// No runs/ directory yet (fresh repo): nil, no error.
+	got, err := ListRunIDs(t.TempDir())
+	if err != nil {
+		t.Fatalf("ListRunIDs missing runs dir: %v", err)
+	}
+	if got != nil {
+		t.Errorf("missing runs dir: want nil, got %v", got)
+	}
+	// Persistence off (empty root): nil, no error — same as "no runs".
+	got, err = ListRunIDs("")
+	if err != nil {
+		t.Fatalf("ListRunIDs empty root: %v", err)
+	}
+	if got != nil {
+		t.Errorf("empty root: want nil, got %v", got)
 	}
 }
 

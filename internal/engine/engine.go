@@ -67,6 +67,19 @@ func (m *Manager) RunDir(runID string) string {
 	return filepath.Join(m.root, "runs", runID)
 }
 
+// PersistedRuns lists the IDs of runs persisted on disk under .jig/runs/, oldest
+// first. These are the runs a fresh session inherits — including ones from
+// earlier sessions that have no in-memory Run handle — so the TUI can seed its
+// run list at startup rather than only showing runs started this session. Pair
+// each ID with RunDir and ReplayJournal to reconstruct that run's state.
+//
+// Returns nil when persistence is off (root == ""). The manager holds no state
+// for these runs beyond the on-disk layout, so this reads the directory each
+// call.
+func (m *Manager) PersistedRuns() ([]string, error) {
+	return datastore.ListRunIDs(m.root)
+}
+
 // RunSnapshot is a point-in-time summary of a run, safe to read from any goroutine.
 type RunSnapshot struct {
 	ID       string

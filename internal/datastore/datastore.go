@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 )
 
 // RunDir creates (if necessary) the run directory for runID under root and
@@ -38,6 +39,36 @@ func RunDir(root, runID string) (string, error) {
 		}
 	}
 	return dir, nil
+}
+
+// ListRunIDs returns the IDs of the runs persisted under root's runs/ directory,
+// sorted ascending. Because run IDs are timestamp-prefixed (YYYYMMDD-HHMMSS-…),
+// ascending order is chronological — oldest first. Only subdirectories count as
+// runs; stray files are ignored.
+//
+// A missing runs/ directory yields nil with no error (nothing has run yet), and
+// an empty root (persistence off) yields nil as well — callers treat "no runs to
+// list" and "persistence disabled" identically.
+func ListRunIDs(root string) ([]string, error) {
+	if root == "" {
+		return nil, nil
+	}
+	runsDir := filepath.Join(root, "runs")
+	ents, err := os.ReadDir(runsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("datastore: read runs dir %q: %w", runsDir, err)
+	}
+	var ids []string
+	for _, ent := range ents {
+		if ent.IsDir() {
+			ids = append(ids, ent.Name())
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
 }
 
 // StepDir creates (if necessary) the per-step directory steps/<stepID>/ inside

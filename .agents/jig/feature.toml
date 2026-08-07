@@ -24,7 +24,7 @@ description = "Research -> plan -> implement -> verify -> ship, with review gate
 
 [defaults]
 model           = "claude-opus-4-8"
-max_turns       = 40
+max_turns       = 120
 permission_mode = "acceptEdits"
 max_parallel    = 3
 artifacts_dir   = ".jig/artifacts"

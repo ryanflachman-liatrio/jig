@@ -312,6 +312,27 @@ func (m monitorModel) withSnapshot(snap engine.RunSnapshot) monitorModel {
 	return m
 }
 
+// withJournal rebuilds the monitor from a run's replayed journal — the recovery
+// path for a run from an earlier session, where no in-memory Run handle exists to
+// Snapshot(). It folds the same events a live run emits (reconstructing the step
+// list, statuses, and done/failed), then points the Transcript panel at the first
+// step so content shows on open without waiting for an event that will never
+// arrive. runDir must be set before calling so the transcript load can find the
+// step files.
+//
+// Any gate entries a finished run's journal contains (a review or recovery
+// prompt) are cleared by the resolving step transition that follows them, so a
+// cleanly finished run folds down to an empty queue. A run that died while parked
+// keeps its historical prompt, but the root guards every gate action on a live
+// handle, so a recovered prompt is inert.
+func (m monitorModel) withJournal(evs []engine.Event) monitorModel {
+	for _, e := range evs {
+		m, _ = m.handleEngineEvent(e)
+	}
+	m.reloadTranscript()
+	return m
+}
+
 func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -94,6 +95,57 @@ func (m runsModel) Update(msg tea.Msg) (runsModel, tea.Cmd) {
 	return m, nil
 }
 
+// hydrate folds runs recovered from disk into the list — one grouped, seq-ordered
+// event slice per run, oldest run first (see engine.ReplayJournal). It reuses
+// handleEngineEvent so a replayed run folds into a row exactly as a live one did,
+// keeping a single definition of "events → row".
+//
+// A run already tracked in the index is skipped wholesale: a run started this
+// session owns its row, and its live state may be ahead of what the journal has
+// flushed to disk. Hydration only fills in runs the session has not seen.
+func (m runsModel) hydrate(runs [][]engine.Event) runsModel {
+	for _, evs := range runs {
+		if len(evs) == 0 {
+			continue
+		}
+		// The first journal line is always RunStarted; use it to dedupe against
+		// live rows before folding the rest.
+		if rs, ok := evs[0].(engine.RunStarted); ok {
+			if _, exists := m.index[rs.RunID]; exists {
+				continue
+			}
+		}
+		for _, e := range evs {
+			m = m.handleEngineEvent(e)
+		}
+	}
+	m.syncViewport()
+	return m
+}
+
+// sortRows orders rows newest-first by run ID and rebuilds the id→position
+// index. Run IDs are timestamp-prefixed (YYYYMMDD-HHMMSS-…), so a lexical
+// descending sort is reverse-chronological — more reliable than the started
+// field, which is only the moment the row was folded, not the run's real start.
+// The cursor is repositioned to stay on whatever run it was pointing at, so a
+// re-sort never silently changes the selection out from under the user.
+func (m *runsModel) sortRows() {
+	var selectedID string
+	if m.cursor >= 0 && m.cursor < len(m.rows) {
+		selectedID = m.rows[m.cursor].id
+	}
+	sort.Slice(m.rows, func(i, j int) bool {
+		return m.rows[i].id > m.rows[j].id
+	})
+	m.index = make(map[string]int, len(m.rows))
+	for i := range m.rows {
+		m.index[m.rows[i].id] = i
+	}
+	if pos, ok := m.index[selectedID]; ok {
+		m.cursor = pos
+	}
+}
+
 func (m runsModel) handleEngineEvent(e engine.Event) runsModel {
 	switch ev := e.(type) {
 	case engine.RunStarted:
@@ -110,8 +162,16 @@ func (m runsModel) handleEngineEvent(e engine.Event) runsModel {
 		for _, id := range ev.Steps {
 			row.statuses[id] = step.StatusPending
 		}
-		m.index[ev.RunID] = len(m.rows)
+		// A run starting now is the newest, so it belongs at the top. Stick the
+		// cursor to the top when it was already there, so a user watching the head
+		// of the list follows the newest run; otherwise sortRows keeps the cursor
+		// on whatever run it was on.
+		atTop := m.cursor == 0
 		m.rows = append(m.rows, row)
+		m.sortRows()
+		if atTop {
+			m.cursor = 0
+		}
 
 	case engine.StepStatus:
 		i, ok := m.index[ev.RunID]

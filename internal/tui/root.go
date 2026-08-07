@@ -41,6 +41,12 @@ type showRunsMsg struct{}
 // showMonitorMsg asks the root to open the monitor for a specific run.
 type showMonitorMsg struct{ runID string }
 
+// runsHydratedMsg carries runs recovered from disk at startup, one seq-ordered
+// event slice per run (oldest first), for the runs list to fold in. It is
+// produced once by hydrateRunsCmd so a fresh session shows runs from earlier
+// sessions instead of an empty list.
+type runsHydratedMsg struct{ runs [][]engine.Event }
+
 // reviewVerdictMsg is emitted by the monitor when the user selects a verdict
 // for a review step. The root delivers it to the run via Run.Resolve.
 type reviewVerdictMsg struct {
@@ -140,6 +146,7 @@ func New(ctx context.Context, mgr *engine.Manager) tea.Model {
 func (m rootModel) Init() tea.Cmd {
 	return tea.Batch(
 		discoverWorkflowsCmd(workflowsDir),
+		hydrateRunsCmd(m.manager),
 		waitForLiveEventCmd(m.liveEvents),
 		waitForCtrlEventCmd(m.ctrlEvents),
 	)
@@ -204,6 +211,10 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.active = screenRuns
 		return m, nil
 
+	case runsHydratedMsg:
+		m.runs = m.runs.hydrate(msg.runs)
+		return m, nil
+
 	case showMonitorMsg:
 		// Preserve monitor state when returning to the same run — events that
 		// arrived while on other screens are already reflected, and we avoid
@@ -214,10 +225,14 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// before withSnapshot so it preserves it.
 			m.monitor.runDir = m.manager.RunDir(msg.runID)
 			// Seed with a snapshot so already-completed or in-progress steps
-			// show up immediately. Snapshot() is safe for completed runs.
+			// show up immediately. Snapshot() is safe for completed runs. A run
+			// from an earlier session has no handle, so fall back to replaying its
+			// journal from disk — the same events a Snapshot would carry.
 			if run, ok := m.handles[msg.runID]; ok {
 				snap := run.Snapshot()
 				m.monitor = m.monitor.withSnapshot(snap)
+			} else if evs, err := engine.ReplayJournal(m.monitor.runDir); err == nil && len(evs) > 0 {
+				m.monitor = m.monitor.withJournal(evs)
 			}
 		}
 		m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
@@ -313,6 +328,29 @@ func (m rootModel) View() tea.View {
 	v.AltScreen = true
 	v.BackgroundColor = theme.Canvas
 	return v
+}
+
+// hydrateRunsCmd reads the runs persisted on disk and replays each journal into
+// its event stream, off the UI goroutine, so the runs list can show runs from
+// earlier sessions at startup. It emits one runsHydratedMsg; runs whose journal
+// is missing or undecodable are simply omitted. When persistence is off, the run
+// list is empty and the message carries nothing.
+func hydrateRunsCmd(mgr *engine.Manager) tea.Cmd {
+	return func() tea.Msg {
+		ids, err := mgr.PersistedRuns()
+		if err != nil || len(ids) == 0 {
+			return runsHydratedMsg{}
+		}
+		runs := make([][]engine.Event, 0, len(ids))
+		for _, id := range ids {
+			evs, err := engine.ReplayJournal(mgr.RunDir(id))
+			if err != nil || len(evs) == 0 {
+				continue
+			}
+			runs = append(runs, evs)
+		}
+		return runsHydratedMsg{runs: runs}
+	}
 }
 
 // waitForLiveEventCmd drains one event from the live (liveness-signal) channel.
