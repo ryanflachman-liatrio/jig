@@ -1,11 +1,12 @@
-# jig TUI
+# jig
+
+jig's domain vocabulary — a glossary, not a spec. Two clusters: the TUI
+presentation language, and the execution & code-integration model.
+
+## TUI presentation
 
 The presentation vocabulary of jig's Bubble Tea interface — the terms that name
-what the user sees and where their keys act. This context covers the framing and
-layout language introduced by the bordered-screens work; it is a glossary, not a
-spec.
-
-## Language
+what the user sees and where their keys act.
 
 **Screen**:
 One top-level view in the workflow flow: Selector, Detail, Runs, or Monitor.
@@ -59,3 +60,58 @@ _Avoid_: Request, item, gate (a gate is the strip; an entry is what it displays)
 The single unboxed dim hint line rendered directly below a screen's panel(s),
 listing the keybindings available in the current state. Never enclosed in a panel.
 _Avoid_: Help line, status bar, keybind bar.
+
+## Execution & code integration
+
+The vocabulary of how jig carries code between steps and lets an operator rewind a
+run. Introduced by the run-integration/reset work (spec 05).
+
+**Run branch**:
+The single per-run git branch into which every step's code changes are integrated,
+one commit per step. It starts at the user's working-branch HEAD and accumulates the
+run's work; at run end a single human-gated merge lands it back on the user's branch.
+_Avoid_: Integration branch (acceptable synonym), main, trunk.
+
+**Step worktree**:
+The isolated git worktree in which one mutating step's agent runs, branched off the
+**run branch's current HEAD** — so a step sees the code its upstream steps produced.
+Each mutating step gets its own; read-only steps get none.
+_Avoid_: Sandbox, checkout.
+
+**Integration**:
+Squash-merging a completed step's worktree branch back into the run branch as
+**exactly one commit, tagged with the step id**. The per-step commit is what makes a
+step addressable by a later reset.
+_Avoid_: Merge (reserve "merge" for the final run-branch → user-branch landing).
+
+**Integration conflict**:
+A git conflict encountered while integrating a step, or while replaying a survivor
+during a reset, when two changes touch the same lines. Surfaced through the Gate as a
+human-resolved entry — never auto-resolved.
+_Avoid_: Collision, clash.
+
+**Reset** (to a step):
+The operator action that rewinds a run to an earlier target step: `git reset` the run
+branch to before the target's dependency closure, replay the survivor commits outside
+that closure, and return the target and its downstream to `pending` to re-run. Only on
+an unfinished run.
+_Avoid_: Retry, rerun (reserve "retry" for the automatic `on_failure = "retry"`).
+
+**Stop / Resume** (a step):
+**Stop** interrupts a single running step (the run stays alive and becomes quiescent);
+**resume** continues that step's agent session with a new message. Stop is the way to
+reach quiescence mid-run so a reset can proceed; resume continues the conversation, not
+the exact interrupted turn.
+_Avoid_: Pause; Cancel (reserve "cancel" for tearing down the whole run).
+
+**Quiescent**:
+A run with no worker in flight that has not yet settled — the only state in which a
+reset is safe. Reached at a gate or by stopping the running step.
+_Avoid_: Idle, paused, done.
+
+**Generation**:
+The per-step counter of manual re-runs, distinct from **`Attempt`** (automatic
+failure-retries under `on_failure = "retry"`) and **`Iteration`** (loop passes). Bumped
+when a step is manually reset so its transcript shows a legible boundary; unlike
+`Attempt`, it gates no budget.
+_Avoid_: Attempt, retry, version, epoch.
