@@ -168,6 +168,27 @@ func squashMergeStep(repoRoot, runWorktree, stepWorktree, stepBranch, stepID str
 	return sha, false, nil
 }
 
+// finalMerge lands the run by merging runBranch into the user's working branch
+// (spec 06 A3). repoRoot is the primary worktree, still checked out on base, so
+// the merge advances base's HEAD to include the run's squash commits (a
+// fast-forward when base hasn't moved). base is informational — the merge runs
+// against repoRoot's current HEAD, which is base.
+//
+// On a merge conflict the half-applied merge is aborted so repoRoot's working
+// tree is left clean (conflict == true, err == nil); the caller decides how to
+// surface it. Discard is simply not calling this — the run branch is left in
+// place and base is untouched.
+func finalMerge(repoRoot, base, runBranch string) (conflict bool, err error) {
+	if out, cerr := gitCmd(repoRoot, "merge", "--no-edit", runBranch); cerr != nil {
+		if len(mergeConflictPaths(repoRoot)) > 0 {
+			_, _ = gitCmd(repoRoot, "merge", "--abort")
+			return true, nil
+		}
+		return false, fmt.Errorf("git merge %s onto %s: %w — %s", runBranch, base, cerr, strings.TrimSpace(out))
+	}
+	return false, nil
+}
+
 // mergeConflictPaths returns the unmerged (conflicted) paths in a worktree after
 // a failed merge/squash, so the integration-conflict gate (spec 06 A2) can name
 // exactly which files the operator must resolve.

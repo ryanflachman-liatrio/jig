@@ -71,6 +71,10 @@ func TestJournalRoundTrip(t *testing.T) {
 			name: "IntegrationConflictRequest",
 			ev:   IntegrationConflictRequest{RunID: "r1", StepID: "impl", Paths: []string{"a.go", "b.go"}},
 		},
+		{
+			name: "FinalMergeRequest",
+			ev:   FinalMergeRequest{RunID: "r1", RunBranch: "jig/wf/run-1", Base: "main"},
+		},
 	}
 
 	for i, tc := range cases {

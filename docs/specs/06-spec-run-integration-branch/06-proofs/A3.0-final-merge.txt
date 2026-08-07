@@ -1,0 +1,38 @@
+A3.0 — Final gated merge (run branch → user branch)
+
+Reproduces the approve path of the spec-06-A3 final-merge gate: at run end the run
+branch carries one jig-step-tagged commit per mutating step; approving the gate
+runs `git merge --no-edit <run-branch>` onto the user's working branch, which
+fast-forwards the base HEAD to include every run commit. Discard is simply not
+merging — the base is left untouched and the run branch remains for inspection
+(see TestFinalMergeDiscardLeavesBase).
+
+## base branch BEFORE approve
+0a5d939 init
+
+## run branch commits (jig-step tagged)
+5016acb b jig-step: b
+b114522 a jig-step: a
+0a5d939 init
+
+## operator approves final-merge gate → git merge --no-edit jig/land/run-x
+## base branch AFTER approve
+5016acb b jig-step: b
+b114522 a jig-step: a
+0a5d939 init
+
+## file_a / file_b now on base:
+file_a.txt
+file_b.txt
+
+Engine-level evidence (internal/engine/integration_test.go, run under -race):
+  --- PASS: TestFinalMergeApproveLandsCommits   (base HEAD advances; file_a lands; jig-step:a reachable from base HEAD)
+  --- PASS: TestFinalMergeDiscardLeavesBase      (base HEAD unchanged; run branch still present)
+  --- PASS: TestJournalRoundTrip                 (FinalMergeRequest round-trips through the journal)
+TUI evidence (internal/tui/monitor_test.go):
+  --- PASS: TestMonitorFinalMergeGate            ([y] merge / [d] discard render and emit finalMergeResponseMsg)
+
+FLAG-2 constraint honored: the final-merge gate is a pre-RunFinished completion
+step. The scheduler emits FinalMergeRequest, parks (awaitingFinalMerge), and only
+after the operator's approve/discard does it emit RunFinished and settle. There is
+no RunResumed event and no post-RunFinished scheduler re-entry.

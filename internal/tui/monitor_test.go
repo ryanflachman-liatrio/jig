@@ -1466,3 +1466,54 @@ func TestMonitorIntegrationConflictGate(t *testing.T) {
 		t.Fatalf("expected abort resolveIntegrationResponseMsg, got %+v (%T)", cmd(), cmd())
 	}
 }
+
+// TestMonitorFinalMergeGate verifies that a FinalMergeRequest surfaces a
+// final-merge gate offering merge/discard, whose y/d actions emit
+// finalMergeResponseMsg (approve / discard).
+func TestMonitorFinalMergeGate(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	m, _ = m.Update(engineEventMsg{event: engine.FinalMergeRequest{
+		RunID:     "run-1",
+		RunBranch: "jig/wf/run-1",
+		Base:      "main",
+	}})
+	if len(m.inputQueue) == 0 {
+		t.Fatal("final merge event not added to input queue")
+	}
+	strip := m.gateStrip()
+	if !strings.Contains(strip, "(final merge)") {
+		t.Fatalf("final-merge gate strip not shown:\n%s", strip)
+	}
+	if !strings.Contains(strip, "main") {
+		t.Fatalf("base branch not rendered:\n%s", strip)
+	}
+	if !strings.Contains(strip, "[y] merge") || !strings.Contains(strip, "[d] discard") {
+		t.Fatalf("final-merge actions not rendered:\n%s", strip)
+	}
+
+	// Approve routes to finalMergeResponseMsg{approve:true}.
+	m.focus = focusGate
+	_, cmd := m.Update(key("y"))
+	if cmd == nil {
+		t.Fatal("y produced no command")
+	}
+	fr, ok := cmd().(finalMergeResponseMsg)
+	if !ok {
+		t.Fatalf("expected finalMergeResponseMsg, got %T", cmd())
+	}
+	if !fr.approve || fr.runID != "run-1" {
+		t.Fatalf("got approve=%v runID=%q; want approve/run-1", fr.approve, fr.runID)
+	}
+
+	// Discard routes to finalMergeResponseMsg{approve:false}.
+	m2 := newMonitorWithSteps(t)
+	m2, _ = m2.Update(engineEventMsg{event: engine.FinalMergeRequest{RunID: "run-1", RunBranch: "jig/wf/run-1", Base: "main"}})
+	m2.focus = focusGate
+	_, cmd = m2.Update(key("d"))
+	if cmd == nil {
+		t.Fatal("d produced no command")
+	}
+	if fr, ok := cmd().(finalMergeResponseMsg); !ok || fr.approve {
+		t.Fatalf("expected discard finalMergeResponseMsg, got %+v (%T)", cmd(), cmd())
+	}
+}

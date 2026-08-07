@@ -221,7 +221,7 @@ scheduler message + handler mirroring `Run.Resolve` / `handleRecover`.
   resolve lands a merged commit and the run completes; abort fails the step), and a `monitor_test.go` case
   asserting the conflict entry renders with paths. Generate `06-proofs/A2.0-integration-conflict-gate.txt`.
 
-### [ ] 4.0 Final gated merge (run branch → user branch) + de-merge examples
+### [x] 4.0 Final gated merge (run branch → user branch) + de-merge examples
 
 At run end (all steps terminal), present a final merge gate: merge the run branch onto the user's
 working branch, or discard. On approve, jig performs the merge and the base HEAD gains the run's
@@ -244,25 +244,25 @@ run once under human control.
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Add `FinalMergeRequest{RunBranch string, Base string}` to `event.go` + `isEvent()`, and its
+- [x] 4.1 Add `FinalMergeRequest{RunBranch string, Base string}` to `event.go` + `isEvent()`, and its
   journal kind/decoder (`journal.go:26,72-117`) with a round-trip test row in `journal_test.go`.
-- [ ] 4.2 In `worktree.go`, add `finalMerge(repoRoot, base, runBranch string) (conflict bool, err error)`
+- [x] 4.2 In `worktree.go`, add `finalMerge(repoRoot, base, runBranch string) (conflict bool, err error)`
   that merges the run branch onto the base working branch (fast-forward where possible); discard is simply
   not calling it (the run branch is left in place).
-- [ ] 4.3 At terminal detection (`engine.go:530-531`), when a run branch exists with ≥1 commit, present the
+- [x] 4.3 At terminal detection (`engine.go:530-531`), when a run branch exists with ≥1 commit, present the
   final-merge gate (emit `FinalMergeRequest`, keep the run parked-but-alive) instead of emitting
   `RunFinished` immediately. With no run branch / no commits (persistence-off), finish exactly as today.
   **Constraint (audit FLAG 2):** this gate is a **pre-`RunFinished` completion step** (approve/discard →
   *then* `RunFinished`), **not** the retired park-after-finish lifecycle — introduce **no** `RunResumed`
   event and no post-`RunFinished` scheduler re-entry. Add a comment saying so.
-- [ ] 4.4 Add `finalMergeMsg{approve bool}` (`engine.go:272-344`), `Run.FinalMerge(approve bool)`, and a
+- [x] 4.4 Add `finalMergeMsg{approve bool}` (`engine.go:272-344`), `Run.FinalMerge(approve bool)`, and a
   `handle` case: on approve, call `finalMerge` (a conflict routes to the 3.x integration-conflict gate); on
   discard, skip the merge and leave the run branch. Then emit `RunFinished` — the run settles here and is
   locked (no resume), per the FLAG 2 constraint above.
-- [ ] 4.5 TUI: add `inputKindFinalMerge` (`monitor.go:40-84`) rendering an approve/discard prompt at run
+- [x] 4.5 TUI: add `inputKindFinalMerge` (`monitor.go:40-84`) rendering an approve/discard prompt at run
   end; route the response in `root.go` mirroring the other gates (`root.go:242-277`).
-- [ ] 4.6 Edit `examples/bugfix.toml` to remove the hand-wired `merge` command step; run `go run ./cmd/jig
+- [x] 4.6 Edit `examples/bugfix.toml` to remove the hand-wired `merge` command step; run `go run ./cmd/jig
   validate examples/bugfix.toml` (and the other `examples/*.toml`) and confirm exit 0.
-- [ ] 4.7 Add `TestFinalMergeApproveLandsCommits` and `TestFinalMergeDiscardLeavesBase` to
+- [x] 4.7 Add `TestFinalMergeApproveLandsCommits` and `TestFinalMergeDiscardLeavesBase` to
   `integration_test.go`, plus a `monitor_test.go` case for the approve/discard entry. Generate
   `06-proofs/A3.0-final-merge.txt` (base `git log --oneline` before/after approve).

@@ -142,6 +142,18 @@ type IntegrationConflictRequest struct {
 	Paths  []string
 }
 
+// FinalMergeRequest is emitted at run end (all steps terminal) when the run
+// branch carries at least one commit (spec 06 A3). It asks the human to land the
+// run: approve merges RunBranch onto Base (the user's working branch); discard
+// leaves the run branch in place for inspection and merges nothing. The decision
+// is delivered via Run.FinalMerge. This gate is a pre-RunFinished completion
+// step — the run has NOT emitted RunFinished yet and does not resume afterward.
+type FinalMergeRequest struct {
+	RunID     string
+	RunBranch string
+	Base      string
+}
+
 // PromptRequest asks the human to supply free-form text for a from="user" input.
 // Multiple user inputs on one step are requested sequentially, each replacing
 // the previous PromptRequest.
@@ -186,5 +198,6 @@ func (InputRequest) isEvent()               {}
 func (RunError) isEvent()                   {}
 func (RecoveryRequest) isEvent()            {}
 func (IntegrationConflictRequest) isEvent() {}
+func (FinalMergeRequest) isEvent()          {}
 func (PromptRequest) isEvent()              {}
 func (AgentQuestion) isEvent()              {}

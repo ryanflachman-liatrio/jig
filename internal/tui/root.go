@@ -109,6 +109,14 @@ type resolveIntegrationResponseMsg struct {
 	abort  bool
 }
 
+// finalMergeResponseMsg is emitted by the monitor when the user answers the
+// final-merge gate. The root delivers it via Run.FinalMerge: approve lands the
+// run branch onto the base; discard leaves the run branch in place.
+type finalMergeResponseMsg struct {
+	runID   string
+	approve bool
+}
+
 // engineEventMsg wraps one engine.Event for delivery as a tea.Msg.
 // isLive distinguishes which channel the event arrived on so the root can
 // re-arm the correct drain loop after processing.
@@ -281,6 +289,12 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case resolveIntegrationResponseMsg:
 		if run, ok := m.handles[msg.runID]; ok {
 			run.ResolveIntegration(msg.stepID, msg.abort)
+		}
+		return m, nil
+
+	case finalMergeResponseMsg:
+		if run, ok := m.handles[msg.runID]; ok {
+			run.FinalMerge(msg.approve)
 		}
 		return m, nil
 

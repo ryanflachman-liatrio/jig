@@ -241,6 +241,14 @@ func (r *Run) ResolveIntegration(stepID string, abort bool) {
 	r.inbox <- resolveIntegrationMsg{stepID: stepID, abort: abort}
 }
 
+// FinalMerge delivers the operator's decision for the final-merge gate (spec 06
+// A3): approve=true lands the run branch onto the base working branch; approve=
+// false discards it, leaving the run branch in place. Either way the run settles
+// afterward (no resume).
+func (r *Run) FinalMerge(approve bool) {
+	r.inbox <- finalMergeMsg{approve: approve}
+}
+
 // Snapshot returns a point-in-time view of the run's state. For a live run
 // the request routes through the scheduler's inbox (single-writer invariant).
 // For a completed run it returns the cached final snapshot immediately,
@@ -348,6 +356,12 @@ type resolveIntegrationMsg struct {
 	abort  bool
 }
 
+// finalMergeMsg carries the operator's decision for the final-merge gate (spec
+// 06 A3): approve lands the run branch onto the base, discard leaves it.
+type finalMergeMsg struct {
+	approve bool
+}
+
 func (stepDoneMsg) isSchedMsg()            {}
 func (verdictMsg) isSchedMsg()             {}
 func (userInputMsg) isSchedMsg()           {}
@@ -358,6 +372,7 @@ func (agentQuestionNotifyMsg) isSchedMsg() {}
 func (agentQuestionAnswerMsg) isSchedMsg() {}
 func (recoverMsg) isSchedMsg()             {}
 func (resolveIntegrationMsg) isSchedMsg()  {}
+func (finalMergeMsg) isSchedMsg()          {}
 
 // ── reporter ─────────────────────────────────────────────────────────────────
 
@@ -425,7 +440,18 @@ type scheduler struct {
 	// persistence-off / non-git path, where steps run in place with no integration.
 	runBranch   string            // per-run integration branch name; "" when persistence-off
 	runWorktree string            // run worktree absolute path; "" when persistence-off
+	runBaseSHA  string            // working-branch HEAD the run branch was rooted at
+	baseBranch  string            // user's working branch name (final-merge target)
 	stepCommits map[string]string // stepID → squash-merge commit sha on the run branch
+
+	// Final-merge gate (spec 06 A3): a pre-RunFinished completion step. When the
+	// run reaches terminal with a non-empty run branch, the scheduler emits one
+	// FinalMergeRequest and parks (awaitingFinalMerge) instead of finishing;
+	// Run.FinalMerge lands or discards, then the run settles. terminated is set by
+	// the settling handler so run()'s loop returns after emitting RunFinished. No
+	// RunResumed event exists — the run does not re-enter after it settles.
+	awaitingFinalMerge bool
+	terminated         bool
 
 	// from="user" input collection: inputs are gathered one at a time before
 	// the step is dispatched. preResolvedInputs guards against re-intercepting
@@ -571,16 +597,27 @@ func (s *scheduler) run(ctx context.Context) {
 			s.dispatch(ctx, st)
 		}
 
-		// 2. Terminal check: nothing running, nothing pending and runnable.
+		// 2. Terminal check: nothing running, nothing pending and runnable. Before
+		//    finishing, present the final-merge gate (spec 06 A3) when the run branch
+		//    carries commits — this is a pre-RunFinished completion step, so the run
+		//    parks (does not emit RunFinished) until the operator lands or discards.
 		if s.inFlight == 0 && !s.anyPendingRunnable() {
-			s.emit(RunFinished{RunID: s.runID, Failed: s.anyFailed()})
-			return
+			if !s.requestFinalMergeIfNeeded() {
+				s.emit(RunFinished{RunID: s.runID, Failed: s.anyFailed()})
+				return
+			}
+			// Parked on the final-merge gate: fall through and block on the inbox.
 		}
 
 		// 3. Block for exactly one message, then loop to re-dispatch.
 		select {
 		case msg := <-s.inbox:
 			s.handle(msg)
+			// The final-merge handler settles the run in place (emits RunFinished
+			// itself); it does not re-enter the dispatch loop (no RunResumed).
+			if s.terminated {
+				return
+			}
 		case <-ctx.Done():
 			s.emit(RunFinished{RunID: s.runID, Failed: true})
 			return
@@ -778,7 +815,8 @@ func (s *scheduler) setupRunBranch() error {
 	// branch, steps run in place. Probe for a real HEAD and degrade rather than
 	// failing the run. The only hard error left is a genuine worktree-add failure
 	// on a valid repo.
-	if _, err := currentHEAD(s.repoRoot); err != nil {
+	head, err := currentHEAD(s.repoRoot)
+	if err != nil {
 		return nil
 	}
 	branch := runBranchName(s.wf.Meta.Name, s.runID)
@@ -791,6 +829,13 @@ func (s *scheduler) setupRunBranch() error {
 	}
 	s.runBranch = branch
 	s.runWorktree = wtPath
+	s.runBaseSHA = head
+	// Record the user's working branch as the final-merge target (spec 06 A3).
+	// A detached HEAD yields "HEAD" here; the final merge still lands onto whatever
+	// repoRoot has checked out, so the name is informational for the gate.
+	if out, berr := gitCmd(s.repoRoot, "rev-parse", "--abbrev-ref", "HEAD"); berr == nil {
+		s.baseBranch = strings.TrimSpace(out)
+	}
 	return nil
 }
 
@@ -1122,6 +1167,9 @@ func (s *scheduler) handle(msg schedMsg) {
 	case resolveIntegrationMsg:
 		s.handleResolveIntegration(m)
 
+	case finalMergeMsg:
+		s.handleFinalMerge(m)
+
 	case agentQuestionNotifyMsg:
 		// The agent step called AskUserQuestion; transition to StatusNeedsInput so
 		// the TUI can surface the question. The goroutine is still alive, blocked on
@@ -1316,6 +1364,60 @@ func (s *scheduler) handleResolveIntegration(m resolveIntegrationMsg) {
 	if wfStep != nil && wfStep.Loop != nil {
 		s.fireLoop(m.stepID, wfStep)
 	}
+}
+
+// requestFinalMergeIfNeeded presents the final-merge gate the first time the run
+// reaches terminal with a non-empty run branch (spec 06 A3), returning true to
+// keep the run parked-but-alive. It returns false — finish normally — on the
+// persistence-off / non-git path, when the run failed (nothing clean to land), or
+// when the run branch gained no commits beyond its base. Idempotent: once the
+// gate is emitted it keeps returning true until Run.FinalMerge settles the run.
+func (s *scheduler) requestFinalMergeIfNeeded() bool {
+	if s.awaitingFinalMerge {
+		return true // gate already presented; still waiting on the operator
+	}
+	if s.runBranch == "" || s.runWorktree == "" || s.anyFailed() {
+		return false
+	}
+	head, err := currentHEAD(s.runWorktree)
+	if err != nil || head == s.runBaseSHA {
+		return false // run branch is empty — nothing to merge
+	}
+	s.awaitingFinalMerge = true
+	s.emit(FinalMergeRequest{RunID: s.runID, RunBranch: s.runBranch, Base: s.baseBranch})
+	return true
+}
+
+// handleFinalMerge applies the operator's final-merge decision (spec 06 A3).
+// Approve merges the run branch onto the base working branch; discard leaves the
+// run branch in place. Either outcome settles the run: it emits RunFinished and
+// sets terminated so run()'s loop returns. This is a pre-RunFinished completion
+// step — there is deliberately no RunResumed and no post-finish re-entry.
+func (s *scheduler) handleFinalMerge(m finalMergeMsg) {
+	if !s.awaitingFinalMerge {
+		return // stale or duplicate
+	}
+	if m.approve {
+		conflict, err := finalMerge(s.repoRoot, s.baseBranch, s.runBranch)
+		if err != nil {
+			s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("final merge: %v", err)})
+			return // stay parked; the operator can retry or discard
+		}
+		if conflict {
+			// The run branch conflicts with concurrent work on the base. finalMerge
+			// aborted the half-applied merge, so the working tree is clean; surface it
+			// and stay parked so the operator can discard (or fix base and re-approve).
+			s.emit(RunError{
+				RunID: s.runID,
+				Err:   fmt.Sprintf("final merge conflicts with %s; run branch %s left for manual merge", s.baseBranch, s.runBranch),
+			})
+			return
+		}
+	}
+	// Approved-and-merged, or discarded: the run settles here.
+	s.awaitingFinalMerge = false
+	s.terminated = true
+	s.emit(RunFinished{RunID: s.runID, Failed: s.anyFailed()})
 }
 
 // composeRecoveryMessage builds the resume prompt for RecoverResume: the failed

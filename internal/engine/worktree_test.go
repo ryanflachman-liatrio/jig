@@ -114,12 +114,12 @@ skill = "skills/mutate"
 	mgr := NewManager(exec, jigRoot)
 	_, ch := mgr.Subscribe()
 
-	_, err = mgr.Start(wf)
+	run, err := mgr.Start(wf)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	events := collectEvents(t, ch, 10*time.Second)
+	events := driveFinalMerge(t, ch, run, false)
 
 	// The mutate step must have received a non-empty worktree path.
 	req, ok := exec.requests["mutate"]
@@ -206,6 +206,9 @@ output_type = { enum = ["approve", "reject"] }
 				diffSeen = rr.Diff
 				run.Resolve("check", "approve")
 			}
+			if _, ok2 := e.(FinalMergeRequest); ok2 {
+				run.FinalMerge(false)
+			}
 			if _, ok2 := e.(RunFinished); ok2 {
 				goto done
 			}
@@ -271,7 +274,8 @@ skill = "skills/mutate"
 	// neither may enter the recovery gate (which is where a branch collision would
 	// now surface instead of a hard teardown).
 	for i := 0; i < 2; i++ {
-		if _, err := mgr.Start(wf); err != nil {
+		run, err := mgr.Start(wf)
+		if err != nil {
 			t.Fatalf("run %d start: %v", i+1, err)
 		}
 		deadline := time.After(10 * time.Second)
@@ -282,6 +286,8 @@ skill = "skills/mutate"
 				switch ev := e.(type) {
 				case RecoveryRequest:
 					t.Fatalf("run %d entered recovery (branch collision not handled): %s", i+1, ev.Err)
+				case FinalMergeRequest:
+					run.FinalMerge(false)
 				case RunFinished:
 					if ev.Failed {
 						t.Fatalf("run %d finished failed; want success on re-run", i+1)

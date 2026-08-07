@@ -175,7 +175,7 @@ depends_on = ["a"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	collectEvents(t, ch, 10*time.Second)
+	driveFinalMerge(t, ch, run, false)
 
 	// B branched off the run branch after A integrated → its worktree has file_a.
 	if !exec.present["b"]["file_a"] {
@@ -281,7 +281,7 @@ depends_on = ["a"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	collectEvents(t, ch, 10*time.Second)
+	driveFinalMerge(t, ch, run, false)
 
 	br := runBranchName("compose", run.ID)
 	commits, err := stepCommitsFromLog(repo, br)
@@ -331,7 +331,7 @@ max_retries = 1
 	if err != nil {
 		t.Fatal(err)
 	}
-	events := collectEvents(t, ch, 10*time.Second)
+	events := driveFinalMerge(t, ch, run, false)
 	if rf := events[len(events)-1].(RunFinished); rf.Failed {
 		t.Fatalf("run failed despite successful retry")
 	}
@@ -416,6 +416,9 @@ loop:
 				mustGit(t, runWorktree, "add", "-A")
 				run.ResolveIntegration(icr.StepID, false)
 			}
+			if _, ok := e.(FinalMergeRequest); ok {
+				run.FinalMerge(false) // discard: the assertion reads the run branch
+			}
 			if _, ok := e.(RunFinished); ok {
 				break loop
 			}
@@ -490,5 +493,107 @@ loop:
 	}
 	if got := findStatus(events, conflictStep); len(got) == 0 || got[len(got)-1] != step.StatusFailed {
 		t.Errorf("conflicted step %q should end failed; transitions %v", conflictStep, got)
+	}
+}
+
+// landWorkflow is a single mutating step whose squash commit gives the run branch
+// one commit to land at the final-merge gate.
+const landWorkflow = `
+[workflow]
+name = "land"
+version = "0.1"
+
+[[step]]
+id = "a"
+type = "command"
+run = "echo a"
+isolation = "worktree"
+`
+
+// driveFinalMerge collects events until RunFinished, answering the final-merge
+// gate with approve when it fires.
+func driveFinalMerge(t *testing.T, ch <-chan Event, run *Run, approve bool) []Event {
+	t.Helper()
+	deadline := time.After(15 * time.Second)
+	var events []Event
+	for {
+		select {
+		case e := <-ch:
+			events = append(events, e)
+			if _, ok := e.(FinalMergeRequest); ok {
+				run.FinalMerge(approve)
+			}
+			if _, ok := e.(RunFinished); ok {
+				return events
+			}
+		case <-deadline:
+			t.Fatal("timeout waiting for RunFinished")
+		}
+	}
+}
+
+// TestFinalMergeApproveLandsCommits proves that approving the final-merge gate
+// merges the run branch onto the base working branch, so the base HEAD gains the
+// run's commits (spec 06 A3 approve).
+func TestFinalMergeApproveLandsCommits(t *testing.T) {
+	repo := t.TempDir()
+	initRepo(t, repo)
+	baseBefore := strings.TrimSpace(mustGit(t, repo, "rev-parse", "HEAD"))
+
+	wf, err := workflow.Decode(landWorkflow, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &composeExec{writes: map[string]map[string]string{"a": {"file_a": "from a"}}}
+	mgr := NewManager(exec, filepath.Join(repo, ".jig"))
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := driveFinalMerge(t, ch, run, true)
+	if rf := events[len(events)-1].(RunFinished); rf.Failed {
+		t.Errorf("approve should settle a clean run; got Failed=true")
+	}
+	baseAfter := strings.TrimSpace(mustGit(t, repo, "rev-parse", "HEAD"))
+	if baseAfter == baseBefore {
+		t.Errorf("base HEAD did not advance after approve (still %s)", baseAfter)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "file_a")); err != nil {
+		t.Errorf("file_a not present in base working tree after merge: %v", err)
+	}
+	if commits, _ := stepCommitsFromLog(repo, "HEAD"); commits["a"] == "" {
+		t.Errorf("base HEAD missing the jig-step: a commit; got %v", commits)
+	}
+}
+
+// TestFinalMergeDiscardLeavesBase proves that discarding leaves the base branch
+// untouched while the run branch stays present for inspection (spec 06 A3 discard).
+func TestFinalMergeDiscardLeavesBase(t *testing.T) {
+	repo := t.TempDir()
+	initRepo(t, repo)
+	baseBefore := strings.TrimSpace(mustGit(t, repo, "rev-parse", "HEAD"))
+
+	wf, err := workflow.Decode(landWorkflow, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &composeExec{writes: map[string]map[string]string{"a": {"file_a": "from a"}}}
+	mgr := NewManager(exec, filepath.Join(repo, ".jig"))
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	driveFinalMerge(t, ch, run, false)
+
+	baseAfter := strings.TrimSpace(mustGit(t, repo, "rev-parse", "HEAD"))
+	if baseAfter != baseBefore {
+		t.Errorf("discard advanced the base HEAD: %s → %s", baseBefore, baseAfter)
+	}
+	if out, err := gitCmd(repo, "rev-parse", "--verify", runBranchName("land", run.ID)); err != nil {
+		t.Errorf("discard should leave the run branch for inspection: %s", strings.TrimSpace(out))
 	}
 }

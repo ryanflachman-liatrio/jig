@@ -48,6 +48,7 @@ const (
 	inputKindReview                                      // ReviewRequest (verdict + message)
 	inputKindRecovery                                    // RecoveryRequest (retry / resume / abort)
 	inputKindIntegrationConflict                         // IntegrationConflictRequest (resolve / abort)
+	inputKindFinalMerge                                  // FinalMergeRequest (approve / discard)
 )
 
 // pendingInputEntry is one element of the persistent input queue. Exactly one
@@ -66,6 +67,7 @@ type pendingInputEntry struct {
 	review      *engine.ReviewRequest
 	recovery    *engine.RecoveryRequest
 	integration *engine.IntegrationConflictRequest
+	finalMerge  *engine.FinalMergeRequest
 
 	// draft is the in-progress textarea text (request/prompt, review compose, and
 	// recovery guidance), preserved across navigation.
@@ -552,6 +554,8 @@ func kindName(k pendingInputKind) string {
 		return "recovery"
 	case inputKindIntegrationConflict:
 		return "integration"
+	case inputKindFinalMerge:
+		return "final merge"
 	default:
 		return "input"
 	}
@@ -913,6 +917,25 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 			}
 		}
 		return m, nil
+
+	case inputKindFinalMerge:
+		fm := entry.finalMerge
+		// Approve lands the run branch onto the base; discard leaves it in place.
+		if keybind.Matches(msg, m.keys.FinalMergeApprove) {
+			m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
+			m.refreshPanels()
+			return m, func() tea.Msg {
+				return finalMergeResponseMsg{runID: fm.RunID, approve: true}
+			}
+		}
+		if keybind.Matches(msg, m.keys.FinalMergeDiscard) {
+			m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
+			m.refreshPanels()
+			return m, func() tea.Msg {
+				return finalMergeResponseMsg{runID: fm.RunID, approve: false}
+			}
+		}
+		return m, nil
 	}
 
 	return m, nil
@@ -1035,6 +1058,20 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 			kind:        inputKindIntegrationConflict,
 			stepID:      ev.StepID,
 			integration: &evCopy,
+		})
+
+	case engine.FinalMergeRequest:
+		if ev.RunID != m.runID {
+			return m, nil
+		}
+		// The run reached terminal with a non-empty run branch; the operator lands or
+		// discards it (spec 06 A3). No focus steal on arrival (Decision 6). The entry
+		// is keyed by the run branch since there is no owning step.
+		evCopy := ev
+		m.inputQueue = append(m.inputQueue, pendingInputEntry{
+			kind:       inputKindFinalMerge,
+			stepID:     ev.RunBranch,
+			finalMerge: &evCopy,
 		})
 
 	case engine.InputRequest:
@@ -1595,6 +1632,17 @@ func (m monitorModel) gateStrip() string {
 			}
 			b.WriteString("    [r] resolve (finish merge from run worktree)\n")
 			b.WriteString("    [a] abort run\n")
+
+		case inputKindFinalMerge:
+			fm := entry.finalMerge
+			base := fm.Base
+			if base == "" {
+				base = "working branch"
+			}
+			line := clipReason("merge "+fm.RunBranch+" → "+base, m.gateInnerWidth()-2, 1)
+			b.WriteString("  " + theme.Marker.Render(line) + "\n\n")
+			b.WriteString("    [y] merge onto " + base + "\n")
+			b.WriteString("    [d] discard (leave run branch)\n")
 		}
 	}
 
@@ -2121,6 +2169,8 @@ func (m monitorModel) footerView() string {
 			}
 		case inputKindIntegrationConflict:
 			status = theme.Error.Render("integration conflict" + queueSuffix)
+		case inputKindFinalMerge:
+			status = theme.Marker.Render("awaiting final merge" + queueSuffix)
 		}
 	} else {
 		status = theme.Running.Render("running")
@@ -2163,6 +2213,8 @@ func (m monitorModel) footerView() string {
 			}
 		case inputKindIntegrationConflict:
 			hint = hintString(m.keys.IntegrationResolve, m.keys.RecoverAbort, entryNav, m.keys.GateBlur)
+		case inputKindFinalMerge:
+			hint = hintString(m.keys.FinalMergeApprove, m.keys.FinalMergeDiscard, entryNav, m.keys.GateBlur)
 		}
 	case m.focus == focusTranscript:
 		hint = hintString(m.keys.FocusFull, m.keys.Scroll, m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll)

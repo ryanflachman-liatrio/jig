@@ -37,9 +37,7 @@ output_type = { enum = ["approve", "revise"] }
   max_iterations = 3
   feedback       = "@approve"
 
-[[step]]
-id         = "merge"
-type       = "command"
-depends_on = ["approve"]
-when       = "approve == 'approve'"
-run        = "git merge --no-ff jig/bugfix/fix"
+# Landing the change is no longer a hand-wired `merge` command step: jig runs each
+# step on a per-run integration branch and presents a single final-merge gate at
+# run end (spec 06 A3), so approving the review and then the final-merge gate lands
+# the run onto the working branch.
