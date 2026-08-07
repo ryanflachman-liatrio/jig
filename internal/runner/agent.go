@@ -267,8 +267,26 @@ func captureStream(
 		appendEntry(transcript.RoleUser, []transcript.Block{{Type: transcript.BlockText, Text: initialUserMsg}})
 	}
 
+	// Capture the SDK session id as early as it is surfaced (spec 07 B2). With
+	// partial messages enabled every StreamEvent carries session_id, and the init
+	// SystemMessage carries it too — both arrive well before the terminal
+	// ResultMessage. Recording it here means a step stopped mid-turn still returns
+	// a resumable session id (see the connection-closed path below), where the old
+	// capture-on-ResultMessage-only left a cancelled step with SessionID == "".
+	sessionID := ""
+	noteSession := func(id string) {
+		if id != "" && sessionID == "" {
+			sessionID = id
+		}
+	}
+
 	for msg := range msgChan {
 		switch m := msg.(type) {
+		case *claudecode.SystemMessage:
+			// The init system message carries session_id in its preserved Data.
+			if id, ok := m.Data["session_id"].(string); ok {
+				noteSession(id)
+			}
 		case *claudecode.AssistantMessage:
 			blocks, _ := assistantBlocks(m)
 			appendEntry(transcript.RoleAssistant, blocks)
@@ -281,6 +299,9 @@ func captureStream(
 		case *claudecode.UserMessage:
 			appendEntry(transcript.RoleUser, toolResultBlocks(m))
 		case *claudecode.StreamEvent:
+			// Every stream event carries the session id — the earliest reliable
+			// source when partial messages are enabled.
+			noteSession(m.SessionID)
 			// Live-typing tail only; the finalized AssistantMessage above is
 			// authoritative and is what lands in the transcript.
 			if delta, ok := agentTextDelta(m); ok {
@@ -351,8 +372,14 @@ func captureStream(
 		}
 	}
 
-	// msgChan closed before ResultMessage — connection dropped.
-	return failResult("agent connection closed unexpectedly", start), nil
+	// msgChan closed before ResultMessage — the connection dropped or the step's
+	// context was cancelled (a deliberate stop, spec 07 B1). Carry the
+	// early-captured session id on the result so the engine can resume this
+	// conversation; without partial messages the SDK may not have surfaced one,
+	// in which case SessionID stays "" and resume degrades to a fresh restart.
+	res := failResult("agent connection closed unexpectedly", start)
+	res.SessionID = sessionID
+	return res, nil
 }
 
 // assistantBlocks maps an assistant message's content blocks to transcript

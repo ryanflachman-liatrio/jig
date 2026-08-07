@@ -192,6 +192,21 @@ type Run struct {
 // Cancel terminates the run. In-flight workers receive context cancellation.
 func (r *Run) Cancel() { r.cancel() }
 
+// Stop halts one running step's worker without ending the run (spec 07 B1). The
+// step's partial work is preserved and it parks at step.StatusStopped; the run
+// stays alive and becomes quiescent (no worker in flight). Stopping a step that
+// is not currently running is a no-op. Resume the step with Run.Resume.
+func (r *Run) Stop(stepID string) { r.inbox <- stopMsg{stepID: stepID} }
+
+// Resume brings a step parked at step.StatusStopped back up (spec 07 B2). When
+// the stopped step captured an SDK session id its agent session is continued
+// with message as the new turn; otherwise the step restarts fresh (a documented
+// degrade, since the SDK cannot always surface a session id at cancel time).
+// Resuming a step that is not stopped is a no-op.
+func (r *Run) Resume(stepID, message string) {
+	r.inbox <- resumeMsg{stepID: stepID, message: message}
+}
+
 // Resolve delivers a human verdict for a review step (Phase 3+).
 func (r *Run) Resolve(stepID, verdict string) {
 	r.inbox <- verdictMsg{stepID: stepID, verdict: verdict}
@@ -362,6 +377,20 @@ type finalMergeMsg struct {
 	approve bool
 }
 
+// stopMsg asks the scheduler to stop one running step's worker without ending
+// the run (spec 07 B1). handleStop cancels that step's child context only.
+type stopMsg struct {
+	stepID string
+}
+
+// resumeMsg asks the scheduler to resume a stopped step (spec 07 B2). When the
+// step has a captured session id the agent session is continued with message;
+// otherwise the step restarts fresh (documented degrade, not an error).
+type resumeMsg struct {
+	stepID  string
+	message string
+}
+
 func (stepDoneMsg) isSchedMsg()            {}
 func (verdictMsg) isSchedMsg()             {}
 func (userInputMsg) isSchedMsg()           {}
@@ -373,6 +402,8 @@ func (agentQuestionAnswerMsg) isSchedMsg() {}
 func (recoverMsg) isSchedMsg()             {}
 func (resolveIntegrationMsg) isSchedMsg()  {}
 func (finalMergeMsg) isSchedMsg()          {}
+func (stopMsg) isSchedMsg()                {}
+func (resumeMsg) isSchedMsg()              {}
 
 // ── reporter ─────────────────────────────────────────────────────────────────
 
@@ -478,6 +509,20 @@ type scheduler struct {
 	// agentQuestionAnswerMsg can route the answer to the correct channel.
 	reporters map[string]*reporter
 
+	// Per-step cancellation (spec 07 B1). Each dispatched worker gets its own
+	// child context derived from the run context, its CancelFunc stored here keyed
+	// by step id, so Run.Stop can cancel one worker without touching the run
+	// context or its siblings. This deliberately reverses the single-run-context
+	// assumption the engine started with (one context.WithCancel shared by every
+	// worker): run-level cancellation still exists via s.cancel, but stop is
+	// surgical. Entries are removed when the worker's stepDoneMsg is handled.
+	stepCancels map[string]context.CancelFunc
+	// stopping marks steps whose worker was cancelled by Run.Stop (not by failure
+	// or run-level abort). When that worker's stepDoneMsg arrives it is routed to
+	// StatusStopped — partial work captured, no failure policy, run stays alive —
+	// rather than through the normal failure path.
+	stopping map[string]bool
+
 	postExecChain []postExecHandler // post-execution handler chain
 
 	onDone func(RunSnapshot) // called once before the scheduler goroutine exits
@@ -528,6 +573,8 @@ func newScheduler(
 		stepInputCount:      make(map[string]int),
 		recoverCount:        make(map[string]int),
 		reporters:           make(map[string]*reporter),
+		stepCancels:         make(map[string]context.CancelFunc),
+		stopping:            make(map[string]bool),
 		postExecChain: []postExecHandler{
 			phCaptureWorktreeDiff,
 			phRunValidateGate,
@@ -782,6 +829,12 @@ func (s *scheduler) anyPendingRunnable() bool {
 		if st.Status == step.StatusAwaitingIntegration {
 			return true
 		}
+		// A deliberately-stopped step keeps the run alive and quiescent (spec 07
+		// B1): the operator will resume it or (via Feature C) reset. Reaching zero
+		// in-flight workers must not be read as end-of-run while a stop is parked.
+		if st.Status == step.StatusStopped {
+			return true
+		}
 	}
 	return false
 }
@@ -953,8 +1006,16 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 	// see fresh output after a re-run rather than a stale cached decode.
 	delete(s.structured, st.ID)
 
+	// Give this worker its own child context so Run.Stop can cancel it
+	// independently of the run context and its siblings (spec 07 B1). The child is
+	// cancelled either by handleStop (a deliberate stop) or when the worker's
+	// stepDoneMsg is handled (normal completion) — the latter releases the context
+	// resources. Cancelling the run context still cascades to every child.
+	stepCtx, stepCancel := context.WithCancel(ctx)
+	s.stepCancels[st.ID] = stepCancel
+
 	go func() {
-		result, err := s.exec.Execute(ctx, req, rep)
+		result, err := s.exec.Execute(stepCtx, req, rep)
 		s.inbox <- stepDoneMsg{stepID: stepID, result: result, err: err}
 	}()
 }
@@ -1066,6 +1127,32 @@ func (s *scheduler) handle(msg schedMsg) {
 	case stepDoneMsg:
 		s.inFlight--
 		delete(s.reporters, m.stepID)
+		// Release the worker's child context and drop it from the registry — the
+		// worker has exited, so its CancelFunc has no further use.
+		if cancel, ok := s.stepCancels[m.stepID]; ok {
+			cancel()
+			delete(s.stepCancels, m.stepID)
+		}
+
+		// A deliberately-stopped worker (Run.Stop cancelled its context) is not a
+		// failure and not end-of-run (spec 07 B1). Record whatever result it
+		// returned so a resume keeps its captured session id, preserve its partial
+		// worktree diff on disk, and park it at StatusStopped — the run stays alive
+		// and becomes quiescent. Skip the failure policy and the post-exec chain.
+		if s.stopping[m.stepID] {
+			delete(s.stopping, m.stepID)
+			if m.result != nil {
+				s.states[m.stepID].Result = m.result
+			}
+			// Capture the partial diff now: on the normal path phCaptureWorktreeDiff
+			// does this, but a stopped worker never reaches the post-exec chain.
+			if path, ok := s.worktrees[m.stepID]; ok {
+				s.diffs[m.stepID] = captureDiff(path, s.wtBaseSHAs[m.stepID])
+			}
+			from := s.states[m.stepID].Status
+			s.transition(m.stepID, from, step.StatusStopped)
+			break
+		}
 
 		// Record result and synthesize an error result when the executor
 		// returned a Go error rather than a failed Result.
@@ -1170,6 +1257,12 @@ func (s *scheduler) handle(msg schedMsg) {
 	case finalMergeMsg:
 		s.handleFinalMerge(m)
 
+	case stopMsg:
+		s.handleStop(m)
+
+	case resumeMsg:
+		s.handleResume(m)
+
 	case agentQuestionNotifyMsg:
 		// The agent step called AskUserQuestion; transition to StatusNeedsInput so
 		// the TUI can surface the question. The goroutine is still alive, blocked on
@@ -1259,6 +1352,52 @@ func (s *scheduler) enterRecovery(stepID string) {
 		Err:       state.Result.Err,
 		CanResume: state.Result.SessionID != "",
 	})
+}
+
+// handleStop cancels one running step's worker without ending the run (spec 07
+// B1). It cancels only that step's child context — never the run context — so
+// the worker exits, its stepDoneMsg is routed to StatusStopped (handle marks it
+// via s.stopping), and the run stays alive and quiescent. Stopping a step that
+// has no live worker (pending, already terminal, parked without a worker, or an
+// unknown id) is a documented no-op: the absence of a cancel-registry entry is
+// exactly "no worker in flight".
+func (s *scheduler) handleStop(m stopMsg) {
+	cancel, ok := s.stepCancels[m.stepID]
+	if !ok {
+		return // no worker in flight for this step: nothing to stop
+	}
+	// Mark the step as being stopped before cancelling so the worker's inbound
+	// stepDoneMsg (which may already be racing us) is routed to StatusStopped
+	// rather than through the failure policy. The registry entry is cleared when
+	// that stepDoneMsg is handled.
+	s.stopping[m.stepID] = true
+	cancel()
+}
+
+// handleResume brings a step parked at step.StatusStopped back up (spec 07 B2).
+// With a captured session id it continues the agent conversation with a new
+// message (reusing the resumeSessions/stepMessage machinery that dispatch and
+// the runner's WithResume/WithContinueConversation path already implement);
+// without one it restarts the step fresh — a documented degrade, not an error.
+// Either way the step returns to StatusPending so the dispatch loop re-runs it,
+// reusing its existing worktree so partial edits accumulate. Resuming a step
+// that is not stopped is a no-op.
+func (s *scheduler) handleResume(m resumeMsg) {
+	state := s.states[m.stepID]
+	if state == nil || state.Status != step.StatusStopped {
+		return // stale, duplicate, or not a stopped step
+	}
+	if state.Result != nil && state.Result.SessionID != "" {
+		// Resume-as-continue: hand the session id + operator message to the next
+		// dispatch. This continues the conversation; it does not recover the exact
+		// interrupted turn (an SDK limitation).
+		s.resumeSessions[m.stepID] = state.Result.SessionID
+		s.stepMessage[m.stepID] = m.message
+	}
+	// No captured session id → leave resumeSessions unset: dispatch builds the
+	// full prompt and the runner starts a fresh session (documented degrade).
+	state.Attempt++
+	s.transition(m.stepID, step.StatusStopped, step.StatusPending)
 }
 
 // handleRecover applies a human recovery decision to a step parked in

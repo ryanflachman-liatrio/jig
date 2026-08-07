@@ -1,0 +1,23 @@
+=== gofmt -l internal/ cmd/ (empty = clean) ===
+--- (end gofmt; no output above means clean) ---
+
+=== go vet ./... ===
+vet exit=0
+
+=== go build ./cmd/jig ===
+build OK
+
+=== go test ./... -race -count=1 ===
+?   	jig/cmd/jig	[no test files]
+ok  	jig/internal/datastore	1.382s
+ok  	jig/internal/engine	5.879s
+?   	jig/internal/manifest	[no test files]
+ok  	jig/internal/runner	1.960s
+ok  	jig/internal/step	2.212s
+ok  	jig/internal/transcript	2.618s
+ok  	jig/internal/tui	3.761s
+ok  	jig/internal/workflow	3.002s
+
+=== go run ./cmd/jig validate examples/feature.toml (kitchen-sink) ===
+ok: "feature" v1 — 15 step(s)
+feature.toml VALID

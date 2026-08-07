@@ -1,0 +1,6 @@
+=== RUN   TestStopOneStep
+--- PASS: TestStopOneStep (0.05s)
+=== RUN   TestStopNonRunningStep
+--- PASS: TestStopNonRunningStep (0.02s)
+PASS
+ok  	jig/internal/engine	1.471s

@@ -1,0 +1,12 @@
+=== RUN   TestResumeContinuesSession
+--- PASS: TestResumeContinuesSession (0.00s)
+=== RUN   TestResumeWithoutSessionRestarts
+--- PASS: TestResumeWithoutSessionRestarts (0.00s)
+=== RUN   TestStopResumeStopReentersQuiescence
+--- PASS: TestStopResumeStopReentersQuiescence (0.05s)
+PASS
+ok  	jig/internal/engine	1.556s
+=== RUN   TestCaptureStream_ResumeAppends
+--- PASS: TestCaptureStream_ResumeAppends (0.01s)
+PASS
+ok  	jig/internal/runner	1.452s

@@ -522,6 +522,101 @@ func TestCaptureStream_ErrorResult(t *testing.T) {
 	}
 }
 
+// TestSessionIDCapturedAtStart proves the spec-07 B2 fix: the SDK session id is
+// captured from an early stream event (or the init SystemMessage) and survives a
+// mid-turn stop. Here the stream carries a StreamEvent with a session id and then
+// closes *before* any ResultMessage — exactly what a cancelled worker sees. The
+// returned Result must still carry the session id so the engine can resume.
+func TestSessionIDCapturedAtStart(t *testing.T) {
+	streamEvt := &claudecode.StreamEvent{
+		SessionID: "sess-early",
+		Event:     map[string]any{"type": "message_start"},
+	}
+	// No ResultMessage: the channel closes after the stream event, mimicking a
+	// context cancellation cutting the turn short.
+	res, err := captureStream(scriptChan(streamEvt), engine.StepRequest{Step: &workflow.Step{}}, &captureReporter{}, time.Now(), "")
+	if err != nil {
+		t.Fatalf("captureStream: %v", err)
+	}
+	if res.Status != step.StatusFailed {
+		t.Fatalf("status = %q, want failed (connection closed mid-turn)", res.Status)
+	}
+	if res.SessionID != "sess-early" {
+		t.Fatalf("SessionID = %q, want sess-early (captured at start, survives a stop)", res.SessionID)
+	}
+}
+
+// TestSessionIDCapturedFromSystemMessage verifies the init SystemMessage is also
+// honored as an early session-id source.
+func TestSessionIDCapturedFromSystemMessage(t *testing.T) {
+	sys := &claudecode.SystemMessage{Subtype: "init", Data: map[string]any{"session_id": "sess-sys"}}
+	res, err := captureStream(scriptChan(sys), engine.StepRequest{Step: &workflow.Step{}}, &captureReporter{}, time.Now(), "")
+	if err != nil {
+		t.Fatalf("captureStream: %v", err)
+	}
+	if res.SessionID != "sess-sys" {
+		t.Fatalf("SessionID = %q, want sess-sys", res.SessionID)
+	}
+}
+
+// TestCaptureStream_ResumeAppends proves the transcript is a log that a resume
+// appends to, never truncates (spec 07 invariant). Two captureStream calls write
+// to the same transcript path — the first turn, then a resumed turn — and the
+// second call's entries are appended after the first's, which remain intact.
+func TestCaptureStream_ResumeAppends(t *testing.T) {
+	dir := t.TempDir()
+	tPath := filepath.Join(dir, "transcript.jsonl")
+	req := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: tPath}
+
+	// First turn.
+	turnOne := &claudecode.AssistantMessage{Content: []claudecode.ContentBlock{&claudecode.TextBlock{Text: "turn one"}}}
+	if _, err := captureStream(scriptChan(turnOne, &claudecode.ResultMessage{}), req, &captureReporter{}, time.Now(), ""); err != nil {
+		t.Fatal(err)
+	}
+	r, _ := transcript.Open(tPath)
+	firstCount := len(mustWindow(t, r))
+
+	// Resumed turn: the human message that triggered the resume plus a new answer.
+	turnTwo := &claudecode.AssistantMessage{Content: []claudecode.ContentBlock{&claudecode.TextBlock{Text: "turn two"}}}
+	if _, err := captureStream(scriptChan(turnTwo, &claudecode.ResultMessage{}), req, &captureReporter{}, time.Now(), "continue please"); err != nil {
+		t.Fatal(err)
+	}
+
+	r2, _ := transcript.Open(tPath)
+	entries := mustWindow(t, r2)
+	if len(entries) <= firstCount {
+		t.Fatalf("resume did not append: entries went from %d to %d", firstCount, len(entries))
+	}
+	// The first turn is still the first entry (not truncated/overwritten).
+	if entries[0].Blocks[0].Text != "turn one" {
+		t.Fatalf("first entry = %q, want the preserved 'turn one'", entries[0].Blocks[0].Text)
+	}
+	// The resumed human message and answer are appended after it.
+	var sawContinue, sawTurnTwo bool
+	for _, e := range entries[firstCount:] {
+		for _, b := range e.Blocks {
+			if b.Text == "continue please" {
+				sawContinue = true
+			}
+			if b.Text == "turn two" {
+				sawTurnTwo = true
+			}
+		}
+	}
+	if !sawContinue || !sawTurnTwo {
+		t.Fatalf("appended entries missing resume content: sawContinue=%v sawTurnTwo=%v", sawContinue, sawTurnTwo)
+	}
+}
+
+func mustWindow(t *testing.T, r *transcript.Reader) []transcript.Entry {
+	t.Helper()
+	entries, err := r.Window(0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return entries
+}
+
 // TestRewriteAskUserQuestion verifies that "AskUserQuestion" is rewritten to
 // the MCP-qualified name and other tool names pass through unchanged.
 func TestRewriteAskUserQuestion(t *testing.T) {

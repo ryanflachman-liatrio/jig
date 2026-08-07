@@ -27,9 +27,17 @@ const (
 	// (spec 06 A2). Like StatusAwaitingRecovery it is parked-but-alive: the run and
 	// in-flight siblings keep running while the operator resolves or aborts.
 	StatusAwaitingIntegration Status = "awaiting_integration"
-	StatusSucceeded           Status = "succeeded"
-	StatusFailed              Status = "failed"
-	StatusSkipped             Status = "skipped" // when=false, or dep skipped/failed
+	// StatusStopped is a step whose worker was deliberately stopped mid-run by an
+	// operator (spec 07 B1) — not a failure and not end-of-run. Like the awaiting_*
+	// states it is parked-but-alive: the run stays quiescent (no worker in flight)
+	// and any in-flight siblings keep running. A stopped step is eligible to be
+	// resumed (Run.Resume continues its agent session, spec 07 B2) or, once
+	// Feature C lands, reset. Its partial worktree diff and transcript are captured
+	// on cancel, so stopping never discards work.
+	StatusStopped   Status = "stopped"
+	StatusSucceeded Status = "succeeded"
+	StatusFailed    Status = "failed"
+	StatusSkipped   Status = "skipped" // when=false, or dep skipped/failed
 )
 
 // State is the scheduler's mutable record for one step.

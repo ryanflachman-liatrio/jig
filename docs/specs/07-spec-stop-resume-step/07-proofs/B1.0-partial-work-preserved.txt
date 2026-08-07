@@ -1,0 +1,24 @@
+=== RUN   TestStopPersistenceOff
+--- PASS: TestStopPersistenceOff (0.00s)
+=== RUN   TestStoppedStepCapturesDiff
+--- PASS: TestStoppedStepCapturesDiff (0.10s)
+PASS
+ok  	jig/internal/engine	1.506s
+=== RUN   TestStepContextRenderGolden
+--- PASS: TestStepContextRenderGolden (0.00s)
+=== RUN   TestStepContextRenderStable
+--- PASS: TestStepContextRenderStable (0.00s)
+=== RUN   TestStepContextRenderOmits
+=== RUN   TestStepContextRenderOmits/zero_value_renders_empty
+=== RUN   TestStepContextRenderOmits/topology-only_omits_optional_lines
+=== RUN   TestStepContextRenderOmits/pipeline-entry_renders_position_line_and_delimiter_only
+--- PASS: TestStepContextRenderOmits (0.00s)
+    --- PASS: TestStepContextRenderOmits/zero_value_renders_empty (0.00s)
+    --- PASS: TestStepContextRenderOmits/topology-only_omits_optional_lines (0.00s)
+    --- PASS: TestStepContextRenderOmits/pipeline-entry_renders_position_line_and_delimiter_only (0.00s)
+=== RUN   TestStatusValues
+--- PASS: TestStatusValues (0.00s)
+=== RUN   TestStatusStoppedDistinct
+--- PASS: TestStatusStoppedDistinct (0.00s)
+PASS
+ok  	jig/internal/step	1.419s

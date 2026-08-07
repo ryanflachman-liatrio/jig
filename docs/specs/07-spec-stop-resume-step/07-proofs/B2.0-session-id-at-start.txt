@@ -1,0 +1,6 @@
+=== RUN   TestSessionIDCapturedAtStart
+--- PASS: TestSessionIDCapturedAtStart (0.00s)
+=== RUN   TestSessionIDCapturedFromSystemMessage
+--- PASS: TestSessionIDCapturedFromSystemMessage (0.00s)
+PASS
+ok  	jig/internal/runner	1.414s
