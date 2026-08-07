@@ -400,6 +400,17 @@ type scheduler struct {
 	wtBaseSHAs map[string]string // stepID → HEAD SHA captured at worktree creation
 	diffs      map[string]string // stepID → latest diff text (updated each execution)
 
+	// Run-integration branch (spec 06). At run start (repoRoot != "") the
+	// scheduler creates a run branch at the working-branch HEAD and a run
+	// worktree checked out on it; each mutating step's worktree branches off the
+	// run branch's current HEAD and squash-merges back as one commit. stepCommits
+	// maps stepID → the sha of that step's squash commit, reconstructable from the
+	// run branch's `jig-step:` trailers. All three stay "" / empty on the
+	// persistence-off / non-git path, where steps run in place with no integration.
+	runBranch   string            // per-run integration branch name; "" when persistence-off
+	runWorktree string            // run worktree absolute path; "" when persistence-off
+	stepCommits map[string]string // stepID → squash-merge commit sha on the run branch
+
 	// from="user" input collection: inputs are gathered one at a time before
 	// the step is dispatched. preResolvedInputs guards against re-intercepting
 	// after all inputs are collected and the step resets to StatusPending.
@@ -465,6 +476,7 @@ func newScheduler(
 		worktrees:           make(map[string]string),
 		wtBaseSHAs:          make(map[string]string),
 		diffs:               make(map[string]string),
+		stepCommits:         make(map[string]string),
 		pendingUserInputs:   make(map[string][]workflow.Input),
 		collectedUserInputs: make(map[string][]ResolvedInput),
 		preResolvedInputs:   make(map[string][]ResolvedInput),
@@ -490,6 +502,16 @@ func (s *scheduler) run(ctx context.Context) {
 	}
 	s.emit(RunStarted{RunID: s.runID, Workflow: s.wf.Meta.Name, Steps: ids})
 
+	// Create the per-run integration branch + run worktree at the working-branch
+	// HEAD (spec 06). Persistence-off / non-git (repoRoot == "") is a no-op: no
+	// run branch, no run worktree, steps run in place. A git error here is a hard
+	// setup failure — fail the run before any step burns work.
+	if err := s.setupRunBranch(); err != nil {
+		s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("setup run branch: %v", err)})
+		s.emit(RunFinished{RunID: s.runID, Failed: true})
+		return
+	}
+
 	maxPar := s.wf.Defaults.MaxParallel
 	if maxPar <= 0 {
 		maxPar = 4
@@ -512,6 +534,12 @@ func (s *scheduler) run(ctx context.Context) {
 		if s.repoRoot != "" {
 			for _, path := range s.worktrees {
 				_ = removeWorktree(s.repoRoot, path)
+			}
+			// Remove the run worktree but KEEP the run branch: it is the run's
+			// integration history, left for inspection (Open Question 1) and for the
+			// final gated merge (Task 4.x) to land or discard.
+			if s.runWorktree != "" {
+				_ = removeWorktree(s.repoRoot, s.runWorktree)
 			}
 		}
 	}()
@@ -709,6 +737,39 @@ func (s *scheduler) anyFailed() bool {
 		}
 	}
 	return false
+}
+
+// setupRunBranch creates the per-run integration branch at the working-branch
+// HEAD and a run worktree checked out on it, recorded on the scheduler. It runs
+// once at run start on the scheduler goroutine, before the dispatch loop.
+//
+// Persistence-off / non-git (repoRoot == "") is a first-class no-op: runBranch
+// and runWorktree stay "" and every downstream integration step keys off that,
+// so steps run in place exactly as before spec 06.
+func (s *scheduler) setupRunBranch() error {
+	if s.repoRoot == "" {
+		return nil
+	}
+	// repoRoot can be set for persistence without the parent actually being a git
+	// work tree (e.g. a plain temp dir in tests, or jig run outside a repo). That
+	// is the non-git case, which spec 06 designates a first-class no-op: no run
+	// branch, steps run in place. Probe for a real HEAD and degrade rather than
+	// failing the run. The only hard error left is a genuine worktree-add failure
+	// on a valid repo.
+	if _, err := currentHEAD(s.repoRoot); err != nil {
+		return nil
+	}
+	branch := runBranchName(s.wf.Meta.Name, s.runID)
+	// createWorktree does `git worktree add -B <branch> <path>`, which creates the
+	// branch at the repo's current HEAD (the user's working-branch HEAD) and checks
+	// it out in a fresh worktree — exactly the run-branch root spec 06 requires.
+	wtPath := filepath.Join(s.jigRoot, "worktrees", s.runID, "_run")
+	if _, err := createWorktree(s.repoRoot, wtPath, branch); err != nil {
+		return err
+	}
+	s.runBranch = branch
+	s.runWorktree = wtPath
+	return nil
 }
 
 // dispatch launches a worker goroutine for one step. The worker sends a

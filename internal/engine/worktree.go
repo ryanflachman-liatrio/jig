@@ -75,6 +75,35 @@ func captureDiff(wtPath, baseSHA string) string {
 	return b.String()
 }
 
+// currentHEAD returns the HEAD commit SHA of the git repo or worktree at dir.
+// It is the run-branch analogue of createWorktree's internal rev-parse: callers
+// use it to branch a step worktree off the run branch's *current* HEAD at
+// dispatch time (Task 2.x), which is what lets steps compose on each other's code.
+func currentHEAD(dir string) (string, error) {
+	out, err := gitCmd(dir, "rev-parse", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("rev-parse HEAD: %w — %s", err, strings.TrimSpace(out))
+	}
+	return strings.TrimSpace(out), nil
+}
+
+// createBranchAt creates or resets branch to point at ref in the repo at
+// repoRoot (`git branch -f`). Used to place the run branch at the working-branch
+// HEAD; `-f` keeps a re-run idempotent against a leftover branch of the same name.
+func createBranchAt(repoRoot, branch, ref string) error {
+	if out, err := gitCmd(repoRoot, "branch", "-f", branch, ref); err != nil {
+		return fmt.Errorf("git branch -f %s %s: %w — %s", branch, ref, err, strings.TrimSpace(out))
+	}
+	return nil
+}
+
+// runBranchName returns the per-run integration branch name
+// jig/<workflow>/run-<runID> (Open Question 1: settled naming). Both segments
+// are sanitized so arbitrary workflow names and run IDs map to legal branch names.
+func runBranchName(workflow, runID string) string {
+	return "jig/" + sanitizeBranchName(workflow) + "/run-" + sanitizeBranchName(runID)
+}
+
 // sanitizeBranchName replaces characters illegal in git branch names with
 // hyphens so workflow and step IDs map cleanly to branch names.
 func sanitizeBranchName(s string) string {

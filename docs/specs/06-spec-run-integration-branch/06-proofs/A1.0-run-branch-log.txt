@@ -1,0 +1,10 @@
+# A1.0 run-branch log — proof that the run branch is created at working-branch HEAD
+
+$ git rev-parse HEAD   # working-branch HEAD before any step runs
+f849cdbfd31bfd74873423add204e14fb3ef5bfd
+
+$ git branch --list 'jig/*'
++ jig/compose/run-20260807-183000-abc123de
+
+$ git log --format='%H %s' -1 jig/compose/run-20260807-183000-abc123de   # run-branch tip == working HEAD, message 'init'
+f849cdbfd31bfd74873423add204e14fb3ef5bfd init
