@@ -22,9 +22,14 @@ const (
 	// session with the error fed back in, or abort. It keeps the run and any
 	// in-flight sibling steps alive while the human decides.
 	StatusAwaitingRecovery Status = "awaiting_recovery"
-	StatusSucceeded        Status = "succeeded"
-	StatusFailed           Status = "failed"
-	StatusSkipped          Status = "skipped" // when=false, or dep skipped/failed
+	// StatusAwaitingIntegration is a step whose squash-merge into the run branch
+	// hit a conflict and is parked for a human to resolve in the run worktree
+	// (spec 06 A2). Like StatusAwaitingRecovery it is parked-but-alive: the run and
+	// in-flight siblings keep running while the operator resolves or aborts.
+	StatusAwaitingIntegration Status = "awaiting_integration"
+	StatusSucceeded           Status = "succeeded"
+	StatusFailed              Status = "failed"
+	StatusSkipped             Status = "skipped" // when=false, or dep skipped/failed
 )
 
 // State is the scheduler's mutable record for one step.

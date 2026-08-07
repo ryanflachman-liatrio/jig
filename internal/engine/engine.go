@@ -233,6 +233,14 @@ func (r *Run) Recover(stepID, action, text string) {
 	r.inbox <- recoverMsg{stepID: stepID, action: action, text: text}
 }
 
+// ResolveIntegration delivers a human decision for a step parked in
+// step.StatusAwaitingIntegration after a squash-merge conflict (spec 06 A2).
+// abort=false finishes the integration from the operator-resolved run worktree;
+// abort=true fails the step, routing it to the recovery gate.
+func (r *Run) ResolveIntegration(stepID string, abort bool) {
+	r.inbox <- resolveIntegrationMsg{stepID: stepID, abort: abort}
+}
+
 // Snapshot returns a point-in-time view of the run's state. For a live run
 // the request routes through the scheduler's inbox (single-writer invariant).
 // For a completed run it returns the cached final snapshot immediately,
@@ -333,6 +341,13 @@ type recoverMsg struct {
 	text   string // optional guidance, used by RecoverResume
 }
 
+// resolveIntegrationMsg carries a human decision for a step parked on an
+// integration conflict: resolve (finish the merge) or abort (fail the step).
+type resolveIntegrationMsg struct {
+	stepID string
+	abort  bool
+}
+
 func (stepDoneMsg) isSchedMsg()            {}
 func (verdictMsg) isSchedMsg()             {}
 func (userInputMsg) isSchedMsg()           {}
@@ -342,6 +357,7 @@ func (agentInputMsg) isSchedMsg()          {}
 func (agentQuestionNotifyMsg) isSchedMsg() {}
 func (agentQuestionAnswerMsg) isSchedMsg() {}
 func (recoverMsg) isSchedMsg()             {}
+func (resolveIntegrationMsg) isSchedMsg()  {}
 
 // ── reporter ─────────────────────────────────────────────────────────────────
 
@@ -724,6 +740,11 @@ func (s *scheduler) anyPendingRunnable() bool {
 		if st.Status == step.StatusAwaitingRecovery {
 			return true
 		}
+		// A step parked on an integration conflict keeps the run alive: the human
+		// will resolve the conflict in the run worktree or abort (spec 06 A2).
+		if st.Status == step.StatusAwaitingIntegration {
+			return true
+		}
 	}
 	return false
 }
@@ -1098,6 +1119,9 @@ func (s *scheduler) handle(msg schedMsg) {
 	case recoverMsg:
 		s.handleRecover(m)
 
+	case resolveIntegrationMsg:
+		s.handleResolveIntegration(m)
+
 	case agentQuestionNotifyMsg:
 		// The agent step called AskUserQuestion; transition to StatusNeedsInput so
 		// the TUI can surface the question. The goroutine is still alive, blocked on
@@ -1226,6 +1250,71 @@ func (s *scheduler) handleRecover(m recoverMsg) {
 		// in a worktree, dispatch reuses the existing worktree; a setup-failure
 		// retry has no stored worktree, so dispatch re-runs createWorktree.
 		s.transition(m.stepID, state.Status, step.StatusPending)
+	}
+}
+
+// handleResolveIntegration applies a human decision to a step parked in
+// step.StatusAwaitingIntegration after a squash-merge conflict (spec 06 A2).
+//
+//   - resolve (abort=false): the operator merged the conflict in the run
+//     worktree; the engine finishes the integration by committing the resolved
+//     tree with the jig-step trailer, records stepCommits, and succeeds the step.
+//   - abort (abort=true): discard the half-applied squash and fail the step,
+//     routing it to the recovery gate via applyFailurePolicy.
+func (s *scheduler) handleResolveIntegration(m resolveIntegrationMsg) {
+	state := s.states[m.stepID]
+	if state == nil || state.Status != step.StatusAwaitingIntegration {
+		return // stale or duplicate
+	}
+
+	if m.abort {
+		// Discard the conflicted/staged squash so the run worktree is clean, then
+		// fail the step through the normal failure policy (→ recovery gate).
+		_, _ = gitCmd(s.runWorktree, "reset", "--hard")
+		res := s.states[m.stepID].Result
+		if res == nil {
+			res = &step.Result{}
+			s.states[m.stepID].Result = res
+		}
+		res.Status = step.StatusFailed
+		if res.Err == "" {
+			res.Err = fmt.Sprintf("integration conflict for step %q aborted by operator", m.stepID)
+		}
+		s.applyFailurePolicy(m.stepID, s.stepByID(m.stepID))
+		return
+	}
+
+	// Resolve: refuse while unmerged paths remain — the operator must `git add`
+	// their resolution first (standard git conflict resolution).
+	if len(mergeConflictPaths(s.runWorktree)) > 0 {
+		s.emit(RunError{
+			RunID: s.runID,
+			Err:   fmt.Sprintf("step %q: unresolved conflicts remain in the run worktree", m.stepID),
+		})
+		return // stay parked
+	}
+	if out, err := gitCmd(s.runWorktree, "add", "-A"); err != nil {
+		s.emit(RunError{
+			RunID: s.runID,
+			Err:   fmt.Sprintf("stage resolved conflict for %q: %v — %s", m.stepID, err, strings.TrimSpace(out)),
+		})
+		return
+	}
+	msg := m.stepID + "\n\njig-step: " + m.stepID
+	if out, err := gitCmd(s.runWorktree, "commit", "-m", msg); err != nil {
+		s.emit(RunError{
+			RunID: s.runID,
+			Err:   fmt.Sprintf("commit resolved conflict for %q: %v — %s", m.stepID, err, strings.TrimSpace(out)),
+		})
+		return // stay parked
+	}
+	if sha, err := currentHEAD(s.runWorktree); err == nil {
+		s.stepCommits[m.stepID] = sha
+	}
+	wfStep := s.stepByID(m.stepID)
+	s.transition(m.stepID, step.StatusAwaitingIntegration, step.StatusSucceeded)
+	if wfStep != nil && wfStep.Loop != nil {
+		s.fireLoop(m.stepID, wfStep)
 	}
 }
 

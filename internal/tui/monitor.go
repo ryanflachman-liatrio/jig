@@ -42,11 +42,12 @@ const (
 type pendingInputKind int
 
 const (
-	inputKindRequest  pendingInputKind = iota // block_on InputRequest
-	inputKindQuestion                         // AskUserQuestion AgentQuestion
-	inputKindPrompt                           // from="user" PromptRequest
-	inputKindReview                           // ReviewRequest (verdict + message)
-	inputKindRecovery                         // RecoveryRequest (retry / resume / abort)
+	inputKindRequest             pendingInputKind = iota // block_on InputRequest
+	inputKindQuestion                                    // AskUserQuestion AgentQuestion
+	inputKindPrompt                                      // from="user" PromptRequest
+	inputKindReview                                      // ReviewRequest (verdict + message)
+	inputKindRecovery                                    // RecoveryRequest (retry / resume / abort)
+	inputKindIntegrationConflict                         // IntegrationConflictRequest (resolve / abort)
 )
 
 // pendingInputEntry is one element of the persistent input queue. Exactly one
@@ -59,11 +60,12 @@ type pendingInputEntry struct {
 	toolUseID string // non-empty only for inputKindQuestion
 
 	// Exactly one payload pointer is non-nil, matching kind.
-	request  *engine.InputRequest
-	question *engine.AgentQuestion
-	prompt   *engine.PromptRequest
-	review   *engine.ReviewRequest
-	recovery *engine.RecoveryRequest
+	request     *engine.InputRequest
+	question    *engine.AgentQuestion
+	prompt      *engine.PromptRequest
+	review      *engine.ReviewRequest
+	recovery    *engine.RecoveryRequest
+	integration *engine.IntegrationConflictRequest
 
 	// draft is the in-progress textarea text (request/prompt, review compose, and
 	// recovery guidance), preserved across navigation.
@@ -548,6 +550,8 @@ func kindName(k pendingInputKind) string {
 		return "prompt"
 	case inputKindRecovery:
 		return "recovery"
+	case inputKindIntegrationConflict:
+		return "integration"
 	default:
 		return "input"
 	}
@@ -889,6 +893,26 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 			}
 		}
 		return m, nil
+
+	case inputKindIntegrationConflict:
+		ic := entry.integration
+		// Resolve: the operator merged the conflict in the run worktree; the engine
+		// finishes the integration. Abort: fail the step (→ recovery gate).
+		if keybind.Matches(msg, m.keys.IntegrationResolve) {
+			m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
+			m.refreshPanels()
+			return m, func() tea.Msg {
+				return resolveIntegrationResponseMsg{runID: ic.RunID, stepID: ic.StepID, abort: false}
+			}
+		}
+		if keybind.Matches(msg, m.keys.RecoverAbort) {
+			m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
+			m.refreshPanels()
+			return m, func() tea.Msg {
+				return resolveIntegrationResponseMsg{runID: ic.RunID, stepID: ic.StepID, abort: true}
+			}
+		}
+		return m, nil
 	}
 
 	return m, nil
@@ -957,7 +981,7 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		// any transition away from a parked state (needs_input, awaiting_recovery)
 		// and on all terminal transitions — but not the entry into a parked state,
 		// whose gate entry arrives on the following ctrl event.
-		if ev.To != step.StatusNeedsInput && ev.To != step.StatusAwaitingRecovery {
+		if ev.To != step.StatusNeedsInput && ev.To != step.StatusAwaitingRecovery && ev.To != step.StatusAwaitingIntegration {
 			for i := len(m.inputQueue) - 1; i >= 0; i-- {
 				if m.inputQueue[i].stepID == ev.StepID {
 					m.removeEntryAt(i)
@@ -998,6 +1022,19 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 			kind:     inputKindRecovery,
 			stepID:   ev.StepID,
 			recovery: &evCopy,
+		})
+
+	case engine.IntegrationConflictRequest:
+		if ev.RunID != m.runID {
+			return m, nil
+		}
+		// A step's squash-merge conflicted and parked. Append a gate entry; no
+		// focus steal on arrival (Decision 6), consistent with the other kinds.
+		evCopy := ev
+		m.inputQueue = append(m.inputQueue, pendingInputEntry{
+			kind:        inputKindIntegrationConflict,
+			stepID:      ev.StepID,
+			integration: &evCopy,
 		})
 
 	case engine.InputRequest:
@@ -1540,6 +1577,24 @@ func (m monitorModel) gateStrip() string {
 				}
 				b.WriteString("    [a] abort run\n")
 			}
+
+		case inputKindIntegrationConflict:
+			// Name the conflicted paths (bounded to two rows for a fixed strip
+			// height), then the resolve/abort affordances.
+			paths := strings.Join(entry.integration.Paths, ", ")
+			if paths == "" {
+				paths = "(conflicted files unknown)"
+			}
+			pathLines := strings.Split(clipReason("conflict in "+paths, m.gateInnerWidth()-2, 2), "\n")
+			for i := 0; i < 2; i++ {
+				if i < len(pathLines) {
+					b.WriteString("  " + theme.Error.Render(pathLines[i]) + "\n")
+				} else {
+					b.WriteString("\n")
+				}
+			}
+			b.WriteString("    [r] resolve (finish merge from run worktree)\n")
+			b.WriteString("    [a] abort run\n")
 		}
 	}
 
@@ -2064,6 +2119,8 @@ func (m monitorModel) footerView() string {
 			} else {
 				status = theme.Error.Render("step failed — recovery" + queueSuffix)
 			}
+		case inputKindIntegrationConflict:
+			status = theme.Error.Render("integration conflict" + queueSuffix)
 		}
 	} else {
 		status = theme.Running.Render("running")
@@ -2104,6 +2161,8 @@ func (m monitorModel) footerView() string {
 			} else {
 				hint = hintString(m.keys.RecoverRetry, m.keys.RecoverAbort, entryNav, m.keys.GateBlur)
 			}
+		case inputKindIntegrationConflict:
+			hint = hintString(m.keys.IntegrationResolve, m.keys.RecoverAbort, entryNav, m.keys.GateBlur)
 		}
 	case m.focus == focusTranscript:
 		hint = hintString(m.keys.FocusFull, m.keys.Scroll, m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll)

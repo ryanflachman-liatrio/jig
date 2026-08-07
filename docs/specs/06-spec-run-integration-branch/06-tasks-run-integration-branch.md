@@ -170,7 +170,7 @@ history. This is the core code-composition slice.
   asserting a re-run step re-integrates correctly onto the run branch (worktree reuse at `engine.go:722-723`
   still holds) — not just the happy A→B path.
 
-### [ ] 3.0 Integration-conflict gate
+### [x] 3.0 Integration-conflict gate
 
 When a squash-merge in 2.0 hits a conflict (two steps touched the same lines), surface it to a
 human instead of failing silently or auto-resolving. Add a new Gate input-entry kind (proposed
@@ -196,27 +196,27 @@ scheduler message + handler mirroring `Run.Resolve` / `handleRecover`.
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Add `StatusAwaitingIntegration` to `internal/step/step.go` beside `StatusAwaitingRecovery`
+- [x] 3.1 Add `StatusAwaitingIntegration` to `internal/step/step.go` beside `StatusAwaitingRecovery`
   (`step.go:24`), with a comment that it is a parked-but-alive status.
-- [ ] 3.2 Add `IntegrationConflictRequest{StepID string, Paths []string}` to `event.go` with
+- [x] 3.2 Add `IntegrationConflictRequest{StepID string, Paths []string}` to `event.go` with
   `isEvent()`, mirroring `RecoveryRequest` (`event.go:125-132`).
-- [ ] 3.3 Wire it into the journal: add the kind string in `eventKind` (`journal.go:26`) and a decoder
+- [x] 3.3 Wire it into the journal: add the kind string in `eventKind` (`journal.go:26`) and a decoder
   (`journal.go:72-117`); add a round-trip + unknown-kind-skip row to `journal_test.go`.
-- [ ] 3.4 In `phSquashMergeIntegration`, on `conflict == true`: transition the step to
+- [x] 3.4 In `phSquashMergeIntegration`, on `conflict == true`: transition the step to
   `StatusAwaitingIntegration`, emit `IntegrationConflictRequest` with the conflicted paths (parsed from
   git output), and return a parked/halt `postExecDecision` (`handlers.go:8-15`) so the run stays alive.
   Add `StatusAwaitingIntegration` to `anyPendingRunnable` (`engine.go:647-700`) so the run does not settle
   while a conflict is parked (non-blocking gate, ADR 0002).
-- [ ] 3.5 Add `resolveIntegrationMsg{stepID string, abort bool}` (`engine.go:272-344`), a public
+- [x] 3.5 Add `resolveIntegrationMsg{stepID string, abort bool}` (`engine.go:272-344`), a public
   `Run.ResolveIntegration(stepID string, abort bool)`, and a `handleResolveIntegration` case in `handle`
   (`engine.go:921-1051`) mirroring `handleRecover` (`engine.go:1021-1152`): on resolve, complete the
   squash-merge from the operator-resolved run worktree, record `stepCommits[stepID]`, transition the step
   to succeeded, and continue; on abort, fail the step (routes to the recovery gate via `applyFailurePolicy`).
-- [ ] 3.6 TUI: add `inputKindIntegrationConflict` to `pendingInputKind` (`monitor.go:40-50`) and a payload
+- [x] 3.6 TUI: add `inputKindIntegrationConflict` to `pendingInputKind` (`monitor.go:40-50`) and a payload
   in `pendingInputEntry` (`monitor.go:56-84`); render the step id + conflicted paths and take focus like
   other entries; route resolve/abort in `root.go` mirroring `recoverResponseMsg → run.Recover`
   (`root.go:242-277`).
-- [ ] 3.7 Add `TestIntegrationConflictRaisesGate` and `TestIntegrationConflictAbortFailsStep` to
+- [x] 3.7 Add `TestIntegrationConflictRaisesGate` and `TestIntegrationConflictAbortFailsStep` to
   `integration_test.go` (two parallel steps writing the same line; second integration raises the gate;
   resolve lands a merged commit and the run completes; abort fails the step), and a `monitor_test.go` case
   asserting the conflict entry renders with paths. Generate `06-proofs/A2.0-integration-conflict-gate.txt`.

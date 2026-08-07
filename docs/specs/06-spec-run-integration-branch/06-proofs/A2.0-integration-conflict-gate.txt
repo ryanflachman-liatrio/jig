@@ -1,0 +1,27 @@
+# A2.0 integration-conflict gate — overlapping integration raises a gate, resolves, lands merged commit
+
+## a integrates cleanly
+Squash commit -- not updating HEAD
+$ git log --format='%s' jig/conflict/run-20260807-193000-conflict1 | head -2
+a
+init
+
+## b conflicts on shared.txt (the gate fires: IntegrationConflictRequest{StepID:b, Paths:[shared.txt]})
+Auto-merging shared.txt
+CONFLICT (add/add): Merge conflict in shared.txt
+Squash commit -- not updating HEAD
+Automatic merge failed; fix conflicts and then commit the result.
+$ git -C <run-worktree> diff --name-only --diff-filter=U   # conflicted paths surfaced to the operator
+shared.txt
+
+## operator resolves in the run worktree, then Run.ResolveIntegration finishes the merge
+$ git log --format='%H  jig-step=%(trailers:key=jig-step,valueonly)' jig/conflict/run-20260807-193000-conflict1
+01c204d8b65346de4170c3b95721d2047ff28a33  jig-step=b
+
+4f7735f216fd5db33bd2e734a4b5cf223691341c  jig-step=a
+
+62af99839f02797777b0446908c7d8ba82a78b55  jig-step=
+
+## resolved shared.txt contains both contributions:
+from a
+from b

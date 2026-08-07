@@ -1415,3 +1415,54 @@ func TestMonitorResizeRefits(t *testing.T) {
 		}
 	}
 }
+
+// TestMonitorIntegrationConflictGate verifies that an IntegrationConflictRequest
+// surfaces an integration gate that names the conflicted paths and whose r/a
+// actions emit resolveIntegrationResponseMsg (resolve / abort).
+func TestMonitorIntegrationConflictGate(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	m, _ = m.Update(engineEventMsg{event: engine.IntegrationConflictRequest{
+		RunID:  "run-1",
+		StepID: "a",
+		Paths:  []string{"shared.go"},
+	}})
+	if len(m.inputQueue) == 0 {
+		t.Fatal("integration conflict event not added to input queue")
+	}
+	strip := m.gateStrip()
+	if !strings.Contains(strip, "(integration)") {
+		t.Fatalf("integration gate strip not shown:\n%s", strip)
+	}
+	if !strings.Contains(strip, "shared.go") {
+		t.Fatalf("conflicted path not rendered:\n%s", strip)
+	}
+	if !strings.Contains(strip, "[r] resolve") || !strings.Contains(strip, "[a] abort") {
+		t.Fatalf("integration actions not rendered:\n%s", strip)
+	}
+
+	// Resolve routes to resolveIntegrationResponseMsg{abort:false}.
+	m.focus = focusGate
+	_, cmd := m.Update(key("r"))
+	if cmd == nil {
+		t.Fatal("r produced no command")
+	}
+	rr, ok := cmd().(resolveIntegrationResponseMsg)
+	if !ok {
+		t.Fatalf("expected resolveIntegrationResponseMsg, got %T", cmd())
+	}
+	if rr.abort || rr.stepID != "a" {
+		t.Fatalf("got abort=%v stepID=%q; want resolve/a", rr.abort, rr.stepID)
+	}
+
+	// Abort routes to resolveIntegrationResponseMsg{abort:true}.
+	m2 := newMonitorWithSteps(t)
+	m2, _ = m2.Update(engineEventMsg{event: engine.IntegrationConflictRequest{RunID: "run-1", StepID: "a", Paths: []string{"x"}}})
+	m2.focus = focusGate
+	_, cmd = m2.Update(key("a"))
+	if cmd == nil {
+		t.Fatal("a produced no command")
+	}
+	if rr, ok := cmd().(resolveIntegrationResponseMsg); !ok || !rr.abort {
+		t.Fatalf("expected abort resolveIntegrationResponseMsg, got %+v (%T)", cmd(), cmd())
+	}
+}

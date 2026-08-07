@@ -131,6 +131,17 @@ type RecoveryRequest struct {
 	CanResume bool
 }
 
+// IntegrationConflictRequest is emitted when a step's squash-merge into the run
+// branch conflicts with already-integrated work (spec 06 A2). The step is parked
+// in step.StatusAwaitingIntegration; the run stays alive. Paths names the
+// conflicted files the operator must resolve in the run worktree. The decision
+// (resolve or abort) is delivered via Run.ResolveIntegration.
+type IntegrationConflictRequest struct {
+	RunID  string
+	StepID string
+	Paths  []string
+}
+
 // PromptRequest asks the human to supply free-form text for a from="user" input.
 // Multiple user inputs on one step are requested sequentially, each replacing
 // the previous PromptRequest.
@@ -162,17 +173,18 @@ type AgentQuestionOption struct {
 	Description string
 }
 
-func (RunStarted) isEvent()      {}
-func (RunFinished) isEvent()     {}
-func (StepStatus) isEvent()      {}
-func (StepOutput) isEvent()      {}
-func (StepToolCall) isEvent()    {}
-func (StepMessage) isEvent()     {}
-func (GateResult) isEvent()      {}
-func (LoopFired) isEvent()       {}
-func (ReviewRequest) isEvent()   {}
-func (InputRequest) isEvent()    {}
-func (RunError) isEvent()        {}
-func (RecoveryRequest) isEvent() {}
-func (PromptRequest) isEvent()   {}
-func (AgentQuestion) isEvent()   {}
+func (RunStarted) isEvent()                 {}
+func (RunFinished) isEvent()                {}
+func (StepStatus) isEvent()                 {}
+func (StepOutput) isEvent()                 {}
+func (StepToolCall) isEvent()               {}
+func (StepMessage) isEvent()                {}
+func (GateResult) isEvent()                 {}
+func (LoopFired) isEvent()                  {}
+func (ReviewRequest) isEvent()              {}
+func (InputRequest) isEvent()               {}
+func (RunError) isEvent()                   {}
+func (RecoveryRequest) isEvent()            {}
+func (IntegrationConflictRequest) isEvent() {}
+func (PromptRequest) isEvent()              {}
+func (AgentQuestion) isEvent()              {}

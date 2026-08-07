@@ -354,3 +354,141 @@ func mustGit(t *testing.T, dir string, args ...string) string {
 	}
 	return out
 }
+
+// conflictWorkflow is two parallel mutating steps that both create the same file
+// with different content — an add/add conflict when the second integrates.
+const conflictWorkflow = `
+[workflow]
+name = "conflict"
+version = "0.1"
+
+[[step]]
+id = "a"
+type = "command"
+run = "echo a"
+isolation = "worktree"
+
+[[step]]
+id = "b"
+type = "command"
+run = "echo b"
+isolation = "worktree"
+`
+
+// TestIntegrationConflictRaisesGate proves that an overlapping squash-merge parks
+// the step on the integration-conflict gate (naming the conflicted paths),
+// resolving it lands a merged commit, and the run completes (spec 06 A2).
+func TestIntegrationConflictRaisesGate(t *testing.T) {
+	repo := t.TempDir()
+	initRepo(t, repo)
+	wf, err := workflow.Decode(conflictWorkflow, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &composeExec{writes: map[string]map[string]string{
+		"a": {"shared": "a\n"},
+		"b": {"shared": "b\n"},
+	}}
+	mgr := NewManager(exec, filepath.Join(repo, ".jig"))
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runWorktree := filepath.Join(repo, ".jig", "worktrees", run.ID, "_run")
+
+	gated := false
+	deadline := time.After(15 * time.Second)
+	var events []Event
+loop:
+	for {
+		select {
+		case e := <-ch:
+			events = append(events, e)
+			if icr, ok := e.(IntegrationConflictRequest); ok && !gated {
+				gated = true
+				if len(icr.Paths) == 0 {
+					t.Errorf("conflict request carried no paths")
+				}
+				for _, p := range icr.Paths {
+					_ = os.WriteFile(filepath.Join(runWorktree, p), []byte("resolved\n"), 0o644)
+				}
+				mustGit(t, runWorktree, "add", "-A")
+				run.ResolveIntegration(icr.StepID, false)
+			}
+			if _, ok := e.(RunFinished); ok {
+				break loop
+			}
+		case <-deadline:
+			t.Fatal("timeout waiting for RunFinished")
+		}
+	}
+	if !gated {
+		t.Fatal("expected an IntegrationConflictRequest but none was emitted")
+	}
+	if rf := events[len(events)-1].(RunFinished); rf.Failed {
+		t.Errorf("run should complete after conflict resolution; got Failed=true")
+	}
+	commits, err := stepCommitsFromLog(repo, runBranchName("conflict", run.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commits) != 2 {
+		t.Errorf("both steps should be integrated after resolve; got %v", commits)
+	}
+}
+
+// TestIntegrationConflictAbortFailsStep proves the abort path transitions the
+// conflicted step to failed and routes it to the recovery gate (spec 06 A2).
+func TestIntegrationConflictAbortFailsStep(t *testing.T) {
+	repo := t.TempDir()
+	initRepo(t, repo)
+	wf, err := workflow.Decode(conflictWorkflow, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &composeExec{writes: map[string]map[string]string{
+		"a": {"shared": "a\n"},
+		"b": {"shared": "b\n"},
+	}}
+	mgr := NewManager(exec, filepath.Join(repo, ".jig"))
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var conflictStep string
+	routedToRecovery := false
+	deadline := time.After(15 * time.Second)
+	var events []Event
+loop:
+	for {
+		select {
+		case e := <-ch:
+			events = append(events, e)
+			if icr, ok := e.(IntegrationConflictRequest); ok && conflictStep == "" {
+				conflictStep = icr.StepID
+				run.ResolveIntegration(icr.StepID, true) // abort
+			}
+			if rr, ok := e.(RecoveryRequest); ok && rr.StepID == conflictStep {
+				routedToRecovery = true
+				run.Recover(rr.StepID, RecoverAbort, "") // tear down to end the run
+			}
+			if _, ok := e.(RunFinished); ok {
+				break loop
+			}
+		case <-deadline:
+			t.Fatal("timeout waiting for RunFinished")
+		}
+	}
+	if conflictStep == "" {
+		t.Fatal("expected an IntegrationConflictRequest")
+	}
+	if !routedToRecovery {
+		t.Errorf("abort should route the conflicted step to the recovery gate")
+	}
+	if got := findStatus(events, conflictStep); len(got) == 0 || got[len(got)-1] != step.StatusFailed {
+		t.Errorf("conflicted step %q should end failed; transitions %v", conflictStep, got)
+	}
+}

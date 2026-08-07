@@ -87,15 +87,15 @@ func phSquashMergeIntegration(s *scheduler, m stepDoneMsg, _ *workflow.Step) pos
 		return decisionFailed
 	}
 	if conflict {
-		// Task 3.0 replaces this with the integration-conflict gate. Until then,
-		// clean the run worktree of the half-applied squash and fail the step.
-		_, _ = gitCmd(s.runWorktree, "reset", "--hard")
-		res := ensureResult(s, m.stepID)
-		res.Status = step.StatusFailed
-		if res.Err == "" {
-			res.Err = "integration conflict merging step " + m.stepID
-		}
-		return decisionFailed
+		// Surface the conflict to a human (spec 06 A2) instead of failing or
+		// auto-resolving. The conflicted state is left in the run worktree for the
+		// operator to resolve; the step parks but the run stays alive. Resolution
+		// arrives via Run.ResolveIntegration → handleResolveIntegration.
+		paths := mergeConflictPaths(s.runWorktree)
+		from := s.states[m.stepID].Status
+		s.transition(m.stepID, from, step.StatusAwaitingIntegration)
+		s.emit(IntegrationConflictRequest{RunID: s.runID, StepID: m.stepID, Paths: paths})
+		return decisionNeedsInput
 	}
 	if sha != "" {
 		s.stepCommits[m.stepID] = sha

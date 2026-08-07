@@ -63,6 +63,14 @@ func TestJournalRoundTrip(t *testing.T) {
 			name: "RunError",
 			ev:   RunError{RunID: "r1", Err: "unexpected panic"},
 		},
+		{
+			name: "RecoveryRequest",
+			ev:   RecoveryRequest{RunID: "r1", StepID: "fix", Err: "boom", CanResume: true},
+		},
+		{
+			name: "IntegrationConflictRequest",
+			ev:   IntegrationConflictRequest{RunID: "r1", StepID: "impl", Paths: []string{"a.go", "b.go"}},
+		},
 	}
 
 	for i, tc := range cases {

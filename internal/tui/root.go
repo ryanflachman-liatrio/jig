@@ -100,6 +100,15 @@ type recoverResponseMsg struct {
 	text   string
 }
 
+// resolveIntegrationResponseMsg is emitted by the monitor when the user resolves
+// or aborts a step parked on an integration conflict. The root delivers it via
+// Run.ResolveIntegration. abort=false finishes the merge; abort=true fails the step.
+type resolveIntegrationResponseMsg struct {
+	runID  string
+	stepID string
+	abort  bool
+}
+
 // engineEventMsg wraps one engine.Event for delivery as a tea.Msg.
 // isLive distinguishes which channel the event arrived on so the root can
 // re-arm the correct drain loop after processing.
@@ -266,6 +275,12 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case recoverResponseMsg:
 		if run, ok := m.handles[msg.runID]; ok {
 			run.Recover(msg.stepID, msg.action, msg.text)
+		}
+		return m, nil
+
+	case resolveIntegrationResponseMsg:
+		if run, ok := m.handles[msg.runID]; ok {
+			run.ResolveIntegration(msg.stepID, msg.abort)
 		}
 		return m, nil
 
