@@ -115,9 +115,17 @@ const (
     StatusAwaitingReview   Status = "awaiting_review"   // parked on a human verdict
     StatusNeedsInput       Status = "needs_input"       // parked on block_on / AskUserQuestion
     StatusAwaitingRecovery Status = "awaiting_recovery" // failed, parked for a human recovery decision
-    StatusSucceeded        Status = "succeeded"
-    StatusFailed           Status = "failed"
-    StatusSkipped          Status = "skipped"           // `when` false, or dep skipped
+    // StatusAwaitingIntegration is a step whose squash-merge into the run branch
+    // hit a conflict; parked for a human to resolve in the run worktree. Like
+    // StatusAwaitingRecovery it is parked-but-alive: in-flight siblings keep running.
+    StatusAwaitingIntegration Status = "awaiting_integration"
+    // StatusStopped is a step whose worker was deliberately stopped by an operator
+    // (Run.Stop) — not a failure and not end-of-run. The run stays quiescent (no
+    // worker in flight); stopped steps are eligible for resume or reset.
+    StatusStopped   Status = "stopped"
+    StatusSucceeded Status = "succeeded"
+    StatusFailed    Status = "failed"
+    StatusSkipped   Status = "skipped" // when=false, or dep skipped/failed
 )
 
 // State is the scheduler's mutable record for one step. Only the scheduler
@@ -127,7 +135,11 @@ type State struct {
     Status    Status
     Attempt   int // retry count under on_failure = "retry"
     Iteration int // loop iteration when re-run via [step.loop]
-    Result    *Result
+    // Generation counts manual operator resets (Run.Reset). Unlike Attempt,
+    // which gates the MaxRetries budget, Generation is purely a provenance axis
+    // that marks manual re-runs and makes them legible in the transcript.
+    Generation int
+    Result     *Result
 }
 
 // Result is what execution produced; serialized as result.json.
@@ -156,7 +168,7 @@ type Event interface{ isEvent() }
 
 type RunStarted    struct{ RunID, Workflow string; Steps []string }
 type RunFinished   struct{ RunID string; Failed bool }
-type StepStatus    struct{ RunID, StepID string; From, To step.Status; Attempt, Iteration int }
+type StepStatus    struct{ RunID, StepID string; From, To step.Status; Attempt, Iteration, Generation int; Err string }
 type StepOutput    struct{ RunID, StepID string; Delta string }   // live-typing tail only
 type StepMessage   struct{ RunID, StepID string; Seq, Iteration int } // transcript advanced (liveness)
 type StepToolCall  struct{ RunID, StepID, Tool, Detail string }   // observed metadata, live
@@ -164,6 +176,15 @@ type GateResult    struct{ RunID, StepID string; Passed bool; Detail string }
 type LoopFired     struct{ RunID, StepID, Goto string; Iteration, Max int }
 type ReviewRequest struct{ RunID, StepID string; Render ReviewRender; Choices []string }
 type RunError      struct{ RunID string; Err string } // engine-level, not step-level
+// StepsReset is the journaled audit record for an operator reset. It carries
+// the operator's chosen target and blast-radius closure — provenance the
+// StepStatus stream cannot express. Written before any destructive git operation
+// so a crash leaves journal and disk in a consistent state.
+type StepsReset struct {
+    RunID   string
+    Target  string   // the step the operator reset to
+    Closure []string // target + transitive depends_on closure (the reset set)
+}
 ```
 
 Journal envelope (JSONL, one event per line):
@@ -280,6 +301,54 @@ The logic lives in three independently table-testable methods:
 `max_parallel` (they're human-bound, not machine-bound). The eventual verdict
 message on the inbox is that step's completion; the verdict becomes
 `Result.Verdict`.
+
+### Stop — per-step quiescence
+
+An operator may stop one running step without ending the run:
+
+```go
+func (r *Run) Stop(stepID string) { r.inbox <- stopMsg{stepID: stepID} }
+```
+
+`handleStop` in the scheduler:
+1. Cancels that step's child context (each worker gets its own child context,
+   so only that worker unwinds — not the run context or sibling workers).
+2. Adds the step to a `stopping` set so the scheduler knows the upcoming
+   `stepDone` is intentional rather than a failure.
+3. When the worker's `stepDone` arrives with the cancelled context, the scheduler
+   detects it is in `stopping`, transitions the step to `StatusStopped` (not
+   `StatusFailed`), and does not apply the failure policy.
+
+A run is **quiescent** when `inFlight == 0` with no pending-runnable steps.
+A stopped step keeps the run alive and quiescent: the run stays open but idles,
+waiting for an operator action (resume or reset). Quiescence is the precondition
+for `Run.Reset` — reset never mutates while a worker is live.
+
+### Reset — dependency closure and rewind+replay
+
+`Run.Reset(target)` rewinds the run branch and re-queues the target step and its
+dependency closure. It is only valid on an unfinished, quiescent run. See
+[ADR 0008](../adr/0008-manual-reset-rewind-and-replay.md) for the full algorithm
+rationale and rejected alternatives.
+
+**Algorithm:**
+1. Compute the **reset set** = target step ∪ its transitive `depends_on` closure.
+2. Write `StepsReset{target, closure}` to the journal *before* any git mutation
+   (crash-consistent ordering: if jig crashes after the event write, a future
+   `fold(journal)` can reconstruct post-reset state from `StepStatus` transitions).
+3. `git reset --hard` the run branch to the commit just before the earliest
+   reset-set commit (identified via the step→commit map built from squash commits).
+4. Cherry-pick, in original order, every later commit that is **not** in the reset
+   set (the independent "survivors"). In a linear workflow the reset set is a
+   contiguous tail and this step is a no-op.
+5. Return each step in the reset set to `StatusPending` and increment its
+   `Generation` counter. Unlike `Attempt` (which gates `MaxRetries`), `Generation`
+   is a provenance axis only — it makes manual re-runs legible in the transcript
+   without consuming the automatic-retry budget.
+
+Cherry-pick conflicts surface through the integration-conflict gate (same path as
+squash-merge conflicts from parallel steps — no auto-resolver). Reset on a fully
+settled run is locked; reopening a finished run is a deferred follow-up.
 
 ### The `Executor` seam (engine ↔ runner)
 
@@ -497,16 +566,20 @@ watch its text stream live in the step pane; the review step renders
 
 ### Phase 5 — mutation, safely
 
-Build: worktree creation, branch naming (`jig/<workflow>/<step-id>`),
-validate-inside-worktree · diff rendering for `review = "diff"` · the
-merge-join convention · cancellation hardening (worktree cleanup on abort).
+Build: run-branch creation, per-step worktree branched off run HEAD, branch
+naming (`jig/<workflow>/<step-id>`), squash-merge back into run branch on step
+completion, validate-inside-worktree · diff rendering for `review = "diff"` ·
+integration-conflict gate (parallel steps that touch the same files) ·
+cancellation hardening (worktree cleanup on abort) · final human-gated merge at
+run end.
 
 **UI test:** the full `examples/feature.toml` kitchen sink — mutating fix step
 in its own worktree, gate runs `go test` inside it, human reviews the actual
-diff, `revise` loops with feedback, `approve` merges.
+diff, `revise` loops with feedback, `approve` triggers the final merge gate.
 
 ### Deferred (matches workflow-schema.md MVP-1 scope)
 
 Resume-from-journal (the journal already makes it possible), map/fan-out over
 dynamic lists, secrets, remote execution. Also deferred: journaling
-`StepOutput` deltas in full (decide truncation vs. skip at Phase 4).
+`StepOutput` deltas in full (decided to skip at Phase 4 — the transcript carries
+the full content). Reopening a fully-settled run for reset is also deferred.

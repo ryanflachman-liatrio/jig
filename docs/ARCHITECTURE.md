@@ -15,7 +15,7 @@ jig has two halves that meet at the `.toml` workflow file:
                                         │ *Workflow (a validated DAG)
                                         ▼
                         ┌──────────────────────────────┐
-                        │  internal/engine  (planned)   │
+                        │  internal/engine               │
    run the workflow  →  │  traverse DAG · gates · loops │
                         │  ┌─ runner · step · manifest ─┐│
                         │  │ worktrees · agents · shell ││
@@ -24,17 +24,17 @@ jig has two halves that meet at the `.toml` workflow file:
                                         ▼
                         ┌──────────────────────────────┐
    watch / review    →  │  internal/tui  (Bubble Tea)   │  ← human-in-the-loop
-                        │  chat today → run monitor next │
+                        │  streaming chat + run monitor  │
                         └──────────────────────────────┘
 ```
 
 - The **workflow package** turns text into a validated in-memory graph. It is
   pure and deterministic — no I/O beyond reading referenced files during
   validation, no agent calls. This is the mature, tested core.
-- The **engine** (and its helper packages) will *execute* that graph. Not yet
-  implemented; the schema already describes its intended runtime behavior.
-- The **TUI** is the human surface — today a streaming Claude chat client, on
-  the path to becoming the run monitor and the host for `review` steps.
+- The **engine** (and its helper packages) executes that graph — DAG traversal,
+  gates, loops, run-branch worktree management, and the event journal.
+- The **TUI** is the human surface — a streaming Claude chat client and a
+  navigable run monitor for driving and reviewing in-flight workflows.
 
 ## Package layout
 
@@ -43,7 +43,7 @@ cmd/jig/            entry point: `jig validate` / `jig prune` subcommands + the 
 internal/
   workflow/         schema, loader, validator, guard/condition parser   [DONE]
   tui/              Bubble Tea app: chat client + navigable run monitor  [DONE]
-  engine/           DAG executor / orchestrator + event bus             [DONE]
+  engine/           DAG executor / orchestrator + event bus + run-branch lifecycle [DONE]
   runner/           concrete executors (agent SDK, shell command)       [DONE]
   step/             per-step execution state & result model             [DONE]
   transcript/       per-step transcript.jsonl store (writer + reader)   [DONE]
@@ -92,7 +92,10 @@ File-by-file:
   references are type-checked against that schema at load time.
 - **Worktree isolation is inferred, then overridable.** An agent step whose
   `allowed_tools` include mutating tools (`Edit`/`Write`/`Bash`/`NotebookEdit`)
-  defaults to `isolation = "worktree"`; `isolation = "none"` opts out.
+  defaults to `isolation = "worktree"`; `isolation = "none"` opts out. When
+  running in a worktree, the step's branch is created off the current tip of the
+  **run branch** (not repo-root HEAD), so each step sees the accumulated code
+  changes produced by its upstream steps — see the integration model below.
 - **Defaults inherit, step fields win.** `[defaults]` seeds model/effort/limits;
   an explicit field on a step overrides. Same precedence rule when folding an
   `agent_file`'s `tools`/`model` in.
@@ -172,41 +175,61 @@ the agent, and thinking blocks can all contain secrets. `.jig/` is git-ignored
 the local disk. Treat a run directory as sensitive; `jig prune` is the supported
 way to clear it.
 
-## Where the engine will plug in (planned)
+## Integration model — the run branch
 
-The schema already specifies the engine's contract; these are the seams to fill:
+jig runs each step on a per-run **integration branch** (the "run branch"). This
+is the key design decision that lets downstream steps build on upstream code
+while keeping each step's turn isolated in its own worktree. See
+[ADR 0007](adr/0007-run-integration-branch-model.md) for the full rationale.
 
-1. **Run directory.** `.jig/runs/<run-id>/` holds `artifacts/` (where `@stepid`
-   resolves), `journal.jsonl` (the orchestration event log), and
-   `steps/<step-id>/` with `result.json` (engine-owned metadata) plus
-   `transcript.jsonl` (the step's full conversation — see the transcript store
-   below). Kept outside the working tree so it survives worktree switches:
+- **One run branch per run.** When a run starts, jig creates a branch named
+  `jig/<workflow>/<run-id>` off the user's working HEAD. This is the mutable
+  spine of the run; all step contributions land here.
+- **Step worktrees branch off run HEAD.** Each mutating step gets its own git
+  worktree branched from the current tip of the run branch. The step therefore
+  sees all code changes produced by its upstream steps — not just the baseline
+  from which the run started.
+- **Squash-per-step.** When a step completes, jig squash-merges the step's
+  worktree branch back into the run branch as exactly one commit, tagged with
+  the step id. This keeps the run-branch history linear and commit-addressable.
+- **Step→commit map.** Because each step's contribution lands as a single
+  labeled commit, every step's code changes are retrievable by commit hash. This
+  is the foundation that makes commit-addressable reset possible.
+- **Final human-gated merge.** At run end, jig presents the run branch for a
+  single human-gated merge onto the user's working branch. Explicit `merge`
+  command steps are not needed — integration is the engine's responsibility.
 
-   ```
-   .jig/runs/<run-id>/
-     journal.jsonl                – orchestration events (one Envelope/line)
-     steps/<step-id>/
-       result.json                – terminal step summary
-       transcript.jsonl           – append-only per-step conversation
-     artifacts/                   – producer output (@stepid resolves here)
-   ```
-2. **Traversal.** Topologically order the validated DAG; run ready steps
-   concurrently up to `max_parallel`; skip a step whose `when` guard is false.
-3. **Step execution** (`runner`/`step`):
-   - *agent* → fresh context from `SKILL.md`/agent file + resolved input paths +
-     allowed tools + optional worktree. Producers additionally run headless
-     under `--json-schema` so the final answer is constrained-decoded to the
-     step's schema and saved as its JSON artifact.
-   - *command* → run `run`/`script` in `cwd` (inside the worktree for mutating
-     lineages).
-   - *review* → pause, render the artifact/diff in the TUI, capture the human
-     verdict.
-4. **Gates & loops.** After a step, run `[step.validate]`; on failure apply
-   `on_failure` (`abort`/`retry`/`continue`). Evaluate `[step.loop]`; if it fires
-   and the cap isn't hit, re-run the target with `feedback` fed back in.
-5. **Engine-observed metadata.** Status, changed files, tool-call log, and
-   duration are derived from the SDK message stream — the engine sees every
-   `Write`/`Edit`/`Bash` — not asked of the agent. This is the record gates trust.
+**Run directory layout.** `.jig/runs/<run-id>/` lives outside the working tree
+so it survives worktree switches:
+
+```
+.jig/runs/<run-id>/
+  journal.jsonl                – orchestration events (one Envelope/line)
+  steps/<step-id>/
+    result.json                – terminal step summary
+    transcript.jsonl           – append-only per-step conversation
+  artifacts/                   – producer output (@stepid resolves here)
+```
+
+### Stop and reset seam
+
+The run branch's commit-per-step history is what makes operator-driven stop and
+reset coherent. See [ADR 0008](adr/0008-manual-reset-rewind-and-replay.md) for
+the full algorithm rationale.
+
+- **`Run.Stop`** cancels one running step's worker without ending the run. The
+  step transitions to `stopped` — not a failure, not end-of-run. A run is
+  **quiescent** when no worker is in flight; quiescence is the precondition for
+  reset.
+- **Reset** is a git rewind plus survivor replay scoped to the target step's
+  dependency closure. Given a target step T, jig computes the reset set (T and
+  its transitive `depends_on` closure); rewinds the run branch to the commit
+  just before the earliest reset-set commit; cherry-picks any later commits that
+  are *not* in the reset set (independent "survivors"); and returns the reset
+  set to `pending`. In a linear workflow the reset set is a contiguous tail and
+  the cherry-pick step is a no-op.
+- Reset is available only on an unfinished, quiescent run. A fully-settled run
+  is locked — reopening a finished run to reset it is a deferred follow-up.
 
 ## Dependencies
 

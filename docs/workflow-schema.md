@@ -177,9 +177,13 @@ don't clobber each other and every change is reviewable/revertible.
   (`Edit`/`Write`/`Bash`); override with `isolation = "none"`.
 - **Branch name is derived by convention:** `jig/<workflow>/<step-id>`. No
   injected variable needed — a later `command` step can reference it directly.
-- **Parallel mutating steps** must branch from the same base; a downstream join
-  step merges them (and errors on conflict). `validate` commands run *inside*
-  the step's worktree.
+- **Each step worktree branches off the run-branch HEAD**, not repo-root HEAD.
+  This means each step sees the accumulated code changes produced by its upstream
+  steps. When the step completes, jig squash-merges its worktree branch back into
+  the run branch as one commit. Integration is the engine's responsibility — no
+  explicit `merge` command step is needed.
+- `validate` commands run *inside* the step's worktree, so they see the step's
+  changes before integration.
 
 ---
 
@@ -545,14 +549,12 @@ output_type = { enum = ["approve", "revise"] }
   goto           = "fix"
   max_iterations = 3
   feedback       = "@approve"
-
-[[step]]
-id         = "merge"
-type       = "command"
-depends_on = ["approve"]
-when       = "approve == 'approve'"
-run        = "git merge --no-ff jig/bugfix/fix"
 ```
+
+> **Note:** A hand-wired `merge` command step is no longer needed. jig runs each
+> step on a per-run integration branch and squash-merges step results into it
+> automatically. At run end, the run monitor presents a single human-gated merge
+> that lands the integration branch onto the user's working branch.
 
 ---
 
@@ -571,6 +573,13 @@ run        = "git merge --no-ff jig/bugfix/fix"
 4. **After completion**, run `[step.validate]`; on failure apply `on_failure`.
    Evaluate `[step.loop]`; if it fires and the cap isn't hit, re-run the target.
 5. **Workflow succeeds** when every reachable terminal step succeeds.
+
+**Stop and reset add no schema surface.** Stopping a running step and resetting
+a run to an earlier step are operator actions available in the run monitor — they
+add no `.toml` fields and require no changes to a workflow file. `jig validate`
+is unaffected. The run-branch integration model (worktrees + squash-per-step)
+is what makes reset safe and coherent; the workflow schema simply needs to be
+a well-formed DAG.
 
 ---
 
