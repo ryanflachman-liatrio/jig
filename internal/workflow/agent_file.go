@@ -102,6 +102,17 @@ func parseAgentFile(data []byte) (*agentFile, error) {
 	return af, nil
 }
 
+// ParseAgentFileContent parses a Claude agent .md file and returns its model
+// (empty string when unset) and prompt body. Exported for use by the runner's
+// monitor dispatcher, which needs to read monitor agent files directly.
+func ParseAgentFileContent(data []byte) (model, prompt string, err error) {
+	af, err := parseAgentFile(data)
+	if err != nil {
+		return "", "", err
+	}
+	return af.Model, af.Prompt, nil
+}
+
 // parseToolList reads a frontmatter tool list, accepting both "Read, Grep, Glob"
 // and "[Read, Grep, Glob]".
 func parseToolList(v string) []string {

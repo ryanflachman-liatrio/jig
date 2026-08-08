@@ -18,6 +18,7 @@ import (
 
 	"jig/internal/datastore"
 	"jig/internal/manifest"
+	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/workflow"
 )
@@ -39,11 +40,12 @@ type sub struct {
 // Manager is the registry of concurrent runs.
 // mu guards the registry only — workflow state is owned by each scheduler.
 type Manager struct {
-	mu   sync.Mutex
-	runs map[string]*Run
-	exec Executor
-	root string // .jig/ root (used in Phase 2+ for file I/O)
-	subs []sub  // manager-level fan-out; TUI subscribes once
+	mu       sync.Mutex
+	runs     map[string]*Run
+	exec     Executor
+	root     string // .jig/ root (used in Phase 2+ for file I/O)
+	subs     []sub  // manager-level fan-out; TUI subscribes once
+	monitors []sentinel.MonitorDef
 }
 
 // NewManager returns a Manager backed by exec. root is the .jig/ directory;
@@ -54,6 +56,12 @@ func NewManager(exec Executor, root string) *Manager {
 		exec: exec,
 		root: root,
 	}
+}
+
+// SetMonitors registers Tier-2 monitor definitions that will be dispatched
+// out-of-band for every run started by this manager. Call before Start.
+func (m *Manager) SetMonitors(monitors []sentinel.MonitorDef) {
+	m.monitors = monitors
 }
 
 // RunDir returns the on-disk directory for runID without creating it, or "" when
@@ -141,6 +149,85 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	}
 	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir, m.root, repoRoot, onDone)
 	go s.run(ctx)
+
+	// Tier-2: start the supervisor out-of-band when monitors are configured and
+	// persistence is on (runDir non-empty — transcripts exist to read).
+	if len(m.monitors) > 0 && runDir != "" {
+		secOn := wf.Defaults.Security.Enabled == nil || *wf.Defaults.Security.Enabled
+		t2On := wf.Defaults.Security.Tier2Enabled == nil || *wf.Defaults.Security.Tier2Enabled
+		if secOn && t2On {
+			sigCh := make(chan sentinel.StepSignal, 128)
+
+			// Bridge StepMessage liveness events from the live bus channel to the
+			// supervisor's signal channel. Drops are safe: a missed signal only
+			// delays the next flush; the supervisor re-reads from disk on the next
+			// signal it does receive.
+			liveCh, _ := m.Subscribe()
+			go func() {
+				defer close(sigCh)
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case ev, ok := <-liveCh:
+						if !ok {
+							return
+						}
+						if sm, ok := ev.(StepMessage); ok {
+							select {
+							case sigCh <- sentinel.StepSignal{
+								RunID:     sm.RunID,
+								StepID:    sm.StepID,
+								Seq:       sm.Seq,
+								Iteration: sm.Iteration,
+							}:
+							default:
+							}
+						}
+					}
+				}
+			}()
+
+			// notify converts a sentinel.Finding to an engine SecurityFinding event
+			// and fans it out to all bus subscribers (TUI) and the scheduler inbox
+			// (critical-finding escalation). Called from the supervisor goroutine.
+			notify := func(f sentinel.Finding) {
+				sf := SecurityFinding{
+					RunID:       f.RunID,
+					StepID:      f.StepID,
+					Tier:        string(f.Tier),
+					Monitor:     f.Monitor,
+					Severity:    string(f.Severity),
+					Action:      string(f.Action),
+					Fingerprint: f.Fingerprint,
+				}
+				fanOutCtrl(subs, sf)
+				select {
+				case inbox <- securityFindingMsg{sf: sf}:
+				default:
+				}
+			}
+
+			var sink *sentinel.Writer
+			if fw, err := sentinel.NewWriter(datastore.FindingsPath(runDir)); err == nil {
+				sink = fw
+			}
+
+			sup := sentinel.NewSupervisor(
+				runID,
+				sigCh,
+				sink,
+				m.monitors,
+				wf.Defaults.Security.FleetBudgetUSD,
+				func(stepID string) string {
+					return datastore.TranscriptPath(runDir, stepID)
+				},
+				notify,
+			)
+			go sup.Run(ctx)
+		}
+	}
+
 	return run, nil
 }
 
@@ -1181,6 +1268,21 @@ func (s *scheduler) buildRequest(
 	if st.Type == workflow.StepAgent && st.InjectContextEnabled() {
 		workflowContext = s.buildStepContext(st).Render()
 	}
+	// Activate the Tier-1 guard for agent steps unless explicitly disabled.
+	// Security is on by default (nil Enabled = on); resolved after applyDefaults.
+	var guard *sentinel.Guard
+	var findingsPath string
+	if st.Type == workflow.StepAgent {
+		secOn := st.Security.Enabled == nil || *st.Security.Enabled
+		t1On := st.Security.Tier1Enabled == nil || *st.Security.Tier1Enabled
+		if secOn && t1On {
+			guard = sentinel.NewGuard(st.Security.OutboundAllowlist)
+			if s.runDir != "" {
+				findingsPath = datastore.FindingsPath(s.runDir)
+			}
+		}
+	}
+
 	return StepRequest{
 		RunID:           runID,
 		Step:            st,
@@ -1192,6 +1294,8 @@ func (s *scheduler) buildRequest(
 		TranscriptPath:  transcriptPath,
 		Iteration:       state.Iteration,
 		Attempt:         state.Attempt,
+		Guard:           guard,
+		FindingsPath:    findingsPath,
 	}
 }
 

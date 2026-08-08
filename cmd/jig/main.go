@@ -14,6 +14,7 @@ import (
 	"jig/internal/datastore"
 	"jig/internal/engine"
 	"jig/internal/runner"
+	"jig/internal/sentinel"
 	"jig/internal/tui"
 	"jig/internal/workflow"
 )
@@ -41,6 +42,13 @@ func main() {
 	mux.Register(workflow.StepReview, runner.NewFakeExecutor(nil, runner.FakeOutcome{}))
 	mgr := engine.NewManager(mux, ".jig")
 
+	// Register Tier-2 monitor agents. Look for .md files in the well-known
+	// monitors directory beside the examples; skip silently if absent so the
+	// binary works outside the repo tree.
+	if monitors := discoverMonitors("examples/agents/monitors"); len(monitors) > 0 {
+		mgr.SetMonitors(monitors)
+	}
+
 	// Alt screen and the background canvas are declared on the View in v2 (see
 	// rootModel.View), not as program options here.
 	p := tea.NewProgram(tui.New(ctx, mgr))
@@ -48,6 +56,30 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error running program: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// discoverMonitors returns MonitorDef entries for every .md file found in dir.
+// Each file's base name (without extension) becomes the monitor name. Files that
+// fail to stat are silently skipped so the binary remains usable outside the repo.
+func discoverMonitors(dir string) []sentinel.MonitorDef {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	adapter := runner.NewMonitorAdapter()
+	var defs []sentinel.MonitorDef
+	for _, e := range entries {
+		if e.IsDir() || len(e.Name()) < 4 || e.Name()[len(e.Name())-3:] != ".md" {
+			continue
+		}
+		name := e.Name()[:len(e.Name())-3] // strip .md
+		defs = append(defs, sentinel.MonitorDef{
+			File:       dir + "/" + e.Name(),
+			Monitor:    name,
+			Dispatcher: adapter,
+		})
+	}
+	return defs
 }
 
 // runValidate parses and validates a workflow file, printing a summary. It

@@ -113,6 +113,7 @@ func TestSupervisorBatching(t *testing.T) {
 			}
 			return ""
 		},
+		nil, // no notify in tests
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -192,6 +193,7 @@ func TestSupervisorBudgetDegrade(t *testing.T) {
 			}
 			return ""
 		},
+		nil, // no notify in tests
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

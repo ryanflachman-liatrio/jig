@@ -71,6 +71,8 @@ type Supervisor struct {
 	budget         float64                    // per-run USD ceiling; ≤0 = unlimited
 	transcriptPath func(stepID string) string // "" → persistence off for that step
 
+	notify func(Finding) // optional; called for each new finding after sink append
+
 	mu        sync.Mutex
 	spentUSD  float64
 	degraded  bool
@@ -83,6 +85,11 @@ type Supervisor struct {
 // NewSupervisor creates a Supervisor ready to Run. Pass a nil sink to disable
 // findings persistence. The supervisor does not start automatically; call Run.
 // It returns immediately from Run when no monitors are configured.
+//
+// notify, when non-nil, is called for each new Finding after it is appended to
+// the sink. The engine uses this to fan the finding out to bus subscribers (TUI
+// Security pane) and to the scheduler inbox (critical-finding escalation).
+// notify must be goroutine-safe; it is called while the supervisor's mu is not held.
 func NewSupervisor(
 	runID string,
 	signals <-chan StepSignal,
@@ -90,6 +97,7 @@ func NewSupervisor(
 	monitors []MonitorDef,
 	budgetUSD float64,
 	transcriptPath func(stepID string) string,
+	notify func(Finding),
 ) *Supervisor {
 	return &Supervisor{
 		runID:          runID,
@@ -98,6 +106,7 @@ func NewSupervisor(
 		monitors:       monitors,
 		budget:         budgetUSD,
 		transcriptPath: transcriptPath,
+		notify:         notify,
 		cursors:        make(map[string]int),
 		seenFPs:        make(map[string]map[string]bool),
 		pending:        make(map[string]int),
@@ -238,6 +247,9 @@ func (s *Supervisor) flushStep(ctx context.Context, stepID string) {
 				s.mu.Lock()
 				s.seenFPs[stepID][fp] = true
 				s.mu.Unlock()
+				if s.notify != nil {
+					s.notify(f)
+				}
 			}
 		}
 
@@ -271,6 +283,9 @@ func (s *Supervisor) egressDegrade() {
 	}
 	if s.sink != nil {
 		_ = s.sink.Append(f)
+	}
+	if s.notify != nil {
+		s.notify(f)
 	}
 }
 
