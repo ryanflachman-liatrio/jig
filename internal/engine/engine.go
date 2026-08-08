@@ -207,6 +207,31 @@ func (r *Run) Resume(stepID, message string) {
 	r.inbox <- resumeMsg{stepID: stepID, message: message}
 }
 
+// ClosureOf returns the reset set for stepID — the step itself plus every
+// step that transitively depends on it, in declaration order. This is the
+// same set handleReset would invalidate, and the TUI uses it to compute the
+// blast-radius count for the reset confirmation dialog. Returns nil when the
+// run is already settled (the scheduler goroutine has exited).
+func (r *Run) ClosureOf(stepID string) []string {
+	select {
+	case <-r.done:
+		return nil
+	default:
+	}
+	reply := make(chan []string, 1)
+	select {
+	case r.inbox <- closureReqMsg{stepID: stepID, reply: reply}:
+		select {
+		case cl := <-reply:
+			return cl
+		case <-r.done:
+			return nil
+		}
+	case <-r.done:
+		return nil
+	}
+}
+
 // Reset rewinds the run branch to before stepID's transitive depends_on
 // closure, replays independent survivor commits, returns the closure to pending,
 // and bumps each reset step's Generation counter (spec 08 C2). Only valid on
@@ -332,6 +357,11 @@ type snapshotReqMsg struct {
 	reply chan<- RunSnapshot
 }
 
+type closureReqMsg struct {
+	stepID string
+	reply  chan<- []string
+}
+
 type humanMessageMsg struct {
 	stepID string // review step ID receiving the message
 	text   string
@@ -409,6 +439,7 @@ func (stepDoneMsg) isSchedMsg()            {}
 func (verdictMsg) isSchedMsg()             {}
 func (userInputMsg) isSchedMsg()           {}
 func (snapshotReqMsg) isSchedMsg()         {}
+func (closureReqMsg) isSchedMsg()          {}
 func (humanMessageMsg) isSchedMsg()        {}
 func (agentInputMsg) isSchedMsg()          {}
 func (agentQuestionNotifyMsg) isSchedMsg() {}
@@ -1307,6 +1338,9 @@ func (s *scheduler) handle(msg schedMsg) {
 
 	case snapshotReqMsg:
 		m.reply <- s.snapshot()
+
+	case closureReqMsg:
+		m.reply <- s.closureOf(m.stepID)
 	}
 }
 

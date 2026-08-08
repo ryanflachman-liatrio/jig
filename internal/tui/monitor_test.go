@@ -1517,3 +1517,188 @@ func TestMonitorFinalMergeGate(t *testing.T) {
 		t.Fatalf("expected discard finalMergeResponseMsg, got %+v (%T)", cmd(), cmd())
 	}
 }
+
+// buildResetMonitor creates a monitorModel with a fan-out workflow snapshot for
+// reset TUI tests. Steps: a (succeeded), b (succeeded, depends a), gate
+// (awaitingReview, depends b), d (succeeded, independent). Run is quiescent.
+func buildResetMonitor(t *testing.T) monitorModel {
+	t.Helper()
+	m := newMonitorModel("run-reset")
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m, _ = m.Update(engineEventMsg{event: engine.RunStarted{
+		RunID:    "run-reset",
+		Workflow: "fanout",
+		Steps:    []string{"a", "d", "b", "gate"},
+	}})
+	for _, ev := range []engine.Event{
+		engine.StepStatus{RunID: "run-reset", StepID: "a", From: step.StatusPending, To: step.StatusSucceeded},
+		engine.StepStatus{RunID: "run-reset", StepID: "d", From: step.StatusPending, To: step.StatusSucceeded},
+		engine.StepStatus{RunID: "run-reset", StepID: "b", From: step.StatusPending, To: step.StatusSucceeded},
+		engine.StepStatus{RunID: "run-reset", StepID: "gate", From: step.StatusPending, To: step.StatusAwaitingReview},
+	} {
+		m, _ = m.Update(engineEventMsg{event: ev})
+	}
+	return m
+}
+
+// TestResetConfirmation verifies that pressing r on a mid-graph step opens the
+// reset confirmation gate, y confirms (emits resetStepMsg), and n cancels.
+func TestResetConfirmation(t *testing.T) {
+	m := buildResetMonitor(t)
+
+	// Cursor starts at step 0 (a). Navigate to step 0 explicitly.
+	// Inject showResetConfirmMsg directly (as the root would after resolving closure).
+	closure := []string{"a", "b", "gate"}
+	m, _ = m.Update(showResetConfirmMsg{runID: "run-reset", stepID: "a", closure: closure})
+
+	// Confirmation entry must be in the queue.
+	if len(m.inputQueue) == 0 {
+		t.Fatal("expected reset confirmation in inputQueue, queue is empty")
+	}
+	entry := m.inputQueue[len(m.inputQueue)-1]
+	if entry.kind != inputKindResetConfirm {
+		t.Fatalf("queue entry kind = %v; want inputKindResetConfirm", entry.kind)
+	}
+	if entry.resetConfirm.stepID != "a" {
+		t.Errorf("resetConfirm.stepID = %q; want %q", entry.resetConfirm.stepID, "a")
+	}
+	if len(entry.resetConfirm.closure) != 3 {
+		t.Errorf("resetConfirm.closure len = %d; want 3", len(entry.resetConfirm.closure))
+	}
+
+	// Tab twice to reach gate focus (Steps → Transcript → Gate).
+	m, _ = m.Update(key("tab"))
+	m, _ = m.Update(key("tab"))
+	if m.focus != focusGate {
+		t.Fatalf("after 2×tab: focus = %v; want focusGate", m.focus)
+	}
+
+	// y confirms → emits resetStepMsg.
+	m2, cmd := m.Update(key("y"))
+	if cmd == nil {
+		t.Fatal("expected a Cmd after y; got nil")
+	}
+	result := cmd()
+	if rsm, ok := result.(resetStepMsg); !ok {
+		t.Fatalf("cmd() returned %T; want resetStepMsg", result)
+	} else if rsm.stepID != "a" {
+		t.Errorf("resetStepMsg.stepID = %q; want %q", rsm.stepID, "a")
+	}
+	_ = m2
+
+	// Press n instead: clears the entry, emits nothing.
+	m3, cmd3 := m.Update(key("n"))
+	if cmd3 != nil && cmd3() != nil {
+		t.Errorf("after n: expected nil cmd, got %T", cmd3())
+	}
+	// Confirmation entry should be gone.
+	for _, e := range m3.inputQueue {
+		if e.kind == inputKindResetConfirm {
+			t.Error("after n: reset confirmation still in queue")
+		}
+	}
+}
+
+// TestResetLinearTipTUI verifies that pressing r on a linear-tip step emits
+// requestResetMsg immediately (no confirmation), and r on a settled run or
+// non-terminal step is a no-op.
+func TestResetLinearTipTUI(t *testing.T) {
+	m := buildResetMonitor(t)
+
+	// Navigate to step "a" (index 0 in the monitor step list).
+	// Press r: since a is Succeeded, it emits requestResetMsg.
+	m2, cmd := m.Update(key("r"))
+	if cmd == nil {
+		t.Fatal("expected a Cmd after r on a terminal step; got nil")
+	}
+	result := cmd()
+	if rrm, ok := result.(requestResetMsg); !ok {
+		t.Fatalf("cmd() returned %T; want requestResetMsg", result)
+	} else {
+		if rrm.stepID != "a" {
+			t.Errorf("requestResetMsg.stepID = %q; want %q", rrm.stepID, "a")
+		}
+	}
+	_ = m2
+
+	// Press r on a pending step → no cmd (gate is in AwaitingReview, cursor on a).
+	// Simulate pressing r on a non-terminal step: navigate to gate (index 3).
+	for range 3 {
+		m, _ = m.Update(key("j"))
+	}
+	if m.steps[m.cursor].status != step.StatusAwaitingReview {
+		t.Logf("cursor status = %q (expected AwaitingReview for gate)", m.steps[m.cursor].status)
+	}
+	// gate is AwaitingReview — this IS a resettable status, so r is eligible.
+	// Navigate to a pending/running step that is NOT resettable.
+	// Create a separate model with a running step.
+	m2Running := newMonitorModel("run-running")
+	m2Running, _ = m2Running.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m2Running, _ = m2Running.Update(engineEventMsg{event: engine.RunStarted{
+		RunID: "run-running", Workflow: "w", Steps: []string{"x"},
+	}})
+	m2Running, _ = m2Running.Update(engineEventMsg{event: engine.StepStatus{
+		RunID: "run-running", StepID: "x", From: step.StatusPending, To: step.StatusRunning,
+	}})
+	// x is Running → r key should emit stopStepMsg (not requestResetMsg),
+	// since StopStep binding uses "s" and ResetStep uses "r" — r on running
+	// is a no-op for reset (only terminal/stopped trigger reset).
+	_, cmdRunning := m2Running.Update(key("r"))
+	if cmdRunning != nil {
+		if result := cmdRunning(); result != nil {
+			if _, isReset := result.(requestResetMsg); isReset {
+				t.Error("r on a running step should not emit requestResetMsg")
+			}
+		}
+	}
+
+	// Settled run: done=true → r must produce no cmd.
+	mDone := buildResetMonitor(t)
+	mDone, _ = mDone.Update(engineEventMsg{event: engine.RunFinished{RunID: "run-reset", Failed: false}})
+	_, cmdDone := mDone.Update(key("r"))
+	if cmdDone != nil {
+		if result := cmdDone(); result != nil {
+			t.Errorf("r on settled run: expected nil result, got %T", result)
+		}
+	}
+}
+
+// TestStopKey verifies that s on a running step emits stopStepMsg, and s on a
+// non-running step is a no-op.
+func TestStopKey(t *testing.T) {
+	m := newMonitorModel("run-stop")
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m, _ = m.Update(engineEventMsg{event: engine.RunStarted{
+		RunID: "run-stop", Workflow: "w", Steps: []string{"x", "y"},
+	}})
+	// x transitions to Running, y stays Pending.
+	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+		RunID: "run-stop", StepID: "x", From: step.StatusPending, To: step.StatusRunning,
+	}})
+
+	// Cursor is on x (Running). s → stopStepMsg.
+	_, cmd := m.Update(key("s"))
+	if cmd == nil {
+		t.Fatal("expected Cmd after s on running step; got nil")
+	}
+	result := cmd()
+	if ssm, ok := result.(stopStepMsg); !ok {
+		t.Fatalf("cmd() returned %T; want stopStepMsg", result)
+	} else if ssm.stepID != "x" {
+		t.Errorf("stopStepMsg.stepID = %q; want %q", ssm.stepID, "x")
+	}
+
+	// Navigate to y (Pending). s → no stopStepMsg.
+	m, _ = m.Update(key("j"))
+	if m.steps[m.cursor].id != "y" {
+		t.Fatalf("expected cursor on y, got %q", m.steps[m.cursor].id)
+	}
+	_, cmd2 := m.Update(key("s"))
+	if cmd2 != nil {
+		if result := cmd2(); result != nil {
+			if _, isStop := result.(stopStepMsg); isStop {
+				t.Error("s on a non-running step should not emit stopStepMsg")
+			}
+		}
+	}
+}

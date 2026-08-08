@@ -196,6 +196,14 @@ type monitorKeys struct {
 
 	FinalMergeApprove keybind.Binding // matched (y, final-merge gate: land the run branch onto base)
 	FinalMergeDiscard keybind.Binding // matched (d, final-merge gate: leave the run branch, merge nothing)
+
+	// Steps panel — step lifecycle actions (spec 08 C4).
+	// These are matched only in focusSteps and gated by step eligibility via
+	// SetEnabled, so they never collide with the gate-focused RecoverRetry (r)
+	// or IntegrationResolve (r) which are only active in focusGate.
+	StopStep   keybind.Binding // matched (s, steps panel: cancel a running step)
+	ResetStep  keybind.Binding // matched (r, steps panel: reset to a quiescent step)
+	ResumeStep keybind.Binding // matched (ctrl+r, steps panel: resume a stopped step)
 }
 
 func defaultMonitorKeys() monitorKeys {
@@ -245,5 +253,9 @@ func defaultMonitorKeys() monitorKeys {
 
 		FinalMergeApprove: keybind.NewBinding(keybind.WithKeys("y"), keybind.WithHelp("y", "merge")),
 		FinalMergeDiscard: keybind.NewBinding(keybind.WithKeys("d"), keybind.WithHelp("d", "discard")),
+
+		StopStep:   keybind.NewBinding(keybind.WithKeys("s"), keybind.WithHelp("s", "stop")),
+		ResetStep:  keybind.NewBinding(keybind.WithKeys("r"), keybind.WithHelp("r", "reset")),
+		ResumeStep: keybind.NewBinding(keybind.WithKeys("ctrl+r"), keybind.WithHelp("ctrl+r", "resume")),
 	}
 }

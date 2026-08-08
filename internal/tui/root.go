@@ -117,6 +117,44 @@ type finalMergeResponseMsg struct {
 	approve bool
 }
 
+// stopStepMsg is emitted by the monitor when the user presses the stop key on
+// a running step. The root delivers it via Run.Stop (spec 07 B1 / spec 08 C4).
+type stopStepMsg struct {
+	runID  string
+	stepID string
+}
+
+// resumeStepMsg is emitted by the monitor when the user presses the resume key
+// on a stopped step. The root delivers it via Run.Resume (spec 07 B2 / spec 08 C4).
+type resumeStepMsg struct {
+	runID   string
+	stepID  string
+	message string
+}
+
+// requestResetMsg is emitted by the monitor when the user presses the reset key
+// on a terminal/stopped step. The root resolves the closure via Run.ClosureOf
+// and either confirms immediately (empty downstream) or shows a confirmation.
+type requestResetMsg struct {
+	runID  string
+	stepID string
+}
+
+// resetStepMsg is emitted after the user confirms a reset (or immediately when
+// the closure has no downstream steps). The root delivers it via Run.Reset.
+type resetStepMsg struct {
+	runID  string
+	stepID string
+}
+
+// showResetConfirmMsg is emitted by the root to the monitor when the closure
+// has downstream steps, asking the monitor to show the confirmation gate entry.
+type showResetConfirmMsg struct {
+	runID   string
+	stepID  string
+	closure []string // all steps that will be reset (incl. target)
+}
+
 // engineEventMsg wraps one engine.Event for delivery as a tea.Msg.
 // isLive distinguishes which channel the event arrived on so the root can
 // re-arm the correct drain loop after processing.
@@ -295,6 +333,44 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case finalMergeResponseMsg:
 		if run, ok := m.handles[msg.runID]; ok {
 			run.FinalMerge(msg.approve)
+		}
+		return m, nil
+
+	case stopStepMsg:
+		if run, ok := m.handles[msg.runID]; ok {
+			run.Stop(msg.stepID)
+		}
+		return m, nil
+
+	case resumeStepMsg:
+		if run, ok := m.handles[msg.runID]; ok {
+			run.Resume(msg.stepID, msg.message)
+		}
+		return m, nil
+
+	case requestResetMsg:
+		run, ok := m.handles[msg.runID]
+		if !ok {
+			return m, nil
+		}
+		closure := run.ClosureOf(msg.stepID)
+		if len(closure) <= 1 {
+			// Linear tip: reset immediately, no confirmation needed.
+			run.Reset(msg.stepID)
+			return m, nil
+		}
+		// Mid-graph reset: ask the monitor to show the confirmation gate entry.
+		var monCmd tea.Cmd
+		m.monitor, monCmd = m.monitor.Update(showResetConfirmMsg{
+			runID:   msg.runID,
+			stepID:  msg.stepID,
+			closure: closure,
+		})
+		return m, monCmd
+
+	case resetStepMsg:
+		if run, ok := m.handles[msg.runID]; ok {
+			run.Reset(msg.stepID)
 		}
 		return m, nil
 

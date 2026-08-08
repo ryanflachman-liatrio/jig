@@ -49,7 +49,15 @@ const (
 	inputKindRecovery                                    // RecoveryRequest (retry / resume / abort)
 	inputKindIntegrationConflict                         // IntegrationConflictRequest (resolve / abort)
 	inputKindFinalMerge                                  // FinalMergeRequest (approve / discard)
+	inputKindResetConfirm                                // reset confirmation (y/n, default n — spec 08 C4)
 )
+
+// resetConfirmEntry holds the data for a pending reset confirmation gate entry.
+type resetConfirmEntry struct {
+	runID   string
+	stepID  string   // the reset target
+	closure []string // all steps that will be reset (incl. target)
+}
 
 // pendingInputEntry is one element of the persistent input queue. Exactly one
 // payload pointer is non-nil, matching kind. Per-entry state (draft text,
@@ -61,13 +69,14 @@ type pendingInputEntry struct {
 	toolUseID string // non-empty only for inputKindQuestion
 
 	// Exactly one payload pointer is non-nil, matching kind.
-	request     *engine.InputRequest
-	question    *engine.AgentQuestion
-	prompt      *engine.PromptRequest
-	review      *engine.ReviewRequest
-	recovery    *engine.RecoveryRequest
-	integration *engine.IntegrationConflictRequest
-	finalMerge  *engine.FinalMergeRequest
+	request      *engine.InputRequest
+	question     *engine.AgentQuestion
+	prompt       *engine.PromptRequest
+	review       *engine.ReviewRequest
+	recovery     *engine.RecoveryRequest
+	integration  *engine.IntegrationConflictRequest
+	finalMerge   *engine.FinalMergeRequest
+	resetConfirm *resetConfirmEntry
 
 	// draft is the in-progress textarea text (request/prompt, review compose, and
 	// recovery guidance), preserved across navigation.
@@ -363,6 +372,21 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 		}
 		return m, evCmd
 
+	case showResetConfirmMsg:
+		if msg.runID != m.runID {
+			return m, nil
+		}
+		// Mid-graph reset: show a confirmation gate entry naming the blast radius.
+		// No focus steal on arrival (Decision 6); the user can tab to act on it.
+		rc := &resetConfirmEntry{runID: msg.runID, stepID: msg.stepID, closure: msg.closure}
+		m.inputQueue = append(m.inputQueue, pendingInputEntry{
+			kind:         inputKindResetConfirm,
+			stepID:       msg.stepID,
+			resetConfirm: rc,
+		})
+		m.refreshPanels()
+		return m, nil
+
 	case tea.KeyPressMsg:
 		// Focus-switch keys move keyboard focus between the present regions even
 		// while a gate is pending — gates are non-blocking (ADR 0002). Handled
@@ -556,6 +580,8 @@ func kindName(k pendingInputKind) string {
 		return "integration"
 	case inputKindFinalMerge:
 		return "final merge"
+	case inputKindResetConfirm:
+		return "reset confirm"
 	default:
 		return "input"
 	}
@@ -629,6 +655,43 @@ func (m monitorModel) updateSteps(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 		return m, nil
 	case keybind.Matches(msg, m.keys.StepsLeave):
 		return m, func() tea.Msg { return showRunsMsg{} }
+
+	// ── spec 08 C4: stop/reset/resume ─────────────────────────────────────────
+	case keybind.Matches(msg, m.keys.StopStep):
+		if !m.done && m.cursor < len(m.steps) {
+			st := m.steps[m.cursor]
+			if st.status == step.StatusRunning {
+				runID, stepID := m.runID, st.id
+				return m, func() tea.Msg { return stopStepMsg{runID: runID, stepID: stepID} }
+			}
+		}
+		return m, nil
+
+	case keybind.Matches(msg, m.keys.ResetStep):
+		if !m.done && m.cursor < len(m.steps) {
+			st := m.steps[m.cursor]
+			// Only terminal/stopped steps can be reset, and only when the run is
+			// quiescent (no worker in flight). We delegate the quiescence check to
+			// handleReset in the engine; the TUI pre-filters obviously ineligible
+			// cases to avoid a noisy no-op.
+			switch st.status {
+			case step.StatusSucceeded, step.StatusFailed, step.StatusSkipped,
+				step.StatusStopped, step.StatusAwaitingReview:
+				runID, stepID := m.runID, st.id
+				return m, func() tea.Msg { return requestResetMsg{runID: runID, stepID: stepID} }
+			}
+		}
+		return m, nil
+
+	case keybind.Matches(msg, m.keys.ResumeStep):
+		if !m.done && m.cursor < len(m.steps) {
+			st := m.steps[m.cursor]
+			if st.status == step.StatusStopped {
+				runID, stepID := m.runID, st.id
+				return m, func() tea.Msg { return resumeStepMsg{runID: runID, stepID: stepID} }
+			}
+		}
+		return m, nil
 	}
 	// Other keys (scroll wheel, ctrl+d/u) scroll the Steps viewport.
 	var cmd tea.Cmd
@@ -934,6 +997,22 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 			return m, func() tea.Msg {
 				return finalMergeResponseMsg{runID: fm.RunID, approve: false}
 			}
+		}
+		return m, nil
+
+	case inputKindResetConfirm:
+		rc := entry.resetConfirm
+		// y confirms the reset; n / esc / GateBlur cancel (esc caught above).
+		if msg.String() == "y" {
+			m.removeEntryAt(m.activeInputIdx)
+			m.refreshPanels()
+			return m, func() tea.Msg {
+				return resetStepMsg{runID: rc.runID, stepID: rc.stepID}
+			}
+		}
+		if msg.String() == "n" {
+			m.removeEntryAt(m.activeInputIdx)
+			m.refreshPanels()
 		}
 		return m, nil
 	}
@@ -1643,6 +1722,24 @@ func (m monitorModel) gateStrip() string {
 			b.WriteString("  " + theme.Marker.Render(line) + "\n\n")
 			b.WriteString("    [y] merge onto " + base + "\n")
 			b.WriteString("    [d] discard (leave run branch)\n")
+
+		case inputKindResetConfirm:
+			rc := entry.resetConfirm
+			count := len(rc.closure) - 1 // downstream steps (excluding the target itself)
+			ids := strings.Join(rc.closure, ", ")
+			summary := fmt.Sprintf("Reset to %q will re-run %d step(s): %s", rc.stepID, len(rc.closure), ids)
+			line := clipReason(summary, m.gateInnerWidth()-2, 2)
+			lineRows := strings.Split(line, "\n")
+			for i := 0; i < 2; i++ {
+				if i < len(lineRows) {
+					b.WriteString("  " + theme.Error.Render(lineRows[i]) + "\n")
+				} else {
+					b.WriteString("\n")
+				}
+			}
+			_ = count // count is embedded in the ids string above
+			b.WriteString("    [y] confirm reset\n")
+			b.WriteString("    [n] cancel  (default)\n")
 		}
 	}
 
@@ -2219,11 +2316,33 @@ func (m monitorModel) footerView() string {
 			hint = hintString(m.keys.IntegrationResolve, m.keys.RecoverAbort, entryNav, m.keys.GateBlur)
 		case inputKindFinalMerge:
 			hint = hintString(m.keys.FinalMergeApprove, m.keys.FinalMergeDiscard, entryNav, m.keys.GateBlur)
+		case inputKindResetConfirm:
+			hint = hintString(m.keys.GateBlur) // y/n shown inline in the gate strip
 		}
 	case m.focus == focusTranscript:
 		hint = hintString(m.keys.FocusFull, m.keys.Scroll, m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll)
 	default: // focusSteps
-		hint = hintString(m.keys.FocusFull, m.keys.StepsNav, m.keys.StepsLeave, keyQuit)
+		// Gate eligibility: advertise stop/reset/resume only for eligible steps.
+		stopKey := m.keys.StopStep
+		resetKey := m.keys.ResetStep
+		resumeKey := m.keys.ResumeStep
+		if m.done || m.cursor >= len(m.steps) {
+			stopKey.SetEnabled(false)
+			resetKey.SetEnabled(false)
+			resumeKey.SetEnabled(false)
+		} else {
+			st := m.steps[m.cursor]
+			stopKey.SetEnabled(st.status == step.StatusRunning)
+			resumeKey.SetEnabled(st.status == step.StatusStopped)
+			switch st.status {
+			case step.StatusSucceeded, step.StatusFailed, step.StatusSkipped,
+				step.StatusStopped, step.StatusAwaitingReview:
+				resetKey.SetEnabled(true)
+			default:
+				resetKey.SetEnabled(false)
+			}
+		}
+		hint = hintString(m.keys.FocusFull, m.keys.StepsNav, stopKey, resetKey, resumeKey, m.keys.StepsLeave, keyQuit)
 	}
 	// When a gate is pending but the user has focused a panel, remind them a gate
 	// is waiting (it is non-blocking — tab returns to it).

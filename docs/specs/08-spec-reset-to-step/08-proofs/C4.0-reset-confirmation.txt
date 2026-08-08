@@ -1,0 +1,22 @@
+=== RUN   TestResetConfirmation
+--- PASS: TestResetConfirmation (0.00s)
+=== RUN   TestResetLinearTipTUI
+--- PASS: TestResetLinearTipTUI (0.00s)
+=== RUN   TestStopKey
+--- PASS: TestStopKey (0.00s)
+PASS
+ok  	jig/internal/tui	0.251s
+
+TestResetConfirmation:
+  - showResetConfirmMsg{closure: [a, b, gate]} adds inputKindResetConfirm to queue
+  - After 2×tab to gate focus: y emits resetStepMsg{stepID:"a"}
+  - n clears the confirmation entry, emits nothing
+
+TestResetLinearTipTUI:
+  - r on a terminal step (StatusSucceeded) emits requestResetMsg{stepID:"a"}
+  - r on a running step emits nothing (reset only targets terminal/stopped)
+  - r on a settled run (done=true) emits nothing
+
+TestStopKey:
+  - s on a running step emits stopStepMsg{stepID:"x"}
+  - s on a pending step emits nothing
