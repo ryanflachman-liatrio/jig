@@ -128,7 +128,7 @@ interception seam under `acceptEdits`.
 
 ---
 
-### [ ] 4.0 Unit 3 — Detection supervisor (Tier-2 fleet harness)
+### [x] 4.0 Unit 3 — Detection supervisor (Tier-2 fleet harness)
 
 **Out-of-band fleet infrastructure.** A bus subscriber (mirroring the TUI) that
 consumes `StepMessage` liveness signals, reads dual-bounded transcript windows off
@@ -144,17 +144,17 @@ without blocking the observed run.
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Create `internal/sentinel/supervisor.go` with a `Supervisor` struct. The constructor accepts `(live, ctrl <-chan engine.Event)` channels (from `Manager.Subscribe()`), a findings sink, a set of monitor definitions, and a per-run dollar budget. It must not start when persistence is off or security is disabled.
-- [ ] 4.2 Implement the `StepMessage` consumption loop: on each signal, fetch newly-appended entries for that step via `transcript.Reader.Window`/`Tail` from the last-seen cursor position. Maintain a per-step cursor map (last seq classified) so reads advance rather than re-scan.
-- [ ] 4.3 Implement dual-bounded window assembly: given the raw entries since the cursor, truncate to `min(entryCountCap, tokenCeiling)` entries, oldest-first, where token count is estimated as `len(text)/4`. The truncation must not split a single entry.
-- [ ] 4.4 Implement per-step batching/debouncing: accumulate incoming `StepMessage` signals in a buffer; flush when `len(buffer) >= N` or `time.Since(lastFlush) >= T` (defaults: N=5 entries, T=500ms). After flushing, deduplicate the window's `Fingerprint` set against previously-seen fingerprints for that step; skip dispatch for already-seen fingerprints.
-- [ ] 4.5 Implement monitor dispatch: for each active monitor definition, call `runner.AgentExecutor.Execute` with `persistence_off` (empty `TranscriptPath`, empty `runDir`), structured output matching the monitor's schema (`severity`, `flagged`, `detail`), and tools disabled. Hold one persistent `claudecode.Client` per supervisor (not per dispatch) to amortize connection overhead.
-- [ ] 4.6 Enforce per-run dollar budget: accumulate each monitor call's `Result.TotalCostUSD` against the ceiling. When exhausted, stop dispatching to LLM monitors and append exactly one `degraded-to-tier1` `Finding` (Severity: `"low"`, Action: `"observed"`). The observed run must not be blocked or slowed.
-- [ ] 4.7 Write `TestSupervisorBatching` and `TestSupervisorBudgetDegrade` in `internal/sentinel/supervisor_test.go` using a stub monitor and a fake bus. Capture proof outputs.
+- [x] 4.1 Create `internal/sentinel/supervisor.go` with a `Supervisor` struct. The constructor accepts `(live, ctrl <-chan engine.Event)` channels (from `Manager.Subscribe()`), a findings sink, a set of monitor definitions, and a per-run dollar budget. It must not start when persistence is off or security is disabled.
+- [x] 4.2 Implement the `StepMessage` consumption loop: on each signal, fetch newly-appended entries for that step via `transcript.Reader.Window`/`Tail` from the last-seen cursor position. Maintain a per-step cursor map (last seq classified) so reads advance rather than re-scan.
+- [x] 4.3 Implement dual-bounded window assembly: given the raw entries since the cursor, truncate to `min(entryCountCap, tokenCeiling)` entries, oldest-first, where token count is estimated as `len(text)/4`. The truncation must not split a single entry.
+- [x] 4.4 Implement per-step batching/debouncing: accumulate incoming `StepMessage` signals in a buffer; flush when `len(buffer) >= N` or `time.Since(lastFlush) >= T` (defaults: N=5 entries, T=500ms). After flushing, deduplicate the window's `Fingerprint` set against previously-seen fingerprints for that step; skip dispatch for already-seen fingerprints.
+- [x] 4.5 Implement monitor dispatch: for each active monitor definition, call `runner.AgentExecutor.Execute` with `persistence_off` (empty `TranscriptPath`, empty `runDir`), structured output matching the monitor's schema (`severity`, `flagged`, `detail`), and tools disabled. Hold one persistent `claudecode.Client` per supervisor (not per dispatch) to amortize connection overhead.
+- [x] 4.6 Enforce per-run dollar budget: accumulate each monitor call's `Result.TotalCostUSD` against the ceiling. When exhausted, stop dispatching to LLM monitors and append exactly one `degraded-to-tier1` `Finding` (Severity: `"low"`, Action: `"observed"`). The observed run must not be blocked or slowed.
+- [x] 4.7 Write `TestSupervisorBatching` and `TestSupervisorBudgetDegrade` in `internal/sentinel/supervisor_test.go` using a stub monitor and a fake bus. Capture proof outputs.
 
 ---
 
-### [ ] 5.0 Unit 4 — Monitor roster (Tier-2 detectors)
+### [x] 5.0 Unit 4 — Monitor roster (Tier-2 detectors)
 
 **Populate the fleet.** Three tools-off, structured-output Haiku agent files under
 `examples/agents/monitors/`, each prompted to treat all transcript content as
@@ -170,11 +170,11 @@ the entry window from Unit 3).
 
 #### 5.0 Tasks
 
-- [ ] 5.1 In `internal/sentinel/prefilter.go`, implement `StuckLoopPrefilter(entries []transcript.Entry) bool` — returns true when the same tool name + normalized input appears ≥ 3 times in the window, or when the consecutive `IsError` count ≥ 3. Implement `ExfilPrefilter(entries []transcript.Entry) bool` — returns true when a `tool_result` block contains a secret-shaped string (reuse the guard's entropy/pattern detector) followed by a `tool_use` block whose name is `WebFetch` or a curl/wget `Bash`.
-- [ ] 5.2 Write `examples/agents/monitors/prompt-injection.md` — tools-off, Haiku, structured output (`flagged bool`, `severity string`, `detail string`). The prompt must spotlight all transcript content as untrusted/potentially attacker-controlled, watch only `tool_result` blocks for injection patterns, and check whether the following assistant turn acts on injected text.
-- [ ] 5.3 Write `examples/agents/monitors/stuck-loop.md` — tools-off, Haiku, same structured output schema. The prompt uses the `StuckLoopPrefilter` signal (passed as context) and confirms only ambiguous cases; it must emit `flagged=false` cheaply when the prefilter is false.
-- [ ] 5.4 Write `examples/agents/monitors/exfil-pattern.md` — tools-off, Haiku, same structured output schema. The prompt requires the window to span both the secret-read entry and the outbound call entry; it must coordinate its verdict with the Tier-1 host-allowlist rule context passed from the supervisor.
-- [ ] 5.5 Write `TestMonitorRoster` in `internal/sentinel/supervisor_test.go` using the supervisor stub harness, seeded transcript fixtures, and the three monitor agent files. Capture proof outputs. Produce `10-proofs/4.1-monitor-files.md` listing each file path and confirming `jig validate` accepts it as an `agent_file` triple.
+- [x] 5.1 In `internal/sentinel/prefilter.go`, implement `StuckLoopPrefilter(entries []transcript.Entry) bool` — returns true when the same tool name + normalized input appears ≥ 3 times in the window, or when the consecutive `IsError` count ≥ 3. Implement `ExfilPrefilter(entries []transcript.Entry) bool` — returns true when a `tool_result` block contains a secret-shaped string (reuse the guard's entropy/pattern detector) followed by a `tool_use` block whose name is `WebFetch` or a curl/wget `Bash`.
+- [x] 5.2 Write `examples/agents/monitors/prompt-injection.md` — tools-off, Haiku, structured output (`flagged bool`, `severity string`, `detail string`). The prompt must spotlight all transcript content as untrusted/potentially attacker-controlled, watch only `tool_result` blocks for injection patterns, and check whether the following assistant turn acts on injected text.
+- [x] 5.3 Write `examples/agents/monitors/stuck-loop.md` — tools-off, Haiku, same structured output schema. The prompt uses the `StuckLoopPrefilter` signal (passed as context) and confirms only ambiguous cases; it must emit `flagged=false` cheaply when the prefilter is false.
+- [x] 5.4 Write `examples/agents/monitors/exfil-pattern.md` — tools-off, Haiku, same structured output schema. The prompt requires the window to span both the secret-read entry and the outbound call entry; it must coordinate its verdict with the Tier-1 host-allowlist rule context passed from the supervisor.
+- [x] 5.5 Write `TestMonitorRoster` in `internal/sentinel/supervisor_test.go` using the supervisor stub harness, seeded transcript fixtures, and the three monitor agent files. Capture proof outputs. Produce `10-proofs/4.1-monitor-files.md` listing each file path and confirming `jig validate` accepts it as an `agent_file` triple.
 
 ---
 
