@@ -2022,6 +2022,117 @@ func (s *scheduler) loopBody(gotoID, loopID string) []string {
 	return body
 }
 
+// closureOf returns the reset set for targetID: the target itself plus every
+// step that transitively depends on it, in workflow declaration order.
+// Independent parallel branches (steps with no transitive dependency on
+// targetID) are excluded — they are survivors in a subsequent rewindPlan call.
+func (s *scheduler) closureOf(targetID string) []string {
+	// Forward reachability: start with the target, then add every step whose
+	// depends_on chain passes through the accumulating set. Same algorithm as
+	// loopBody's fwd set, but without the backward intersection.
+	fwd := map[string]bool{targetID: true}
+	for changed := true; changed; {
+		changed = false
+		for i := range s.wf.Steps {
+			st := &s.wf.Steps[i]
+			if fwd[st.ID] {
+				continue
+			}
+			for _, dep := range st.DependsOn {
+				if fwd[dep] {
+					fwd[st.ID] = true
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	// Return in declaration order so the caller has a stable, deterministic list.
+	var out []string
+	for i := range s.wf.Steps {
+		if fwd[s.wf.Steps[i].ID] {
+			out = append(out, s.wf.Steps[i].ID)
+		}
+	}
+	return out
+}
+
+// rewindPlan computes the git operations needed to reset the run branch for a
+// reset of targetID. It returns:
+//
+//   - rewindTo: the run-branch commit the caller should "git reset --hard" to
+//     (the commit just before the earliest closure commit). Empty string when
+//     there is nothing to rewind (no git repo, or no closure step has a commit).
+//   - survivors: the ordered list of run-branch commit SHAs that are NOT in the
+//     closure but sit after the rewind point; the caller cherry-picks these back
+//     after the reset to preserve independent parallel branches.
+func (s *scheduler) rewindPlan(targetID string) (rewindTo string, survivors []string) {
+	if s.runWorktree == "" || len(s.stepCommits) == 0 {
+		return "", nil
+	}
+
+	closure := s.closureOf(targetID)
+	closureSet := make(map[string]bool, len(closure))
+	for _, id := range closure {
+		closureSet[id] = true
+	}
+
+	// Collect the SHA of every closure step that has a commit on the run branch.
+	closureSHAs := make(map[string]bool)
+	for id, sha := range s.stepCommits {
+		if closureSet[id] {
+			closureSHAs[sha] = true
+		}
+	}
+	if len(closureSHAs) == 0 {
+		return "", nil // all closure steps are read-only (no commits); nothing to rewind
+	}
+
+	// Walk the run-branch commits oldest-first. Using runBaseSHA..HEAD keeps
+	// us in the run branch's own history without touching the user's branch.
+	out, err := gitCmd(s.runWorktree, "log", "--format=%H", "--reverse",
+		s.runBaseSHA+"..HEAD")
+	if err != nil || strings.TrimSpace(out) == "" {
+		return "", nil
+	}
+	var commits []string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if sha := strings.TrimSpace(line); sha != "" {
+			commits = append(commits, sha)
+		}
+	}
+
+	// Find the earliest commit that belongs to the closure.
+	firstIdx := -1
+	for i, sha := range commits {
+		if closureSHAs[sha] {
+			firstIdx = i
+			break
+		}
+	}
+	if firstIdx < 0 {
+		return "", nil
+	}
+
+	// Rewind to the commit just before the earliest closure commit.
+	// If the earliest closure commit is the very first run-branch commit,
+	// rewind all the way back to the base SHA (the run-branch root).
+	if firstIdx == 0 {
+		rewindTo = s.runBaseSHA
+	} else {
+		rewindTo = commits[firstIdx-1]
+	}
+
+	// Survivors: run-branch commits after the rewind point that are not in the
+	// closure. The caller cherry-picks them (in order) to restore independent work.
+	for _, sha := range commits[firstIdx+1:] {
+		if !closureSHAs[sha] {
+			survivors = append(survivors, sha)
+		}
+	}
+	return rewindTo, survivors
+}
+
 func (s *scheduler) transition(stepID string, from, to step.Status) {
 	state := s.states[stepID]
 	state.Status = to
