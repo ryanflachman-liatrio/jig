@@ -73,7 +73,7 @@ exposes per-step and per-run cost in the TUI.
 
 ---
 
-### [ ] 2.0 Unit 1 — Finding model, `findings.jsonl` sink, `SecurityFinding` event, and journal exhaustiveness guard
+### [x] 2.0 Unit 1 — Finding model, `findings.jsonl` sink, `SecurityFinding` event, and journal exhaustiveness guard
 
 **Foundation for both tiers.** Defines the durable findings record and the
 `SecurityFinding` ctrl bus event before any producer exists — mirroring the
@@ -89,14 +89,14 @@ existed and fixes three pre-existing silent-drop bugs (`InputRequest`, `PromptRe
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Create `internal/sentinel/finding.go` with the `Finding` struct (fields: `Ts`, `RunID`, `StepID`, `Iteration`, `Tier`, `Monitor`, `Severity`, `Action`, `Detail`, `Evidence`, `Fingerprint`). Define `Tier`, `Severity`, and `Action` as typed string constants (`"guard"/"monitor"`, `"low/medium/high/critical"`, `"observed/blocked/escalated"`).
-- [ ] 2.2 Add `Redact(patternName, rawMatch string) string` helper to `internal/sentinel/finding.go` that returns `"<patternName>:…" + last4` and never stores the raw value. Add `NewFingerprint(stepID, monitor, evidenceKey string) string` using `crypto/sha256`.
-- [ ] 2.3 Create `internal/sentinel/sink.go` with an append-only JSONL `Writer` (flush-per-Append matching `transcript.Writer`) and a `Reader` (open→read-to-EOF→close). Both no-op silently when the path is `""`.
-- [ ] 2.4 Add `FindingsPath(runDir string) string` to `internal/datastore/datastore.go`, returning `filepath.Join(runDir, "findings.jsonl")`. Mirror the pattern of `TranscriptPath`.
-- [ ] 2.5 Add `SecurityFinding` event struct to `internal/engine/event.go` with fields: `RunID`, `StepID`, `Tier`, `Monitor`, `Severity`, `Action`, `Fingerprint`. Add the `isEvent()` marker method.
-- [ ] 2.6 In `internal/engine/journal.go`, add a `"security_finding"` case to `eventKind` and a decoder entry in `decoders` for `SecurityFinding`. Also add the three missing cases: `InputRequest → "input_request"`, `PromptRequest → "prompt_request"`, `AgentQuestion → "agent_question"` to both `eventKind` and `decoders`.
-- [ ] 2.7 In `internal/engine/journal_test.go`, write `TestEventExhaustiveness` that uses reflection or a hand-enumerated list of all `Event` union members, calls `eventKind` on each, and asserts: (a) the kind is a non-empty non-`"unknown"` string, and (b) the kind has a decoder entry in `decoders`. This test must fail if any event is missing from either map.
-- [ ] 2.8 Write `TestRedactionFingerprint` in `internal/sentinel/finding_test.go`, `TestFindingsSinkRoundtrip` in `internal/sentinel/sink_test.go`, and `TestSecurityFindingJournal` in `internal/engine/journal_test.go`. Capture outputs to proof files.
+- [x] 2.1 Create `internal/sentinel/finding.go` with the `Finding` struct (fields: `Ts`, `RunID`, `StepID`, `Iteration`, `Tier`, `Monitor`, `Severity`, `Action`, `Detail`, `Evidence`, `Fingerprint`). Define `Tier`, `Severity`, and `Action` as typed string constants (`"guard"/"monitor"`, `"low/medium/high/critical"`, `"observed/blocked/escalated"`).
+- [x] 2.2 Add `Redact(patternName, rawMatch string) string` helper to `internal/sentinel/finding.go` that returns `"<patternName>:…" + last4` and never stores the raw value. Add `NewFingerprint(stepID, monitor, evidenceKey string) string` using `crypto/sha256`.
+- [x] 2.3 Create `internal/sentinel/sink.go` with an append-only JSONL `Writer` (flush-per-Append matching `transcript.Writer`) and a `Reader` (open→read-to-EOF→close). Both no-op silently when the path is `""`.
+- [x] 2.4 Add `FindingsPath(runDir string) string` to `internal/datastore/datastore.go`, returning `filepath.Join(runDir, "findings.jsonl")`. Mirror the pattern of `TranscriptPath`.
+- [x] 2.5 Add `SecurityFinding` event struct to `internal/engine/event.go` with fields: `RunID`, `StepID`, `Tier`, `Monitor`, `Severity`, `Action`, `Fingerprint`. Add the `isEvent()` marker method.
+- [x] 2.6 In `internal/engine/journal.go`, add a `"security_finding"` case to `eventKind` and a decoder entry in `decoders` for `SecurityFinding`. Also add the three missing cases: `InputRequest → "input_request"`, `PromptRequest → "prompt_request"`, `AgentQuestion → "agent_question"` to both `eventKind` and `decoders`.
+- [x] 2.7 In `internal/engine/journal_test.go`, write `TestEventExhaustiveness` that uses reflection or a hand-enumerated list of all `Event` union members, calls `eventKind` on each, and asserts: (a) the kind is a non-empty non-`"unknown"` string, and (b) the kind has a decoder entry in `decoders`. This test must fail if any event is missing from either map.
+- [x] 2.8 Write `TestRedactionFingerprint` in `internal/sentinel/finding_test.go`, `TestFindingsSinkRoundtrip` in `internal/sentinel/sink_test.go`, and `TestSecurityFindingJournal` in `internal/engine/journal_test.go`. Capture outputs to proof files.
 
 ---
 

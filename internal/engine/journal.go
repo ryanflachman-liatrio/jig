@@ -45,6 +45,8 @@ func eventKind(e Event) string {
 		return "steps_reset"
 	case ReviewRequest:
 		return "review_request"
+	case InputRequest:
+		return "input_request"
 	case RunError:
 		return "run_error"
 	case RecoveryRequest:
@@ -53,6 +55,12 @@ func eventKind(e Event) string {
 		return "integration_conflict_request"
 	case FinalMergeRequest:
 		return "final_merge_request"
+	case PromptRequest:
+		return "prompt_request"
+	case AgentQuestion:
+		return "agent_question"
+	case SecurityFinding:
+		return "security_finding"
 	default:
 		return "unknown"
 	}
@@ -130,6 +138,22 @@ var decoders = map[string]func([]byte) (Event, error){
 	},
 	"final_merge_request": func(b []byte) (Event, error) {
 		var e FinalMergeRequest
+		return e, json.Unmarshal(b, &e)
+	},
+	"input_request": func(b []byte) (Event, error) {
+		var e InputRequest
+		return e, json.Unmarshal(b, &e)
+	},
+	"prompt_request": func(b []byte) (Event, error) {
+		var e PromptRequest
+		return e, json.Unmarshal(b, &e)
+	},
+	"agent_question": func(b []byte) (Event, error) {
+		var e AgentQuestion
+		return e, json.Unmarshal(b, &e)
+	},
+	"security_finding": func(b []byte) (Event, error) {
+		var e SecurityFinding
 		return e, json.Unmarshal(b, &e)
 	},
 }

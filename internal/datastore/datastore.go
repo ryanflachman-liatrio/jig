@@ -96,6 +96,13 @@ func TranscriptPath(runDir, stepID string) string {
 	return filepath.Join(runDir, "steps", stepID, "transcript.jsonl")
 }
 
+// FindingsPath returns the path to findings.jsonl for a run inside runDir.
+// The append-only findings file holds every security finding emitted by both
+// Tier-1 (guard) and Tier-2 (monitor fleet) for this run (see internal/sentinel).
+func FindingsPath(runDir string) string {
+	return filepath.Join(runDir, "findings.jsonl")
+}
+
 // OutputPath returns the canonical path to output.md for a step inside runDir.
 // Content is the agent's raw_result base-schema field — the clean prose answer
 // written by the agent as its primary deliverable.

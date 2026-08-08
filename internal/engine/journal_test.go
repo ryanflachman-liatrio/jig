@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -172,5 +173,100 @@ func TestStepsResetRoundTrip(t *testing.T) {
 		if sr.Closure[i] != ev.Closure[i] {
 			t.Errorf("Closure[%d] = %q; want %q", i, sr.Closure[i], ev.Closure[i])
 		}
+	}
+}
+
+// allEventInstances enumerates one representative value for every Event union
+// member. TestEventExhaustiveness uses this to verify the journal handles them all.
+// ADD NEW EVENT TYPES HERE — the test will fail if eventKind returns "unknown"
+// or if no decoder exists for the kind.
+var allEventInstances = []Event{
+	RunStarted{RunID: "r", Workflow: "w", Steps: []string{"a"}},
+	RunFinished{RunID: "r", Failed: false},
+	StepStatus{RunID: "r", StepID: "s", From: step.StatusPending, To: step.StatusRunning},
+	StepOutput{RunID: "r", StepID: "s", Delta: "hello"},
+	StepToolCall{RunID: "r", StepID: "s", Tool: "Bash", Detail: "ls"},
+	StepMessage{RunID: "r", StepID: "s", Seq: 1, Iteration: 0},
+	GateResult{RunID: "r", StepID: "s", Passed: true},
+	LoopFired{RunID: "r", StepID: "s", Goto: "s", Iteration: 1, Max: 3},
+	ReviewRequest{RunID: "r", StepID: "s", Choices: []string{"approve"}},
+	InputRequest{RunID: "r", StepID: "s"},
+	RunError{RunID: "r", Err: "boom"},
+	RecoveryRequest{RunID: "r", StepID: "s", Err: "failed"},
+	IntegrationConflictRequest{RunID: "r", StepID: "s", Paths: []string{"file.go"}},
+	FinalMergeRequest{RunID: "r", RunBranch: "b", Base: "main"},
+	PromptRequest{RunID: "r", StepID: "s", Label: "Enter value", As: "val"},
+	AgentQuestion{RunID: "r", StepID: "s", ToolUseID: "tu1", Questions: []AgentQuestionItem{{Question: "ok?"}}},
+	StepsReset{RunID: "r", Target: "s", Closure: []string{"s"}, RewindTo: "abc"},
+	SecurityFinding{RunID: "r", StepID: "s", Tier: "guard", Monitor: "secret-leak", Severity: "high", Action: "blocked", Fingerprint: "fp"},
+}
+
+// TestEventExhaustiveness verifies every Event union member:
+//  1. Has a non-empty, non-"unknown" kind in eventKind.
+//  2. Has a matching entry in the decoders map.
+//  3. Round-trips through MarshalEnvelope → UnmarshalEnvelope.
+//
+// This is the guard the first draft (spec 10) assumed already existed.
+// Add a row to allEventInstances when adding a new event type.
+func TestEventExhaustiveness(t *testing.T) {
+	for i, ev := range allEventInstances {
+		typeName := reflect.TypeOf(ev).Name()
+
+		kind := eventKind(ev)
+		if kind == "" || kind == "unknown" {
+			t.Errorf("[%d] %s: eventKind returned %q — add a case to eventKind", i, typeName, kind)
+			continue
+		}
+
+		if _, ok := decoders[kind]; !ok {
+			t.Errorf("[%d] %s: kind %q has no decoder in decoders map — add one", i, typeName, kind)
+			continue
+		}
+
+		line, err := MarshalEnvelope(i+1, ev)
+		if err != nil {
+			t.Errorf("[%d] %s: MarshalEnvelope error: %v", i, typeName, err)
+			continue
+		}
+		_, decoded, err := UnmarshalEnvelope(line)
+		if err != nil {
+			t.Errorf("[%d] %s: UnmarshalEnvelope error: %v", i, typeName, err)
+			continue
+		}
+		if decoded == nil {
+			t.Errorf("[%d] %s: UnmarshalEnvelope returned nil event (unknown kind %q)", i, typeName, kind)
+		}
+	}
+}
+
+// TestSecurityFindingJournal specifically verifies SecurityFinding round-trips
+// and that its ctrl-channel intent is preserved through the journal path.
+func TestSecurityFindingJournal(t *testing.T) {
+	ev := SecurityFinding{
+		RunID: "run1", StepID: "step1",
+		Tier: "guard", Monitor: "secret-leak",
+		Severity: "critical", Action: "blocked",
+		Fingerprint: "abcdef123456",
+	}
+	line, err := MarshalEnvelope(1, ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	env, decoded, err := UnmarshalEnvelope(line)
+	if err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if decoded == nil {
+		t.Fatal("decoded event is nil")
+	}
+	if env.Kind != "security_finding" {
+		t.Errorf("Kind = %q; want security_finding", env.Kind)
+	}
+	sf, ok := decoded.(SecurityFinding)
+	if !ok {
+		t.Fatalf("decoded type = %T; want SecurityFinding", decoded)
+	}
+	if sf.StepID != ev.StepID || sf.Fingerprint != ev.Fingerprint || sf.Severity != ev.Severity {
+		t.Errorf("round-trip mismatch: got %+v, want %+v", sf, ev)
 	}
 }

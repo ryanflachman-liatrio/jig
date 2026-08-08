@@ -199,6 +199,22 @@ type StepsReset struct {
 	RewindTo string   // git commit SHA the run branch was reset to
 }
 
+// SecurityFinding is emitted when the security layer (Tier-1 guard or Tier-2
+// monitor fleet) produces a finding for a running step. It rides the ctrl
+// channel (must-not-drop), not live, because a missed finding is not
+// self-correcting the way a missed StepMessage is (see D4 in spec 10).
+// The full finding detail is durable in findings.jsonl; this event carries
+// only the fields needed to route a critical finding to the recovery gate.
+type SecurityFinding struct {
+	RunID       string `json:"run_id"`
+	StepID      string `json:"step_id"`
+	Tier        string `json:"tier"`     // "guard" | "monitor"
+	Monitor     string `json:"monitor"`  // rule or monitor name
+	Severity    string `json:"severity"` // "low" | "medium" | "high" | "critical"
+	Action      string `json:"action"`   // "observed" | "blocked" | "escalated"
+	Fingerprint string `json:"fingerprint"`
+}
+
 func (RunStarted) isEvent()                 {}
 func (RunFinished) isEvent()                {}
 func (StepStatus) isEvent()                 {}
@@ -216,3 +232,4 @@ func (FinalMergeRequest) isEvent()          {}
 func (PromptRequest) isEvent()              {}
 func (AgentQuestion) isEvent()              {}
 func (StepsReset) isEvent()                 {}
+func (SecurityFinding) isEvent()            {}
