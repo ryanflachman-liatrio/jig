@@ -2137,12 +2137,13 @@ func (s *scheduler) transition(stepID string, from, to step.Status) {
 	state := s.states[stepID]
 	state.Status = to
 	ev := StepStatus{
-		RunID:     s.runID,
-		StepID:    stepID,
-		From:      from,
-		To:        to,
-		Attempt:   state.Attempt,
-		Iteration: state.Iteration,
+		RunID:      s.runID,
+		StepID:     stepID,
+		From:       from,
+		To:         to,
+		Attempt:    state.Attempt,
+		Iteration:  state.Iteration,
+		Generation: state.Generation,
 	}
 	// Carry the failure reason and subtype so the TUI can surface them without
 	// re-reading result.json. handle() guarantees state.Result.Err is populated

@@ -317,3 +317,39 @@ func seqs(entries []Entry) []int {
 	}
 	return out
 }
+
+// TestGenerationField verifies that a transcript Entry with Generation > 0
+// round-trips through the writer and reader with the field preserved.
+func TestGenerationField(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "transcript.jsonl")
+	w, err := Create(path)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	entry := Entry{
+		Generation: 2,
+		Attempt:    0,
+		Iteration:  0,
+		Role:       RoleAssistant,
+		Blocks:     []Block{{Type: BlockText, Text: "re-run output"}},
+	}
+	if _, err := w.Append(entry); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	w.Close()
+
+	r, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	entries, err := r.Window(0, 10)
+	if err != nil {
+		t.Fatalf("Window: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("want 1 entry, got %d", len(entries))
+	}
+	if entries[0].Generation != 2 {
+		t.Errorf("Generation = %d; want 2", entries[0].Generation)
+	}
+}

@@ -89,7 +89,9 @@ func TestReplayJournal_SkipsUndecodableLines(t *testing.T) {
 
 	// A garbage line and an unknown-kind line between two good events must be
 	// skipped, not abort the replay. The final line intentionally has no trailing
-	// newline — the real-world tail after a crash mid-write.
+	// newline — the real-world tail after a crash mid-write. Unknown-kind lines
+	// (forward-compat) return (env, nil, nil) and are skipped by the nil-event
+	// guard in ReplayJournal.
 	var buf []byte
 	buf = append(buf, good...)
 	buf = append(buf, '\n')
@@ -113,5 +115,56 @@ func TestReplayJournal_SkipsUndecodableLines(t *testing.T) {
 	}
 	if _, ok := got[1].(RunFinished); !ok {
 		t.Errorf("event 1 (no trailing newline): want RunFinished, got %T", got[1])
+	}
+}
+
+// TestReplayPostReset verifies that a journal containing a steps_reset event
+// followed by fresh step_status transitions replays all events correctly —
+// unknown kinds are skipped (not dropped due to an error) and known kinds are
+// preserved in order.
+func TestReplayPostReset(t *testing.T) {
+	runDir := t.TempDir()
+
+	evs := []Event{
+		RunStarted{RunID: "r1", Workflow: "wf", Steps: []string{"a", "b", "c"}},
+		StepStatus{RunID: "r1", StepID: "a", From: step.StatusPending, To: step.StatusRunning},
+		StepStatus{RunID: "r1", StepID: "a", From: step.StatusRunning, To: step.StatusSucceeded},
+		StepStatus{RunID: "r1", StepID: "b", From: step.StatusPending, To: step.StatusSucceeded},
+		// Operator resets to "a" — audit event written before the StepStatus resets.
+		StepsReset{RunID: "r1", Target: "a", Closure: []string{"a", "b"}, RewindTo: "deadbeef"},
+		// Post-reset StepStatus transitions (pending, then re-running).
+		StepStatus{RunID: "r1", StepID: "a", From: step.StatusSucceeded, To: step.StatusPending, Generation: 1},
+		StepStatus{RunID: "r1", StepID: "b", From: step.StatusSucceeded, To: step.StatusPending, Generation: 1},
+		StepStatus{RunID: "r1", StepID: "a", From: step.StatusPending, To: step.StatusRunning, Generation: 1},
+		StepStatus{RunID: "r1", StepID: "a", From: step.StatusRunning, To: step.StatusSucceeded, Generation: 1},
+		RunFinished{RunID: "r1", Failed: false},
+	}
+	writeJournal(t, runDir, evs)
+
+	got, err := ReplayJournal(runDir)
+	if err != nil {
+		t.Fatalf("ReplayJournal: %v", err)
+	}
+	if len(got) != len(evs) {
+		t.Fatalf("event count: want %d, got %d", len(evs), len(got))
+	}
+	// Spot-check the StepsReset at index 4.
+	sr, ok := got[4].(StepsReset)
+	if !ok {
+		t.Fatalf("event[4]: want StepsReset, got %T", got[4])
+	}
+	if sr.Target != "a" {
+		t.Errorf("StepsReset.Target = %q; want %q", sr.Target, "a")
+	}
+	if sr.RewindTo != "deadbeef" {
+		t.Errorf("StepsReset.RewindTo = %q; want %q", sr.RewindTo, "deadbeef")
+	}
+	// Spot-check that the post-reset StepStatus carries Generation.
+	ss, ok := got[5].(StepStatus)
+	if !ok {
+		t.Fatalf("event[5]: want StepStatus, got %T", got[5])
+	}
+	if ss.Generation != 1 {
+		t.Errorf("post-reset StepStatus.Generation = %d; want 1", ss.Generation)
 	}
 }

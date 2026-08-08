@@ -1802,8 +1802,12 @@ func (m monitorModel) chatBody() string {
 			fmt.Sprintf("… %d earlier message(s) elided", m.chatElided)) + "\n\n")
 	}
 
-	lastIter, lastAttempt := -1, -1
+	lastIter, lastAttempt, lastGen := -1, -1, -1
 	for _, e := range m.chatEntries {
+		if lastGen != -1 && e.Generation > lastGen {
+			b.WriteString("\n  " + theme.Marker.Render(
+				fmt.Sprintf("── re-run %d ──", e.Generation+1)) + "\n\n")
+		}
 		if lastIter != -1 && e.Iteration > lastIter {
 			b.WriteString("\n  " + theme.Marker.Render(
 				fmt.Sprintf("── iteration %d ──", e.Iteration+1)) + "\n\n")
@@ -1812,7 +1816,7 @@ func (m monitorModel) chatBody() string {
 			b.WriteString("\n  " + theme.Marker.Render(
 				fmt.Sprintf("── retry %d ──", e.Attempt)) + "\n\n")
 		}
-		lastIter, lastAttempt = e.Iteration, e.Attempt
+		lastIter, lastAttempt, lastGen = e.Iteration, e.Attempt, e.Generation
 
 		b.WriteString("  " + theme.Chat.Hint.Render(fmt.Sprintf("#%d %s", e.Seq, e.Role)) + "\n")
 		for bi, blk := range e.Blocks {

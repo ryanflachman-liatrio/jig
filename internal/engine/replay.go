@@ -35,7 +35,7 @@ func ReplayJournal(runDir string) ([]Event, error) {
 	for {
 		line, readErr := br.ReadString('\n')
 		if len(line) > 0 {
-			if _, e, err := UnmarshalEnvelope([]byte(line)); err == nil {
+			if _, e, err := UnmarshalEnvelope([]byte(line)); err == nil && e != nil {
 				events = append(events, e)
 			}
 		}

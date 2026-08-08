@@ -84,11 +84,16 @@ type Block struct {
 
 // Entry is one line of the transcript: a single message (one model turn, one
 // batch of tool results, or a terminal summary) with its ordered blocks.
+// Retries and loop iterations append to the same file; entries are
+// distinguished by Attempt, Iteration, and Generation.
 type Entry struct {
-	Seq       int     `json:"seq"`     // monotonic per file, 1-based
-	Ts        string  `json:"ts"`      // RFC3339 UTC, second precision
-	Iteration int     `json:"iter"`    // loop iteration (step.State.Iteration)
-	Attempt   int     `json:"attempt"` // retry attempt (step.State.Attempt)
-	Role      Role    `json:"role"`    // assistant | user | system | result
-	Blocks    []Block `json:"blocks"`
+	Seq       int    `json:"seq"`     // monotonic per file, 1-based
+	Ts        string `json:"ts"`      // RFC3339 UTC, second precision
+	Iteration int    `json:"iter"`    // loop iteration (step.State.Iteration)
+	Attempt   int    `json:"attempt"` // retry attempt (step.State.Attempt)
+	// Generation counts manual operator resets (step.State.Generation). A new
+	// generation appends to the same file; the monitor renders a separator.
+	Generation int     `json:"gen,omitempty"` // 0 on first run (omitted from JSON)
+	Role       Role    `json:"role"`          // assistant | user | system | result
+	Blocks     []Block `json:"blocks"`
 }

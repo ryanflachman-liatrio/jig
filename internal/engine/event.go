@@ -23,12 +23,13 @@ type RunFinished struct {
 
 // StepStatus records a single status transition for one step.
 type StepStatus struct {
-	RunID     string
-	StepID    string
-	From      step.Status
-	To        step.Status
-	Attempt   int
-	Iteration int
+	RunID      string
+	StepID     string
+	From       step.Status
+	To         step.Status
+	Attempt    int
+	Iteration  int
+	Generation int // manual re-run count (step.State.Generation); 0 on first run
 	// Err carries the failure reason when To == step.StatusFailed — the step
 	// Result's error, or the [step.validate] gate detail when a gate failed.
 	// Empty for every non-failing transition.
@@ -185,6 +186,19 @@ type AgentQuestionOption struct {
 	Description string
 }
 
+// StepsReset is emitted when an operator resets a run to an earlier step
+// (spec 08 C2/C3). It is an audit record of operator intent — the target step,
+// the full closure that was invalidated, and the git commit the run branch was
+// rewound to. State reconstruction relies on the journaled StepStatus
+// transitions; StepsReset carries provenance the status stream cannot express
+// and requires no state-changing fold handler (same design as LoopFired).
+type StepsReset struct {
+	RunID    string
+	Target   string   // the step the operator chose to reset to
+	Closure  []string // ordered reset set (target ∪ transitive dependents)
+	RewindTo string   // git commit SHA the run branch was reset to
+}
+
 func (RunStarted) isEvent()                 {}
 func (RunFinished) isEvent()                {}
 func (StepStatus) isEvent()                 {}
@@ -201,3 +215,4 @@ func (IntegrationConflictRequest) isEvent() {}
 func (FinalMergeRequest) isEvent()          {}
 func (PromptRequest) isEvent()              {}
 func (AgentQuestion) isEvent()              {}
+func (StepsReset) isEvent()                 {}

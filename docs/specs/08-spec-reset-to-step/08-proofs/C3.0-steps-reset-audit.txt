@@ -1,0 +1,10 @@
+=== RUN   TestStepsResetRoundTrip
+--- PASS: TestStepsResetRoundTrip (0.00s)
+=== RUN   TestReplayPostReset
+--- PASS: TestReplayPostReset (0.00s)
+PASS
+ok  	jig/internal/engine	0.185s
+=== RUN   TestGenerationField
+--- PASS: TestGenerationField (0.00s)
+PASS
+ok  	jig/internal/transcript	0.211s

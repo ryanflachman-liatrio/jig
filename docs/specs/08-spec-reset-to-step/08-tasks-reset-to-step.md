@@ -58,7 +58,7 @@ cherry-pick.
 
 ---
 
-### [ ] 2.0 StepsReset Audit Event and Generation Provenance (Unit C3)
+### [x] 2.0 StepsReset Audit Event and Generation Provenance (Unit C3)
 
 Add the data-model changes that Task 3.0's `handleReset` will use: `Generation
 int` in `step.State` and `transcript.Entry`; `StepsReset` event in `event.go`;
@@ -75,16 +75,16 @@ int` in `step.State` and `transcript.Entry`; `StepsReset` event in `event.go`;
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Add `Generation int` field to `step.State` in `internal/step/step.go`. Document it as the manual re-run counter (distinct from `Attempt` which gates `MaxRetries`).
-- [ ] 2.2 Add `Generation int` (JSON tag `"gen"`) to `transcript.Entry` in `internal/transcript/transcript.go`. Update the doc comment to mention `Generation` alongside `Attempt` and `Iteration`.
-- [ ] 2.3 Add `Generation int` to `StepStatus` in `internal/engine/event.go`. Add `StepsReset` struct with fields `RunID, Target string, Closure []string, RewindTo string` and its `isEvent()` method.
-- [ ] 2.4 Register `StepsReset` in `internal/engine/journal.go`: add `case StepsReset: return "steps_reset"` to `eventKind`; add a `"steps_reset"` entry to `decoders`. Also update `UnmarshalEnvelope` so that an unrecognised kind returns `(env, nil, nil)` (no error) rather than `(env, nil, err)` — this is required by `ReplayJournal`'s skip-on-error contract and matches the intent of "an unknown-kind line shall still be skipped."
-- [ ] 2.5 Update `transition()` in `internal/engine/engine.go` to set `ev.Generation = state.Generation` alongside `Attempt` and `Iteration`.
-- [ ] 2.6 Add `── re-run N ──` separator to `chatBody()` in `internal/tui/monitor.go`. Track `lastGen` alongside `lastIter` / `lastAttempt`; emit the separator when `e.Generation > lastGen && lastGen != -1`. Initialize `lastGen = -1` before the loop.
-- [ ] 2.7 Write `TestStepsResetRoundTrip` in `internal/engine/journal_test.go` — marshal a `StepsReset{RunID: "r1", Target: "A", Closure: []string{"A","B"}, RewindTo: "abc123"}` and unmarshal; assert all fields round-trip. Also decode a raw line with kind `"future_event"` and assert no error.
-- [ ] 2.8 Write `TestReplayPostReset` in `internal/engine/replay_test.go` — write a `journal.jsonl` with a `steps_reset` line followed by `step_status` lines; call `ReplayJournal`; assert the returned slice includes the `StepsReset` event and the subsequent `StepStatus` events with no gaps.
-- [ ] 2.9 Write `TestGenerationField` in `internal/transcript/transcript_test.go` — append an `Entry{Generation: 2, Role: RoleAssistant, ...}` via the writer, read it back via the reader, assert `Generation == 2`.
-- [ ] 2.10 Run `go test ./internal/engine -run "TestStepsResetRoundTrip|TestReplayPostReset" -v` and `go test ./internal/transcript -run TestGenerationField -v`; save trimmed output to `docs/specs/08-spec-reset-to-step/08-proofs/C3.0-steps-reset-audit.txt`.
+- [x] 2.1 Add `Generation int` field to `step.State` in `internal/step/step.go`. Document it as the manual re-run counter (distinct from `Attempt` which gates `MaxRetries`).
+- [x] 2.2 Add `Generation int` (JSON tag `"gen"`) to `transcript.Entry` in `internal/transcript/transcript.go`. Update the doc comment to mention `Generation` alongside `Attempt` and `Iteration`.
+- [x] 2.3 Add `Generation int` to `StepStatus` in `internal/engine/event.go`. Add `StepsReset` struct with fields `RunID, Target string, Closure []string, RewindTo string` and its `isEvent()` method.
+- [x] 2.4 Register `StepsReset` in `internal/engine/journal.go`: add `case StepsReset: return "steps_reset"` to `eventKind`; add a `"steps_reset"` entry to `decoders`. Also update `UnmarshalEnvelope` so that an unrecognised kind returns `(env, nil, nil)` (no error) rather than `(env, nil, err)` — this is required by `ReplayJournal`'s skip-on-error contract and matches the intent of "an unknown-kind line shall still be skipped."
+- [x] 2.5 Update `transition()` in `internal/engine/engine.go` to set `ev.Generation = state.Generation` alongside `Attempt` and `Iteration`.
+- [x] 2.6 Add `── re-run N ──` separator to `chatBody()` in `internal/tui/monitor.go`. Track `lastGen` alongside `lastIter` / `lastAttempt`; emit the separator when `e.Generation > lastGen && lastGen != -1`. Initialize `lastGen = -1` before the loop.
+- [x] 2.7 Write `TestStepsResetRoundTrip` in `internal/engine/journal_test.go` — marshal a `StepsReset{RunID: "r1", Target: "A", Closure: []string{"A","B"}, RewindTo: "abc123"}` and unmarshal; assert all fields round-trip. Also decode a raw line with kind `"future_event"` and assert no error.
+- [x] 2.8 Write `TestReplayPostReset` in `internal/engine/replay_test.go` — write a `journal.jsonl` with a `steps_reset` line followed by `step_status` lines; call `ReplayJournal`; assert the returned slice includes the `StepsReset` event and the subsequent `StepStatus` events with no gaps.
+- [x] 2.9 Write `TestGenerationField` in `internal/transcript/transcript_test.go` — append an `Entry{Generation: 2, Role: RoleAssistant, ...}` via the writer, read it back via the reader, assert `Generation == 2`.
+- [x] 2.10 Run `go test ./internal/engine -run "TestStepsResetRoundTrip|TestReplayPostReset" -v` and `go test ./internal/transcript -run TestGenerationField -v`; save trimmed output to `docs/specs/08-spec-reset-to-step/08-proofs/C3.0-steps-reset-audit.txt`.
 
 ---
 

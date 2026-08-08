@@ -41,6 +41,8 @@ func eventKind(e Event) string {
 		return "gate_result"
 	case LoopFired:
 		return "loop_fired"
+	case StepsReset:
+		return "steps_reset"
 	case ReviewRequest:
 		return "review_request"
 	case RunError:
@@ -106,6 +108,10 @@ var decoders = map[string]func([]byte) (Event, error){
 		var e LoopFired
 		return e, json.Unmarshal(b, &e)
 	},
+	"steps_reset": func(b []byte) (Event, error) {
+		var e StepsReset
+		return e, json.Unmarshal(b, &e)
+	},
 	"review_request": func(b []byte) (Event, error) {
 		var e ReviewRequest
 		return e, json.Unmarshal(b, &e)
@@ -129,6 +135,9 @@ var decoders = map[string]func([]byte) (Event, error){
 }
 
 // UnmarshalEnvelope decodes one JSONL line into its Envelope and Event.
+// An unknown Kind returns (env, nil, nil) — the caller (ReplayJournal) skips
+// nil events rather than aborting, which preserves forward-compatibility: a
+// journal written by a newer jig version degrades gracefully in an older one.
 func UnmarshalEnvelope(line []byte) (Envelope, Event, error) {
 	var env Envelope
 	if err := json.Unmarshal(line, &env); err != nil {
@@ -136,7 +145,7 @@ func UnmarshalEnvelope(line []byte) (Envelope, Event, error) {
 	}
 	decode, ok := decoders[env.Kind]
 	if !ok {
-		return env, nil, fmt.Errorf("unknown event kind %q", env.Kind)
+		return env, nil, nil // unknown kind: skip, not an error
 	}
 	e, err := decode(env.Data)
 	if err != nil {

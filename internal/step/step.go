@@ -47,7 +47,11 @@ type State struct {
 	Status    Status
 	Attempt   int // retry count under on_failure = "retry"
 	Iteration int // loop iteration when re-run via [step.loop]
-	Result    *Result
+	// Generation counts manual operator resets (Run.Reset). Unlike Attempt,
+	// which gates the MaxRetries budget, Generation is purely a provenance axis
+	// that makes re-runs legible in the transcript and gates nothing.
+	Generation int
+	Result     *Result
 }
 
 // Result is what execution produced; serialized as result.json by the manifest
