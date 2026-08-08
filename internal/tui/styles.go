@@ -152,6 +152,17 @@ type Styles struct {
 		Types map[string]lipgloss.Style
 	}
 
+	// Security styles the per-severity rows in the Security pane and its header.
+	// Rows are always rendered verbatim (not through glamour) so redacted previews
+	// like [aws-key:…MPLE] display literally.
+	Security struct {
+		Header      lipgloss.Style
+		CriticalRow lipgloss.Style
+		HighRow     lipgloss.Style
+		MediumRow   lipgloss.Style
+		LowRow      lipgloss.Style
+	}
+
 	// Markdown is the themed glamour config used for every transcript/chat
 	// render, replacing glamour's stock "dark" style so headings/code/links
 	// carry the Charmtone brand.
@@ -258,6 +269,12 @@ func DefaultTheme() Styles {
 	s.GradTo = secondary
 
 	s.Markdown = charmtoneMarkdown()
+
+	s.Security.Header = lipgloss.NewStyle().Bold(true).Foreground(fgMuted)
+	s.Security.CriticalRow = lipgloss.NewStyle().Bold(true).Foreground(danger)
+	s.Security.HighRow = lipgloss.NewStyle().Foreground(danger)
+	s.Security.MediumRow = lipgloss.NewStyle().Foreground(warning)
+	s.Security.LowRow = lipgloss.NewStyle().Foreground(fgMuted)
 
 	return s
 }

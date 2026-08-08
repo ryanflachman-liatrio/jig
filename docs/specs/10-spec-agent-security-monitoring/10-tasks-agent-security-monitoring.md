@@ -178,7 +178,7 @@ the entry window from Unit 3).
 
 ---
 
-### [ ] 6.0 Unit 5 — Security pane and human escalation
+### [x] 6.0 Unit 5 — Security pane and human escalation
 
 **Make findings visible and critical findings actionable.** The TUI run monitor
 gains a Security region that lists findings by severity as `SecurityFinding` ctrl
@@ -194,12 +194,12 @@ cannot be parked (best-effort to the nearest live decision point).
 
 #### 6.0 Tasks
 
-- [ ] 6.1 Add a `Security` sub-struct to `Styles` in `internal/tui/styles.go` with fields: `CriticalRow`, `HighRow`, `MediumRow`, `LowRow`, `Header` lipgloss styles. Build them in `DefaultTheme()` from the existing `danger`, `warning`, `success`, and `fgMuted` tokens — no bare hex colors.
-- [ ] 6.2 Add a security findings slice (`[]engine.SecurityFinding`) to `monitorModel` in `internal/tui/monitor.go`. In the `Update` loop, handle `engine.SecurityFinding` from the ctrl channel: read the full finding detail from `findings.jsonl` (file is truth) rather than from the event fields.
-- [ ] 6.3 Render the Security region in `monitorModel.View()`: a panel listing each finding as a single line (`[SEVERITY] monitor: detail`), styled by severity via `theme.Security.*`. Route redacted-secret previews through the verbatim path (not glamour). The region should be visible only when at least one finding exists.
-- [ ] 6.4 In `internal/engine/engine.go`, handle critical `SecurityFinding` escalation: when a `SecurityFinding` with `Severity == "critical"` arrives, call `s.enterRecovery(stepID)` if the step is in a running/blockable state; if the step is already terminal, record the finding only; if the run is done, surface the finding with no recovery action.
-- [ ] 6.5 Implement rate-limiting and fingerprint deduplication of escalation: maintain a `seenEscalations map[string]bool` keyed on `Fingerprint`. A fingerprint that has already triggered `enterRecovery` must not trigger it again for the same step.
-- [ ] 6.6 Write `TestSecurityPane` in `internal/tui/monitor_test.go` and `TestCriticalEscalation` in `internal/engine/engine_test.go`. Capture proof outputs.
+- [x] 6.1 Add a `Security` sub-struct to `Styles` in `internal/tui/styles.go` with fields: `CriticalRow`, `HighRow`, `MediumRow`, `LowRow`, `Header` lipgloss styles. Build them in `DefaultTheme()` from the existing `danger`, `warning`, `success`, and `fgMuted` tokens — no bare hex colors.
+- [x] 6.2 Add a security findings slice (`[]engine.SecurityFinding`) to `monitorModel` in `internal/tui/monitor.go`. In the `Update` loop, handle `engine.SecurityFinding` from the ctrl channel: read the full finding detail from `findings.jsonl` (file is truth) rather than from the event fields.
+- [x] 6.3 Render the Security region in `monitorModel.View()`: a panel listing each finding as a single line (`[SEVERITY] monitor: detail`), styled by severity via `theme.Security.*`. Route redacted-secret previews through the verbatim path (not glamour). The region should be visible only when at least one finding exists.
+- [x] 6.4 In `internal/engine/engine.go`, handle critical `SecurityFinding` escalation: when a `SecurityFinding` with `Severity == "critical"` arrives, call `s.enterRecovery(stepID)` if the step is in a running/blockable state; if the step is already terminal, record the finding only; if the run is done, surface the finding with no recovery action.
+- [x] 6.5 Implement rate-limiting and fingerprint deduplication of escalation: maintain a `seenEscalations map[string]bool` keyed on `Fingerprint`. A fingerprint that has already triggered `enterRecovery` must not trigger it again for the same step.
+- [x] 6.6 Write `TestSecurityPane` in `internal/tui/monitor_test.go` and `TestCriticalEscalation` in `internal/engine/engine_test.go`. Capture proof outputs.
 
 ---
 

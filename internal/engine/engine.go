@@ -452,6 +452,13 @@ func (stopMsg) isSchedMsg()                {}
 func (resumeMsg) isSchedMsg()              {}
 func (resetMsg) isSchedMsg()               {}
 
+// securityFindingMsg delivers a SecurityFinding to the scheduler inbox so the
+// scheduler can escalate critical findings to the recovery gate without
+// blocking the ctrl fan-out path.
+type securityFindingMsg struct{ sf SecurityFinding }
+
+func (securityFindingMsg) isSchedMsg() {}
+
 // ── reporter ─────────────────────────────────────────────────────────────────
 
 // reporter routes live step signals through the scheduler's fan-out.
@@ -555,6 +562,11 @@ type scheduler struct {
 	// recovery loop stays bounded (maxRecoverRounds).
 	recoverCount map[string]int // stepID → recovery rounds taken so far
 
+	// seenEscalations deduplicates critical-finding recovery escalations by
+	// Fingerprint. A fingerprint that already triggered enterRecovery must not
+	// trigger it again for the same step.
+	seenEscalations map[string]bool
+
 	// reporters holds the active reporter for each in-flight step so
 	// agentQuestionAnswerMsg can route the answer to the correct channel.
 	reporters map[string]*reporter
@@ -622,6 +634,7 @@ func newScheduler(
 		reviewMessages:      make(map[string]int),
 		stepInputCount:      make(map[string]int),
 		recoverCount:        make(map[string]int),
+		seenEscalations:     make(map[string]bool),
 		reporters:           make(map[string]*reporter),
 		stepCancels:         make(map[string]context.CancelFunc),
 		stopping:            make(map[string]bool),
@@ -1038,6 +1051,13 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 				// Must-not-drop: rides ctrl, not live.
 				e.RunID, e.StepID = runID, stepID
 				fanOutCtrl(subs, e)
+				// Also notify the scheduler so critical findings can escalate
+				// to the recovery gate. Non-blocking: the scheduler's inbox is
+				// buffered (64) and rarely full.
+				select {
+				case inbox <- securityFindingMsg{sf: e}:
+				default:
+				}
 			}
 		},
 	}
@@ -1188,6 +1208,17 @@ func (s *scheduler) handle(msg schedMsg) {
 			delete(s.stepCancels, m.stepID)
 		}
 
+		// A step escalated to StatusAwaitingRecovery by a critical security finding
+		// while it was still running: keep it parked regardless of the worker's final
+		// result. Record the result (preserving SessionID for potential resume) but
+		// do not re-process through the post-exec chain or failure policy.
+		if s.states[m.stepID] != nil && s.states[m.stepID].Status == step.StatusAwaitingRecovery {
+			if m.result != nil {
+				s.states[m.stepID].Result = m.result
+			}
+			break
+		}
+
 		// A deliberately-stopped worker (Run.Stop cancelled its context) is not a
 		// failure and not end-of-run (spec 07 B1). Record whatever result it
 		// returned so a resume keeps its captured session id, preserve its partial
@@ -1320,6 +1351,9 @@ func (s *scheduler) handle(msg schedMsg) {
 	case resetMsg:
 		s.handleReset(m)
 
+	case securityFindingMsg:
+		s.handleSecurityFinding(m.sf)
+
 	case agentQuestionNotifyMsg:
 		// The agent step called AskUserQuestion; transition to StatusNeedsInput so
 		// the TUI can surface the question. The goroutine is still alive, blocked on
@@ -1412,6 +1446,40 @@ func (s *scheduler) enterRecovery(stepID string) {
 		Err:       state.Result.Err,
 		CanResume: state.Result.SessionID != "",
 	})
+}
+
+// handleSecurityFinding escalates critical security findings to the recovery
+// gate. Non-critical findings are silently recorded (seenEscalations) so
+// duplicate fingerprints remain no-ops even if they later become critical.
+// A fingerprint that already triggered enterRecovery is skipped (rate-limit).
+// If the step is already terminal or the run is done, no recovery action is taken.
+func (s *scheduler) handleSecurityFinding(sf SecurityFinding) {
+	// Always record the fingerprint to prevent duplicate escalations.
+	if s.seenEscalations[sf.Fingerprint] {
+		return
+	}
+	s.seenEscalations[sf.Fingerprint] = true
+
+	if sf.Severity != "critical" {
+		return
+	}
+	state, ok := s.states[sf.StepID]
+	if !ok {
+		return // unknown step — finding already recorded above
+	}
+	switch state.Status {
+	case step.StatusRunning, step.StatusNeedsInput:
+		// Blockable: set a descriptive error and park for human recovery decision.
+		if state.Result == nil {
+			state.Result = &step.Result{Status: step.StatusFailed}
+		}
+		if state.Result.Err == "" {
+			state.Result.Err = "security escalation: critical finding from " + sf.Monitor
+		}
+		s.enterRecovery(sf.StepID)
+		// StatusAwaitingRecovery: already parked; finding recorded above.
+		// Terminal states (succeeded, failed, skipped, stopped): record only.
+	}
 }
 
 // handleStop cancels one running step's worker without ending the run (spec 07

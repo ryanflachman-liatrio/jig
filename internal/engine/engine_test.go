@@ -2009,3 +2009,197 @@ depends_on = ["b"]
 		}
 	}
 }
+
+// securityEscalateExec is an executor whose target step emits one or more
+// SecurityFinding ctrl events via rep.Finding, then optionally blocks until
+// ctx is cancelled. It is used to test the critical-finding escalation path.
+type securityEscalateExec struct {
+	stepID   string
+	findings []SecurityFinding // emitted sequentially before blocking
+	block    bool              // if true, block on ctx.Done after emitting
+}
+
+func (e *securityEscalateExec) Execute(ctx context.Context, req StepRequest, rep Reporter) (*step.Result, error) {
+	if req.Step.ID != e.stepID {
+		if err := sleepCtx(ctx, time.Millisecond); err != nil {
+			return nil, err
+		}
+		return &step.Result{Status: step.StatusSucceeded}, nil
+	}
+	for _, sf := range e.findings {
+		rep.Finding(sf)
+	}
+	if e.block {
+		<-ctx.Done()
+	}
+	return &step.Result{Status: step.StatusSucceeded}, nil
+}
+
+// TestCriticalEscalation verifies the four escalation scenarios documented in
+// spec 10, task 6.4/6.5.
+func TestCriticalEscalation(t *testing.T) {
+	// Use type="command" to pass the validator; the custom executor is called
+	// regardless of the declared step type in engine tests.
+	const toml = `
+[workflow]
+name = "security-escalation"
+version = "1.0"
+[[step]]
+id = "impl"
+type = "command"
+run = "true"
+`
+
+	t.Run("critical finding on running step → StatusAwaitingRecovery → abort cleans up", func(t *testing.T) {
+		wf, err := workflow.Decode(toml, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		exec := &securityEscalateExec{
+			stepID: "impl",
+			findings: []SecurityFinding{{
+				Tier: "guard", Monitor: "secret-in-write",
+				Severity: "critical", Action: "escalated", Fingerprint: "fp-crit-1",
+			}},
+			block: true,
+		}
+		mgr := NewManager(exec, "")
+		_, ctrl := mgr.Subscribe()
+		run, err := mgr.Start(wf)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var gotRR RecoveryRequest
+		deadline := time.After(5 * time.Second)
+	loop1:
+		for {
+			select {
+			case e := <-ctrl:
+				switch ev := e.(type) {
+				case RecoveryRequest:
+					gotRR = ev
+					break loop1
+				case RunFinished:
+					t.Fatal("run finished before RecoveryRequest from critical security finding")
+				}
+			case <-deadline:
+				t.Fatal("timeout waiting for RecoveryRequest")
+			}
+		}
+
+		if gotRR.StepID != "impl" {
+			t.Errorf("RecoveryRequest.StepID = %q, want impl", gotRR.StepID)
+		}
+
+		snap := run.Snapshot()
+		var parked bool
+		for _, s := range snap.Steps {
+			if s.ID == "impl" && s.Status == step.StatusAwaitingRecovery {
+				parked = true
+			}
+		}
+		if !parked {
+			t.Errorf("step should be parked at awaiting_recovery; snapshot = %+v", snap.Steps)
+		}
+
+		run.Recover("impl", RecoverAbort, "")
+		drainUntilFinished(t, ctrl, 5*time.Second)
+	})
+
+	t.Run("non-critical finding → no RecoveryRequest", func(t *testing.T) {
+		wf, err := workflow.Decode(toml, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		exec := &securityEscalateExec{
+			stepID: "impl",
+			findings: []SecurityFinding{{
+				Tier: "guard", Monitor: "secret-in-write",
+				Severity: "high", Action: "blocked", Fingerprint: "fp-high-1",
+			}},
+			block: false,
+		}
+		mgr := NewManager(exec, "")
+		_, ctrl := mgr.Subscribe()
+		if _, err := mgr.Start(wf); err != nil {
+			t.Fatal(err)
+		}
+
+		// Run should finish normally without a RecoveryRequest.
+		var gotRR bool
+		drainChecked(t, ctrl, 5*time.Second, func(e Event) bool {
+			if _, ok := e.(RecoveryRequest); ok {
+				gotRR = true
+			}
+			_, done := e.(RunFinished)
+			return done
+		})
+		if gotRR {
+			t.Error("non-critical finding should not produce a RecoveryRequest")
+		}
+	})
+
+	t.Run("duplicate fingerprints → park once", func(t *testing.T) {
+		wf, err := workflow.Decode(toml, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		const fp = "fp-dup-1"
+		exec := &securityEscalateExec{
+			stepID: "impl",
+			findings: []SecurityFinding{
+				{Tier: "guard", Monitor: "secret-in-write", Severity: "critical", Action: "escalated", Fingerprint: fp},
+				{Tier: "guard", Monitor: "secret-in-write", Severity: "critical", Action: "escalated", Fingerprint: fp},
+			},
+			block: true,
+		}
+		mgr := NewManager(exec, "")
+		_, ctrl := mgr.Subscribe()
+		run, err := mgr.Start(wf)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var rrCount int
+		deadline := time.After(5 * time.Second)
+	loop3:
+		for {
+			select {
+			case e := <-ctrl:
+				if _, ok := e.(RecoveryRequest); ok {
+					rrCount++
+					if rrCount == 1 {
+						// Give a moment for a possible second RR to arrive.
+						time.Sleep(50 * time.Millisecond)
+						break loop3
+					}
+				}
+			case <-deadline:
+				t.Fatal("timeout waiting for RecoveryRequest")
+			}
+		}
+		if rrCount != 1 {
+			t.Errorf("want exactly 1 RecoveryRequest for duplicate fingerprints, got %d", rrCount)
+		}
+
+		run.Recover("impl", RecoverAbort, "")
+		drainUntilFinished(t, ctrl, 5*time.Second)
+	})
+}
+
+// drainChecked drains ctrl until pred returns true or timeout.
+func drainChecked(t *testing.T, ctrl <-chan Event, timeout time.Duration, pred func(Event) bool) {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case e := <-ctrl:
+			if pred(e) {
+				return
+			}
+		case <-deadline:
+			t.Fatal("timeout waiting for run to finish")
+		}
+	}
+}

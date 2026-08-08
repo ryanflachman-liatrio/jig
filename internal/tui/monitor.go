@@ -16,6 +16,7 @@ import (
 
 	"jig/internal/datastore"
 	"jig/internal/engine"
+	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/transcript"
 )
@@ -168,6 +169,12 @@ type monitorModel struct {
 	// promptTextarea is the active textarea, rebuilt from the current entry's draft
 	// via newInputTextarea on every entry switch (request/prompt/review-compose kinds).
 	promptTextarea textarea.Model
+
+	// secFindings is the list of security findings produced during this run,
+	// populated by SecurityFinding ctrl events. Content is read from
+	// findings.jsonl (file is truth) rather than from the event fields, so
+	// the Detail field (redacted-secret preview) is always present.
+	secFindings []sentinel.Finding
 
 	// Phase 4: rolling output buffer per step (last outputMaxLines lines).
 	stepOutput map[string]*strings.Builder
@@ -1270,6 +1277,28 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		}
 		m.done = true
 		m.failed = ev.Failed
+
+	case engine.SecurityFinding:
+		if ev.RunID != m.runID {
+			return m, nil
+		}
+		// File is truth: read all findings from findings.jsonl to get the full
+		// Detail field (redacted-secret preview) that the event omits.
+		fPath := datastore.FindingsPath(m.runDir)
+		if findings, err := sentinel.ReadAll(fPath); err == nil {
+			m.secFindings = findings
+		} else {
+			// Persistence off or file not yet written — synthesize a minimal record
+			// from the event fields so the Security pane still populates.
+			m.secFindings = append(m.secFindings, sentinel.Finding{
+				StepID:      ev.StepID,
+				Tier:        sentinel.Tier(ev.Tier),
+				Monitor:     ev.Monitor,
+				Severity:    sentinel.Severity(ev.Severity),
+				Action:      sentinel.Action(ev.Action),
+				Fingerprint: ev.Fingerprint,
+			})
+		}
 	}
 	return m, nil
 }
@@ -2257,6 +2286,41 @@ func stepCostStr(s monitorStep) string {
 	return fmt.Sprintf("$%.4f", *s.cost)
 }
 
+// securityView renders the Security region: a compact list of findings by
+// severity, visible only when at least one finding exists. Every row is rendered
+// verbatim (not through glamour) so redacted previews like [aws-key:…MPLE] are
+// displayed literally rather than being re-interpreted as markdown.
+func (m monitorModel) securityView() string {
+	if len(m.secFindings) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString(theme.Security.Header.Render("Security findings"))
+	sb.WriteString("\n")
+	for _, f := range m.secFindings {
+		sev := strings.ToUpper(string(f.Severity))
+		label := "[" + sev + "] " + f.Monitor + ": "
+		detail := f.Detail
+		if detail == "" {
+			detail = string(f.Action)
+		}
+		var row string
+		switch f.Severity {
+		case sentinel.SeverityCritical:
+			row = theme.Security.CriticalRow.Render(label + detail)
+		case sentinel.SeverityHigh:
+			row = theme.Security.HighRow.Render(label + detail)
+		case sentinel.SeverityMedium:
+			row = theme.Security.MediumRow.Render(label + detail)
+		default:
+			row = theme.Security.LowRow.Render(label + detail)
+		}
+		sb.WriteString(row)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
 func (m monitorModel) footerView() string {
 	var status string
 	if m.done {
@@ -2425,5 +2489,6 @@ func (m monitorModel) View() string {
 		panels = lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, panels, gate, footer)
+	sec := m.securityView()
+	return lipgloss.JoinVertical(lipgloss.Left, panels, sec, gate, footer)
 }

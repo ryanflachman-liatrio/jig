@@ -13,6 +13,7 @@ import (
 
 	"jig/internal/datastore"
 	"jig/internal/engine"
+	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/transcript"
 )
@@ -1701,4 +1702,101 @@ func TestStopKey(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestSecurityPane verifies that SecurityFinding ctrl events populate the
+// Security pane and that render output is styled by severity (verbatim path,
+// not glamour). It uses the findingsPath mechanism: findings are written to
+// disk and the model reads them from there.
+func TestSecurityPane(t *testing.T) {
+	dir := t.TempDir()
+	fPath := datastore.FindingsPath(dir)
+
+	// Write two findings to disk.
+	fw, err := sentinel.NewWriter(fPath)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	findings := []sentinel.Finding{
+		{
+			StepID: "impl", Tier: "guard", Monitor: "secret-in-write",
+			Severity: sentinel.SeverityHigh, Action: sentinel.ActionBlocked,
+			Detail: "tool input contains aws-key pattern: [aws-key:…MPLE]",
+		},
+		{
+			StepID: "impl", Tier: "guard", Monitor: "denied-shell",
+			Severity: sentinel.SeverityCritical, Action: sentinel.ActionEscalated,
+			Detail: "Bash command matches denied shell pattern",
+		},
+	}
+	for _, f := range findings {
+		if err := fw.Append(f); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+	if err := fw.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Build a minimal monitorModel with runDir set.
+	m := newMonitorModel("run1")
+	m.runDir = dir
+	m.ready = true
+	m.width = 80
+	m.height = 24
+
+	// Feed a SecurityFinding event for each finding.
+	for _, f := range findings {
+		m, _ = m.handleEngineEvent(engine.SecurityFinding{
+			RunID:       "run1",
+			StepID:      f.StepID,
+			Tier:        string(f.Tier),
+			Monitor:     f.Monitor,
+			Severity:    string(f.Severity),
+			Action:      string(f.Action),
+			Fingerprint: f.Fingerprint,
+		})
+	}
+
+	if len(m.secFindings) != 2 {
+		t.Fatalf("secFindings len = %d, want 2", len(m.secFindings))
+	}
+
+	// Render the security view and verify it contains expected text.
+	secView := m.securityView()
+
+	t.Run("high severity row rendered", func(t *testing.T) {
+		if !strings.Contains(secView, "HIGH") {
+			t.Errorf("security view missing HIGH row:\n%s", secView)
+		}
+		if !strings.Contains(secView, "secret-in-write") {
+			t.Errorf("security view missing monitor name:\n%s", secView)
+		}
+		// Redacted preview must appear verbatim (not mangled by glamour).
+		if !strings.Contains(secView, "[aws-key:…MPLE]") {
+			t.Errorf("security view mangled redacted preview:\n%s", secView)
+		}
+	})
+
+	t.Run("critical severity row rendered", func(t *testing.T) {
+		if !strings.Contains(secView, "CRITICAL") {
+			t.Errorf("security view missing CRITICAL row:\n%s", secView)
+		}
+		if !strings.Contains(secView, "denied-shell") {
+			t.Errorf("security view missing monitor name:\n%s", secView)
+		}
+	})
+
+	t.Run("header rendered", func(t *testing.T) {
+		if !strings.Contains(secView, "Security findings") {
+			t.Errorf("security view missing header:\n%s", secView)
+		}
+	})
+
+	t.Run("empty when no findings", func(t *testing.T) {
+		m2 := newMonitorModel("run2")
+		if got := m2.securityView(); got != "" {
+			t.Errorf("securityView with no findings returned non-empty string: %q", got)
+		}
+	})
 }
