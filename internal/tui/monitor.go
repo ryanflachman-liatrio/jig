@@ -110,6 +110,9 @@ type monitorModel struct {
 	// runErr is an engine-level failure (worktree setup, max_iterations) that is
 	// not attributable to a single step. Set by the engine.RunError event.
 	runErr string
+	// totalCost is the summed TotalCostUSD across all steps, from the last Snapshot.
+	// Zero means "no cost reported" — not "$0.00 spent".
+	totalCost float64
 
 	// Two-panel navigation: focus selects the active region; cursor selects the
 	// step in the Steps panel. chatStep is the step whose transcript the right
@@ -273,8 +276,9 @@ type monitorStep struct {
 	status  step.Status
 	start   time.Time
 	end     time.Time
-	err     string // failure reason when status == StatusFailed
-	subtype string // SDK result subtype for agent policy-limit failures
+	err     string   // failure reason when status == StatusFailed
+	subtype string   // SDK result subtype for agent policy-limit failures
+	cost    *float64 // TotalCostUSD from step.Result; nil when not yet known
 }
 
 func newMonitorModel(runID string) monitorModel {
@@ -296,6 +300,7 @@ func (m monitorModel) withSnapshot(snap engine.RunSnapshot) monitorModel {
 	m.workflow = snap.Workflow
 	m.done = snap.Done
 	m.failed = snap.Failed
+	m.totalCost = snap.TotalCostUSD
 	m.steps = make([]monitorStep, len(snap.Steps))
 	m.index = make(map[string]int, len(snap.Steps))
 	if m.stepOutput == nil {
@@ -315,9 +320,12 @@ func (m monitorModel) withSnapshot(snap engine.RunSnapshot) monitorModel {
 	}
 	for i, st := range snap.Steps {
 		ms := monitorStep{id: st.ID, status: st.Status}
-		if st.Status == step.StatusFailed && st.Result != nil {
-			ms.err = st.Result.Err
-			ms.subtype = st.Result.Subtype
+		if st.Result != nil {
+			if st.Status == step.StatusFailed {
+				ms.err = st.Result.Err
+				ms.subtype = st.Result.Subtype
+			}
+			ms.cost = st.Result.TotalCostUSD
 		}
 		m.steps[i] = ms
 		m.index[st.ID] = i
@@ -1445,13 +1453,18 @@ func (m monitorModel) listBody() string {
 		if n := m.msgCount[s.id]; n > 0 {
 			msgs = theme.Question.Render(fmt.Sprintf("%d msg", n))
 		}
-		line := fmt.Sprintf("%s%s  %s  %s  %s  %s",
+		costStr := ""
+		if c := stepCostStr(s); c != "" {
+			costStr = theme.Question.Render(c)
+		}
+		line := fmt.Sprintf("%s%s  %s  %s  %s  %s  %s",
 			cursor,
 			indicator,
 			style.Render(padRight(s.id, idWidth)),
 			statusStyle(s.status).Render(fmt.Sprintf("%-16s", string(s.status))),
 			theme.Question.Render(padRight(dur, 10)),
 			msgs,
+			costStr,
 		)
 		if label := subtypeBadgeLabel(s.subtype); label != "" {
 			line += "  " + theme.Badge.Error.Render(label)
@@ -2235,6 +2248,15 @@ func stepDuration(s monitorStep) string {
 	return d.String()
 }
 
+// stepCostStr returns a human-readable cost string for a step, or "" when cost
+// is unknown (nil pointer — the step is still running or the SDK didn't report).
+func stepCostStr(s monitorStep) string {
+	if s.cost == nil {
+		return ""
+	}
+	return fmt.Sprintf("$%.4f", *s.cost)
+}
+
 func (m monitorModel) footerView() string {
 	var status string
 	if m.done {
@@ -2348,6 +2370,10 @@ func (m monitorModel) footerView() string {
 	// is waiting (it is non-blocking — tab returns to it).
 	if m.hasGate() && m.focus != focusGate {
 		hint = "tab to gate  •  " + hint
+	}
+	// Append per-run cost to the status when any cost has been reported.
+	if m.totalCost > 0 {
+		status += "  " + theme.Question.Render(fmt.Sprintf("$%.4f total", m.totalCost))
 	}
 	// Clip to the terminal width so a long hint line never overflows the panels
 	// and skews JoinVertical's per-line width (which would break the box borders).

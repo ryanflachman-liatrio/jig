@@ -82,11 +82,12 @@ func (m *Manager) PersistedRuns() ([]string, error) {
 
 // RunSnapshot is a point-in-time summary of a run, safe to read from any goroutine.
 type RunSnapshot struct {
-	ID       string
-	Workflow string
-	Steps    []step.State
-	Done     bool
-	Failed   bool
+	ID           string
+	Workflow     string
+	Steps        []step.State
+	Done         bool
+	Failed       bool
+	TotalCostUSD float64 // sum of all steps' TotalCostUSD; 0.0 when none reported
 }
 
 // Start validates wf and spawns a scheduler goroutine for it, returning the
@@ -2332,6 +2333,9 @@ func (s *scheduler) emit(e Event) {
 						Status:  string(ss.To),
 						Attempt: state.Attempt,
 					}
+					if state.Result != nil {
+						term.TotalCostUSD = state.Result.TotalCostUSD
+					}
 				}
 			}
 			s.writer.AppendLine(line, term)
@@ -2348,6 +2352,7 @@ func (s *scheduler) emit(e Event) {
 func (s *scheduler) snapshot() RunSnapshot {
 	states := make([]step.State, len(s.wf.Steps))
 	allDone := true
+	var totalCost float64
 	for i, wfStep := range s.wf.Steps {
 		st := s.states[wfStep.ID]
 		states[i] = *st
@@ -2356,13 +2361,17 @@ func (s *scheduler) snapshot() RunSnapshot {
 		default:
 			allDone = false
 		}
+		if st.Result != nil && st.Result.TotalCostUSD != nil {
+			totalCost += *st.Result.TotalCostUSD
+		}
 	}
 	return RunSnapshot{
-		ID:       s.runID,
-		Workflow: s.wf.Meta.Name,
-		Steps:    states,
-		Done:     allDone,
-		Failed:   s.anyFailed(),
+		ID:           s.runID,
+		Workflow:     s.wf.Meta.Name,
+		Steps:        states,
+		Done:         allDone,
+		Failed:       s.anyFailed(),
+		TotalCostUSD: totalCost,
 	}
 }
 

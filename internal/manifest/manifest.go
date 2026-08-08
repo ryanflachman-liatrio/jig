@@ -56,9 +56,10 @@ func NewWriter(runDir string) (*Writer, error) {
 // step reaches a terminal status.  It is filled by the engine's emit() method,
 // which already knows the current step state.
 type StepTerminal struct {
-	StepID  string
-	Status  string // "succeeded" | "failed" | "skipped"
-	Attempt int
+	StepID       string
+	Status       string // "succeeded" | "failed" | "skipped"
+	Attempt      int
+	TotalCostUSD *float64
 }
 
 // AppendLine writes one pre-encoded JSONL line to journal.jsonl.  If terminal
@@ -83,9 +84,10 @@ func (w *Writer) writeResult(t *StepTerminal) {
 	}
 	path := datastore.ResultPath(w.runDir, t.StepID)
 	result := stepResultJSON{
-		StepID:  t.StepID,
-		Status:  t.Status,
-		Attempt: t.Attempt,
+		StepID:       t.StepID,
+		Status:       t.Status,
+		Attempt:      t.Attempt,
+		TotalCostUSD: t.TotalCostUSD,
 	}
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
@@ -95,11 +97,11 @@ func (w *Writer) writeResult(t *StepTerminal) {
 }
 
 // stepResultJSON is the shape written to steps/<id>/result.json.
-// Phase 4 will enrich this with the full step.Result fields.
 type stepResultJSON struct {
-	StepID  string `json:"step_id"`
-	Status  string `json:"status"`
-	Attempt int    `json:"attempt"`
+	StepID       string   `json:"step_id"`
+	Status       string   `json:"status"`
+	Attempt      int      `json:"attempt"`
+	TotalCostUSD *float64 `json:"total_cost_usd,omitempty"`
 }
 
 // Close flushes and closes the journal file.  Call once after the final event

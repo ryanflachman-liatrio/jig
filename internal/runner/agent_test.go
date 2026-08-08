@@ -712,3 +712,48 @@ func TestBuildAgentPromptPrependsContext(t *testing.T) {
 		t.Error("preamble must appear before the body")
 	}
 }
+
+func floatPtr(f float64) *float64 { return &f }
+
+// TestCostCapture verifies that captureStream populates TotalCostUSD from the
+// SDK ResultMessage. A result without cost yields a nil pointer (not $0.00).
+func TestCostCapture(t *testing.T) {
+	dir := t.TempDir()
+
+	// Success path: ResultMessage carries cost.
+	cost := 0.0034
+	ok := &claudecode.ResultMessage{TotalCostUSD: floatPtr(cost)}
+	req := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: filepath.Join(dir, "t1.jsonl")}
+	res, err := captureStream(scriptChan(ok), req, &captureReporter{}, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.TotalCostUSD == nil {
+		t.Fatal("TotalCostUSD is nil, want non-nil pointer")
+	}
+	if *res.TotalCostUSD != cost {
+		t.Errorf("TotalCostUSD = %v, want %v", *res.TotalCostUSD, cost)
+	}
+
+	// Success path: ResultMessage without cost yields nil pointer (not 0.0).
+	noCost := &claudecode.ResultMessage{}
+	req2 := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: filepath.Join(dir, "t2.jsonl")}
+	res2, err := captureStream(scriptChan(noCost), req2, &captureReporter{}, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res2.TotalCostUSD != nil {
+		t.Errorf("TotalCostUSD = %v, want nil for unreported cost", res2.TotalCostUSD)
+	}
+
+	// Error path: cost is preserved even on error ResultMessage.
+	errMsg := &claudecode.ResultMessage{IsError: true, TotalCostUSD: floatPtr(0.0012)}
+	req3 := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: filepath.Join(dir, "t3.jsonl")}
+	res3, err := captureStream(scriptChan(errMsg), req3, &captureReporter{}, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res3.TotalCostUSD == nil || *res3.TotalCostUSD != 0.0012 {
+		t.Errorf("error-path TotalCostUSD = %v, want 0.0012", res3.TotalCostUSD)
+	}
+}

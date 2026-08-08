@@ -313,6 +313,8 @@ func captureStream(
 				appendEntry(transcript.RoleResult, []transcript.Block{{Type: transcript.BlockText, Text: errStr}})
 				res := failResult(errStr, start)
 				res.Subtype = m.Subtype
+				res.TotalCostUSD = m.TotalCostUSD
+				res.Usage = m.Usage
 				// Retain the session id even on failure so the engine can offer a
 				// recovery that resumes this exact conversation (feeding the error
 				// back in) rather than starting over blind.
@@ -320,10 +322,12 @@ func captureStream(
 				return res, nil
 			}
 			result := &step.Result{
-				Status:    step.StatusSucceeded,
-				Duration:  time.Since(start),
-				SessionID: m.SessionID,
-				Subtype:   m.Subtype,
+				Status:       step.StatusSucceeded,
+				Duration:     time.Since(start),
+				SessionID:    m.SessionID,
+				Subtype:      m.Subtype,
+				TotalCostUSD: m.TotalCostUSD,
+				Usage:        m.Usage,
 			}
 
 			// Marshal the structured output and extract raw_result, which is

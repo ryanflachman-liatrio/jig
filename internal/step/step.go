@@ -68,4 +68,8 @@ type Result struct {
 	// Subtype is the SDK's ResultMessage.Subtype — the closest thing to a
 	// turn-level "why did this end" (e.g. a clean finish vs. hitting max_turns).
 	Subtype string `json:"subtype,omitempty"`
+	// TotalCostUSD is the dollar cost reported by the SDK for this agent step.
+	// A nil pointer means the SDK did not report cost (vs. a reported $0.00).
+	TotalCostUSD *float64        `json:"total_cost_usd,omitempty"`
+	Usage        *map[string]any `json:"usage,omitempty"`
 }

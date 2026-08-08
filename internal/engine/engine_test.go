@@ -1926,3 +1926,86 @@ block_on = "mystep.status == 'blocked'"
 
 	_ = ctx
 }
+
+// costExec is a testExec variant whose outcomes carry TotalCostUSD so
+// TestRunSnapshotCost can verify the snapshot sums them correctly.
+type costOutcome struct {
+	cost float64
+}
+
+type costExec struct {
+	outcomes map[string]costOutcome
+}
+
+func (e *costExec) Execute(_ context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
+	out := e.outcomes[req.Step.ID]
+	res := &step.Result{Status: step.StatusSucceeded}
+	if out.cost != 0 {
+		res.TotalCostUSD = &out.cost
+	}
+	return res, nil
+}
+
+// TestRunSnapshotCost verifies that RunSnapshot.TotalCostUSD sums per-step
+// costs, and that steps without cost contribute 0 (not causing a nil-deref).
+func TestRunSnapshotCost(t *testing.T) {
+	const toml = `
+[workflow]
+name = "cost-test"
+version = "0.1"
+
+[[step]]
+id = "a"
+type = "command"
+run = "true"
+
+[[step]]
+id = "b"
+type = "command"
+run = "true"
+depends_on = ["a"]
+
+[[step]]
+id = "c"
+type = "command"
+run = "true"
+depends_on = ["b"]
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	exec := &costExec{outcomes: map[string]costOutcome{
+		"a": {cost: 0.001},
+		"b": {cost: 0.002},
+		// "c" has no cost reported: TotalCostUSD stays nil
+	}}
+	mgr := NewManager(exec, "")
+	_, ctrl := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for {
+		select {
+		case e := <-ctrl:
+			if _, ok := e.(RunFinished); ok {
+				snap := run.Snapshot()
+				if !snap.Done {
+					t.Fatal("expected run to be done after RunFinished")
+				}
+				const want = 0.001 + 0.002
+				if snap.TotalCostUSD != want {
+					t.Errorf("TotalCostUSD = %v, want %v", snap.TotalCostUSD, want)
+				}
+				return
+			}
+		case <-ctx.Done():
+			t.Fatal("timeout waiting for RunFinished")
+		}
+	}
+}
