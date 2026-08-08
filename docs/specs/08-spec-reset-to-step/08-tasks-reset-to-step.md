@@ -88,7 +88,7 @@ int` in `step.State` and `transcript.Entry`; `StepsReset` event in `event.go`;
 
 ---
 
-### [ ] 3.0 Reset Execution — Rewind, Replay, State Reset, Re-Dispatch (Unit C2)
+### [x] 3.0 Reset Execution — Rewind, Replay, State Reset, Re-Dispatch (Unit C2)
 
 Implement `Run.Reset(stepID)` → `resetMsg` → `handleReset` on the scheduler.
 `handleReset` is guarded to unfinished-and-quiescent runs (`!s.terminated &&
@@ -108,9 +108,9 @@ stale routing maps. `ClearStepOutputs` is a new helper in `internal/datastore`.
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Add `ClearStepOutputs(runDir, stepID string) error` to `internal/datastore/datastore.go`. Remove `result.json`, `output.md`, and `output.json` for the given step (using `os.Remove`; `os.IsNotExist` errors are silently swallowed). No-op and return `nil` when `runDir == ""`.
-- [ ] 3.2 Add `resetMsg{stepID string}`, `func (resetMsg) isSchedMsg() {}`, and `func (r *Run) Reset(stepID string) { r.inbox <- resetMsg{stepID: stepID} }` to `internal/engine/engine.go`. Add a `case resetMsg: s.handleReset(m)` to the `handle()` switch (after `resumeMsg`).
-- [ ] 3.3 Implement `func (s *scheduler) handleReset(m resetMsg)` in `internal/engine/engine.go`:
+- [x] 3.1 Add `ClearStepOutputs(runDir, stepID string) error` to `internal/datastore/datastore.go`. Remove `result.json`, `output.md`, and `output.json` for the given step (using `os.Remove`; `os.IsNotExist` errors are silently swallowed). No-op and return `nil` when `runDir == ""`.
+- [x] 3.2 Add `resetMsg{stepID string}`, `func (resetMsg) isSchedMsg() {}`, and `func (r *Run) Reset(stepID string) { r.inbox <- resetMsg{stepID: stepID} }` to `internal/engine/engine.go`. Add a `case resetMsg: s.handleReset(m)` to the `handle()` switch (after `resumeMsg`).
+- [x] 3.3 Implement `func (s *scheduler) handleReset(m resetMsg)` in `internal/engine/engine.go`:
   - Guard: return silently if `s.terminated` or `s.inFlight > 0` or `s.runWorktree == ""`.
   - Compute closure via `s.closureOf(m.stepID)`; if empty (should not happen since target is always in its own closure) return.
   - Journal `StepsReset{RunID: s.runID, Target: m.stepID, Closure: closure, RewindTo: rewindTo}` via `s.emit`.
@@ -120,11 +120,11 @@ stale routing maps. `ClearStepOutputs` is a new helper in `internal/datastore`.
   - For each step in the closure: reset in-memory `step.State` — `Status=pending` (already transitioned above), `Attempt=0`, `Iteration=0`, `Result=nil`, `Generation++`; delete from `s.stepCommits`.
   - Purge stale routing maps for every step in the closure: delete from `s.resumeSessions`, `s.stepMessage`, `s.stepFeedback`, `s.rerunSource`, `s.recoverCount`, `s.reviewMessages`, `s.stepInputCount`, `s.pendingUserInputs`, `s.collectedUserInputs`, `s.preResolvedInputs`, `s.stopping`.
   - Add a comment above the function explaining the before-destruction journaling order and the single-writer guarantee.
-- [ ] 3.4 Write `TestResetFanOut` in `internal/engine/integration_test.go` using `initRepo` + `composeExec`. Set up a fan-out workflow (A→B→C with A→D as an independent branch); run to a review gate at C (or use a quiescent stop via `Run.Stop`); call `Run.Reset("A")`; collect subsequent `StepStatus` events; assert A/B/C re-run with `Generation==1` and D remains at `Generation==0` with its original status; verify `git log --oneline` on the run worktree.
-- [ ] 3.5 Write `TestResetLinearTip` in `internal/engine/integration_test.go` — linear A→B→C; run to completion of C (stopped or gate); call `Run.Reset("C")`; assert only C re-runs with `Generation==1`; A and B unaffected; run branch has one fewer commit than before.
-- [ ] 3.6 Write `TestResetGuard` in `internal/engine/reset_test.go` — two sub-cases: (a) settled run (`s.terminated=true`): calling `Run.Reset` emits no events; (b) in-flight worker (`s.inFlight=1` via a blocking fake executor): calling `Run.Reset` emits no events. Use a `snapshotReqMsg` round-trip to confirm state is unchanged.
-- [ ] 3.7 Write `TestResetPersistenceOff` in `internal/engine/reset_test.go` — start a run with `runDir=""` (persistence-off path); call `Run.Reset` on a stopped step; assert no panic and no observable state change.
-- [ ] 3.8 Capture proof: from `TestResetFanOut` output, extract ordered StepStatus events and before/after `git log --oneline`; save to `docs/specs/08-spec-reset-to-step/08-proofs/C2.0-reset-reexecutes-closure.txt`.
+- [x] 3.4 Write `TestResetFanOut` in `internal/engine/integration_test.go` using `initRepo` + `composeExec`. Set up a fan-out workflow (A→B→C with A→D as an independent branch); run to a review gate at C (or use a quiescent stop via `Run.Stop`); call `Run.Reset("A")`; collect subsequent `StepStatus` events; assert A/B/C re-run with `Generation==1` and D remains at `Generation==0` with its original status; verify `git log --oneline` on the run worktree.
+- [x] 3.5 Write `TestResetLinearTip` in `internal/engine/integration_test.go` — linear A→B→C; run to completion of C (stopped or gate); call `Run.Reset("C")`; assert only C re-runs with `Generation==1`; A and B unaffected; run branch has one fewer commit than before.
+- [x] 3.6 Write `TestResetGuard` in `internal/engine/reset_test.go` — two sub-cases: (a) settled run (`s.terminated=true`): calling `Run.Reset` emits no events; (b) in-flight worker (`s.inFlight=1` via a blocking fake executor): calling `Run.Reset` emits no events. Use a `snapshotReqMsg` round-trip to confirm state is unchanged.
+- [x] 3.7 Write `TestResetPersistenceOff` in `internal/engine/reset_test.go` — start a run with `runDir=""` (persistence-off path); call `Run.Reset` on a stopped step; assert no panic and no observable state change.
+- [x] 3.8 Capture proof: from `TestResetFanOut` output, extract ordered StepStatus events and before/after `git log --oneline`; save to `docs/specs/08-spec-reset-to-step/08-proofs/C2.0-reset-reexecutes-closure.txt`.
 
 ---
 

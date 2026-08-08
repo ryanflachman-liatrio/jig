@@ -5,7 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"jig/internal/step"
 	"jig/internal/workflow"
 )
 
@@ -280,4 +282,98 @@ func writeAndCommit(t *testing.T, dir, filename, content, msg string) string {
 		t.Fatalf("currentHEAD: %v", err)
 	}
 	return sha
+}
+
+// TestResetGuard verifies that Run.Reset is a silent no-op when the run is
+// settled (terminated). Calling Reset after RunFinished puts a message in the
+// buffered inbox; the scheduler goroutine has already exited so it is never
+// consumed, but the snapshot remains unchanged (spec 08 C2 guard).
+func TestResetGuard(t *testing.T) {
+	const toml = `
+[workflow]
+name = "reset-guard"
+version = "0.1"
+
+[[step]]
+id = "a"
+type = "command"
+run = "echo a"
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr := NewManager(&testExec{}, "")
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collectEvents(t, ch, 5*time.Second) // wait for RunFinished
+
+	if !run.Snapshot().Done {
+		t.Fatal("expected run to be done before testing guard")
+	}
+
+	// Reset on a settled run: must not panic or block; message goes to the
+	// buffered inbox and is silently discarded.
+	run.Reset("a")
+
+	// Snapshot must still show the run as done and step a still succeeded.
+	snap := run.Snapshot()
+	if !snap.Done {
+		t.Error("guard: run unexpectedly became not-done after Reset")
+	}
+	for _, st := range snap.Steps {
+		if st.ID == "a" && st.Status != step.StatusSucceeded {
+			t.Errorf("guard: step a status = %q; want Succeeded (reset must have been a no-op)", st.Status)
+		}
+	}
+}
+
+// TestResetPersistenceOff verifies that Run.Reset is a silent no-op when the run
+// has no git persistence (runWorktree == ""). The guard in handleReset returns
+// early without any git or file operations (spec 08 C2 persistence-off path).
+func TestResetPersistenceOff(t *testing.T) {
+	const toml = `
+[workflow]
+name = "reset-persist-off"
+version = "0.1"
+
+[[step]]
+id = "a"
+type = "command"
+run = "sleep 10"
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := newStopTestExec()
+	exec.blockers["a"] = true
+	mgr := NewManager(exec, "") // no persistence
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForStepStatus(t, run, "a", step.StatusRunning, 2*time.Second)
+	run.Stop("a")
+	waitForStepStatus(t, run, "a", step.StatusStopped, 2*time.Second)
+
+	// Now the run is quiescent (inFlight==0, not terminated). But runWorktree==""
+	// so handleReset must return early without panicking.
+	run.Reset("a") // must not panic or cause any state change
+
+	time.Sleep(10 * time.Millisecond) // let inbox drain
+
+	snap := run.Snapshot()
+	if snap.Done {
+		t.Error("persistence-off reset: run unexpectedly Done")
+	}
+	for _, st := range snap.Steps {
+		if st.ID == "a" && st.Status != step.StatusStopped {
+			t.Errorf("persistence-off reset: step a status = %q; want Stopped (no-op)", st.Status)
+		}
+	}
+	run.Cancel()
 }

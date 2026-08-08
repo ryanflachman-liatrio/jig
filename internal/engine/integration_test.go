@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -596,4 +597,324 @@ func TestFinalMergeDiscardLeavesBase(t *testing.T) {
 	if out, err := gitCmd(repo, "rev-parse", "--verify", runBranchName("land", run.ID)); err != nil {
 		t.Errorf("discard should leave the run branch for inspection: %s", strings.TrimSpace(out))
 	}
+}
+
+// generationExec wraps composeExec and writes content that increments per
+// dispatch, so each re-run produces a distinct tree and git never sees
+// "nothing to commit" on a reset step worktree.
+type generationExec struct {
+	mu     sync.Mutex
+	counts map[string]int
+	base   *composeExec
+}
+
+func newGenerationExec(writes map[string]map[string]string) *generationExec {
+	return &generationExec{counts: make(map[string]int), base: &composeExec{writes: writes}}
+}
+
+func (e *generationExec) Execute(ctx context.Context, req StepRequest, rep Reporter) (*step.Result, error) {
+	e.mu.Lock()
+	e.counts[req.Step.ID]++
+	n := e.counts[req.Step.ID]
+	e.mu.Unlock()
+	// Stamp the content with the invocation count so each re-run is distinct.
+	if req.Worktree != "" {
+		for filename := range e.base.writes[req.Step.ID] {
+			content := fmt.Sprintf("step-%s run-%d", req.Step.ID, n)
+			_ = os.WriteFile(filepath.Join(req.Worktree, filename), []byte(content), 0o644)
+		}
+	}
+	return &step.Result{Status: step.StatusSucceeded}, nil
+}
+
+// waitForReviewRequest collects events until a ReviewRequest for stepID arrives
+// or timeout elapses. Returns the accumulated events.
+func waitForReviewRequest(t *testing.T, ch <-chan Event, stepID string, timeout time.Duration) []Event {
+	t.Helper()
+	deadline := time.After(timeout)
+	var events []Event
+	for {
+		select {
+		case e := <-ch:
+			events = append(events, e)
+			if rr, ok := e.(ReviewRequest); ok && rr.StepID == stepID {
+				return events
+			}
+			if _, ok := e.(RunFinished); ok {
+				t.Fatalf("RunFinished before ReviewRequest for %q", stepID)
+			}
+		case <-deadline:
+			t.Fatalf("timeout waiting for ReviewRequest for %q", stepID)
+		}
+	}
+}
+
+// waitForGeneration polls the snapshot until every step in want reaches the
+// given Generation, or the timeout elapses.
+func waitForGeneration(t *testing.T, run *Run, want map[string]int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		snap := run.Snapshot()
+		allOK := true
+		for _, st := range snap.Steps {
+			if wantGen, ok := want[st.ID]; ok && st.Generation != wantGen {
+				allOK = false
+				break
+			}
+		}
+		if allOK {
+			return
+		}
+		select {
+		case <-deadline:
+			snap := run.Snapshot()
+			t.Fatalf("timeout waiting for generation: snapshot=%v", snap.Steps)
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
+// fanoutResetWorkflow has: A (no deps), D (no deps, independent), B (depends A),
+// gate (review, depends B). The gate creates natural quiescence after A, B, D run.
+const fanoutResetWorkflow = `
+[workflow]
+name = "reset-fanout"
+version = "0.1"
+
+[[step]]
+id = "a"
+type = "command"
+run = "echo a"
+isolation = "worktree"
+
+[[step]]
+id = "d"
+type = "command"
+run = "echo d"
+isolation = "worktree"
+
+[[step]]
+id = "b"
+type = "command"
+run = "echo b"
+isolation = "worktree"
+depends_on = ["a"]
+
+[[step]]
+id = "gate"
+type = "review"
+review = "diff"
+output_type = "bool"
+depends_on = ["b"]
+`
+
+// TestResetFanOut verifies that Reset("a") on the fan-out workflow re-runs
+// A/B/gate (closure) while preserving D's state, commit, and Generation=0
+// (spec 08 Unit C2 — fan-out proof).
+func TestResetFanOut(t *testing.T) {
+	t.Parallel()
+	repo := t.TempDir()
+	initRepo(t, repo)
+
+	wf, err := workflow.Decode(fanoutResetWorkflow, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := newGenerationExec(map[string]map[string]string{
+		"a": {"a.txt": ""},
+		"b": {"b.txt": ""},
+		"d": {"d.txt": ""},
+	})
+	mgr := NewManager(exec, filepath.Join(repo, ".jig"))
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runBranch := runBranchName("reset-fanout", run.ID)
+
+	// First run: wait for gate (A, B, D done; gate parked → quiescent).
+	waitForReviewRequest(t, ch, "gate", 10*time.Second)
+
+	// Pre-reset: A, B, D each committed; gate has no commit (review step).
+	preCommits, err := stepCommitsFromLog(repo, runBranch)
+	if err != nil {
+		t.Fatalf("stepCommitsFromLog pre-reset: %v", err)
+	}
+	if len(preCommits) != 3 {
+		t.Errorf("pre-reset: want 3 commits (a, b, d), got %d: %v", len(preCommits), preCommits)
+	}
+	dPreSHA := preCommits["d"]
+	if dPreSHA == "" {
+		t.Fatal("pre-reset: D has no commit on run branch")
+	}
+
+	// Reset to "a": closure = {a, b, gate}; D is the only survivor.
+	run.Reset("a")
+
+	// Wait for the second ReviewRequest (A and B re-ran with Generation=1).
+	waitForReviewRequest(t, ch, "gate", 10*time.Second)
+
+	// Post-reset snapshot: D unchanged (Gen=0, Succeeded); A/B re-ran (Gen=1).
+	snap := run.Snapshot()
+	for _, st := range snap.Steps {
+		switch st.ID {
+		case "d":
+			if st.Status != step.StatusSucceeded {
+				t.Errorf("post-reset: step d status = %q; want Succeeded", st.Status)
+			}
+			if st.Generation != 0 {
+				t.Errorf("post-reset: step d Generation = %d; want 0 (untouched)", st.Generation)
+			}
+		case "a", "b":
+			if st.Status != step.StatusSucceeded {
+				t.Errorf("post-reset: step %q status = %q; want Succeeded", st.ID, st.Status)
+			}
+			if st.Generation != 1 {
+				t.Errorf("post-reset: step %q Generation = %d; want 1", st.ID, st.Generation)
+			}
+		case "gate":
+			if st.Generation != 1 {
+				t.Errorf("post-reset: step gate Generation = %d; want 1", st.Generation)
+			}
+		}
+	}
+
+	// Post-reset run branch: D present (cherry-picked — new SHA but same content),
+	// A and B re-committed (different SHAs from before).
+	postCommits, err := stepCommitsFromLog(repo, runBranch)
+	if err != nil {
+		t.Fatalf("stepCommitsFromLog post-reset: %v", err)
+	}
+	if len(postCommits) != 3 {
+		t.Errorf("post-reset: want 3 commits (d survivor + new a/b), got %d: %v", len(postCommits), postCommits)
+	}
+	if postCommits["d"] == "" {
+		t.Error("D has no commit on post-reset run branch; survivor cherry-pick failed")
+	}
+	// D's SHA changes after cherry-pick (different parent), but the old SHA must
+	// no longer be present — the run branch was rewound past it.
+	if postCommits["d"] == dPreSHA {
+		t.Errorf("D commit is unchanged: cherry-pick should have created a new SHA (different parent)")
+	}
+	if postCommits["a"] == "" {
+		t.Error("A has no commit after re-run")
+	}
+	if postCommits["a"] == preCommits["a"] {
+		t.Error("A commit unchanged after reset+re-run; want new commit (generationExec writes distinct content)")
+	}
+	if postCommits["b"] == "" {
+		t.Error("B has no commit after re-run")
+	}
+	if postCommits["b"] == preCommits["b"] {
+		t.Error("B commit unchanged after reset+re-run; want new commit")
+	}
+
+	run.Cancel()
+}
+
+// TestResetLinearTip verifies that Reset("b") on a linear A→B workflow re-runs
+// only B (the tip), leaves A's commit unchanged, and the run branch has A then
+// a new B commit (spec 08 Unit C2 — linear-tip proof).
+func TestResetLinearTip(t *testing.T) {
+	t.Parallel()
+	repo := t.TempDir()
+	initRepo(t, repo)
+
+	const toml = `
+[workflow]
+name = "reset-linear"
+version = "0.1"
+
+[[step]]
+id = "a"
+type = "command"
+run = "echo a"
+isolation = "worktree"
+
+[[step]]
+id = "b"
+type = "command"
+run = "echo b"
+isolation = "worktree"
+depends_on = ["a"]
+
+[[step]]
+id = "gate"
+type = "review"
+review = "diff"
+output_type = "bool"
+depends_on = ["b"]
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := newGenerationExec(map[string]map[string]string{
+		"a": {"a.txt": ""},
+		"b": {"b.txt": ""},
+	})
+	mgr := NewManager(exec, filepath.Join(repo, ".jig"))
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runBranch := runBranchName("reset-linear", run.ID)
+	waitForReviewRequest(t, ch, "gate", 10*time.Second)
+
+	preCommits, err := stepCommitsFromLog(repo, runBranch)
+	if err != nil {
+		t.Fatalf("stepCommitsFromLog pre-reset: %v", err)
+	}
+	aPreSHA := preCommits["a"]
+	bPreSHA := preCommits["b"]
+	if aPreSHA == "" || bPreSHA == "" {
+		t.Fatalf("pre-reset: missing commits a=%q b=%q", aPreSHA, bPreSHA)
+	}
+
+	// Reset to "b" only (linear tip). Closure = {b, gate}; A is untouched.
+	run.Reset("b")
+
+	// Wait for gate again (B re-ran).
+	waitForReviewRequest(t, ch, "gate", 10*time.Second)
+
+	// A unchanged (Gen=0), B re-ran (Gen=1), gate re-parked (Gen=1).
+	snap := run.Snapshot()
+	for _, st := range snap.Steps {
+		switch st.ID {
+		case "a":
+			if st.Generation != 0 {
+				t.Errorf("step a: Generation = %d; want 0 (untouched)", st.Generation)
+			}
+			if st.Status != step.StatusSucceeded {
+				t.Errorf("step a: status = %q; want Succeeded", st.Status)
+			}
+		case "b":
+			if st.Generation != 1 {
+				t.Errorf("step b: Generation = %d; want 1", st.Generation)
+			}
+		case "gate":
+			if st.Generation != 1 {
+				t.Errorf("step gate: Generation = %d; want 1", st.Generation)
+			}
+		}
+	}
+
+	// Run branch: A unchanged, B is a new commit.
+	postCommits, err := stepCommitsFromLog(repo, runBranch)
+	if err != nil {
+		t.Fatalf("stepCommitsFromLog post-reset: %v", err)
+	}
+	if postCommits["a"] != aPreSHA {
+		t.Errorf("A commit changed: pre=%q post=%q; want unchanged", aPreSHA, postCommits["a"])
+	}
+	if postCommits["b"] == bPreSHA {
+		t.Error("B commit unchanged after reset+re-run; want new commit")
+	}
+
+	run.Cancel()
 }

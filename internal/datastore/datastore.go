@@ -109,3 +109,25 @@ func OutputPath(runDir, stepID string) string {
 func OutputJSONPath(runDir, stepID string) string {
 	return filepath.Join(runDir, "steps", stepID, "output.json")
 }
+
+// ClearStepOutputs removes the derived per-step outputs for stepID —
+// result.json, output.md, and output.json — so a reset step starts fresh.
+// transcript.jsonl is intentionally left intact: it is append-only and a
+// re-run appends a new generation rather than overwriting history.
+// No-ops silently when runDir is empty (persistence-off path) or when any
+// individual file does not exist.
+func ClearStepOutputs(runDir, stepID string) error {
+	if runDir == "" {
+		return nil
+	}
+	for _, path := range []string{
+		ResultPath(runDir, stepID),
+		OutputPath(runDir, stepID),
+		OutputJSONPath(runDir, stepID),
+	} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("datastore: clear step %q output %q: %w", stepID, path, err)
+		}
+	}
+	return nil
+}

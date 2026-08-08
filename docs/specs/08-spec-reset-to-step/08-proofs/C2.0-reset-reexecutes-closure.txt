@@ -1,0 +1,28 @@
+=== RUN   TestResetFanOut
+=== PAUSE TestResetFanOut
+=== RUN   TestResetLinearTip
+=== PAUSE TestResetLinearTip
+=== RUN   TestResetGuard
+--- PASS: TestResetGuard (0.00s)
+=== RUN   TestResetPersistenceOff
+--- PASS: TestResetPersistenceOff (0.01s)
+=== CONT  TestResetFanOut
+=== CONT  TestResetLinearTip
+--- PASS: TestResetLinearTip (0.33s)
+--- PASS: TestResetFanOut (0.49s)
+PASS
+ok  	jig/internal/engine	0.691s
+
+TestResetFanOut verifies (fanout workflow: A→B→gate, D independent):
+  - Pre-reset: 3 commits on run branch (a, b, d)
+  - After Run.Reset("a"): D stays Succeeded/Generation=0
+  - After re-run: A and B re-ran with Generation=1; gate re-parked (Generation=1)
+  - Post-reset run branch: D cherry-picked (new SHA), new A commit, new B commit (3 total)
+
+TestResetLinearTip verifies (A→B→gate):
+  - After Run.Reset("b"): A unchanged (Generation=0, same commit SHA)
+  - B re-ran with Generation=1; gate re-parked (Generation=1)
+  - B has a new commit; A's commit SHA is unchanged
+
+TestResetGuard: Run.Reset on a settled (Done) run is a silent no-op — step a remains Succeeded.
+TestResetPersistenceOff: Run.Reset with no git persistence (runWorktree="") is a clean no-op — step a stays Stopped.

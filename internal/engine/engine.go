@@ -207,6 +207,13 @@ func (r *Run) Resume(stepID, message string) {
 	r.inbox <- resumeMsg{stepID: stepID, message: message}
 }
 
+// Reset rewinds the run branch to before stepID's transitive depends_on
+// closure, replays independent survivor commits, returns the closure to pending,
+// and bumps each reset step's Generation counter (spec 08 C2). Only valid on
+// an unfinished, quiescent run (no worker in flight); settled runs and in-flight
+// runs are silent no-ops. Persistence-off runs (no git) are also no-ops.
+func (r *Run) Reset(stepID string) { r.inbox <- resetMsg{stepID: stepID} }
+
 // Resolve delivers a human verdict for a review step (Phase 3+).
 func (r *Run) Resolve(stepID, verdict string) {
 	r.inbox <- verdictMsg{stepID: stepID, verdict: verdict}
@@ -391,6 +398,13 @@ type resumeMsg struct {
 	message string
 }
 
+// resetMsg asks the scheduler to reset the run to targetID (spec 08 C2).
+// handleReset rewinds the run branch to before the target's dependency closure,
+// replays survivors, and returns the closure to pending for re-dispatch.
+type resetMsg struct {
+	stepID string
+}
+
 func (stepDoneMsg) isSchedMsg()            {}
 func (verdictMsg) isSchedMsg()             {}
 func (userInputMsg) isSchedMsg()           {}
@@ -404,6 +418,7 @@ func (resolveIntegrationMsg) isSchedMsg()  {}
 func (finalMergeMsg) isSchedMsg()          {}
 func (stopMsg) isSchedMsg()                {}
 func (resumeMsg) isSchedMsg()              {}
+func (resetMsg) isSchedMsg()               {}
 
 // ── reporter ─────────────────────────────────────────────────────────────────
 
@@ -1263,6 +1278,9 @@ func (s *scheduler) handle(msg schedMsg) {
 	case resumeMsg:
 		s.handleResume(m)
 
+	case resetMsg:
+		s.handleReset(m)
+
 	case agentQuestionNotifyMsg:
 		// The agent step called AskUserQuestion; transition to StatusNeedsInput so
 		// the TUI can surface the question. The goroutine is still alive, blocked on
@@ -1398,6 +1416,111 @@ func (s *scheduler) handleResume(m resumeMsg) {
 	// full prompt and the runner starts a fresh session (documented degrade).
 	state.Attempt++
 	s.transition(m.stepID, step.StatusStopped, step.StatusPending)
+}
+
+// handleReset rewinds the run to before targetID's dependency closure (spec 08
+// C2). It is only valid on an unfinished, quiescent run; settled runs and runs
+// with a live worker are silent no-ops. The reset is a clean single-writer
+// mutation: no lock is needed because the scheduler goroutine owns all state.
+//
+// Ordering is crash-consistent: the StepsReset audit event and the
+// StepStatus(→pending) transitions are journaled *before* any destructive git
+// or file operation. A crash after journaling leaves the journal (showing
+// pending, no expected output) consistent with the deleted files.
+func (s *scheduler) handleReset(m resetMsg) {
+	// Guard: only on an unfinished, quiescent run with git persistence.
+	if s.terminated || s.inFlight > 0 || s.runWorktree == "" {
+		return
+	}
+
+	closure := s.closureOf(m.stepID)
+	if len(closure) == 0 {
+		return
+	}
+
+	rewindTo, survivors := s.rewindPlan(m.stepID)
+
+	// Journal the audit event and StepStatus(→pending) transitions BEFORE any
+	// destructive operation. A crash after this point leaves the journal in a
+	// state consistent with the pending/empty-output files that follow.
+	s.emit(StepsReset{
+		RunID:    s.runID,
+		Target:   m.stepID,
+		Closure:  closure,
+		RewindTo: rewindTo,
+	})
+	for _, id := range closure {
+		state := s.states[id]
+		if state == nil {
+			continue
+		}
+		s.transition(id, state.Status, step.StatusPending)
+	}
+
+	// Rewind the run branch and replay independent survivors.
+	if rewindTo != "" {
+		if out, err := gitCmd(s.runWorktree, "reset", "--hard", rewindTo); err != nil {
+			s.emit(RunError{RunID: s.runID,
+				Err: fmt.Sprintf("reset: git reset --hard %s: %v — %s", rewindTo, err, strings.TrimSpace(out))})
+			return
+		}
+		for _, sha := range survivors {
+			out, err := gitCmd(s.runWorktree, "cherry-pick", sha)
+			if err != nil {
+				// Conflict: abort the cherry-pick and leave the run parked. The
+				// conflicted paths are surfaced via IntegrationConflictRequest,
+				// reusing the gate from Foundation A (spec 06 A2).
+				_, _ = gitCmd(s.runWorktree, "cherry-pick", "--abort")
+				paths := mergeConflictPaths(s.runWorktree)
+				s.emit(IntegrationConflictRequest{RunID: s.runID, StepID: m.stepID, Paths: paths})
+				s.emit(RunError{RunID: s.runID,
+					Err: fmt.Sprintf("reset: cherry-pick %s: conflict — %s", sha, strings.TrimSpace(out))})
+				return
+			}
+		}
+	}
+
+	// Clear per-step derived outputs for the closure (result.json / output.*).
+	// transcript.jsonl is intentionally kept — the re-run appends a new generation.
+	for _, id := range closure {
+		_ = datastore.ClearStepOutputs(s.runDir, id)
+	}
+
+	// Reset in-memory state for each closure step and purge stale routing maps.
+	for _, id := range closure {
+		state := s.states[id]
+		if state == nil {
+			continue
+		}
+		state.Generation++
+		state.Attempt = 0
+		state.Iteration = 0
+		state.Result = nil
+		// status was already set to pending by the transition loop above
+
+		// Remove the step worktree so re-dispatch creates a fresh one rooted at
+		// the (now-rewound) run branch HEAD. Leaving a stale worktree would cause
+		// squash-merge to diverge from the reset state.
+		if path, ok := s.worktrees[id]; ok {
+			_ = removeWorktree(s.repoRoot, path) // best-effort; re-run creates a new one
+			delete(s.worktrees, id)
+			delete(s.wtBaseSHAs, id)
+		}
+		delete(s.diffs, id)
+
+		delete(s.stepCommits, id)
+		delete(s.resumeSessions, id)
+		delete(s.stepMessage, id)
+		delete(s.stepFeedback, id)
+		delete(s.rerunSource, id)
+		delete(s.recoverCount, id)
+		delete(s.reviewMessages, id)
+		delete(s.stepInputCount, id)
+		delete(s.pendingUserInputs, id)
+		delete(s.collectedUserInputs, id)
+		delete(s.preResolvedInputs, id)
+		delete(s.stopping, id)
+	}
 }
 
 // handleRecover applies a human recovery decision to a step parked in
