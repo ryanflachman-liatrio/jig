@@ -1109,6 +1109,156 @@ needs_input = "bool"
 	}
 }
 
+// TestSecurityConfig proves: zero-config workflow has security on by default;
+// valid [defaults.security] blocks parse and cascade to steps; invalid values
+// are rejected at load time.
+func TestSecurityConfig(t *testing.T) {
+	t.Run("zero config has security enabled by default", func(t *testing.T) {
+		toml := `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "command"
+run = "true"
+`
+		wf, err := Decode(toml, "")
+		if err != nil {
+			t.Fatalf("expected valid, got error: %v", err)
+		}
+		// Security.Enabled nil means "engine default on"; it is never set to false
+		// by the loader when the block is absent.
+		if wf.Defaults.Security.Enabled != nil {
+			t.Errorf("Defaults.Security.Enabled = %v, want nil (engine default on)", wf.Defaults.Security.Enabled)
+		}
+	})
+
+	t.Run("valid security config loads and cascades", func(t *testing.T) {
+		falseVal := false
+		_ = falseVal
+		toml := `
+[workflow]
+name = "x"
+version = "1"
+
+[defaults.security]
+fleet_budget_usd = 0.10
+outbound_allowlist = ["api.github.com", "storage.googleapis.com"]
+concurrency_cap = 2
+
+[[step]]
+id = "a"
+type = "command"
+run = "true"
+
+[[step]]
+id = "b"
+type = "command"
+run = "true"
+
+[step.security]
+enabled = false
+`
+		wf, err := Decode(toml, "")
+		if err != nil {
+			t.Fatalf("expected valid, got error: %v", err)
+		}
+		if wf.Defaults.Security.FleetBudgetUSD != 0.10 {
+			t.Errorf("FleetBudgetUSD = %g, want 0.10", wf.Defaults.Security.FleetBudgetUSD)
+		}
+		if len(wf.Defaults.Security.OutboundAllowlist) != 2 {
+			t.Errorf("OutboundAllowlist len = %d, want 2", len(wf.Defaults.Security.OutboundAllowlist))
+		}
+		// Step b has explicit security.enabled=false; step a inherits nil from defaults.
+		b := wf.Steps[wf.index["b"]]
+		if b.Security.Enabled == nil || *b.Security.Enabled != false {
+			t.Errorf("step b Security.Enabled = %v, want explicit false", b.Security.Enabled)
+		}
+		// Step a inherits the allowlist from [defaults.security].
+		a := wf.Steps[wf.index["a"]]
+		if len(a.Security.OutboundAllowlist) != 2 {
+			t.Errorf("step a inherited OutboundAllowlist len = %d, want 2", len(a.Security.OutboundAllowlist))
+		}
+	})
+
+	// Invalid cases.
+	invalidCases := []struct {
+		name string
+		toml string
+		want string
+	}{
+		{
+			name: "negative fleet_budget_usd",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[defaults.security]
+fleet_budget_usd = -1.0
+[[step]]
+id = "a"
+type = "command"
+run = "true"`,
+			want: "fleet_budget_usd must be >= 0",
+		},
+		{
+			name: "negative concurrency_cap",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[defaults.security]
+concurrency_cap = -1
+[[step]]
+id = "a"
+type = "command"
+run = "true"`,
+			want: "concurrency_cap must be >= 1",
+		},
+		{
+			name: "invalid hostname in outbound_allowlist",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[defaults.security]
+outbound_allowlist = ["https://api.example.com"]
+[[step]]
+id = "a"
+type = "command"
+run = "true"`,
+			want: "not a valid hostname",
+		},
+		{
+			name: "invalid hostname in step security override",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "command"
+run = "true"
+[step.security]
+outbound_allowlist = ["bad host with spaces"]`,
+			want: "not a valid hostname",
+		},
+	}
+
+	for _, tc := range invalidCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Decode(tc.toml, "")
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %q, want substring %q", err.Error(), tc.want)
+			}
+		})
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

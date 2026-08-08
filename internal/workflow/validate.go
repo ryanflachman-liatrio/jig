@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // ValidationError aggregates every problem found in a workflow so the user sees
@@ -42,6 +43,7 @@ func (wf *Workflow) validate(baseDir string) error {
 	// every step's fully-parsed schema.
 	v.resolveSchemas()
 	v.checkMeta()
+	v.checkSecurityConfig()
 	v.checkIDs()
 	for i := range wf.Steps {
 		v.checkStep(&wf.Steps[i])
@@ -120,6 +122,7 @@ func (v *validator) checkStep(s *Step) {
 	v.checkValidate(s)
 	v.checkLoop(s)
 	v.checkContext(s)
+	v.checkStepSecurity(s)
 }
 
 // checkTuning validates the model/reasoning knobs. These are inherited onto
@@ -611,6 +614,54 @@ func (v *validator) checkAcyclic() {
 			return // one cycle report is enough; the graph is unusable
 		}
 	}
+}
+
+// checkSecurityConfig validates the [defaults.security] block. Per-step
+// security overrides are validated by checkStepSecurity inside checkStep.
+func (v *validator) checkSecurityConfig() {
+	sec := &v.wf.Defaults.Security
+	if sec.FleetBudgetUSD < 0 {
+		v.errf("[defaults.security] fleet_budget_usd must be >= 0, got %g", sec.FleetBudgetUSD)
+	}
+	if sec.ConcurrencyCap < 0 {
+		v.errf("[defaults.security] concurrency_cap must be >= 1 when set, got %d", sec.ConcurrencyCap)
+	}
+	for i, host := range sec.OutboundAllowlist {
+		if !isValidHost(host) {
+			v.errf("[defaults.security] outbound_allowlist[%d] %q is not a valid hostname", i, host)
+		}
+	}
+}
+
+// checkStepSecurity validates a step's [step.security] override block.
+func (v *validator) checkStepSecurity(s *Step) {
+	for i, host := range s.Security.OutboundAllowlist {
+		if !isValidHost(host) {
+			v.errf("step %q [step.security] outbound_allowlist[%d] %q is not a valid hostname", s.ID, i, host)
+		}
+	}
+}
+
+// isValidHost reports whether s looks like a valid hostname (or host:port).
+// The check is intentionally simple: non-empty, no whitespace, no scheme,
+// only letters/digits/dots/hyphens/colons.
+func isValidHost(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if unicode.IsSpace(r) {
+			return false
+		}
+		if r == ':' || r == '.' || r == '-' || r == '_' ||
+			(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') {
+			continue
+		}
+		// reject scheme separators and path chars
+		return false
+	}
+	return true
 }
 
 func contains(ss []string, s string) bool {

@@ -203,7 +203,7 @@ cannot be parked (best-effort to the nearest live decision point).
 
 ---
 
-### [ ] 7.0 Unit 6 — Configuration, opt-out, and documentation
+### [x] 7.0 Unit 6 — Configuration, opt-out, and documentation
 
 **Make the layer configurable and documented.** Hardcoded default-on config in the
 engine (no file required, security is on with zero workflow config); workflows
@@ -220,9 +220,9 @@ raise-don't-kill decisions.
 
 #### 7.0 Tasks
 
-- [ ] 7.1 Add `SecurityConfig` struct to `internal/workflow/schema.go` with fields: `Enabled *bool`, `Tier1Enabled *bool`, `Tier2Enabled *bool`, `OutboundAllowlist []string`, `FleetBudgetUSD float64`, `ConcurrencyCap int`, `BatchSize int`, `DebounceMs int`. Add `StepSecurity` (subset of per-step overrideable fields). Add a `Security SecurityConfig` field to `Defaults` and a `Security StepSecurity` field to `Step`.
-- [ ] 7.2 In `internal/workflow/load.go`, cascade `SecurityConfig` in `applyDefaults`: if a step's `Security` field is unset, inherit from `wf.Defaults.Security` (same precedence as `model`/`effort`). Define the engine-side hardcoded default-on config as a package-level constant or init var in `internal/sentinel`.
-- [ ] 7.3 In `internal/workflow/validate.go`, validate `SecurityConfig`: `FleetBudgetUSD` must be ≥ 0; `ConcurrencyCap` must be ≥ 1 when set; `OutboundAllowlist` entries must be valid hostnames (simple string check). Add one `TestDecodeValid` case and at least two `TestDecodeInvalid` cases in `internal/workflow/workflow_test.go`.
-- [ ] 7.4 Add a `[defaults.security]` block to `examples/feature.toml` demonstrating opt-out and per-step override. Run `go run ./cmd/jig validate examples/feature.toml` and capture the exit-0 output to `10-proofs/6.1-validate-ok.txt`.
-- [ ] 7.5 Write the `docs/security-monitoring.md` document covering: two tiers and when each fires, the `findings.jsonl` record format, the redaction guarantee (findings *and* transcript), the escalation policy (best-effort, raise-don't-kill), cost accounting and fleet budget, and the monitor roster.
-- [ ] 7.6 Update `docs/workflow-schema.md` with a `[defaults.security]` / `[step.security]` reference section. Write `docs/adr/NNNN-agent-security-monitoring.md` recording the out-of-band + raise-don't-kill decisions (consistent with ADR 0003 format). Capture test output to `10-proofs/6.0-config-validate.txt`.
+- [x] 7.1 Add `SecurityConfig` struct to `internal/workflow/schema.go` with fields: `Enabled *bool`, `Tier1Enabled *bool`, `Tier2Enabled *bool`, `OutboundAllowlist []string`, `FleetBudgetUSD float64`, `ConcurrencyCap int`, `BatchSize int`, `DebounceMs int`. Add `StepSecurity` (subset of per-step overrideable fields). Add a `Security SecurityConfig` field to `Defaults` and a `Security StepSecurity` field to `Step`.
+- [x] 7.2 In `internal/workflow/load.go`, cascade `SecurityConfig` in `applyDefaults`: if a step's `Security` field is unset, inherit from `wf.Defaults.Security` (same precedence as `model`/`effort`). Define the engine-side hardcoded default-on config as a package-level constant or init var in `internal/sentinel`.
+- [x] 7.3 In `internal/workflow/validate.go`, validate `SecurityConfig`: `FleetBudgetUSD` must be ≥ 0; `ConcurrencyCap` must be ≥ 1 when set; `OutboundAllowlist` entries must be valid hostnames (simple string check). Add one `TestDecodeValid` case and at least two `TestDecodeInvalid` cases in `internal/workflow/workflow_test.go`.
+- [x] 7.4 Add a `[defaults.security]` block to `examples/feature.toml` demonstrating opt-out and per-step override. Run `go run ./cmd/jig validate examples/feature.toml` and capture the exit-0 output to `10-proofs/6.1-validate-ok.txt`.
+- [x] 7.5 Write the `docs/security-monitoring.md` document covering: two tiers and when each fires, the `findings.jsonl` record format, the redaction guarantee (findings *and* transcript), the escalation policy (best-effort, raise-don't-kill), cost accounting and fleet budget, and the monitor roster.
+- [x] 7.6 Update `docs/workflow-schema.md` with a `[defaults.security]` / `[step.security]` reference section. Write `docs/adr/NNNN-agent-security-monitoring.md` recording the out-of-band + raise-don't-kill decisions (consistent with ADR 0003 format). Capture test output to `10-proofs/6.0-config-validate.txt`.

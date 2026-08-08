@@ -127,6 +127,22 @@ func (wf *Workflow) applyDefaults() {
 			s.injectContext = *wf.Defaults.InjectContext
 		}
 
+		// Security: step fields override [defaults.security] when explicitly
+		// set (non-nil pointer / non-empty slice), following the same
+		// zero-value precedence as model/effort.
+		if s.Security.Enabled == nil && wf.Defaults.Security.Enabled != nil {
+			s.Security.Enabled = wf.Defaults.Security.Enabled
+		}
+		if s.Security.Tier1Enabled == nil && wf.Defaults.Security.Tier1Enabled != nil {
+			s.Security.Tier1Enabled = wf.Defaults.Security.Tier1Enabled
+		}
+		if s.Security.Tier2Enabled == nil && wf.Defaults.Security.Tier2Enabled != nil {
+			s.Security.Tier2Enabled = wf.Defaults.Security.Tier2Enabled
+		}
+		if len(s.Security.OutboundAllowlist) == 0 && len(wf.Defaults.Security.OutboundAllowlist) > 0 {
+			s.Security.OutboundAllowlist = wf.Defaults.Security.OutboundAllowlist
+		}
+
 		// Worktree isolation is defaulted on for agent steps that carry
 		// mutating tools; everything else runs in place unless asked otherwise.
 		if s.Type == StepAgent && s.Isolation == "" {

@@ -139,6 +139,47 @@ type Meta struct {
 	Description string `toml:"description"`
 }
 
+// SecurityConfig configures the two-tier agent security monitoring layer.
+// Security is on by default when no [defaults.security] block is present; set
+// enabled = false to opt out. Fleet-wide knobs (budget, concurrency, batching)
+// live here; per-step overrides live in StepSecurity.
+type SecurityConfig struct {
+	// Enabled gates the entire security layer. nil = engine default (on).
+	Enabled      *bool `toml:"enabled"`
+	Tier1Enabled *bool `toml:"tier1_enabled"` // deterministic guard (default on)
+	Tier2Enabled *bool `toml:"tier2_enabled"` // LLM monitor fleet (default on)
+
+	// OutboundAllowlist is the set of hostnames the Tier-1 guard permits for
+	// WebFetch and curl/wget Bash calls. Entries are validated as hostnames at
+	// load time.
+	OutboundAllowlist []string `toml:"outbound_allowlist"`
+
+	// Fleet budget: Tier-2 monitor dispatch stops and degrades to Tier-1-only
+	// once the accumulated monitor cost reaches this ceiling. 0 = no ceiling.
+	FleetBudgetUSD float64 `toml:"fleet_budget_usd"`
+
+	// ConcurrencyCap limits simultaneous Tier-2 monitor dispatches. 0 = use
+	// the engine default. Must be >= 1 when explicitly set.
+	ConcurrencyCap int `toml:"concurrency_cap"`
+
+	// BatchSize and DebounceMs control how Tier-2 batches incoming transcript
+	// entries before dispatching a monitor agent. 0 = use engine defaults.
+	BatchSize  int `toml:"batch_size"`
+	DebounceMs int `toml:"debounce_ms"`
+}
+
+// StepSecurity is the per-step overrideable subset of SecurityConfig. Fleet-wide
+// settings (budget, concurrency, batch, debounce) apply at the run level and
+// cannot be overridden per step.
+type StepSecurity struct {
+	Enabled      *bool `toml:"enabled"`
+	Tier1Enabled *bool `toml:"tier1_enabled"`
+	Tier2Enabled *bool `toml:"tier2_enabled"`
+	// OutboundAllowlist adds step-local host exceptions on top of (or instead
+	// of) the workflow-wide allowlist when non-empty.
+	OutboundAllowlist []string `toml:"outbound_allowlist"`
+}
+
 // Defaults is the [defaults] table. Per-step fields override these.
 type Defaults struct {
 	Model             string      `toml:"model"`
@@ -157,6 +198,10 @@ type Defaults struct {
 	// (nil ⇒ enabled) stays distinct from an explicit false; a per-step
 	// inject_context overrides it.
 	InjectContext *bool `toml:"inject_context"`
+
+	// Security is the workflow-wide security monitoring configuration. Security
+	// is on by default when this block is absent.
+	Security SecurityConfig `toml:"security"`
 }
 
 // Step is one node in the workflow graph. Fields are grouped by the step type
@@ -235,8 +280,9 @@ type Step struct {
 	// TUI surfaces a compose box; on false the step succeeds and downstream proceeds.
 	BlockOn string `toml:"block_on"`
 
-	Validate *Validate `toml:"validate"`
-	Loop     *Loop     `toml:"loop"`
+	Validate *Validate    `toml:"validate"`
+	Loop     *Loop        `toml:"loop"`
+	Security StepSecurity `toml:"security"`
 }
 
 // AgentPrompt returns the body of the resolved agent file for this step, or ""

@@ -583,6 +583,69 @@ a well-formed DAG.
 
 ---
 
+## Security monitoring (`[defaults.security]` / `[step.security]`)
+
+jig wraps every agent step in a two-tier security layer. Security is **on by
+default** — no configuration is needed to enable it. Opt out or tune it via
+`[defaults.security]` (workflow-wide) and `[step.security]` (per-step
+override).
+
+### `[defaults.security]`
+
+```toml
+[defaults.security]
+enabled            = true          # false disables both tiers for all steps
+tier1_enabled      = true          # Tier-1: deterministic guard (LLM-free)
+tier2_enabled      = true          # Tier-2: out-of-band LLM monitor fleet
+outbound_allowlist = ["api.github.com", "storage.googleapis.com"]
+fleet_budget_usd   = 0.10          # per-run Tier-2 cost ceiling; 0 = no limit
+concurrency_cap    = 4             # max simultaneous Tier-2 dispatches; 0 = engine default
+batch_size         = 5             # transcript entries before forcing a monitor flush
+debounce_ms        = 500           # debounce window before flushing
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `enabled` | bool | Disables both tiers when `false`. Default: `true`. |
+| `tier1_enabled` | bool | Toggle Tier-1 deterministic guard. Default: `true`. |
+| `tier2_enabled` | bool | Toggle Tier-2 LLM monitor fleet. Default: `true`. |
+| `outbound_allowlist` | [string] | Hosts permitted for `WebFetch` and curl/wget. Validated as hostnames at load time. |
+| `fleet_budget_usd` | float | Per-run Tier-2 spend ceiling. When exceeded, Tier-2 degrades to Tier-1-only without blocking the run. `0` means no ceiling. Must be `>= 0`. |
+| `concurrency_cap` | int | Max simultaneous Tier-2 monitor dispatches. Must be `>= 1` when set; `0` uses the engine default. |
+| `batch_size` | int | Flush window size (entry count). `0` uses the engine default. |
+| `debounce_ms` | int | Flush debounce in milliseconds. `0` uses the engine default. |
+
+### `[step.security]`
+
+A per-step subset of `SecurityConfig`. Fleet-wide fields (`fleet_budget_usd`,
+`concurrency_cap`, `batch_size`, `debounce_ms`) are not overrideable per step.
+
+```toml
+[[step]]
+id         = "security_scan"
+type       = "agent"
+agent_file = "agents/security-reviewer.md"
+
+  [step.security]
+  tier2_enabled = false   # disable Tier-2 fleet monitors on this step only
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `enabled` | bool | Opt this step out of both tiers. |
+| `tier1_enabled` | bool | Toggle Tier-1 guard for this step. |
+| `tier2_enabled` | bool | Toggle Tier-2 monitors for this step. |
+| `outbound_allowlist` | [string] | Step-local host exceptions; inherits from `[defaults.security]` when empty. |
+
+**Inheritance** follows the same zero-value precedence as `model`/`effort`: an
+explicit per-step value wins, else `[defaults.security]`, else the engine's
+built-in default (on).
+
+For the full two-tier architecture, findings format, redaction guarantee, and
+escalation policy, see [`docs/security-monitoring.md`](security-monitoring.md).
+
+---
+
 ## MVP 1 scope
 
 **In:** DAG orchestration, parallel/sync, worktree isolation, deterministic

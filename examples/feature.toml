@@ -107,6 +107,13 @@ permission_mode     = "acceptEdits"
 max_parallel        = 3
 artifacts_dir       = ".jig/artifacts"
 
+# Security monitoring layer — two tiers (Tier-1: deterministic guard;
+# Tier-2: out-of-band LLM monitors). On by default; opt out with
+# enabled = false. fleet_budget_usd caps the total Tier-2 spend per run.
+[defaults.security]
+fleet_budget_usd   = 0.10
+outbound_allowlist = ["api.github.com", "storage.googleapis.com"]
+
 # ─── 1. Intake ───────────────────────────────────────────────────────────────
 # Classifies the request and extracts the areas to research.
 # Shows: schema_file, inline input, per-step effort + max_budget_usd overrides.
@@ -193,6 +200,12 @@ block_on   = "security_scan.needs_input"
   question    = "text"     # surfaced in the TUI compose box when needs_input is true
   risk_level  = { enum = ["none", "low", "medium", "high", "critical"] }
   findings    = { list = { title = "text", severity = { enum = ["low", "medium", "high", "critical"] }, file = "text", detail = "text" } }
+
+  # Per-step security override: Tier-1 guard stays active; disable Tier-2
+  # fleet monitors on this step (the security scanner is itself a read-only
+  # analysis agent and doesn't need meta-monitoring).
+  [step.security]
+  tier2_enabled = false
 
 # ─── 5. Plan (join) ─────────────────────────────────────────────────────────
 # Waits for all three parallel steps, then synthesises an implementation plan.
