@@ -470,6 +470,9 @@ func (r *reporter) Message(seq, iteration int) {
 	r.ev(StepMessage{Seq: seq, Iteration: iteration})
 }
 
+// Finding routes a SecurityFinding through the ctrl channel (must-not-drop).
+func (r *reporter) Finding(sf SecurityFinding) { r.ev(sf) }
+
 // Question delivers an AskUserQuestion from the running agent to the scheduler,
 // transitions the step to StatusNeedsInput, and blocks until the human answers
 // via Run.AnswerQuestion. Runs in the executor goroutine.
@@ -1031,6 +1034,10 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 				case inbox <- agentQuestionNotifyMsg{stepID: stepID}:
 				default:
 				}
+			case SecurityFinding:
+				// Must-not-drop: rides ctrl, not live.
+				e.RunID, e.StepID = runID, stepID
+				fanOutCtrl(subs, e)
 			}
 		},
 	}

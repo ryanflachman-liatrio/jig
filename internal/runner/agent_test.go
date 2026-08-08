@@ -12,6 +12,7 @@ import (
 	claudecode "github.com/severity1/claude-agent-sdk-go"
 
 	"jig/internal/engine"
+	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/transcript"
 	"jig/internal/workflow"
@@ -22,6 +23,7 @@ import (
 type captureReporter struct {
 	messages []captureMsg
 	deltas   []string
+	findings []engine.SecurityFinding
 }
 
 type captureMsg struct{ seq, iteration int }
@@ -32,6 +34,9 @@ func (r *captureReporter) Message(seq, iteration int) {
 	r.messages = append(r.messages, captureMsg{seq, iteration})
 }
 func (r *captureReporter) Question(_ string, _ []engine.AgentQuestionItem) string { return "" }
+func (r *captureReporter) Finding(sf engine.SecurityFinding) {
+	r.findings = append(r.findings, sf)
+}
 
 // scriptChan turns a fixed message list into the closed channel captureStream
 // consumes — mimicking a completed SDK stream with no live connection.
@@ -714,6 +719,122 @@ func TestBuildAgentPromptPrependsContext(t *testing.T) {
 }
 
 func floatPtr(f float64) *float64 { return &f }
+
+// TestBlockedAndRedacted proves the transcript-redaction and finding-production
+// paths when the Tier-1 guard is active. The test uses a scripted SDK channel
+// (no live Claude Code CLI required) carrying an AssistantMessage whose
+// ToolUseBlock input contains a fake AWS key.
+//
+// The test asserts:
+//   - The transcript.jsonl entry has the key redacted (no raw AKIAIOSFODNN7EXAMPLE).
+//   - The captureReporter received a SecurityFinding via rep.Finding.
+//   - The findings.jsonl file on disk holds exactly one blocked finding.
+//   - A tool_use block without secrets passes through unmodified.
+func TestBlockedAndRedacted(t *testing.T) {
+	dir := t.TempDir()
+	tPath := filepath.Join(dir, "transcript.jsonl")
+	fPath := filepath.Join(dir, "findings.jsonl")
+
+	const fakeKey = "AKIAIOSFODNN7EXAMPLE"
+
+	// AssistantMessage: two tool_use blocks — one with a secret, one clean.
+	secretInput := map[string]any{
+		"file_path": "config.txt",
+		"content":   "aws_access_key_id = " + fakeKey,
+	}
+	cleanInput := map[string]any{
+		"file_path": "main.go",
+		"content":   "package main\n",
+	}
+	secretInputJSON, _ := json.Marshal(secretInput)
+	cleanInputJSON, _ := json.Marshal(cleanInput)
+
+	assistant := &claudecode.AssistantMessage{
+		Content: []claudecode.ContentBlock{
+			&claudecode.ToolUseBlock{ToolUseID: "tu1", Name: "Write", Input: secretInput},
+			&claudecode.ToolUseBlock{ToolUseID: "tu2", Name: "Write", Input: cleanInput},
+		},
+	}
+	result := &claudecode.ResultMessage{IsError: false}
+
+	rep := &captureReporter{}
+	guard := sentinel.NewGuard(nil) // nil allowlist = outbound rule disabled
+	req := engine.StepRequest{
+		RunID:          "run1",
+		Step:           &workflow.Step{ID: "impl"},
+		TranscriptPath: tPath,
+		FindingsPath:   fPath,
+		Guard:          guard,
+		Iteration:      1,
+	}
+
+	res, err := captureStream(scriptChan(assistant, result), req, rep, time.Now(), "")
+	if err != nil {
+		t.Fatalf("captureStream: %v", err)
+	}
+	if res.Status != step.StatusSucceeded {
+		t.Fatalf("status = %q, want succeeded: %s", res.Status, res.Err)
+	}
+
+	// --- Transcript assertions ---
+	r, _ := transcript.Open(tPath)
+	entries, _ := r.Window(0, 0)
+	if len(entries) != 1 {
+		t.Fatalf("want 1 transcript entry (assistant), got %d", len(entries))
+	}
+	blocks := entries[0].Blocks
+	if len(blocks) != 2 {
+		t.Fatalf("want 2 tool_use blocks, got %d", len(blocks))
+	}
+
+	// Block 0: secret Write — raw key must be absent, redacted form present.
+	b0 := string(blocks[0].Input)
+	if strings.Contains(b0, fakeKey) {
+		t.Errorf("transcript block 0 contains raw key (not redacted): %s", b0)
+	}
+	if !strings.Contains(b0, "aws-key") {
+		t.Errorf("transcript block 0 missing redaction marker 'aws-key': %s", b0)
+	}
+	// Original clean input confirms the unredacted block is unchanged.
+	_ = string(secretInputJSON)
+
+	// Block 1: clean Write — input must be byte-identical to the original JSON.
+	b1 := string(blocks[1].Input)
+	if !strings.Contains(b1, "main.go") || strings.Contains(b1, "aws-key") {
+		t.Errorf("transcript block 1 (clean) was unexpectedly modified: %s", b1)
+	}
+	_ = string(cleanInputJSON)
+
+	// --- Reporter assertions ---
+	if len(rep.findings) != 1 {
+		t.Fatalf("want 1 SecurityFinding emitted, got %d", len(rep.findings))
+	}
+	sf := rep.findings[0]
+	if sf.Tier != "guard" {
+		t.Errorf("finding Tier = %q, want guard", sf.Tier)
+	}
+	if sf.Action != "blocked" {
+		t.Errorf("finding Action = %q, want blocked", sf.Action)
+	}
+	if sf.Monitor != "secret-in-write" {
+		t.Errorf("finding Monitor = %q, want secret-in-write", sf.Monitor)
+	}
+
+	// --- findings.jsonl assertions ---
+	fFindings, err := sentinel.ReadAll(fPath)
+	if err != nil {
+		t.Fatalf("ReadAll findings: %v", err)
+	}
+	if len(fFindings) != 1 {
+		t.Fatalf("want 1 finding on disk, got %d", len(fFindings))
+	}
+	if strings.Contains(fFindings[0].Detail, fakeKey) {
+		t.Errorf("finding Detail contains raw key: %s", fFindings[0].Detail)
+	}
+	if fFindings[0].Action != sentinel.ActionBlocked {
+		t.Errorf("finding Action = %q, want blocked", fFindings[0].Action)
+	}
+}
 
 // TestCostCapture verifies that captureStream populates TotalCostUSD from the
 // SDK ResultMessage. A result without cost yields a nil pointer (not $0.00).

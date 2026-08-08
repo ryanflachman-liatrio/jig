@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 
+	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/workflow"
 )
@@ -42,6 +43,16 @@ type StepRequest struct {
 	// the query prompt instead of the freshly-built full prompt.
 	ResumeSessionID string
 	Message         string
+
+	// Guard, when non-nil, activates the Tier-1 deterministic firewall for this
+	// step. The runner registers a WithCanUseTool callback that calls Guard.Check
+	// before each tool executes. The guard also forces PermissionModeDefault (the
+	// only mode in which the SDK callback actually fires — acceptEdits bypasses it).
+	Guard *sentinel.Guard
+	// FindingsPath is the absolute path to the per-run findings.jsonl. When
+	// non-empty the runner appends a Finding record for every blocked/escalated
+	// tool call. "" disables persistence (persistence-off path).
+	FindingsPath string
 }
 
 // ResolvedInput pairs an original workflow.Input with its resolved value.
@@ -62,4 +73,8 @@ type Reporter interface {
 	// Question delivers a dynamic AskUserQuestion from the agent to the scheduler
 	// and blocks until the human provides an answer. Returns the user's answer text.
 	Question(toolUseID string, questions []AgentQuestionItem) string
+	// Finding routes a SecurityFinding through the ctrl channel (must-not-drop).
+	// Called by the runner when the Tier-1 guard or Tier-2 monitor fleet produces
+	// a finding for this step.
+	Finding(sf SecurityFinding)
 }

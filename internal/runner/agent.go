@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	claudecode "github.com/severity1/claude-agent-sdk-go"
 
 	"jig/internal/engine"
+	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/transcript"
 	"jig/internal/workflow"
@@ -54,6 +56,30 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 			claudecode.WithContinueConversation(true),
 		)
 	}
+
+	// When a Tier-1 guard is active, force PermissionModeDefault so the SDK
+	// invokes the WithCanUseTool callback. acceptEdits auto-approves writes
+	// without calling the callback (confirmed by SDK source — see seam probe).
+	if req.Guard != nil {
+		opts = append(opts, claudecode.WithPermissionMode(claudecode.PermissionModeDefault))
+		guard := req.Guard
+		opts = append(opts, claudecode.WithCanUseTool(func(
+			_ context.Context,
+			toolName string,
+			input map[string]any,
+			_ claudecode.ToolPermissionContext,
+		) (claudecode.PermissionResult, error) {
+			dec := guard.Check(toolName, input)
+			if dec.Allow {
+				return claudecode.NewPermissionResultAllow(), nil
+			}
+			// Deny/escalate: findings and SecurityFinding event are produced by
+			// captureStream when it processes the AssistantMessage. The callback
+			// only needs to return the denial so the SDK feeds it back to the agent.
+			return claudecode.NewPermissionResultDeny(dec.Reason), nil
+		}))
+	}
+
 	client := claudecode.NewClient(opts...)
 	if err := client.Connect(ctx); err != nil {
 		return failResult(fmt.Sprintf("agent connect: %v", err), start), nil
@@ -243,6 +269,18 @@ func captureStream(
 		defer func() { _ = w.Close() }()
 	}
 
+	// Open the findings sink when the guard is active and persistence is on.
+	// A nil guard or empty FindingsPath leaves fw nil (no-op path).
+	var fw *sentinel.Writer
+	if req.Guard != nil && req.FindingsPath != "" {
+		var err error
+		fw, err = sentinel.NewWriter(req.FindingsPath)
+		if err != nil {
+			return failResult(fmt.Sprintf("findings sink: %v", err), start), nil
+		}
+		defer func() { _ = fw.Close() }()
+	}
+
 	// append writes one entry and nudges the TUI. Empty-block entries (e.g. a
 	// user message that is only prompt text, no tool results) are skipped so the
 	// transcript stays a record of substantive turns.
@@ -288,7 +326,7 @@ func captureStream(
 				noteSession(id)
 			}
 		case *claudecode.AssistantMessage:
-			blocks, _ := assistantBlocks(m)
+			blocks := guardBlocks(m, req, rep, fw)
 			appendEntry(transcript.RoleAssistant, blocks)
 			if m.HasError() {
 				appendEntry(transcript.RoleSystem, []transcript.Block{{
@@ -417,6 +455,69 @@ func assistantBlocks(m *claudecode.AssistantMessage) ([]transcript.Block, string
 		}
 	}
 	return blocks, text.String()
+}
+
+// guardBlocks calls assistantBlocks then, when the guard is active, scans
+// every tool_use block's input for policy violations. For each violation it
+// produces a Finding (written to fw and emitted as a SecurityFinding ctrl
+// event), and redacts the block's Input so that no raw secret lands in
+// transcript.jsonl.
+//
+// When req.Guard is nil the function is a thin wrapper around assistantBlocks
+// and the result is byte-identical to the pre-guard path.
+func guardBlocks(m *claudecode.AssistantMessage, req engine.StepRequest, rep engine.Reporter, fw *sentinel.Writer) []transcript.Block {
+	blocks, _ := assistantBlocks(m)
+	if req.Guard == nil {
+		return blocks
+	}
+	for i, b := range blocks {
+		if b.Type != transcript.BlockToolUse || b.Input == nil {
+			continue
+		}
+		var input map[string]any
+		if err := json.Unmarshal(b.Input, &input); err != nil {
+			continue
+		}
+		// Redact secrets before the block is appended to transcript.jsonl.
+		if redacted := sentinel.RedactJSON(b.Name, b.Input); !bytes.Equal(redacted, b.Input) {
+			blocks[i].Input = redacted
+		}
+		dec := req.Guard.Check(b.Name, input)
+		if !dec.Allow {
+			evidenceKey := "tool:" + b.Name + ":" + b.ToolUseID
+			fp := sentinel.NewFingerprint(req.Step.ID, dec.Monitor, evidenceKey)
+			sev := sentinel.SeverityHigh
+			if dec.Action == sentinel.ActionEscalated {
+				sev = sentinel.SeverityCritical
+			}
+			f := sentinel.Finding{
+				Ts:          time.Now().UTC(),
+				RunID:       req.RunID,
+				StepID:      req.Step.ID,
+				Iteration:   req.Iteration,
+				Tier:        sentinel.TierGuard,
+				Monitor:     dec.Monitor,
+				Severity:    sev,
+				Action:      dec.Action,
+				Detail:      dec.Reason,
+				Evidence:    evidenceKey,
+				Fingerprint: fp,
+			}
+			if fw != nil {
+				_ = fw.Append(f)
+			}
+			rep.Finding(engine.SecurityFinding{
+				RunID:       req.RunID,
+				StepID:      req.Step.ID,
+				Tier:        string(sentinel.TierGuard),
+				Monitor:     dec.Monitor,
+				Severity:    string(sev),
+				Action:      string(dec.Action),
+				Fingerprint: fp,
+			})
+		}
+	}
+	return blocks
 }
 
 // toolResultBlocks extracts tool_result blocks from a user message. Messages
