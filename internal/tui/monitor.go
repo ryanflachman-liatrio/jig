@@ -183,6 +183,14 @@ type monitorModel struct {
 	chatVP viewport.Model // Transcript panel scroll — independent scroll position
 	ready  bool
 
+	// chatAutoScroll tracks whether the Transcript panel should follow new
+	// content to the bottom. True by default; cleared when the user scrolls up;
+	// restored when the user scrolls back to bottom or navigates to a new step.
+	chatAutoScroll bool
+	// pendingGPrefix is set on a single 'g' keypress in the Transcript panel
+	// to arm the gg→GotoTop chord; any other key clears it.
+	pendingGPrefix bool
+
 	width  int
 	height int
 
@@ -290,14 +298,15 @@ type monitorStep struct {
 
 func newMonitorModel(runID string) monitorModel {
 	return monitorModel{
-		runID:        runID,
-		keys:         defaultMonitorKeys(),
-		index:        make(map[string]int),
-		stepOutput:   make(map[string]*strings.Builder),
-		msgCount:     make(map[string]int),
-		chatExpand:   make(map[blockKey]bool),
-		chatRendered: make(map[blockKey]string),
-		reviews:      make(map[string]engine.ReviewRequest),
+		runID:          runID,
+		keys:           defaultMonitorKeys(),
+		index:          make(map[string]int),
+		stepOutput:     make(map[string]*strings.Builder),
+		msgCount:       make(map[string]int),
+		chatExpand:     make(map[blockKey]bool),
+		chatRendered:   make(map[blockKey]string),
+		reviews:        make(map[string]engine.ReviewRequest),
+		chatAutoScroll: true,
 	}
 }
 
@@ -370,7 +379,6 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 
 	case engineEventMsg:
 		var evCmd tea.Cmd
-		wasAtBottom := m.chatVP.AtBottom()
 		m, evCmd = m.handleEngineEvent(msg.event)
 		// The Transcript panel always shows the cursor's step; point it at the
 		// first step as soon as the run's steps are known (eager reload).
@@ -381,7 +389,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 		if m.ready {
 			m.vp.SetContent(m.listBody())
 			m.chatVP.SetContent(m.chatBody())
-			if wasAtBottom {
+			if m.chatAutoScroll {
 				m.chatVP.GotoBottom()
 			}
 		}
@@ -477,6 +485,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 	var cmd tea.Cmd
 	if m.focus == focusTranscript {
 		m.chatVP, cmd = m.chatVP.Update(msg)
+		m.chatAutoScroll = m.chatVP.AtBottom()
 	} else {
 		m.vp, cmd = m.vp.Update(msg)
 	}
@@ -719,6 +728,28 @@ func (m monitorModel) updateSteps(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 // h/esc return focus to the Steps panel. Remaining keys
 // (j/k/ctrl+d/ctrl+u/pgup/pgdn) scroll the transcript viewport.
 func (m monitorModel) updateTranscript(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
+	// G jumps to the bottom and re-enables auto-scroll (always processed first
+	// so shift+G never starts a gg chord).
+	if keybind.Matches(msg, m.keys.GotoBottom) {
+		m.pendingGPrefix = false
+		m.chatVP.GotoBottom()
+		m.chatAutoScroll = true
+		return m, nil
+	}
+	// gg chord: first g arms the prefix; second g fires GotoTop.
+	if keybind.Matches(msg, m.keys.GotoTop) {
+		if m.pendingGPrefix {
+			m.pendingGPrefix = false
+			m.chatVP.GotoTop()
+			m.chatAutoScroll = false
+			return m, nil
+		}
+		m.pendingGPrefix = true
+		return m, nil
+	}
+	// Any other key cancels a pending g prefix before further processing.
+	m.pendingGPrefix = false
+
 	switch {
 	case keybind.Matches(msg, m.keys.TransToSteps):
 		m.focus = focusSteps
@@ -756,6 +787,7 @@ func (m monitorModel) updateTranscript(msg tea.KeyPressMsg) (monitorModel, tea.C
 	// Other keys (j/k/ctrl+d/ctrl+u/pgup/pgdn) scroll the transcript viewport.
 	var cmd tea.Cmd
 	m.chatVP, cmd = m.chatVP.Update(msg)
+	m.chatAutoScroll = m.chatVP.AtBottom()
 	return m, cmd
 }
 
@@ -1055,9 +1087,11 @@ func (m *monitorModel) reloadTranscript() {
 	// from the previous step would collide with the new step's same-seq blocks.
 	// Reset the render cache along with the other per-step view state.
 	m.chatRendered = make(map[blockKey]string)
+	m.chatAutoScroll = true
+	m.pendingGPrefix = false
 	m.loadChat()
 	if m.ready {
-		m.chatVP.GotoTop()
+		m.chatVP.GotoBottom()
 	}
 }
 
@@ -2406,7 +2440,7 @@ func (m monitorModel) footerView() string {
 			hint = hintString(m.keys.GateBlur) // y/n shown inline in the gate strip
 		}
 	case m.focus == focusTranscript:
-		hint = hintString(m.keys.FocusFull, m.keys.Scroll, m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll)
+		hint = hintString(m.keys.FocusFull, m.keys.Scroll, m.keys.GotoTop, m.keys.GotoBottom, m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll)
 	default: // focusSteps
 		// Gate eligibility: advertise stop/reset/resume only for eligible steps.
 		stopKey := m.keys.StopStep

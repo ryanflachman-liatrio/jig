@@ -5,12 +5,45 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"jig/internal/step"
 	"jig/internal/workflow"
 )
+
+// TestParseStaleWorktreePath verifies the parser that extracts the stale worktree
+// path from a git "is already used by worktree at '<path>'" error message.
+func TestParseStaleWorktreePath(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "real git error",
+			input: "fatal: 'jig/feature/implement' is already used by worktree at '/Users/ryan/.jig/worktrees/old-run/_run'\n",
+			want:  "/Users/ryan/.jig/worktrees/old-run/_run",
+		},
+		{
+			name:  "no match",
+			input: "fatal: something else went wrong",
+			want:  "",
+		},
+		{
+			name:  "empty",
+			input: "",
+			want:  "",
+		},
+	}
+	for _, tc := range tests {
+		got := parseStaleWorktreePath(tc.input)
+		if got != tc.want {
+			t.Errorf("%s: parseStaleWorktreePath(%q) = %q; want %q", tc.name, tc.input, got, tc.want)
+		}
+	}
+}
 
 // TestSanitizeBranchName verifies the sanitize helper used for git branch names.
 func TestSanitizeBranchName(t *testing.T) {
@@ -130,13 +163,6 @@ skill = "skills/mutate"
 		t.Error("StepRequest.Worktree must be non-empty for isolation=worktree step")
 	}
 
-	// The worktree directory must have existed (even if cleaned up now).
-	// We verify by checking the branch was created.
-	out, err2 := gitCmd(repoDir, "branch", "--list", "jig/wt-path-test/mutate")
-	if err2 != nil || !contains(string(out), "jig/wt-path-test/mutate") {
-		t.Errorf("branch jig/wt-path-test/mutate not found after run: %v %s", err2, out)
-	}
-
 	// Run must finish successfully.
 	last := events[len(events)-1]
 	rf, ok2 := last.(RunFinished)
@@ -232,12 +258,10 @@ done:
 	}
 }
 
-// TestScheduler_WorktreeBranchReuseAcrossRuns is the regression for the reported
-// bug: the branch name (jig/<workflow>/<step>) is stable and kept after a run, so
-// a second run of the same workflow used to fail worktree creation with "branch
-// already exists" and tear the run down. createWorktree now uses `-B` (reset), so
-// the second run resets the branch to HEAD and succeeds — no collision, no
-// recovery gate, no teardown.
+// TestScheduler_WorktreeBranchReuseAcrossRuns verifies that sequential and
+// concurrent runs of the same workflow don't collide on step branches. Step
+// branches are now scoped per-run (jig/<workflow>/run-<runID>/<step>), so each
+// run gets its own branches with no reset-or-create races.
 func TestScheduler_WorktreeBranchReuseAcrossRuns(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not in PATH")
@@ -270,9 +294,8 @@ skill = "skills/mutate"
 	mgr := NewManager(newCaptureExec(), jigRoot)
 	_, ch := mgr.Subscribe()
 
-	// Run the same workflow twice against the same repo. Both must succeed and
-	// neither may enter the recovery gate (which is where a branch collision would
-	// now surface instead of a hard teardown).
+	// Run the same workflow twice. Both must succeed with no recovery gate (which
+	// is where a branch collision would surface).
 	for i := 0; i < 2; i++ {
 		run, err := mgr.Start(wf)
 		if err != nil {
@@ -300,10 +323,13 @@ skill = "skills/mutate"
 		}
 	}
 
-	// The branch persists after both runs for downstream merge steps to reference.
-	out, err := gitCmd(repoDir, "branch", "--list", "jig/rerun-test/mutate")
-	if err != nil || !contains(string(out), "jig/rerun-test/mutate") {
-		t.Errorf("branch jig/rerun-test/mutate not found after re-runs: %v %s", err, out)
+	// Both run branches must be present (kept as integration history).
+	out, err := gitCmd(repoDir, "branch", "--list", "jig/rerun-test/run-*")
+	if err != nil {
+		t.Fatalf("git branch --list: %v", err)
+	}
+	if strings.Count(strings.TrimSpace(string(out)), "\n")+1 < 2 {
+		t.Errorf("expected 2 run branches (one per run), got: %s", out)
 	}
 }
 

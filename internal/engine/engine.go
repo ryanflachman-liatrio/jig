@@ -758,29 +758,18 @@ func (s *scheduler) run(ctx context.Context) {
 	}
 
 	defer func() {
-		// Signal completion first so Snapshot() callers unblock immediately.
-		// finalSnap is written before done is closed, satisfying the memory-model
-		// happens-before requirement for lock-free reads in Run.Snapshot().
+		// Worktree cleanup runs before RunFinished is emitted (inside the loop or
+		// in handleFinalMerge) so that t.TempDir() cleanup in tests never races
+		// against a running git subprocess. This call is a safety net for abnormal
+		// exits (e.g. panic, early return from setupRunBranch) that bypass those
+		// paths; it is idempotent and a no-op when called a second time.
+		s.cleanupWorktrees()
+		// Signal completion so Snapshot() callers unblock. finalSnap is written
+		// before done is closed to satisfy the memory-model happens-before
+		// requirement for lock-free reads in Run.Snapshot().
 		s.onDone(s.snapshot())
-		// Close the journal file after the final RunFinished event has been
-		// appended. Deferring ensures the file is closed even when the run exits
-		// via ctx.Done().
 		if s.writer != nil {
 			_ = s.writer.Close()
-		}
-		// Remove any worktrees left active at run end. The branches are kept so
-		// downstream merge steps (e.g. git merge jig/feature/implement) can still
-		// reference them after worktree removal.
-		if s.repoRoot != "" {
-			for _, path := range s.worktrees {
-				_ = removeWorktree(s.repoRoot, path)
-			}
-			// Remove the run worktree but KEEP the run branch: it is the run's
-			// integration history, left for inspection (Open Question 1) and for the
-			// final gated merge (Task 4.x) to land or discard.
-			if s.runWorktree != "" {
-				_ = removeWorktree(s.repoRoot, s.runWorktree)
-			}
 		}
 	}()
 
@@ -800,6 +789,7 @@ func (s *scheduler) run(ctx context.Context) {
 		//    parks (does not emit RunFinished) until the operator lands or discards.
 		if s.inFlight == 0 && !s.anyPendingRunnable() {
 			if !s.requestFinalMergeIfNeeded() {
+				s.cleanupWorktrees()
 				s.emit(RunFinished{RunID: s.runID, Failed: s.anyFailed()})
 				return
 			}
@@ -816,6 +806,7 @@ func (s *scheduler) run(ctx context.Context) {
 				return
 			}
 		case <-ctx.Done():
+			s.cleanupWorktrees()
 			s.emit(RunFinished{RunID: s.runID, Failed: true})
 			return
 		}
@@ -1042,11 +1033,39 @@ func (s *scheduler) setupRunBranch() error {
 	return nil
 }
 
-// stepBranchName is the stable per-step worktree branch name
-// jig/<workflow>/<stepID>. Used both to create the step worktree and to
-// squash-merge it into the run branch, so the two must agree.
+// cleanupWorktrees removes all active step worktrees (and their ephemeral
+// per-run branches) plus the run worktree. It is idempotent: it clears
+// s.worktrees and s.runWorktree as it goes, so a second call is a no-op.
+// Callers must invoke this BEFORE emitting RunFinished so that the git
+// subprocesses finish before the caller's goroutine signals completion.
+func (s *scheduler) cleanupWorktrees() {
+	if s.repoRoot == "" {
+		return
+	}
+	for stepID, path := range s.worktrees {
+		_ = removeWorktree(s.repoRoot, path)
+		_, _ = gitCmd(s.repoRoot, "branch", "-D", s.stepBranchName(stepID))
+		delete(s.worktrees, stepID)
+	}
+	// Remove the run worktree but KEEP the run branch: it is the run's
+	// integration history, left for inspection and for the final merge gate.
+	if s.runWorktree != "" {
+		_ = removeWorktree(s.repoRoot, s.runWorktree)
+		s.runWorktree = ""
+	}
+}
+
+// stepBranchName returns the per-run, per-step branch name
+// jig/<workflow>/<runID>/<stepID>. Including the runID (without the "run-"
+// prefix used by run branches) mirrors the worktree filesystem layout and
+// prevents concurrent runs of the same workflow from colliding on step
+// branches. The "run-" prefix is intentionally absent so that git's ref
+// storage does not conflict: run branch jig/<wf>/run-<id> is a ref file
+// while step branches jig/<wf>/<id>/<step> live under a sibling directory.
+// Both worktree creation and squash-merge use this function as the single
+// source of truth.
 func (s *scheduler) stepBranchName(stepID string) string {
-	return "jig/" + sanitizeBranchName(s.wf.Meta.Name) + "/" + stepID
+	return "jig/" + sanitizeBranchName(s.wf.Meta.Name) + "/" + sanitizeBranchName(s.runID) + "/" + stepID
 }
 
 // dispatch launches a worker goroutine for one step. The worker sends a
@@ -1716,7 +1735,8 @@ func (s *scheduler) handleReset(m resetMsg) {
 		// the (now-rewound) run branch HEAD. Leaving a stale worktree would cause
 		// squash-merge to diverge from the reset state.
 		if path, ok := s.worktrees[id]; ok {
-			_ = removeWorktree(s.repoRoot, path) // best-effort; re-run creates a new one
+			_ = removeWorktree(s.repoRoot, path)
+			_, _ = gitCmd(s.repoRoot, "branch", "-D", s.stepBranchName(id))
 			delete(s.worktrees, id)
 			delete(s.wtBaseSHAs, id)
 		}
@@ -1893,6 +1913,7 @@ func (s *scheduler) handleFinalMerge(m finalMergeMsg) {
 	// Approved-and-merged, or discarded: the run settles here.
 	s.awaitingFinalMerge = false
 	s.terminated = true
+	s.cleanupWorktrees()
 	s.emit(RunFinished{RunID: s.runID, Failed: s.anyFailed()})
 }
 

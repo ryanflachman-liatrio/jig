@@ -170,6 +170,8 @@ type monitorKeys struct {
 	BlockNav     keybind.Binding // display-only ("n/N block")
 	Toggle       keybind.Binding // matched (enter/space → expand)
 	ExpandAll    keybind.Binding // matched (o)
+	GotoTop      keybind.Binding // matched (gg chord — pendingGPrefix state in model)
+	GotoBottom   keybind.Binding // matched (G)
 
 	// gates
 	Submit         keybind.Binding // matched (enter: input/prompt/compose submit)
@@ -228,6 +230,8 @@ func defaultMonitorKeys() monitorKeys {
 		BlockNav:     keybind.NewBinding(keybind.WithKeys("n", "N"), keybind.WithHelp("n/N", "block")),
 		Toggle:       keybind.NewBinding(keybind.WithKeys("enter", " "), keybind.WithHelp("enter", "expand")),
 		ExpandAll:    keybind.NewBinding(keybind.WithKeys("o"), keybind.WithHelp("o", "all")),
+		GotoTop:      keybind.NewBinding(keybind.WithKeys("g"), keybind.WithHelp("gg", "top")),
+		GotoBottom:   keybind.NewBinding(keybind.WithKeys("G"), keybind.WithHelp("G", "bottom")),
 
 		Submit:         keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "submit")),
 		Newline:        keybind.NewBinding(keybind.WithKeys("alt+enter", "shift+enter"), keybind.WithHelp("alt+enter", "newline")),

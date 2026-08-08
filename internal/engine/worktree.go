@@ -11,15 +11,6 @@ import (
 // createWorktree creates a git worktree at wtPath on branch branchName, ensuring
 // the parent directory exists first. It returns the HEAD SHA at creation time so
 // callers can diff against it later.
-//
-// The branch name is stable across runs (jig/<workflow>/<step-id>) so downstream
-// merge steps can reference it by a predictable name, and removeWorktree keeps
-// the branch after the run. That makes a re-run collide with the leftover branch,
-// so we use `-B` (reset-or-create) rather than `-b` (create-only): a re-run
-// resets the step branch to the current HEAD — clean-slate scratch space for this
-// step's work — instead of failing with "branch already exists". Any leftover
-// commits on the old branch are discarded; a step's edits are meant to be merged
-// within its run, not carried across runs.
 func createWorktree(repoRoot, wtPath, branchName string) (baseSHA string, err error) {
 	return createWorktreeAt(repoRoot, wtPath, branchName, "HEAD")
 }
@@ -41,16 +32,42 @@ func createWorktreeAt(repoRoot, wtPath, branchName, ref string) (baseSHA string,
 		return "", fmt.Errorf("mkdir worktree parent: %w", err)
 	}
 
-	if out, err = gitCmd(repoRoot, "worktree", "add", "-B", branchName, wtPath, ref); err != nil {
-		return "", fmt.Errorf("git worktree add: %w — %s", err, strings.TrimSpace(out))
+	out, err = gitCmd(repoRoot, "worktree", "add", "-B", branchName, wtPath, ref)
+	if err != nil {
+		// The branch may be checked out in a stale worktree left by a crashed run.
+		// Remove it and retry once; also prune phantom entries (directory gone but
+		// git metadata still present).
+		if stale := parseStaleWorktreePath(out); stale != "" {
+			_ = removeWorktree(repoRoot, stale)
+			_, _ = gitCmd(repoRoot, "worktree", "prune")
+			out, err = gitCmd(repoRoot, "worktree", "add", "-B", branchName, wtPath, ref)
+		}
+		if err != nil {
+			return "", fmt.Errorf("git worktree add: %w — %s", err, strings.TrimSpace(out))
+		}
 	}
 	return baseSHA, nil
 }
 
-// removeWorktree removes the git worktree at wtPath, keeping the branch so
-// downstream merge steps can still reference it. The branch outlives the run by
-// design; a subsequent run of the same workflow resets it via createWorktree's
-// `-B` (see there).
+// parseStaleWorktreePath extracts the worktree path from a git "is already used
+// by worktree at '<path>'" error message, returning "" when the pattern is absent.
+func parseStaleWorktreePath(gitOutput string) string {
+	const marker = "is already used by worktree at '"
+	i := strings.Index(gitOutput, marker)
+	if i < 0 {
+		return ""
+	}
+	rest := gitOutput[i+len(marker):]
+	j := strings.Index(rest, "'")
+	if j < 0 {
+		return ""
+	}
+	return rest[:j]
+}
+
+// removeWorktree removes the git worktree at wtPath. It does not delete the
+// branch — callers decide whether to keep it (run branch, kept as integration
+// history) or delete it (step branches, ephemeral per-run).
 func removeWorktree(repoRoot, wtPath string) error {
 	out, err := gitCmd(repoRoot, "worktree", "remove", "--force", wtPath)
 	if err != nil {
