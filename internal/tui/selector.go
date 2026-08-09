@@ -164,11 +164,26 @@ func (m *selectorModel) resize() {
 
 // footerView is the single plain hint line below the panel; it branches on the
 // filter state, mirroring lazygit's global keybind bar.
+// helpSections satisfies helpProvider: the selector's list navigation, filter,
+// and open action, plus the global chord.
+func (m selectorModel) helpSections() []helpSection {
+	return []helpSection{
+		{title: "Workflows", bindings: []keybind.Binding{m.keys.Nav, m.keys.Filter, m.keys.Open, m.keys.Apply, m.keys.Clear}},
+		{title: "Global", bindings: []keybind.Binding{keyHelp, keyQuit}},
+	}
+}
+
+// capturesText reports whether the list filter is capturing text, in which case
+// "?" is a literal character rather than the help chord.
+func (m selectorModel) capturesText() bool {
+	return m.list.FilterState() == list.Filtering
+}
+
 func (m selectorModel) footerView() string {
 	if m.list.FilterState() == list.Filtering {
 		return theme.Footer.Render("  " + hintString(m.keys.Apply, m.keys.Clear, keyQuit))
 	}
-	return theme.Footer.Render("  " + hintString(m.keys.Nav, m.keys.Filter, m.keys.Open, keyQuit))
+	return theme.Footer.Render("  " + hintString(m.keys.Nav, m.keys.Filter, m.keys.Open, keyHelp, keyQuit))
 }
 
 func (m selectorModel) View() string {

@@ -497,6 +497,27 @@ func (m monitorModel) hasGate() bool {
 	return len(m.inputQueue) > 0
 }
 
+// textareaActive reports whether the focused gate is currently capturing free
+// text in the shared textarea, in which case printable keys (including "?") are
+// literal input rather than commands. Mirrors the message-routing condition in
+// Update so the two never disagree.
+func (m monitorModel) textareaActive() bool {
+	if m.focus != focusGate {
+		return false
+	}
+	entry, ok := m.activeEntry()
+	if !ok {
+		return false
+	}
+	switch entry.kind {
+	case inputKindRequest, inputKindPrompt:
+		return true
+	case inputKindReview, inputKindRecovery:
+		return entry.composing
+	}
+	return false
+}
+
 // activeEntry returns a pointer to the entry at activeInputIdx, or (nil, false)
 // when the queue is empty or the index is out of range.
 func (m monitorModel) activeEntry() (*pendingInputEntry, bool) {
@@ -2462,7 +2483,7 @@ func (m monitorModel) footerView() string {
 				resetKey.SetEnabled(false)
 			}
 		}
-		hint = hintString(m.keys.FocusFull, m.keys.StepsNav, stopKey, resetKey, resumeKey, m.keys.StepsLeave, keyQuit)
+		hint = hintString(m.keys.FocusFull, m.keys.StepsNav, stopKey, resetKey, resumeKey, m.keys.StepsLeave, keyHelp, keyQuit)
 	}
 	// When a gate is pending but the user has focused a panel, remind them a gate
 	// is waiting (it is non-blocking — tab returns to it).

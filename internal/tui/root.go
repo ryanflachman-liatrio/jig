@@ -178,8 +178,28 @@ type rootModel struct {
 	ctrlEvents <-chan engine.Event
 	handles    map[string]*engine.Run // runID → Run handle, for Snapshot()
 
+	// showHelp toggles the global "?" modal overlay (see help.go). It is owned by
+	// the root so the same chord works on every screen; while set, the root
+	// composites the overlay over the active screen and swallows all other keys.
+	showHelp bool
+
 	width  int
 	height int
+}
+
+// activeProvider returns the help sections + text-capture state of the screen
+// currently driving the UI.
+func (m rootModel) activeProvider() helpProvider {
+	switch m.active {
+	case screenDetail:
+		return m.detail
+	case screenRuns:
+		return m.runs
+	case screenMonitor:
+		return m.monitor
+	default:
+		return m.selector
+	}
 }
 
 // New returns jig's root TUI model. mgr is the engine manager; it must be
@@ -212,6 +232,20 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		if keybind.Matches(msg, keyQuit) {
 			return m, tea.Quit
+		}
+		// Help is a global modal owned by the root. While open it swallows every
+		// key except its own toggle and esc, so nothing fires on the screen behind
+		// it. When closed, "?" opens it — unless the active screen is capturing free
+		// text, where "?" is a literal character.
+		if m.showHelp {
+			if keybind.Matches(msg, keyHelp) || msg.String() == "esc" {
+				m.showHelp = false
+			}
+			return m, nil
+		}
+		if keybind.Matches(msg, keyHelp) && !m.activeProvider().capturesText() {
+			m.showHelp = true
+			return m, nil
 		}
 
 	case tea.WindowSizeMsg:
@@ -424,6 +458,12 @@ func (m rootModel) View() tea.View {
 		content = m.monitor.View()
 	default:
 		content = m.selector.View()
+	}
+	// The help overlay is a global modal: composite it over the active screen (via
+	// a lipgloss Canvas) so the screen shows through around the box, and the same
+	// "?" chord surfaces context-appropriate keys everywhere.
+	if m.showHelp {
+		content = renderHelpOverlay(content, m.width, m.height, m.activeProvider().helpSections())
 	}
 	// v2 declares alt-screen and the full-screen background on the View itself
 	// (the compositor paints BackgroundColor edge-to-edge, so nested styled

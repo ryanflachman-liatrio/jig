@@ -134,8 +134,20 @@ func (m detailModel) titleText() string {
 
 func (m detailModel) footerView() string {
 	// Run drops out automatically when disabled (no workflow loaded).
-	return theme.Footer.Render("  " + hintString(m.keys.Run, m.keys.Runs, m.keys.Back, keyQuit))
+	return theme.Footer.Render("  " + hintString(m.keys.Run, m.keys.Runs, m.keys.Back, keyHelp, keyQuit))
 }
+
+// helpSections satisfies helpProvider: the workflow detail actions plus the
+// global chord. Run drops out when disabled, mirroring the footer.
+func (m detailModel) helpSections() []helpSection {
+	return []helpSection{
+		{title: "Workflow", bindings: []keybind.Binding{m.keys.Run, m.keys.Runs, m.keys.Back}},
+		{title: "Global", bindings: []keybind.Binding{keyHelp, keyQuit}},
+	}
+}
+
+// capturesText: the detail screen never captures free text.
+func (m detailModel) capturesText() bool { return false }
 
 // body renders the header and step list into the viewport's content.
 func (m detailModel) body() string {

@@ -244,8 +244,20 @@ func (m *runsModel) ensureCursorVisible() {
 }
 
 func (m runsModel) footerView() string {
-	return theme.Footer.Render("  " + hintString(m.keys.NewRun, m.keys.Open, m.keys.Back, keyQuit))
+	return theme.Footer.Render("  " + hintString(m.keys.NewRun, m.keys.Open, m.keys.Back, keyHelp, keyQuit))
 }
+
+// helpSections satisfies helpProvider: the run-list navigation and actions plus
+// the global chord.
+func (m runsModel) helpSections() []helpSection {
+	return []helpSection{
+		{title: "Runs", bindings: []keybind.Binding{m.keys.Up, m.keys.Down, m.keys.Open, m.keys.NewRun, m.keys.Back}},
+		{title: "Global", bindings: []keybind.Binding{keyHelp, keyQuit}},
+	}
+}
+
+// capturesText: the runs list never captures free text.
+func (m runsModel) capturesText() bool { return false }
 
 // rowsBody renders one line per run with the selected row highlighted; the panel
 // wraps it and the viewport scrolls it.

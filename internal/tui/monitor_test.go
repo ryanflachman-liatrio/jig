@@ -1800,3 +1800,19 @@ func TestSecurityPane(t *testing.T) {
 		}
 	})
 }
+
+// TestMonitorHelpSections checks the monitor contributes focus-appropriate
+// sections: the Steps section (default focus) plus the shared Focus and Global
+// sections. Root ownership of the overlay itself is covered in root_test.go.
+func TestMonitorHelpSections(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	titles := map[string]bool{}
+	for _, sec := range m.helpSections() {
+		titles[sec.title] = true
+	}
+	for _, want := range []string{"Steps", "Focus", "Global"} {
+		if !titles[want] {
+			t.Errorf("monitor help missing section %q; got %v", want, titles)
+		}
+	}
+}

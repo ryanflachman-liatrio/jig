@@ -99,6 +99,16 @@ type Styles struct {
 		Focused lipgloss.Style
 		Blurred lipgloss.Style
 	}
+	// Help is the modal "?" overlay (see help.go): a bordered box with a title,
+	// per-section headers, and a two-column key/description list. Box reuses the
+	// focused Charple border so the modal reads as the active surface.
+	Help struct {
+		Box     lipgloss.Style
+		Title   lipgloss.Style
+		Section lipgloss.Style
+		Key     lipgloss.Style
+		Desc    lipgloss.Style
+	}
 	// Panel is the titled-box primitive (see panel.go). The border styles omit
 	// the top edge (the helper hand-composites the titled top line per ADR 0001);
 	// Focused/Blurred reuse the same Charple/Iron token pair as Viewport so the
@@ -208,6 +218,15 @@ func DefaultTheme() Styles {
 	s.SelectedLine = lipgloss.NewStyle().Bold(true).Foreground(fgBase)
 	s.SelectedBar = lipgloss.NewStyle().Foreground(primary).Bold(true)
 	s.Accent = lipgloss.NewStyle().Foreground(accent)
+
+	s.Help.Box = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(primary).
+		Padding(0, 2)
+	s.Help.Title = lipgloss.NewStyle().Bold(true).Foreground(primary)
+	s.Help.Section = lipgloss.NewStyle().Bold(true).Foreground(fgBase)
+	s.Help.Key = lipgloss.NewStyle().Foreground(secondary)
+	s.Help.Desc = lipgloss.NewStyle().Foreground(fgMuted)
 
 	s.Viewport.Focused = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

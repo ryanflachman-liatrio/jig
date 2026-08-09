@@ -28,6 +28,17 @@ var keyQuit = keybind.NewBinding(
 	keybind.WithHelp("ctrl+c", "quit"),
 )
 
+// keyHelp toggles the help overlay. Global like keyQuit: the monitor renders the
+// modal and lists this binding in its footer so the key and its advertised help
+// live in one place. Pressing it again (or esc) dismisses the overlay.
+// "shift+/" is listed alongside "?" because some terminals deliver the shifted
+// slash as a modified keypress (String() == "shift+/") rather than the literal
+// "?" text; matching both keeps the chord working everywhere.
+var keyHelp = keybind.NewBinding(
+	keybind.WithKeys("?", "shift+/"),
+	keybind.WithHelp("?", "help"),
+)
+
 // hintString renders the enabled bindings into the footer's "k desc  •  k desc"
 // hint format. Disabled bindings (SetEnabled(false)) are skipped, so a hint can
 // never outlive the key it describes.
