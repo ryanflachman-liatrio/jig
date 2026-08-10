@@ -28,6 +28,11 @@ type CommandExecutor struct {
 	cwd string
 }
 
+// commandWaitDelay bounds how long cmd.Wait blocks after the process exits (or
+// is killed) for a lingering child that still holds the output pipe. After it
+// elapses, os/exec forcibly closes the process I/O so Wait returns.
+const commandWaitDelay = 10 * time.Second
+
 // NewCommandExecutor returns a CommandExecutor whose commands run in cwd.
 // Pass "" to inherit the process working directory.
 func NewCommandExecutor(cwd string) *CommandExecutor {
@@ -54,6 +59,15 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 	// "sh -c" rather than parsing and splitting the command ourselves avoids
 	// the many edge cases in shell tokenisation.
 	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
+	// Kill the whole process group (sh plus every child it spawns) on cancel, not
+	// just the shell — otherwise pipeline/background children outlive a Stop and
+	// can hold the output pipe open (see configureProcessGroup).
+	configureProcessGroup(cmd)
+	// Backstop: if a lingering child keeps the pipe's write-end open after the
+	// process exits or is killed, Wait would otherwise block on the internal
+	// output-copy goroutine forever. WaitDelay bounds that wait, then forcibly
+	// closes the I/O so Wait always returns.
+	cmd.WaitDelay = commandWaitDelay
 	// Worktree takes precedence over the executor's static cwd (Phase 5).
 	cwd := e.cwd
 	if req.Worktree != "" {

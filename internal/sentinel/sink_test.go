@@ -2,6 +2,7 @@ package sentinel
 
 import (
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 )
@@ -69,5 +70,45 @@ func TestFindingsSinkRoundtrip(t *testing.T) {
 	}
 	if len(noopFindings) != 0 {
 		t.Errorf("ReadAll(\"\") returned %d findings, want 0", len(noopFindings))
+	}
+}
+
+// TestWriterConcurrentAppendClose reproduces the data race between a producer
+// goroutine appending findings and the owner closing the writer — the exact
+// pattern in production, where the Tier-2 supervisor appends from its own
+// goroutine while the run tears the writer down. Run with `go test -race`.
+//
+// It also asserts Close is idempotent and that appends after Close are a safe
+// no-op rather than a write to a closed descriptor.
+func TestWriterConcurrentAppendClose(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "findings.jsonl")
+	w, err := NewWriter(path)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+
+	f := Finding{RunID: "r", StepID: "s", Tier: TierMonitor, Monitor: "m", Severity: SeverityLow, Action: ActionObserved, Fingerprint: "fp"}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			_ = w.Append(f)
+		}
+	}()
+
+	// Close concurrently with the in-flight appends.
+	_ = w.Close()
+	// Close is idempotent.
+	if err := w.Close(); err != nil {
+		t.Errorf("second Close: %v", err)
+	}
+	wg.Wait()
+
+	// Appends after Close are a safe no-op, never a panic or write to a closed fd.
+	if err := w.Append(f); err != nil {
+		t.Errorf("Append after Close: %v", err)
 	}
 }

@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -33,7 +34,9 @@ func (r *captureReporter) ToolCall(tool, detail string) {}
 func (r *captureReporter) Message(seq, iteration int) {
 	r.messages = append(r.messages, captureMsg{seq, iteration})
 }
-func (r *captureReporter) Question(_ string, _ []engine.AgentQuestionItem) string { return "" }
+func (r *captureReporter) Question(_ context.Context, _ string, _ []engine.AgentQuestionItem) string {
+	return ""
+}
 func (r *captureReporter) Finding(sf engine.SecurityFinding) {
 	r.findings = append(r.findings, sf)
 }

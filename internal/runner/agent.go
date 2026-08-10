@@ -45,7 +45,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 	// If the step enables AskUserQuestion, register the in-process MCP server
 	// so the CLI recognises mcp__jig__AskUserQuestion (rewritten in buildOptions).
 	if containsStr(req.Step.AllowedTools, "AskUserQuestion") {
-		opts = append(opts, claudecode.WithSdkMcpServer("jig", buildAskUserQuestionServer(rep)))
+		opts = append(opts, claudecode.WithSdkMcpServer("jig", buildAskUserQuestionServer(ctx, rep)))
 	}
 	if req.Worktree != "" {
 		opts = append(opts, claudecode.WithCwd(req.Worktree))
@@ -187,7 +187,11 @@ func rewriteAskUserQuestion(tools []string) []string {
 // blocks on rep.Question, which pauses the step and surfaces the question in the
 // TUI. The SDK injects the answer back into the conversation as a tool result,
 // so no manual sendCh injection is needed.
-func buildAskUserQuestionServer(rep engine.Reporter) *claudecode.McpSdkServerConfig {
+//
+// stepCtx is the executing step's context; it is threaded into rep.Question so a
+// Stop/cancel of the step unblocks a pending AskUserQuestion instead of hanging
+// the handler goroutine forever.
+func buildAskUserQuestionServer(stepCtx context.Context, rep engine.Reporter) *claudecode.McpSdkServerConfig {
 	schema := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -229,7 +233,7 @@ func buildAskUserQuestionServer(rep engine.Reporter) *claudecode.McpSdkServerCon
 					Content: []claudecode.McpContent{{Type: "text", Text: err.Error()}},
 				}, nil
 			}
-			answer := rep.Question("ask-user-question", questions)
+			answer := rep.Question(stepCtx, "ask-user-question", questions)
 			return &claudecode.McpToolResult{
 				Content: []claudecode.McpContent{{Type: "text", Text: answer}},
 			}, nil

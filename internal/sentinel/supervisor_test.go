@@ -268,6 +268,36 @@ func TestSupervisorBudgetDegrade(t *testing.T) {
 	}
 }
 
+// TestSupervisorClosesSinkOnExit proves the supervisor closes the findings sink
+// it was handed when Run returns, so the descriptor is not leaked for the life
+// of the process. Covered here via the no-monitors early return, but the same
+// deferred close fires on ctx cancellation and channel close.
+func TestSupervisorClosesSinkOnExit(t *testing.T) {
+	dir := t.TempDir()
+	fw, err := NewWriter(filepath.Join(dir, "findings.jsonl"))
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+
+	sup := NewSupervisor("run", make(chan StepSignal), fw, nil, 0, func(string) string { return "" }, nil)
+
+	done := make(chan struct{})
+	go func() { sup.Run(context.Background()); close(done) }()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return")
+	}
+
+	fw.mu.Lock()
+	closed := fw.closed
+	fw.mu.Unlock()
+	if !closed {
+		t.Error("supervisor did not close its findings sink on exit")
+	}
+}
+
 // TestBoundWindow verifies the dual-bound truncation logic:
 //   - Count cap: more than entryCountCap entries → only the most-recent are kept.
 //   - Token cap: total bytes > tokenCeiling → entries are dropped from the oldest end.

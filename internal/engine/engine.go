@@ -570,10 +570,18 @@ func (r *reporter) Finding(sf SecurityFinding) { r.ev(sf) }
 // Question delivers an AskUserQuestion from the running agent to the scheduler,
 // transitions the step to StatusNeedsInput, and blocks until the human answers
 // via Run.AnswerQuestion. Runs in the executor goroutine.
-func (r *reporter) Question(toolUseID string, questions []AgentQuestionItem) string {
-	r.answerCh = make(chan string, 1)
+func (r *reporter) Question(ctx context.Context, toolUseID string, questions []AgentQuestionItem) string {
+	// answerCh is created at dispatch (scheduler goroutine); this goroutine only
+	// reads it, so there is no cross-goroutine write to the field. Select on ctx so
+	// a Stop, a run cancel, or a security escalation (all of which cancel the step's
+	// context) unblocks this goroutine instead of parking it on answerCh forever.
 	r.ev(AgentQuestion{ToolUseID: toolUseID, Questions: questions})
-	return <-r.answerCh
+	select {
+	case a := <-r.answerCh:
+		return a
+	case <-ctx.Done():
+		return ""
+	}
 }
 
 // ── scheduler ────────────────────────────────────────────────────────────────
@@ -1130,8 +1138,13 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 	subs := s.subs
 	inbox := s.inbox
 	rep := &reporter{
-		subs:  subs,
-		inbox: inbox,
+		subs: subs,
+		// answerCh is created here on the scheduler goroutine — before the worker
+		// starts — so the field is never written from the executor goroutine and
+		// an answer delivered any time after dispatch has a live channel to land
+		// on. Buffered(1) so AnswerQuestion never blocks the scheduler.
+		answerCh: make(chan string, 1),
+		inbox:    inbox,
 		ev: func(e Event) {
 			// Tag the event with run/step IDs and fan-out without holding any lock.
 			switch e := e.(type) {
@@ -1196,7 +1209,17 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 
 	go func() {
 		result, err := s.exec.Execute(stepCtx, req, rep)
-		s.inbox <- stepDoneMsg{stepID: stepID, result: result, err: err}
+		// Deliver the result, but never block forever: once the run context is
+		// cancelled the scheduler has stopped draining the inbox, so an
+		// unconditional send would strand this goroutine (the inbox is only
+		// buffered to 64, far below max_parallel). Select on ctx (the *run*
+		// context, not stepCtx) so a single-step Stop — which cancels only
+		// stepCtx while the run keeps draining — still delivers its stepDoneMsg
+		// and transitions the step to StatusStopped.
+		select {
+		case s.inbox <- stepDoneMsg{stepID: stepID, result: result, err: err}:
+		case <-ctx.Done():
+		}
 	}()
 }
 
@@ -1600,6 +1623,14 @@ func (s *scheduler) handleSecurityFinding(sf SecurityFinding) {
 			state.Result.Err = "security escalation: critical finding from " + sf.Monitor
 		}
 		s.enterRecovery(sf.StepID)
+		// Reap the still-live worker: cancel its context so a Question-blocked (or
+		// otherwise in-flight) worker unwinds and its stepDoneMsg decrements
+		// inFlight. The step is already parked at StatusAwaitingRecovery, so the
+		// completing worker is recorded-and-kept-parked (see handle(stepDoneMsg))
+		// rather than double-counted when the human later retries.
+		if cancel, ok := s.stepCancels[sf.StepID]; ok {
+			cancel()
+		}
 		// StatusAwaitingRecovery: already parked; finding recorded above.
 		// Terminal states (succeeded, failed, skipped, stopped): record only.
 	}

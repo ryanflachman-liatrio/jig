@@ -117,6 +117,15 @@ func NewSupervisor(
 // Run starts the supervisor's event loop. It blocks until ctx is cancelled or
 // the signals channel is closed. Run is typically called in a goroutine.
 func (s *Supervisor) Run(ctx context.Context) {
+	// The supervisor owns its findings sink for the run's lifetime. Close it on
+	// exit — via any return path — so the final buffer is flushed and the file
+	// descriptor released instead of leaked. Close is idempotent, so a caller
+	// that also holds the writer can close it too without harm.
+	defer func() {
+		if s.sink != nil {
+			_ = s.sink.Close()
+		}
+	}()
 	if len(s.monitors) == 0 {
 		return
 	}

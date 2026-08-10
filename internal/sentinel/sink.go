@@ -5,18 +5,25 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 )
 
-// Writer appends findings to a per-run findings.jsonl. It is not safe for
-// concurrent use; a single sentinel goroutine drives it.
+// Writer appends findings to a per-run findings.jsonl. It is safe for concurrent
+// use: the Tier-2 supervisor appends from its own goroutine while the run may
+// close the writer during teardown, so Append and Close are serialised by mu.
 // Writes are flushed per Append so a concurrent reader always sees whole lines,
 // matching the transcript.Writer contract.
 // A zero-value Writer (or one with path == "") is a silent no-op — the
 // persistence-off path works without any nil checks at call sites.
 type Writer struct {
 	path string
+	mu   sync.Mutex // guards bw/f access and the closed flag
 	f    *os.File
 	bw   *bufio.Writer
+	// closed makes Close idempotent and turns post-Close Append into a no-op
+	// rather than a write to a closed descriptor (the writer may be torn down
+	// while a producer goroutine still holds a reference).
+	closed bool
 }
 
 // NewWriter opens (creating if necessary) findings.jsonl at path for appending.
@@ -35,12 +42,14 @@ func NewWriter(path string) (*Writer, error) {
 // Append serialises f as a JSONL line and flushes immediately so a concurrent
 // reader always sees whole lines. No-ops when the writer has no open file.
 func (w *Writer) Append(f Finding) error {
-	if w.f == nil {
-		return nil
-	}
 	b, err := json.Marshal(f)
 	if err != nil {
 		return fmt.Errorf("sentinel: marshal finding: %w", err)
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.f == nil || w.closed {
+		return nil // persistence off, or the writer was already torn down
 	}
 	if _, err := w.bw.Write(append(b, '\n')); err != nil {
 		return fmt.Errorf("sentinel: write finding: %w", err)
@@ -48,11 +57,15 @@ func (w *Writer) Append(f Finding) error {
 	return w.bw.Flush()
 }
 
-// Close flushes and closes the underlying file.
+// Close flushes and closes the underlying file. It is idempotent: a second Close
+// (or a Close racing an in-flight Append) is a no-op.
 func (w *Writer) Close() error {
-	if w.f == nil {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.f == nil || w.closed {
 		return nil
 	}
+	w.closed = true
 	if err := w.bw.Flush(); err != nil {
 		_ = w.f.Close()
 		return err

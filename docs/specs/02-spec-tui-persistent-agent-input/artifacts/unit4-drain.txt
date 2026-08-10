@@ -76,4 +76,4 @@
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-  running  ·  tab/←/→ focus  •  j/k select  •  esc runs list  •  ctrl+c quit    
+  running  ·  tab/←/→ focus  •  j/k select  •  esc runs list  •  ? help  •  ctrl
