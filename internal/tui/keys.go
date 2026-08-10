@@ -203,6 +203,7 @@ type monitorKeys struct {
 
 	RecoverRetry keybind.Binding // matched (r, recovery gate: re-run fresh)
 	RecoverGuide keybind.Binding // matched (g, recovery gate: compose guidance + resume session)
+	RecoverSkip  keybind.Binding // matched (s, recovery gate: accept failure and continue past it)
 	RecoverAbort keybind.Binding // matched (a, recovery gate: fail the step and abort the run)
 
 	IntegrationResolve keybind.Binding // matched (r, integration-conflict gate: finish the merge from the resolved run worktree)
@@ -262,6 +263,7 @@ func defaultMonitorKeys() monitorKeys {
 
 		RecoverRetry: keybind.NewBinding(keybind.WithKeys("r"), keybind.WithHelp("r", "retry")),
 		RecoverGuide: keybind.NewBinding(keybind.WithKeys("g"), keybind.WithHelp("g", "guide+retry")),
+		RecoverSkip:  keybind.NewBinding(keybind.WithKeys("s"), keybind.WithHelp("s", "skip")),
 		RecoverAbort: keybind.NewBinding(keybind.WithKeys("a"), keybind.WithHelp("a", "abort")),
 
 		IntegrationResolve: keybind.NewBinding(keybind.WithKeys("r"), keybind.WithHelp("r", "resolve")),

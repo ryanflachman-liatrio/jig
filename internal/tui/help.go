@@ -200,9 +200,9 @@ func (m monitorModel) gateHelpSection() helpSection {
 		case entry.composing:
 			sec.bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, m.keys.GateBlur}
 		case entry.recovery != nil && entry.recovery.CanResume:
-			sec.bindings = []keybind.Binding{m.keys.RecoverRetry, m.keys.RecoverGuide, m.keys.RecoverAbort, entryNav, m.keys.GateBlur}
+			sec.bindings = []keybind.Binding{m.keys.RecoverRetry, m.keys.RecoverGuide, m.keys.RecoverSkip, m.keys.RecoverAbort, entryNav, m.keys.GateBlur}
 		default:
-			sec.bindings = []keybind.Binding{m.keys.RecoverRetry, m.keys.RecoverAbort, entryNav, m.keys.GateBlur}
+			sec.bindings = []keybind.Binding{m.keys.RecoverRetry, m.keys.RecoverSkip, m.keys.RecoverAbort, entryNav, m.keys.GateBlur}
 		}
 	case inputKindIntegrationConflict:
 		sec.bindings = []keybind.Binding{m.keys.IntegrationResolve, m.keys.RecoverAbort, entryNav, m.keys.GateBlur}

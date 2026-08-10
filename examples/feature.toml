@@ -302,7 +302,7 @@ run        = "go build ./..."
 id          = "unit_test"
 type        = "command"
 depends_on  = ["implement"]
-script      = "scripts/test.sh"
+script      = "examples/scripts/test.sh"
 output      = "test-report.txt"
 on_failure  = "retry"
 max_retries = 2
@@ -375,7 +375,7 @@ id         = "ship"
 type       = "command"
 depends_on = ["final_review"]
 when       = "final_review == 'ship'"
-script     = "scripts/ship.sh"
+script     = "examples/scripts/ship.sh"
 
 [[step]]
 id         = "notify"

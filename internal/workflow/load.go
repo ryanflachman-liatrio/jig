@@ -14,9 +14,11 @@ const (
 	defaultArtifactsDir = ".jig/artifacts"
 )
 
-// Load reads, parses, and fully validates a workflow file. File-existence
-// checks (skill dirs, JSON schemas, scripts) are resolved relative to the
-// file's own directory.
+// Load reads, parses, and fully validates a workflow file. Authoring-artifact
+// references (skill dirs, JSON schemas, agent files) are resolved relative to
+// the file's own directory; command-step `script` paths are resolved relative
+// to the project (git repo) root, the same anchor the runner uses at execution
+// time (see workflow.ScriptPath / RepoRoot).
 func Load(path string) (*Workflow, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

@@ -129,17 +129,10 @@ isolation     = "worktree"
 allowed_tools = ["Read", "Grep", "Glob", "Edit", "Write", "Bash"]
 
 # -----------------------------------------------------------------------------
-# 6. Checks — THREE deterministic command steps fan out in parallel off
+# 6. Checks — TWO deterministic command steps fan out in parallel off
 #    implement. lint is advisory (on_failure = continue); unit_test is a script
 #    with a gate and a retry policy.
 # -----------------------------------------------------------------------------
-[[step]]
-id         = "lint"
-type       = "command"
-depends_on = ["implement"]
-run        = "golangci-lint run ./..."
-on_failure = "continue"
-
 [[step]]
 id         = "typecheck"
 type       = "command"
@@ -150,7 +143,7 @@ run        = "go build ./..."
 id          = "unit_test"
 type        = "command"
 depends_on  = ["implement"]
-script      = "../../examples/scripts/test.sh"
+script      = "./examples/scripts/test.sh"
 output      = "test-report.txt"
 on_failure  = "retry"
 max_retries = 2
@@ -167,7 +160,7 @@ max_retries = 2
 [[step]]
 id            = "qa"
 type          = "agent"
-depends_on    = ["lint", "typecheck", "unit_test"]
+depends_on    = ["typecheck", "unit_test"]
 skill         = "../skills/qa"
 inputs        = ["@unit_test"]
 allowed_tools = ["Read", "Grep", "Glob"]
@@ -203,7 +196,7 @@ id         = "ship"
 type       = "command"
 depends_on = ["final_review"]
 when       = "final_review == 'ship'"
-script     = "../../examples/scripts/ship.sh"
+script     = "./examples/scripts/ship.sh"
 
 [[step]]
 id         = "notify"

@@ -12,6 +12,7 @@ import (
 	"jig/internal/engine"
 	"jig/internal/step"
 	"jig/internal/transcript"
+	"jig/internal/workflow"
 )
 
 // CommandExecutor runs a workflow command step via the system shell.
@@ -45,7 +46,7 @@ func NewCommandExecutor(cwd string) *CommandExecutor {
 func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, rep engine.Reporter) (*step.Result, error) {
 	start := time.Now()
 
-	cmdStr, err := resolveCommand(req.Step.Run, req.Step.Script)
+	cmdStr, err := resolveCommand(req.Step.Run, req.Step.Script, req.RepoRoot)
 	if err != nil {
 		return &step.Result{
 			Status:   step.StatusFailed,
@@ -168,7 +169,14 @@ func writeCommandTranscript(req engine.StepRequest, rep engine.Reporter, output 
 // resolveCommand returns the shell expression to pass to sh -c.
 // Exactly one of run or script must be non-empty; the workflow validator
 // enforces this at load time.
-func resolveCommand(run, script string) (string, error) {
+//
+// A `script` is a file path resolved against repoRoot (the project root) — the
+// same anchor the validator checked at load time, via workflow.ScriptPath — so
+// the path that validated is the path that runs, regardless of the execution
+// cwd (which stays the step worktree so the script operates on that code). A
+// multi-line `script` is treated as an inline shell body, not a path. When
+// repoRoot is "" (persistence-off / tests) the path is resolved against the cwd.
+func resolveCommand(run, script, repoRoot string) (string, error) {
 	if run != "" && script != "" {
 		// Defensive: validator should have caught this, but fail loudly.
 		return "", fmt.Errorf("step has both run and script set; only one is allowed")
@@ -177,16 +185,17 @@ func resolveCommand(run, script string) (string, error) {
 		return run, nil
 	}
 	if script != "" {
-		// If script looks like a file path (starts with / or ./ or contains no
-		// newline), try to read the file; otherwise treat it as an inline script body.
-		if !strings.Contains(script, "\n") && (strings.HasPrefix(script, "/") || strings.HasPrefix(script, "./")) {
-			body, err := os.ReadFile(script)
-			if err != nil {
-				return "", fmt.Errorf("read script file %q: %w", script, err)
-			}
-			return string(body), nil
+		// A multi-line value is an inline script body; a single-line value is a
+		// path to a script file (resolved from the project root).
+		if strings.Contains(script, "\n") {
+			return script, nil
 		}
-		return script, nil
+		path := workflow.ScriptPath(repoRoot, script)
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("read script file %q: %w", path, err)
+		}
+		return string(body), nil
 	}
 	return "", fmt.Errorf("command step has neither run nor script")
 }

@@ -10,6 +10,24 @@ import (
 	"jig/internal/workflow"
 )
 
+// fireLoopNow records the given loopers' intents and fires the coalesced rewind
+// for their shared goto target, bypassing the run-loop barrier. White-box
+// context tests set step states directly rather than driving real dispatch, so
+// they invoke the record+fire pair explicitly. Passing several loopers models
+// the multiple-loops-target-one-step case (they aggregate into one rewind).
+func fireLoopNow(s *scheduler, loopers ...string) {
+	var gotoID string
+	for _, id := range loopers {
+		st := s.stepByID(id)
+		s.recordLoopIntent(id, st)
+		gotoID = st.Loop.Goto
+	}
+	if intent := s.pendingLoops[gotoID]; intent != nil {
+		s.fireCoalescedLoop(intent)
+		delete(s.pendingLoops, gotoID)
+	}
+}
+
 // planFixture mirrors the `plan` neighborhood of examples/feature.toml: three
 // upstream agents, a review consumer that reviews @plan.summary, a guarded agent
 // consumer that reads @plan.tasks/@plan.approach, plus a non-dependency sibling
@@ -382,7 +400,7 @@ func TestWorkflowContextReviseIteration(t *testing.T) {
 	s.states["plan"].Status = step.StatusSucceeded
 	s.states["plan_review"].Result = &step.Result{Status: step.StatusSucceeded, Verdict: "revise"}
 
-	s.fireLoop("plan_review", s.stepByID("plan_review"))
+	fireLoopNow(s, "plan_review")
 
 	got := s.buildRequest(s.stepByID("plan"), "run1", "", "", "").WorkflowContext
 	if !strings.Contains(got, "(iteration 2 of 3)") {
@@ -400,7 +418,7 @@ func TestWorkflowContextGateRerun(t *testing.T) {
 	s.states["build"].Status = step.StatusSucceeded
 	s.states["qa"].Result = &step.Result{Status: step.StatusSucceeded, Verdict: "false"}
 
-	s.fireLoop("qa", s.stepByID("qa"))
+	fireLoopNow(s, "qa")
 
 	if s.rerunSource["build"] != "qa" {
 		t.Fatalf("rerunSource[build] = %q, want qa (recorded without a feedback ref)", s.rerunSource["build"])
@@ -430,33 +448,33 @@ func TestWorkflowContextFirstRun(t *testing.T) {
 	}
 }
 
-// TestWorkflowContextMultipleLoops hardens the multiple-loops-target-one-step
-// case (audit FLAG-1): two loops whose goto both target `build`, fired in
-// sequence — the last-fired source drives RerunReason (last-write-wins).
+// TestWorkflowContextMultipleLoops covers the multiple-loops-target-one-step
+// case (audit FLAG-1) under the coalescing model: two loops (a review `qa1` and
+// a gate `qa2`) both target `build` and both fire in one wave. They aggregate
+// into a single rewind whose RerunReason is driven by the first contributor in
+// declaration order (`qa1`) — deterministically, regardless of completion
+// order. This replaces the old last-write-wins behavior where the fastest
+// sibling silently won.
 func TestWorkflowContextMultipleLoops(t *testing.T) {
 	s := fixtureScheduler(t, twoLoopsFixture)
 	s.states["build"].Status = step.StatusSucceeded
 	s.states["qa1"].Result = &step.Result{Status: step.StatusSucceeded, Verdict: "revise"}
 	s.states["qa2"].Result = &step.Result{Status: step.StatusSucceeded, Verdict: "false"}
 
-	// Fire the review loop, then the gate loop: the gate fired last.
-	s.fireLoop("qa1", s.stepByID("qa1"))
-	s.fireLoop("qa2", s.stepByID("qa2"))
+	// Record qa2 before qa1 to prove ordering is by declaration, not completion:
+	// qa1 (declared first) must still drive the reason.
+	fireLoopNow(s, "qa2", "qa1")
 
-	if s.rerunSource["build"] != "qa2" {
-		t.Fatalf("rerunSource[build] = %q, want qa2 (last-fired wins)", s.rerunSource["build"])
+	if s.rerunSource["build"] != "qa1" {
+		t.Fatalf("rerunSource[build] = %q, want qa1 (first in declaration order, not fastest)", s.rerunSource["build"])
 	}
 	got := s.buildStepContext(s.stepByID("build")).Render()
-	if !strings.Contains(got, "State: re-running because the `qa2` gate reported a failure") {
-		t.Errorf("want qa2 gate phrasing (last-fired), got:\n%s", got)
+	if !strings.Contains(got, "State: re-running because `qa1` requested revisions") {
+		t.Errorf("want qa1 review phrasing (first declared), got:\n%s", got)
 	}
-	// qa1 legitimately appears as a downstream consumer of build; the assertion is
-	// that its superseded *revise* phrasing does not drive the State line.
-	if strings.Contains(got, "requested revisions") {
-		t.Errorf("must not show the superseded qa1 revise phrasing in State, got:\n%s", got)
-	}
-	if !strings.Contains(got, "(iteration 2 of 2)") {
-		t.Errorf("want qa2's cap `(iteration 2 of 2)`, got:\n%s", got)
+	// qa1's cap (3) drives the iteration clause since it is the named source.
+	if !strings.Contains(got, "(iteration 2 of 3)") {
+		t.Errorf("want qa1's cap `(iteration 2 of 3)`, got:\n%s", got)
 	}
 }
 
@@ -466,7 +484,7 @@ func TestBuildRequestReviseLoopPreambleGolden(t *testing.T) {
 	s := exampleScheduler(t)
 	s.states["plan"].Status = step.StatusSucceeded
 	s.states["plan_review"].Result = &step.Result{Status: step.StatusSucceeded, Verdict: "revise"}
-	s.fireLoop("plan_review", s.stepByID("plan_review"))
+	fireLoopNow(s, "plan_review")
 
 	got := s.buildStepContext(s.stepByID("plan")).Render()
 	checkPreambleGolden(t, reviseLoopPreamblePath, got)

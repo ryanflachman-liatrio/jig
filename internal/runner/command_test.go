@@ -96,6 +96,46 @@ func TestCommandExecutor_MultilineScript(t *testing.T) {
 	}
 }
 
+// TestCommandExecutor_ScriptResolvedFromRepoRoot verifies a single-line `script`
+// is read as a file resolved against RepoRoot (the project root) — not against
+// the execution cwd, and not misread as an inline shell body. This is the fix
+// for the validate/runtime path divergence: the runner locates the script at the
+// same anchor the validator checked.
+func TestCommandExecutor_ScriptResolvedFromRepoRoot(t *testing.T) {
+	root := t.TempDir()
+	// Script lives at <root>/scripts/hello.sh; the step references it repo-root
+	// relative. The runner must join it onto RepoRoot to find it.
+	if err := os.MkdirAll(filepath.Join(root, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "scripts", "hello.sh"), []byte("echo from-script\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Execute from an unrelated cwd to prove resolution is anchored to RepoRoot,
+	// not the cwd: the script path would not resolve relative to this dir.
+	exec := NewCommandExecutor(t.TempDir())
+	req := engine.StepRequest{
+		RepoRoot: root,
+		Step: &workflow.Step{
+			ID:     "s",
+			Type:   workflow.StepCommand,
+			Script: "scripts/hello.sh",
+		},
+	}
+	rep := &noopReporter{}
+	result, err := exec.Execute(context.Background(), req, rep)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != step.StatusSucceeded {
+		t.Errorf("want succeeded, got %q (err: %q)", result.Status, result.Err)
+	}
+	if combined := strings.Join(rep.deltas, ""); !strings.Contains(combined, "from-script") {
+		t.Errorf("expected script body to run; got output %q", combined)
+	}
+}
+
 func TestCommandExecutor_ContextCancellation(t *testing.T) {
 	exec := NewCommandExecutor("")
 	ctx, cancel := context.WithCancel(context.Background())

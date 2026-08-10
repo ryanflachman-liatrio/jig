@@ -1020,6 +1020,13 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 			m.refreshPanels()
 			return m, textarea.Blink
 		}
+		if keybind.Matches(msg, m.keys.RecoverSkip) {
+			m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
+			m.refreshPanels()
+			return m, func() tea.Msg {
+				return recoverResponseMsg{runID: rec.RunID, stepID: rec.StepID, action: engine.RecoverSkip}
+			}
+		}
 		if keybind.Matches(msg, m.keys.RecoverAbort) {
 			m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
 			m.refreshPanels()
@@ -2449,9 +2456,9 @@ func (m monitorModel) footerView() string {
 			if entry.composing {
 				hint = hintString(m.keys.Submit, m.keys.Newline, m.keys.GateBlur)
 			} else if entry.recovery.CanResume {
-				hint = hintString(m.keys.RecoverRetry, m.keys.RecoverGuide, m.keys.RecoverAbort, entryNav, m.keys.GateBlur)
+				hint = hintString(m.keys.RecoverRetry, m.keys.RecoverGuide, m.keys.RecoverSkip, m.keys.RecoverAbort, entryNav, m.keys.GateBlur)
 			} else {
-				hint = hintString(m.keys.RecoverRetry, m.keys.RecoverAbort, entryNav, m.keys.GateBlur)
+				hint = hintString(m.keys.RecoverRetry, m.keys.RecoverSkip, m.keys.RecoverAbort, entryNav, m.keys.GateBlur)
 			}
 		case inputKindIntegrationConflict:
 			hint = hintString(m.keys.IntegrationResolve, m.keys.RecoverAbort, entryNav, m.keys.GateBlur)

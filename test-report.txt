@@ -1,0 +1,10 @@
+?   	jig/cmd/jig	[no test files]
+ok  	jig/internal/datastore	(cached)
+ok  	jig/internal/engine	6.969s
+?   	jig/internal/manifest	[no test files]
+ok  	jig/internal/runner	0.569s
+ok  	jig/internal/sentinel	(cached)
+ok  	jig/internal/step	(cached)
+ok  	jig/internal/transcript	(cached)
+ok  	jig/internal/tui	0.910s
+ok  	jig/internal/workflow	(cached)

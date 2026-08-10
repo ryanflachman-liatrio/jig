@@ -123,7 +123,7 @@ Deterministic script/command; no agent context.
 | Field    | Type    | Notes                                              |
 |----------|---------|----------------------------------------------------|
 | `run`    | string  | Shell command (runs in `cwd`). Exactly one of run/script. |
-| `script` | path    | Script file to execute.                            |
+| `script` | path    | Script file to execute, resolved from the **project (git repo) root** (e.g. `examples/scripts/test.sh`). A multi-line value is an inline script body. |
 | `inputs` | [string]| `@stepid` refs / paths made available.             |
 | `output` | path    | Optional file the command writes.                  |
 

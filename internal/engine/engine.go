@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -361,6 +362,10 @@ func (r *Run) AnswerQuestion(stepID, toolUseID, answer string) {
 //   - RecoverRetry  — re-run the step fresh (a new agent session / full prompt).
 //   - RecoverResume — re-run the failed agent session, feeding the captured
 //     error plus the optional text as guidance so it doesn't repeat the mistake.
+//   - RecoverSkip   — accept the failure and continue: the step stays failed but
+//     is treated as a transparent on_failure="continue" node so its dependents
+//     proceed. The run is NOT torn down. This is the release valve for a step
+//     whose failure a human judges non-fatal (e.g. a missing optional tool).
 //   - RecoverAbort  — fail the step and abort the run (the old default behaviour).
 //
 // text is optional guidance, used only by RecoverResume.
@@ -475,6 +480,7 @@ type agentQuestionAnswerMsg struct {
 const (
 	RecoverRetry  = "retry"  // re-run fresh (new session, full prompt)
 	RecoverResume = "resume" // resume the failed agent session with the error + guidance
+	RecoverSkip   = "skip"   // accept the failure and continue past it (like on_failure="continue")
 	RecoverAbort  = "abort"  // fail the step and abort the run
 )
 
@@ -485,7 +491,7 @@ const maxRecoverRounds = 20
 
 type recoverMsg struct {
 	stepID string
-	action string // RecoverRetry | RecoverResume | RecoverAbort
+	action string // RecoverRetry | RecoverResume | RecoverSkip | RecoverAbort
 	text   string // optional guidance, used by RecoverResume
 }
 
@@ -598,14 +604,23 @@ type scheduler struct {
 	runDir       string                    // .jig/runs/<runID>/; "" when persistence is disabled
 	structured   map[string]map[string]any // cached JSON decode of step Result.Structured
 	stepFeedback map[string]string         // gotoStepID → feedback step ID for loop replay
-	// rerunSource maps a loop's goto target → the firing source step id
-	// (last-fired wins per re-run; only one loop fires per re-run event). It lets
-	// buildStepContext name why a step is re-running. In-memory only, never
-	// persisted — it mirrors stepFeedback.
+	// rerunSource maps a loop's goto target → the firing source step id. When a
+	// coalesced rewind has several contributing loopers it names the first in
+	// declaration order. It lets buildStepContext name why a step is re-running.
+	// In-memory only, never persisted — it mirrors stepFeedback.
 	rerunSource map[string]string
-	aborted     bool // true when the run was explicitly aborted (loop cap, etc.)
-	inFlight    int
-	seq         int
+
+	// pendingLoops coalesces loop back-edges that target the same goto step
+	// within one execution wave. A finishing looper records its intent here
+	// instead of rewinding immediately; the rewind fires once, with the union of
+	// every contributing looper's feedback, when the whole rewind body has
+	// settled (loopBarrierReady). This makes parallel siblings that all loop to
+	// the same step deterministic — no reset-collides-with-in-flight-worker, no
+	// last-write-wins feedback clobber. Keyed by goto-target step id.
+	pendingLoops map[string]*loopIntent
+	aborted      bool // true when the run was explicitly aborted (loop cap, etc.)
+	inFlight     int
+	seq          int
 
 	// Phase 5: worktree lifecycle.
 	jigRoot    string            // .jig/ root; "" when persistence is disabled
@@ -662,6 +677,13 @@ type scheduler struct {
 	// trigger it again for the same step.
 	seenEscalations map[string]bool
 
+	// skippedByOperator marks steps a human chose to skip at the recovery gate
+	// (RecoverSkip). The step is transitioned to StatusFailed, but unlike an
+	// abort-policy failure it must NOT block its dependents: it is treated as a
+	// transparent, on_failure="continue" node by depsReady and anyPendingRunnable.
+	// This is the interactive equivalent of a static on_failure = "continue".
+	skippedByOperator map[string]bool
+
 	// reporters holds the active reporter for each in-flight step so
 	// agentQuestionAnswerMsg can route the answer to the correct channel.
 	reporters map[string]*reporter
@@ -715,6 +737,7 @@ func newScheduler(
 		structured:          make(map[string]map[string]any),
 		stepFeedback:        make(map[string]string),
 		rerunSource:         make(map[string]string),
+		pendingLoops:        make(map[string]*loopIntent),
 		jigRoot:             jigRoot,
 		repoRoot:            repoRoot,
 		worktrees:           make(map[string]string),
@@ -730,6 +753,7 @@ func newScheduler(
 		stepInputCount:      make(map[string]int),
 		recoverCount:        make(map[string]int),
 		seenEscalations:     make(map[string]bool),
+		skippedByOperator:   make(map[string]bool),
 		reporters:           make(map[string]*reporter),
 		stepCancels:         make(map[string]context.CancelFunc),
 		stopping:            make(map[string]bool),
@@ -782,6 +806,11 @@ func (s *scheduler) run(ctx context.Context) {
 	}()
 
 	for {
+		// 0. Fire any coalesced loop back-edges whose rewind body has fully
+		//    settled. Runs before dispatch so a fired rewind's freshly-pending body
+		//    steps are picked up in this same iteration.
+		s.fireReadyLoops()
+
 		// 1. Dispatch every ready step, respecting max_parallel.
 		for s.inFlight < maxPar {
 			st, ok := s.nextReady()
@@ -893,8 +922,13 @@ func (s *scheduler) depsReady(st *workflow.Step) bool {
 		if depState.Status == step.StatusSucceeded {
 			continue
 		}
-		// A failed dep is only "ready" when it declared on_failure = "continue".
+		// A failed dep is "ready" when it declared on_failure = "continue", or
+		// when a human skipped it at the recovery gate (RecoverSkip) — both mean
+		// "its failure does not block dependents."
 		if depState.Status == step.StatusFailed {
+			if s.skippedByOperator[depID] {
+				continue
+			}
 			depStep := s.stepByID(depID)
 			if depStep != nil && depStep.OnFailure == workflow.FailContinue {
 				continue
@@ -932,6 +966,11 @@ func (s *scheduler) anyPendingRunnable() bool {
 			blocked[id] = true
 		}
 		if st.Status == step.StatusFailed {
+			// An operator-skipped step (RecoverSkip) is transparent like a
+			// continue-failed one — it must not seed the blocked set.
+			if s.skippedByOperator[id] {
+				continue
+			}
 			wfStep := s.stepByID(id)
 			if wfStep == nil || wfStep.OnFailure != workflow.FailContinue {
 				blocked[id] = true
@@ -1333,6 +1372,7 @@ func (s *scheduler) buildRequest(
 		WorkflowContext: workflowContext,
 		ArtifactDir:     artifactDir,
 		Worktree:        worktreePath,
+		RepoRoot:        s.repoRoot,
 		TranscriptPath:  transcriptPath,
 		Iteration:       state.Iteration,
 		Attempt:         state.Attempt,
@@ -1428,7 +1468,7 @@ func (s *scheduler) handle(msg schedMsg) {
 			curFrom := s.states[m.stepID].Status
 			s.transition(m.stepID, curFrom, step.StatusSucceeded)
 			if wfStep != nil && wfStep.Loop != nil {
-				s.fireLoop(m.stepID, wfStep)
+				s.recordLoopIntent(m.stepID, wfStep)
 			}
 		}
 
@@ -1470,7 +1510,7 @@ func (s *scheduler) handle(msg schedMsg) {
 		wfStep := s.stepByID(m.stepID)
 		s.transition(m.stepID, step.StatusAwaitingReview, step.StatusSucceeded)
 		if wfStep != nil && wfStep.Loop != nil {
-			s.fireLoop(m.stepID, wfStep)
+			s.recordLoopIntent(m.stepID, wfStep)
 		}
 
 	case humanMessageMsg:
@@ -1802,6 +1842,14 @@ func (s *scheduler) handleRecover(m recoverMsg) {
 		s.transition(m.stepID, state.Status, step.StatusFailed)
 		s.cancel()
 
+	case RecoverSkip:
+		// Accept the failure and continue past it. The step stays failed, but
+		// skippedByOperator marks it transparent so depsReady/anyPendingRunnable
+		// treat it like an on_failure="continue" node — dependents proceed and the
+		// run keeps going. No worker is re-dispatched; the recovery loop ends here.
+		s.skippedByOperator[m.stepID] = true
+		s.transition(m.stepID, state.Status, step.StatusFailed)
+
 	case RecoverRetry, RecoverResume:
 		if s.recoverCount[m.stepID] >= maxRecoverRounds {
 			s.emit(RunError{
@@ -1889,7 +1937,7 @@ func (s *scheduler) handleResolveIntegration(m resolveIntegrationMsg) {
 	wfStep := s.stepByID(m.stepID)
 	s.transition(m.stepID, step.StatusAwaitingIntegration, step.StatusSucceeded)
 	if wfStep != nil && wfStep.Loop != nil {
-		s.fireLoop(m.stepID, wfStep)
+		s.recordLoopIntent(m.stepID, wfStep)
 	}
 }
 
@@ -2293,10 +2341,31 @@ func reviewChoices(st *workflow.Step) []string {
 	}
 }
 
-// fireLoop checks the step's [step.loop] condition and, if it fires, resets the
-// loop body (from Goto to this step) to pending for another iteration.
-// When the cap is exceeded while the condition is still true, the run is aborted.
-func (s *scheduler) fireLoop(stepID string, wfStep *workflow.Step) {
+// loopIntent accumulates the contributions of every looper that fired toward a
+// single goto target within one execution wave, so the coalesced rewind carries
+// the union of their feedback rather than only the fastest sibling's.
+type loopIntent struct {
+	gotoID   string
+	contribs []loopContribution
+}
+
+// loopContribution is one looper's fired back-edge: the source step, its type
+// (so buildStepContext can name the reason), the resolved feedback content (""
+// when the loop wires none), and the iteration at which it fired.
+type loopContribution struct {
+	source   string
+	kind     workflow.StepType
+	feedback string
+	iter     int
+}
+
+// recordLoopIntent evaluates a finished step's [step.loop] and, if it fires,
+// records its contribution against the goto target instead of rewinding
+// immediately. The actual rewind is deferred to fireReadyLoops once the whole
+// body settles — this is what makes parallel siblings looping to one step
+// deterministic. The cap is still checked here (at the moment the looper fires),
+// so an over-cap loop aborts the run exactly as before.
+func (s *scheduler) recordLoopIntent(stepID string, wfStep *workflow.Step) {
 	loop := wfStep.Loop
 	state := s.states[stepID]
 
@@ -2319,23 +2388,15 @@ func (s *scheduler) fireLoop(stepID string, wfStep *workflow.Step) {
 		return
 	}
 
-	newIter := state.Iteration + 1
-	s.emit(LoopFired{
-		RunID:     s.runID,
-		StepID:    stepID,
-		Goto:      loop.Goto,
-		Iteration: newIter,
-		Max:       loop.MaxIterations,
-	})
-
-	// Wire feedback: resolve the @ref to actual content (verdict for review steps,
-	// output file text for agent/command steps) so the agent receives real input.
+	// Resolve the feedback @ref to actual content (verdict for review steps,
+	// output file text for agent/command steps) now, while the source step's
+	// result is current.
+	var content string
 	if loop.Feedback != "" {
 		feedbackID := strings.TrimPrefix(loop.Feedback, "@")
 		if dot := strings.Index(feedbackID, "."); dot >= 0 {
 			feedbackID = feedbackID[:dot]
 		}
-		var content string
 		if fs := s.states[feedbackID]; fs != nil && fs.Result != nil {
 			if fs.Result.Verdict != "" {
 				content = fs.Result.Verdict
@@ -2345,18 +2406,162 @@ func (s *scheduler) fireLoop(stepID string, wfStep *workflow.Step) {
 				}
 			}
 		}
-		s.stepFeedback[loop.Goto] = content
 	}
 
-	// Record which step's loop fired this re-run so buildStepContext can name the
-	// reason. Kept outside the feedback block so it is recorded even when the loop
-	// wires no feedback ref. Last-write-wins is correct: only one loop fires per
-	// re-run event, so the last write to rerunSource[goto] names the loop that
-	// caused this dispatch (the multiple-loops-target-one-step case).
-	s.rerunSource[loop.Goto] = stepID
+	intent := s.pendingLoops[loop.Goto]
+	if intent == nil {
+		intent = &loopIntent{gotoID: loop.Goto}
+		s.pendingLoops[loop.Goto] = intent
+	}
+	intent.contribs = append(intent.contribs, loopContribution{
+		source:   stepID,
+		kind:     wfStep.Type,
+		feedback: content,
+		iter:     state.Iteration,
+	})
+}
 
-	// Reset every step in the loop body to pending with the new iteration count.
-	for _, id := range s.loopBody(loop.Goto, stepID) {
+// fireReadyLoops rewinds every pending loop whose body has fully settled. It is
+// called at the top of the run loop, so a fired rewind's freshly-pending body
+// steps are dispatched in the same iteration. Targets are processed in workflow
+// declaration order for determinism.
+func (s *scheduler) fireReadyLoops() {
+	if len(s.pendingLoops) == 0 {
+		return
+	}
+	for i := range s.wf.Steps {
+		g := s.wf.Steps[i].ID
+		intent := s.pendingLoops[g]
+		if intent == nil || !s.loopBarrierReady(g) {
+			continue
+		}
+		s.fireCoalescedLoop(intent)
+		delete(s.pendingLoops, g)
+	}
+}
+
+// loopBarrierReady reports whether a coalesced rewind to gotoID can fire: no
+// step in the rewind body is still able to contribute to (or be corrupted by)
+// the rewind. A body step blocks the barrier while it is running, parked on a
+// human gate, or pending-and-dispatchable (still going to run this wave). A
+// pending body step whose deps can never be satisfied is treated as settled, so
+// a permanently-blocked branch does not stall the rewind.
+func (s *scheduler) loopBarrierReady(gotoID string) bool {
+	for _, id := range s.bodyUnion(gotoID) {
+		st := s.states[id]
+		switch st.Status {
+		case step.StatusRunning,
+			step.StatusAwaitingReview,
+			step.StatusNeedsInput,
+			step.StatusAwaitingRecovery,
+			step.StatusAwaitingIntegration:
+			return false
+		case step.StatusPending:
+			if s.depsReady(s.stepByID(id)) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// bodyUnion is the reset set for a rewind to gotoID: the union of loopBody over
+// every step statically declaring a loop back to gotoID, in workflow
+// declaration order. For the common single-looper (join) case this is exactly
+// loopBody(gotoID, theLooper); with parallel siblings it covers all their paths
+// so one rewind redoes the whole iteration.
+func (s *scheduler) bodyUnion(gotoID string) []string {
+	seen := map[string]bool{}
+	for i := range s.wf.Steps {
+		L := &s.wf.Steps[i]
+		if L.Loop != nil && L.Loop.Goto == gotoID {
+			for _, id := range s.loopBody(gotoID, L.ID) {
+				seen[id] = true
+			}
+		}
+	}
+	var out []string
+	for i := range s.wf.Steps {
+		if seen[s.wf.Steps[i].ID] {
+			out = append(out, s.wf.Steps[i].ID)
+		}
+	}
+	return out
+}
+
+// fireCoalescedLoop performs one rewind for an intent: it composes the union of
+// its contributors' feedback, records the reason, emits a LoopFired per
+// contributor, and resets the whole body to pending at the next iteration.
+func (s *scheduler) fireCoalescedLoop(intent *loopIntent) {
+	// Deterministic order: sort contributors by workflow declaration index.
+	declIndex := func(id string) int {
+		for i := range s.wf.Steps {
+			if s.wf.Steps[i].ID == id {
+				return i
+			}
+		}
+		return len(s.wf.Steps)
+	}
+	sort.SliceStable(intent.contribs, func(i, j int) bool {
+		return declIndex(intent.contribs[i].source) < declIndex(intent.contribs[j].source)
+	})
+
+	// New iteration is one past the highest iteration among contributors (they
+	// share a wave, so this is just wave+1).
+	newIter := 0
+	for _, c := range intent.contribs {
+		if c.iter+1 > newIter {
+			newIter = c.iter + 1
+		}
+	}
+
+	// Compose feedback. A single contributor writes its content verbatim (so the
+	// single-looper case is byte-identical to before). Multiple contributors are
+	// concatenated, each labeled by source, so the rewound step sees every
+	// looper's findings — not just the fastest one's.
+	var feedbacks []loopContribution
+	for _, c := range intent.contribs {
+		if c.feedback != "" {
+			feedbacks = append(feedbacks, c)
+		}
+	}
+	switch len(feedbacks) {
+	case 0:
+		// no feedback wired by any contributor — leave stepFeedback untouched
+	case 1:
+		s.stepFeedback[intent.gotoID] = feedbacks[0].feedback
+	default:
+		var b strings.Builder
+		for i, c := range feedbacks {
+			if i > 0 {
+				b.WriteString("\n\n")
+			}
+			fmt.Fprintf(&b, "From `%s`:\n%s", c.source, c.feedback)
+		}
+		s.stepFeedback[intent.gotoID] = b.String()
+	}
+
+	// Name the re-run reason from the first contributor (declaration order).
+	s.rerunSource[intent.gotoID] = intent.contribs[0].source
+
+	// Emit one LoopFired per contributor for journal/observability fidelity.
+	for _, c := range intent.contribs {
+		src := s.stepByID(c.source)
+		max := 0
+		if src != nil && src.Loop != nil {
+			max = src.Loop.MaxIterations
+		}
+		s.emit(LoopFired{
+			RunID:     s.runID,
+			StepID:    c.source,
+			Goto:      intent.gotoID,
+			Iteration: newIter,
+			Max:       max,
+		})
+	}
+
+	// Reset every step in the body to pending with the new iteration count.
+	for _, id := range s.bodyUnion(intent.gotoID) {
 		bodyState := s.states[id]
 		bodyState.Iteration = newIter
 		s.transition(id, bodyState.Status, step.StatusPending)

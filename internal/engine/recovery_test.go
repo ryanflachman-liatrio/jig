@@ -280,6 +280,62 @@ run = "false"
 	assertRunFinished(t, events, true)
 }
 
+// TestScheduler_Recovery_Skip verifies that RecoverSkip accepts a step's failure
+// and lets the run continue past it: the skipped step ends failed, its dependent
+// still runs, and the run finishes non-failed — the interactive equivalent of a
+// static on_failure = "continue".
+func TestScheduler_Recovery_Skip(t *testing.T) {
+	const toml = `
+[workflow]
+name = "recover-skip"
+version = "0.1"
+
+[[step]]
+id = "bad"
+type = "command"
+run = "false"
+
+[[step]]
+id = "after"
+type = "command"
+depends_on = ["bad"]
+run = "echo after"
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// "bad" fails forever; the only way past it is a skip at the recovery gate.
+	exec := &recoveringExec{stepID: "bad", failCalls: 1000}
+	mgr := NewManager(exec, "")
+	_, ch := mgr.Subscribe()
+
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := driveRecovery(t, ch, run, RecoverSkip, "", 5*time.Second)
+
+	// The run completes without being torn down. Failed=true is honest — the
+	// step did fail; skip only means "don't block dependents / don't abort",
+	// matching on_failure="continue" semantics. The proof skip differs from
+	// abort is that the dependent below actually ran.
+	assertRunFinished(t, events, true)
+
+	// "bad" stays failed (skip does not launder it into success).
+	gotBad := findStatus(events, "bad")
+	if len(gotBad) == 0 || gotBad[len(gotBad)-1] != step.StatusFailed {
+		t.Errorf("skipped step bad should end failed; got %v", gotBad)
+	}
+
+	// The dependent ran despite bad's failure — the release valve worked.
+	gotAfter := findStatus(events, "after")
+	if len(gotAfter) == 0 || gotAfter[len(gotAfter)-1] != step.StatusSucceeded {
+		t.Errorf("dependent after should run and succeed after skip; got %v", gotAfter)
+	}
+}
+
 // TestScheduler_Recovery_SiblingsSurvive verifies that one step failing and
 // parking for recovery does NOT cancel an unrelated in-flight sibling — the core
 // regression: the old s.cancel() killed every worker on the first failure.

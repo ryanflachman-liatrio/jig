@@ -27,7 +27,12 @@ type StepRequest struct {
 	// empty value leaves the built prompt byte-identical to the pre-feature form.
 	WorkflowContext string
 	Worktree        string // "" when isolation = none (Phase 5+)
-	ArtifactDir     string // absolute path under .jig/runs/<runID>/artifacts; "" disables file writes
+	// RepoRoot is the project root (the parent of .jig), used to resolve a
+	// command step's `script` file path — scripts are repo-root-relative, not
+	// relative to the execution cwd. "" on the persistence-off / non-git path,
+	// where the runner falls back to resolving the script against the cwd.
+	RepoRoot    string
+	ArtifactDir string // absolute path under .jig/runs/<runID>/artifacts; "" disables file writes
 
 	// TranscriptPath is the absolute path to this step's transcript.jsonl. When
 	// non-empty the runner captures the full message stream there; "" disables

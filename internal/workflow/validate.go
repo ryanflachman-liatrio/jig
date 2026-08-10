@@ -305,9 +305,17 @@ func (v *validator) checkCommand(s *Step) {
 	case s.Run != "" && s.Script != "":
 		v.errf("command step %q sets both `run` and `script`; pick one", s.ID)
 	}
+	// Scripts are resolved relative to the project (git repo) root, not the
+	// workflow file's directory — the same anchor the runner uses at execution
+	// time (ScriptPath), so a script that validates is exactly the one that runs.
+	// Fall back to baseDir when there is no enclosing git repo (fixtures / tests).
 	if s.Script != "" && v.baseDir != "" {
-		if _, err := os.Stat(filepath.Join(v.baseDir, s.Script)); err != nil {
-			v.errf("command step %q: script %q not found", s.ID, s.Script)
+		root := RepoRoot(v.baseDir)
+		if root == "" {
+			root = v.baseDir
+		}
+		if _, err := os.Stat(ScriptPath(root, s.Script)); err != nil {
+			v.errf("command step %q: script %q not found (resolved from project root %q)", s.ID, s.Script, root)
 		}
 	}
 	if s.Review != "" || hasAgentOnlyFields(s) {
