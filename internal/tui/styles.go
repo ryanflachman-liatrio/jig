@@ -67,6 +67,13 @@ const (
 	RuleGlyph = "─"
 	LoopGlyph = "↺"
 	GateGlyph = "⇢"
+
+	// Chart connectors (detail chart view). ArrowDown terminates a normal
+	// depends_on edge into a node; CondArrow marks a `when`-guarded edge;
+	// ArrowLeft terminates a loop back-edge into its goto target.
+	ArrowDownGlyph = "▼"
+	CondArrowGlyph = "▽"
+	ArrowLeftGlyph = "◄"
 )
 
 // Styles groups all lipgloss styles for the TUI, organized by UI region.
@@ -160,6 +167,20 @@ type Styles struct {
 	Step struct {
 		ID    lipgloss.Style
 		Types map[string]lipgloss.Style
+	}
+
+	// Chart styles the read-only detail chart view (see chart_render.go): the
+	// node boxes and the three connector classes. Box carries the node border
+	// (recolored per step type from Step.Types at render time); Edge is a plain
+	// depends_on arrow, Conditional a `when`-guarded arrow, and BackEdge a
+	// bounded loop back-edge. Gate/Label style the ⇢ gate glyph and node id.
+	Chart struct {
+		Box         lipgloss.Style
+		Edge        lipgloss.Style
+		Conditional lipgloss.Style
+		BackEdge    lipgloss.Style
+		Gate        lipgloss.Style
+		Label       lipgloss.Style
 	}
 
 	// Security styles the per-severity rows in the Security pane and its header.
@@ -282,6 +303,20 @@ func DefaultTheme() Styles {
 		"review":  lipgloss.NewStyle().Foreground(warning),
 	}
 	_ = bgLeast
+
+	// Chart: node box reuses the rounded border on a muted default color (the
+	// renderer recolors it per step type); the three edge classes reuse the
+	// existing muted/info/warning tokens so the chart reads in the same palette
+	// as the step list's type badges.
+	s.Chart.Box = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(fgMuted).
+		Padding(0, 1)
+	s.Chart.Edge = lipgloss.NewStyle().Foreground(fgMuted)
+	s.Chart.Conditional = lipgloss.NewStyle().Foreground(info)
+	s.Chart.BackEdge = lipgloss.NewStyle().Foreground(warning)
+	s.Chart.Gate = lipgloss.NewStyle().Foreground(fgDim)
+	s.Chart.Label = lipgloss.NewStyle().Foreground(fgBase)
 
 	s.Canvas = lipgloss.Color(hexPepper)
 	s.GradFrom = primary

@@ -646,6 +646,43 @@ escalation policy, see [`docs/security-monitoring.md`](security-monitoring.md).
 
 ---
 
+## Visualizing a workflow (TUI chart view)
+
+The read-only workflow detail screen (open a workflow from the picker) shows the
+flat step list by default and can toggle to a **chart view** — a mermaid-style
+top-down flowchart of the graph — with **`v`**. Press `v` again to return to the
+list. The toggle only appears once the workflow passes full validation (an
+invalid file shows its errors instead).
+
+The chart is a direct, deterministic drawing of the constructs above:
+
+- **Nodes** are steps, boxed and colored by `type` (agent / command / review),
+  the same palette the step list uses for its type badges. A `⇢` marks a step
+  with a `[step.validate]` gate; a `↺` marks a step that carries a `[step.loop]`.
+- **Layers (top → bottom)** are longest-path ranks over `depends_on`: a step sits
+  one row below its deepest dependency, so edges always flow downward. Steps in
+  the same rank are ordered left-to-right by their position in the file.
+- **Edges** are `depends_on` links, drawn with elbow connectors that fan out from
+  a parent and fan in above a child (`▼`).
+- **Conditional edges** — the one edge a step's `when` guard decorates — use a
+  hollow arrowhead (`▽`) in the conditional color, since `when` gates an existing
+  dependency rather than adding a new one.
+- **Back-edges** — bounded `[step.loop]` goto targets — are a distinct class
+  routed up a dedicated channel on the right (`↺`, `◄`), reflecting that they are
+  the only cycles in the graph and are capped by `max_iterations`.
+
+The chart is laid out to fit the panel width. A graph wider than the panel (a
+rank with many parallel steps) renders at its natural width; in chart mode the
+`←`/`→` arrows (and vim `h`/`l`) scroll horizontally as the escape hatch — in the
+list view those keys keep their normal meaning.
+
+**MVP exclusions.** The layout does not do crossing-minimization: within-rank
+order is purely file order, so an edge that spans more than one rank passes
+behind the intervening node boxes rather than routing around them. Column
+alignment between ranks is centered, not optimized to reduce edge crossings.
+
+---
+
 ## MVP 1 scope
 
 **In:** DAG orchestration, parallel/sync, worktree isolation, deterministic

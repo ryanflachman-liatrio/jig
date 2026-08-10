@@ -24,17 +24,20 @@ type detailModel struct {
 	loadErr error
 	loaded  bool
 
-	vp     viewport.Model
-	ready  bool
-	width  int
-	height int
+	vp       viewport.Model
+	ready    bool
+	width    int
+	height   int
+	vpWidth  int  // viewport inner width; the chart lays out to fit it
+	viewMode bool // false = flat step list (default), true = chart
 }
 
 func newDetailModel(path string) detailModel {
 	keys := defaultDetailKeys()
-	// Run is unavailable until a valid workflow loads; disabling it both stops
-	// matching "r" and drops "r run" from the footer.
+	// Run and Toggle are unavailable until a valid workflow loads; disabling
+	// them both stops matching their keys and drops them from the footer.
 	keys.Run.SetEnabled(false)
+	keys.Toggle.SetEnabled(false)
 	return detailModel{path: path, keys: keys}
 }
 
@@ -72,6 +75,15 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 		m.wf = msg.wf
 		m.loadErr = msg.err
 		m.keys.Run.SetEnabled(m.wf != nil)
+		// The chart is only meaningful for a valid graph; keep the toggle out of
+		// the footer (and unmatched) until one loads.
+		m.keys.Toggle.SetEnabled(m.wf != nil)
+		if m.wf == nil && m.viewMode {
+			// A prior valid workflow was charted, then a reload failed: fall back
+			// to the list so body() never charts a nil workflow.
+			m.viewMode = false
+			m.applyViewMode()
+		}
 		if m.ready {
 			m.vp.SetContent(m.body())
 			m.vp.GotoTop()
@@ -82,6 +94,15 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 		switch {
 		case keybind.Matches(msg, m.keys.Runs):
 			return m, func() tea.Msg { return showRunsMsg{} }
+		case keybind.Matches(msg, m.keys.Toggle):
+			m.viewMode = !m.viewMode
+			m.applyViewMode()
+			if m.ready {
+				m.vp.SetContent(m.body())
+				m.vp.SetXOffset(0)
+				m.vp.GotoTop()
+			}
+			return m, nil
 		case keybind.Matches(msg, m.keys.Back):
 			return m, func() tea.Msg { return backToSelectorMsg{} }
 		case keybind.Matches(msg, m.keys.Run):
@@ -109,18 +130,44 @@ func (m *detailModel) resize() {
 	if vpHeight < 1 {
 		vpHeight = 1
 	}
+	m.vpWidth = vpWidth
 	if !m.ready {
 		m.vp = viewport.New(viewport.WithWidth(vpWidth), viewport.WithHeight(vpHeight))
-		// Content is word-wrapped to the panel width, so horizontal scrolling
-		// only ever cuts left characters off rendered lines. Disable it.
-		m.vp.KeyMap.Left.Unbind()
-		m.vp.KeyMap.Right.Unbind()
 		m.ready = true
+		// Set horizontal-scroll bindings to match the current mode: the list view
+		// keeps them unbound (content fits the panel width); the chart view binds
+		// them as the wide-graph escape hatch. See applyViewMode.
+		m.applyViewMode()
 	} else {
 		m.vp.SetWidth(vpWidth)
 		m.vp.SetHeight(vpHeight)
 	}
 	m.vp.SetContent(m.body())
+}
+
+// applyViewMode reconciles the toggle-dependent state after viewMode flips (or on
+// first viewport build): the Toggle's own help label, the Back binding, and the
+// viewport's horizontal-scroll keys.
+//
+// The list view keeps horizontal scroll unbound — its content is laid out to the
+// panel width. The chart view lays out to fit that width too, but a graph wider
+// than one rank can still overflow, so it re-enables horizontal scroll (arrows +
+// vim h/l) as the escape hatch. Because the default scroll keys ("left"/"h")
+// collide with Back's vim aliases, Back sheds them in chart mode so left/h reach
+// the viewport; esc/q/backspace still leave the screen.
+func (m *detailModel) applyViewMode() {
+	if m.viewMode {
+		m.keys.Toggle.SetHelp("v", "list")
+		m.keys.Back.SetKeys("esc", "q", "backspace")
+		def := viewport.DefaultKeyMap()
+		m.vp.KeyMap.Left = def.Left
+		m.vp.KeyMap.Right = def.Right
+	} else {
+		m.keys.Toggle.SetHelp("v", "chart")
+		m.keys.Back.SetKeys("esc", "q", "backspace", "h", "left")
+		m.vp.KeyMap.Left.Unbind()
+		m.vp.KeyMap.Right.Unbind()
+	}
 }
 
 // titleText is the detail panel's title: the workflow name, falling back to the
@@ -133,15 +180,15 @@ func (m detailModel) titleText() string {
 }
 
 func (m detailModel) footerView() string {
-	// Run drops out automatically when disabled (no workflow loaded).
-	return theme.Footer.Render("  " + hintString(m.keys.Run, m.keys.Runs, m.keys.Back, keyHelp, keyQuit))
+	// Run and Toggle drop out automatically when disabled (no workflow loaded).
+	return theme.Footer.Render("  " + hintString(m.keys.Run, m.keys.Toggle, m.keys.Runs, m.keys.Back, keyHelp, keyQuit))
 }
 
 // helpSections satisfies helpProvider: the workflow detail actions plus the
 // global chord. Run drops out when disabled, mirroring the footer.
 func (m detailModel) helpSections() []helpSection {
 	return []helpSection{
-		{title: "Workflow", bindings: []keybind.Binding{m.keys.Run, m.keys.Runs, m.keys.Back}},
+		{title: "Workflow", bindings: []keybind.Binding{m.keys.Run, m.keys.Toggle, m.keys.Runs, m.keys.Back}},
 		{title: "Global", bindings: []keybind.Binding{keyHelp, keyQuit}},
 	}
 }
@@ -178,8 +225,22 @@ func (m detailModel) body() string {
 
 	b.WriteString("  " + theme.Valid.Render(IconSuccess+" valid") +
 		theme.Question.Render(fmt.Sprintf("  ·  %d step(s)", len(m.wf.Steps))) + "\n\n")
-	b.WriteString(m.stepsView())
+	if m.viewMode {
+		b.WriteString(m.chartView())
+	} else {
+		b.WriteString(m.stepsView())
+	}
 	return b.String()
+}
+
+// chartView renders the depends_on DAG as a top-down flowchart laid out to fit
+// the viewport's inner width. It falls back to the flat list if no valid
+// workflow is loaded (the toggle is disabled in that case, so this is defensive).
+func (m detailModel) chartView() string {
+	if m.wf == nil {
+		return m.stepsView()
+	}
+	return renderChart(m.wf, m.vpWidth)
 }
 
 // stepsView renders one line per step: an index, the step id, a type badge, and
