@@ -272,6 +272,14 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(rearm, rc, mc)
 
+	// The monitor's live-clock tick is routed unconditionally (like engine events)
+	// so the loop keeps advancing even while the user is on another screen; the
+	// monitor stops re-arming it once no step is running.
+	case monitorTickMsg:
+		var mc tea.Cmd
+		m.monitor, mc = m.monitor.Update(msg)
+		return m, mc
+
 	// ── navigation ────────────────────────────────────────────────────────
 	case showDetailMsg:
 		m.detail = newDetailModel(msg.path)
@@ -326,7 +334,9 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		m.active = screenMonitor
-		return m, nil
+		// A run seeded from a snapshot/journal may already have a step running (or the
+		// prior frame loop fell silent while off-screen); restart the live clock.
+		return m, m.monitor.ensureFrame()
 
 	case reviewVerdictMsg:
 		if run, ok := m.handles[msg.runID]; ok {

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -1814,5 +1815,171 @@ func TestMonitorHelpSections(t *testing.T) {
 		if !titles[want] {
 			t.Errorf("monitor help missing section %q; got %v", want, titles)
 		}
+	}
+}
+
+// drainFrames flushes any scheduled frame(s) so the monitor settles to an idle
+// state (no frame in flight, no pending repaint) — the fixture starting point
+// for asserting on the next event.
+func drainFrames(t *testing.T, m monitorModel) monitorModel {
+	t.Helper()
+	for i := 0; i < 8 && m.ticking; i++ {
+		m, _ = m.Update(monitorTickMsg(time.Now()))
+	}
+	if m.ticking {
+		t.Fatal("frame loop did not settle after draining")
+	}
+	return m
+}
+
+// TestMonitorLiveClockTicks verifies the frame loop's clock role: a running step
+// keeps the loop re-arming so the elapsed column advances, and the loop falls
+// silent once the step finishes.
+func TestMonitorLiveClockTicks(t *testing.T) {
+	m := drainFrames(t, newMonitorWithSteps(t))
+
+	// A step going Running schedules a frame.
+	m, cmd := m.Update(engineEventMsg{event: engine.StepStatus{
+		RunID: "run-1", StepID: "a", To: step.StatusRunning,
+	}})
+	if !m.ticking {
+		t.Fatal("frame not scheduled after step started running")
+	}
+	if cmd == nil {
+		t.Fatal("no frame command returned when step started running")
+	}
+
+	// A frame while the step runs re-arms the loop (non-nil command).
+	m, cmd = m.Update(monitorTickMsg(time.Now()))
+	if cmd == nil {
+		t.Fatal("frame loop did not re-arm while a step was running")
+	}
+	if !m.ticking {
+		t.Fatal("ticking flag cleared while a step was still running")
+	}
+
+	// Once the step finishes, the next frame flushes any pending repaint, then
+	// falls silent (no re-arm) and clears the guard so a future event restarts it.
+	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+		RunID: "run-1", StepID: "a", To: step.StatusSucceeded,
+	}})
+	m, cmd = m.Update(monitorTickMsg(time.Now()))
+	if cmd != nil {
+		t.Fatal("frame loop re-armed after all steps finished")
+	}
+	if m.ticking {
+		t.Fatal("ticking flag still set after the loop should have stopped")
+	}
+}
+
+// TestMonitorFrameLeadingEdge verifies the leading-edge flush: a lone event that
+// arrives while the frame loop is idle repaints immediately (no deferred latency)
+// rather than waiting for the next frame.
+func TestMonitorFrameLeadingEdge(t *testing.T) {
+	m := drainFrames(t, newMonitorWithSteps(t)) // idle: no frame in flight
+
+	// A single (non-running) status event flushes on the spot and, with nothing
+	// running and nothing left dirty, does not arm a frame at all.
+	m, cmd := m.Update(engineEventMsg{event: engine.StepStatus{
+		RunID: "run-1", StepID: "a", To: step.StatusSkipped,
+	}})
+	if m.dirtyList || m.dirtyChat {
+		t.Fatal("idle event was left pending instead of flushed on the leading edge")
+	}
+	if cmd != nil || m.ticking {
+		t.Fatal("a lone idle event spun up a frame loop with nothing to coalesce")
+	}
+}
+
+// TestMonitorFrameCoalescesBurst verifies the coalescing contract: while the loop
+// is running (a streaming window), a burst of events does not stack extra frames
+// and defers the repaint via the dirty flags, which one frame then flushes.
+func TestMonitorFrameCoalescesBurst(t *testing.T) {
+	m := drainFrames(t, newMonitorWithSteps(t)) // chatStep is the first step, "a"
+
+	// Put the visible step into Running so the frame loop stays armed — this is the
+	// streaming window during which deltas must coalesce.
+	m, cmd := m.Update(engineEventMsg{event: engine.StepStatus{
+		RunID: "run-1", StepID: "a", To: step.StatusRunning,
+	}})
+	if !m.ticking || cmd == nil {
+		t.Fatal("running step did not arm the frame loop")
+	}
+
+	// The whole burst reuses the in-flight frame: no delta schedules another frame,
+	// and the transcript repaint stays pending until a frame services it.
+	for i := 0; i < 20; i++ {
+		var c tea.Cmd
+		m, c = m.Update(engineEventMsg{event: engine.StepOutput{
+			RunID: "run-1", StepID: "a", Delta: "chunk",
+		}})
+		if c != nil {
+			t.Fatalf("burst delta %d stacked a duplicate frame", i)
+		}
+	}
+	if !m.dirtyChat {
+		t.Fatal("repaint was not still pending mid-burst (delta rendered inline?)")
+	}
+
+	// A single frame flushes the coalesced repaint for the whole burst.
+	m, _ = m.Update(monitorTickMsg(time.Now()))
+	if m.dirtyChat {
+		t.Fatal("frame did not flush the pending transcript repaint")
+	}
+}
+
+// TestMonitorFrameStepGating verifies that an event for a non-visible step never
+// dirties the (glamour-rendered) Transcript panel — the parallel-steps fix — while
+// still refreshing the cheap Steps list.
+func TestMonitorFrameStepGating(t *testing.T) {
+	m := drainFrames(t, newMonitorWithSteps(t)) // chatStep is "a"
+
+	// Arm the loop (visible step running) so events coalesce into the dirty flags
+	// rather than flushing on the leading edge — that is what we want to inspect.
+	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+		RunID: "run-1", StepID: "a", To: step.StatusRunning,
+	}})
+
+	// A parallel step "b" streaming must not schedule a transcript repaint.
+	m, _ = m.Update(engineEventMsg{event: engine.StepOutput{
+		RunID: "run-1", StepID: "b", Delta: "chunk",
+	}})
+	if m.dirtyChat {
+		t.Fatal("event for a hidden step dirtied the transcript panel")
+	}
+	if !m.dirtyList {
+		t.Fatal("event did not refresh the steps list")
+	}
+
+	// An event for the visible step "a" does dirty the transcript panel.
+	m, _ = m.Update(engineEventMsg{event: engine.StepMessage{
+		RunID: "run-1", StepID: "a", Seq: 1,
+	}})
+	if !m.dirtyChat {
+		t.Fatal("event for the visible step did not dirty the transcript panel")
+	}
+}
+
+// TestMonitorLiveClockNoDuplicateLoops verifies the ticking guard: a second
+// step going Running while a frame is already scheduled does not stack a loop.
+func TestMonitorLiveClockNoDuplicateLoops(t *testing.T) {
+	m := drainFrames(t, newMonitorWithSteps(t))
+
+	m, cmd := m.Update(engineEventMsg{event: engine.StepStatus{
+		RunID: "run-1", StepID: "a", To: step.StatusRunning,
+	}})
+	if cmd == nil {
+		t.Fatal("first Running event did not schedule a frame")
+	}
+
+	// A second concurrent Running step must not spawn another frame command.
+	m, cmd = m.Update(engineEventMsg{event: engine.StepStatus{
+		RunID: "run-1", StepID: "b", To: step.StatusRunning,
+	}})
+	if cmd != nil {
+		t.Fatal("second Running event stacked a duplicate frame loop")
+	}
+	if !m.ticking {
+		t.Fatal("ticking flag unexpectedly cleared")
 	}
 }

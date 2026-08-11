@@ -183,6 +183,20 @@ type monitorModel struct {
 	chatVP viewport.Model // Transcript panel scroll — independent scroll position
 	ready  bool
 
+	// The monitor coalesces high-frequency engine events (streaming StepOutput
+	// deltas, StepMessage liveness) into at most one repaint per frame instead of
+	// re-rendering on every event. An event marks the affected panel(s) dirty; a
+	// self-perpetuating frame tick flushes the dirty panels via SetContent. ticking
+	// records that a frame is currently scheduled (so a burst of events doesn't
+	// stack concurrent loops); the frame also drives the live-clock column while a
+	// step runs. dirtyList/dirtyChat are the pending-repaint flags for the two
+	// panels — the Steps list is cheap and always dirtied, while the Transcript
+	// panel runs glamour and is dirtied only when an event touches the visible
+	// step, so a parallel step's stream never repaints the panel you are viewing.
+	ticking   bool
+	dirtyList bool
+	dirtyChat bool
+
 	// chatAutoScroll tracks whether the Transcript panel should follow new
 	// content to the bottom. True by default; cleared when the user scrolls up;
 	// restored when the user scrolls back to bottom or navigates to a new step.
@@ -385,15 +399,40 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 		if m.chatStep == "" && m.cursor < len(m.steps) {
 			m.reloadTranscript()
 		}
-		// Both panels are always visible, so refresh both on every event.
-		if m.ready {
-			m.vp.SetContent(m.listBody())
-			m.chatVP.SetContent(m.chatBody())
-			if m.chatAutoScroll {
-				m.chatVP.GotoBottom()
-			}
+		// Mark the affected panel(s) dirty. The Steps list is cheap and reflects
+		// every step, so it is always dirtied; the Transcript panel runs glamour, so
+		// it is dirtied only when the event touches the visible step — a parallel
+		// step's stream never repaints the panel you are viewing.
+		m.dirtyList = true
+		if m.eventAffectsChat(msg.event) {
+			m.dirtyChat = true
 		}
-		return m, evCmd
+		// Leading edge: when the frame loop is idle, this event opens a fresh burst
+		// window, so paint it now — a lone event (or the first of a burst) then has
+		// zero added latency. While the loop is already running (mid-stream), the
+		// event is left dirty for the frame to coalesce, collapsing a burst of
+		// per-chunk deltas into one repaint per frame instead of one render each.
+		if !m.ticking {
+			m.flushDirty()
+		}
+		return m, tea.Batch(evCmd, m.ensureFrame())
+
+	case monitorTickMsg:
+		// One animation frame: advance the live clock (a running step's elapsed
+		// column changes even with no new events) and flush whatever is dirty.
+		if m.anyRunning() {
+			m.dirtyList = true
+		}
+		m.flushDirty()
+		// Re-arm while there is ongoing work: a running clock, or a pending repaint
+		// we could actually flush (a dirty flag only counts once ready — before the
+		// first resize there is no viewport, and resize repaints synchronously — so
+		// pending dirt while un-ready must not spin the loop). Otherwise fall silent.
+		if m.anyRunning() || (m.ready && (m.dirtyList || m.dirtyChat)) {
+			return m, monitorTickCmd()
+		}
+		m.ticking = false
+		return m, nil
 
 	case showResetConfirmMsg:
 		if msg.runID != m.runID {
@@ -2332,11 +2371,105 @@ func stepDuration(s monitorStep) string {
 		return "—"
 	}
 	end := s.end
-	if end.IsZero() {
+	running := end.IsZero()
+	if running {
 		end = time.Now()
 	}
-	d := end.Sub(s.start).Round(time.Millisecond)
+	d := end.Sub(s.start)
+	// A still-running step is refreshed once a second by the live-clock tick, so
+	// round its display to whole seconds — millisecond digits would only ever show
+	// the arbitrary sub-second remainder at tick time and jitter distractingly.
+	// Completed steps keep millisecond precision (their duration is final).
+	if running {
+		d = d.Round(time.Second)
+	} else {
+		d = d.Round(time.Millisecond)
+	}
 	return d.String()
+}
+
+// monitorFrameInterval is the repaint cadence of the frame loop. It is fast
+// enough that streaming text and the elapsed-time clock feel live (~10 fps) yet
+// coarse enough that a burst of per-chunk StepOutput deltas collapses to a
+// handful of renders instead of one full re-render per delta.
+const monitorFrameInterval = 100 * time.Millisecond
+
+// monitorTickMsg drives the frame loop: the live elapsed-time clock and the
+// coalesced panel repaint. It carries the tick time only for provenance; the
+// duration column reads wall-clock time when it renders.
+type monitorTickMsg time.Time
+
+// monitorTickCmd schedules the next frame. The loop re-arms itself from the
+// monitorTickMsg handler while a step runs or a panel is dirty, then falls silent.
+func monitorTickCmd() tea.Cmd {
+	return tea.Tick(monitorFrameInterval, func(t time.Time) tea.Msg {
+		return monitorTickMsg(t)
+	})
+}
+
+// flushDirty repaints whichever panels are marked dirty and clears their flags.
+// It no-ops before the first resize (no viewport yet — resize repaints itself),
+// so the dirty flags survive until there is something to render into.
+func (m *monitorModel) flushDirty() {
+	if !m.ready {
+		return
+	}
+	if m.dirtyList {
+		m.vp.SetContent(m.listBody())
+		m.dirtyList = false
+	}
+	if m.dirtyChat {
+		m.chatVP.SetContent(m.chatBody())
+		if m.chatAutoScroll {
+			m.chatVP.GotoBottom()
+		}
+		m.dirtyChat = false
+	}
+}
+
+// ensureFrame schedules a frame if one is not already in flight and there is
+// work to do (a dirty panel or a running clock). It is the single entry point
+// that arms the loop, so concurrent events never stack duplicate tickers.
+func (m *monitorModel) ensureFrame() tea.Cmd {
+	if m.ticking {
+		return nil
+	}
+	if m.dirtyList || m.dirtyChat || m.anyRunning() {
+		m.ticking = true
+		return monitorTickCmd()
+	}
+	return nil
+}
+
+// eventAffectsChat reports whether an engine event changes what the Transcript
+// panel renders for the currently-visible step. High-frequency step-scoped
+// events (streaming output, tool calls, liveness, status) matter only when they
+// belong to chatStep, so a parallel step's stream does not trigger the expensive
+// glamour re-render. Everything else is low-frequency and conservatively repaints.
+func (m monitorModel) eventAffectsChat(e engine.Event) bool {
+	switch ev := e.(type) {
+	case engine.StepStatus:
+		return ev.StepID == m.chatStep
+	case engine.StepOutput:
+		return ev.StepID == m.chatStep
+	case engine.StepToolCall:
+		return ev.StepID == m.chatStep
+	case engine.StepMessage:
+		return ev.StepID == m.chatStep
+	default:
+		return true
+	}
+}
+
+// anyRunning reports whether at least one step is currently executing — the
+// condition under which the frame loop keeps advancing the live clock.
+func (m monitorModel) anyRunning() bool {
+	for _, s := range m.steps {
+		if s.status == step.StatusRunning {
+			return true
+		}
+	}
+	return false
 }
 
 // stepCostStr returns a human-readable cost string for a step, or "" when cost
