@@ -144,6 +144,42 @@ run = "make"
 command = "go build"
 `,
 		},
+		{
+			// A guard, loop guard, and gate check all longer than chartLabelMax:
+			// exercises label truncation and the right-margin/canvas growth that
+			// keeps a wide loop caption and gate label from clipping.
+			name:  "wide_labels",
+			width: 72,
+			src: `
+[workflow]
+name = "wide"
+version = "1"
+[defaults]
+max_parallel = 3
+[[step]]
+id = "plan"
+type = "agent"
+skill = "s"
+[[step]]
+id = "review"
+type = "review"
+depends_on = ["plan"]
+review = "@plan.summary"
+output_type = { enum = ["approve", "revise_with_detailed_feedback"] }
+[step.loop]
+when = "review == 'revise_with_detailed_feedback'"
+goto = "plan"
+max_iterations = 3
+[[step]]
+id = "impl"
+type = "command"
+depends_on = ["review"]
+when = "review == 'approve'"
+run = "make"
+[step.validate]
+command = "go build ./... && go test ./... -race -count=1"
+`,
+		},
 	}
 
 	for _, tc := range cases {

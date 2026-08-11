@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"strconv"
+	"strings"
+
 	"jig/internal/workflow"
 )
 
@@ -24,12 +27,13 @@ import (
 
 // chartNode is one step positioned in the layered layout.
 type chartNode struct {
-	id    string // step id
-	index int    // position in wf.Steps (drives within-rank order)
-	typ   string // step type: agent | command | review
-	rank  int    // longest-path depth over depends_on (0 = no deps)
-	gate  bool   // has a [step.validate] gate
-	loop  *chartLoop
+	id        string // step id
+	index     int    // position in wf.Steps (drives within-rank order)
+	typ       string // step type: agent | command | review
+	rank      int    // longest-path depth over depends_on (0 = no deps)
+	gate      bool   // has a [step.validate] gate
+	gateLabel string // compact description of the gate's check (empty if no gate)
+	loop      *chartLoop
 }
 
 // chartLoop is the bounded back-edge hanging off a step, mirrored onto its node
@@ -41,10 +45,12 @@ type chartLoop struct {
 
 // chartEdge is a depends_on edge from one node to another (always lower rank to
 // higher rank, since rank strictly increases along a dependency). conditional
-// marks the edge the step's `when` guard decorates.
+// marks the edge the step's `when` guard decorates; label is that guard in
+// compact form, drawn beside the edge.
 type chartEdge struct {
 	from, to    int // wf.Steps indices
 	conditional bool
+	label       string
 }
 
 // chartBackEdge is a bounded loop back-edge from the looping step back to its
@@ -53,6 +59,7 @@ type chartEdge struct {
 type chartBackEdge struct {
 	from, to int // wf.Steps indices: loop step -> goto target
 	maxIter  int
+	label    string // loop `when` guard plus the ≤N iteration bound
 }
 
 // chartLayout is the full deterministic layout: nodes indexed by Steps position,
@@ -113,6 +120,9 @@ func layoutChart(wf *workflow.Workflow) chartLayout {
 			rank:  rank[i],
 			gate:  s.Validate != nil,
 		}
+		if s.Validate != nil {
+			n.gateLabel = gateLabel(s.Validate)
+		}
 		if s.Loop != nil {
 			n.loop = &chartLoop{target: s.Loop.Goto, maxIter: s.Loop.MaxIterations}
 		}
@@ -135,10 +145,11 @@ func layoutChart(wf *workflow.Workflow) chartLayout {
 	var edges []chartEdge
 	for i := range steps {
 		s := steps[i]
-		whenStep := ""
+		whenStep, whenLabel := "", ""
 		if s.When != "" {
 			if cond, err := workflow.ParseCondition(s.When); err == nil {
 				whenStep = cond.Step
+				whenLabel = condLabel(cond)
 			}
 		}
 		for _, dep := range s.DependsOn {
@@ -146,7 +157,11 @@ func layoutChart(wf *workflow.Workflow) chartLayout {
 			if !ok {
 				continue
 			}
-			edges = append(edges, chartEdge{from: j, to: i, conditional: dep == whenStep})
+			e := chartEdge{from: j, to: i, conditional: dep == whenStep}
+			if e.conditional {
+				e.label = whenLabel
+			}
+			edges = append(edges, e)
 		}
 	}
 
@@ -157,9 +172,65 @@ func layoutChart(wf *workflow.Workflow) chartLayout {
 			continue
 		}
 		if j, ok := idIndex[steps[i].Loop.Goto]; ok {
-			back = append(back, chartBackEdge{from: i, to: j, maxIter: steps[i].Loop.MaxIterations})
+			be := chartBackEdge{from: i, to: j, maxIter: steps[i].Loop.MaxIterations}
+			be.label = loopLabel(steps[i].Loop)
+			back = append(back, be)
 		}
 	}
 
 	return chartLayout{nodes: nodes, ranks: ranks, edges: edges, backEdges: back}
+}
+
+// condLabel renders a parsed guard back into a compact, readable form for the
+// chart. It reconstructs from the parsed fields (not Raw) so spacing is uniform
+// regardless of how the author wrote the TOML.
+func condLabel(c *workflow.Condition) string {
+	ref := c.Step
+	if len(c.Field) > 0 {
+		ref += "." + strings.Join(c.Field, ".")
+	}
+	switch c.Op {
+	case workflow.CondEq:
+		return ref + " == " + c.Value
+	case workflow.CondNeq:
+		return ref + " != " + c.Value
+	default: // CondTruthy: a bare bool verdict/field reference
+		return ref
+	}
+}
+
+// loopLabel is a back-edge's caption: the re-run guard plus the ≤N iteration
+// bound that makes the termination guarantee visible.
+func loopLabel(l *workflow.Loop) string {
+	var b strings.Builder
+	if cond, err := workflow.ParseCondition(l.When); err == nil {
+		b.WriteString(condLabel(cond))
+	} else if l.When != "" {
+		b.WriteString(l.When)
+	}
+	if l.MaxIterations > 0 {
+		if b.Len() > 0 {
+			b.WriteString("  ")
+		}
+		b.WriteString("≤" + strconv.Itoa(l.MaxIterations))
+	}
+	return b.String()
+}
+
+// gateLabel is a compact description of a [step.validate] gate's check, shown
+// beside the gated node. Exactly one check field is set (enforced by the
+// validator), so the first non-empty one wins.
+func gateLabel(v *workflow.Validate) string {
+	switch {
+	case v.Command != "":
+		return v.Command
+	case v.OutputSchema != "":
+		return "schema"
+	case v.OutputContains != "":
+		return "contains " + strconv.Quote(v.OutputContains)
+	case v.OutputExists:
+		return "exists"
+	default:
+		return ""
+	}
 }

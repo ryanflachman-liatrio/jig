@@ -26,12 +26,13 @@ import (
 // ranks stack with chartVGap blank rows between them, leaving room for a
 // horizontal routing "bus" row and an arrowhead row above each child.
 const (
-	chartHGap        = 4  // horizontal gap between boxes in a rank
-	chartHGapMin     = 2  // compressed gap when the natural layout overflows width
-	chartVGap        = 2  // blank rows between ranks: [bus row, arrow row]
+	chartHGap        = 6  // horizontal gap between boxes in a rank
+	chartHGapMin     = 3  // compressed gap when the natural layout overflows width
+	chartVGap        = 3  // blank rows between ranks: [bus row, blank, arrow row]
 	chartBoxMaxInner = 18 // cap on box content width so wide graphs still fit
 	chartBoxPadBrd   = 4  // padding (1+1) + border (1+1) added around inner width
 	chartBoxHeight   = 4  // top border + 2 content lines + bottom border
+	chartLabelMax    = 24 // cap on an edge/loop/gate label width (truncated)
 )
 
 // connector direction bits.
@@ -189,6 +190,18 @@ func renderChart(wf *workflow.Workflow, width int) string {
 	natural := maxCount*bw + max(0, maxCount-1)*hgap
 	totalW := max(width, natural)
 
+	// A conditional edge carries a text label drawn between the bus row and the
+	// arrowhead. Reserve a dedicated label row for it by widening the inter-rank
+	// gap, but only when some edge actually has a label — plain graphs stay
+	// compact. labelRow (below) is valid only when vgap > chartVGap.
+	vgap := chartVGap
+	for _, e := range lay.edges {
+		if e.conditional && e.label != "" {
+			vgap = chartVGap + 1
+			break
+		}
+	}
+
 	// Node top-left coordinates: ranks stack vertically; each rank's row is
 	// centered within totalW so near-linear graphs render as a centered spine.
 	xs := make([]int, len(lay.nodes))
@@ -200,23 +213,78 @@ func renderChart(wf *workflow.Workflow, width int) string {
 		if startX < 0 {
 			startX = 0
 		}
-		y := r * (bh + chartVGap)
+		y := r * (bh + vgap)
 		for j, idx := range row {
 			xs[idx] = startX + j*(bw+hgap)
 			ys[idx] = y
 		}
 	}
 	numRanks := len(lay.ranks)
-	totalH := numRanks*bh + max(0, numRanks-1)*chartVGap
+	totalH := numRanks*bh + max(0, numRanks-1)*vgap
 
-	// Reserve a right-side margin: one dedicated vertical channel per back-edge.
-	loopMargin := 0
-	if len(lay.backEdges) > 0 {
-		loopMargin = 2 + 2*len(lay.backEdges)
+	// Rightmost column any box occupies. Loop channels route just past this, not
+	// out at the full chart width — so a centered spine's back-edges hug the boxes
+	// instead of stretching a long horizontal run across the empty right margin.
+	maxRight := 0
+	for i := range lay.nodes {
+		if r := xs[i] + bw; r > maxRight {
+			maxRight = r
+		}
 	}
-	canvasW := totalW + loopMargin
+	loopBase := maxRight + 2 // x of the first (innermost) back-edge channel
+
+	// Grow the canvas past totalW only if the channels + their labels reach beyond
+	// it; a centered spine with short captions keeps the panel-width canvas.
+	canvasW := totalW
+	if len(lay.backEdges) > 0 {
+		maxLoopLabel := 0
+		for _, be := range lay.backEdges {
+			if w := lipgloss.Width(truncateTitle(be.label, chartLabelMax)); w > maxLoopLabel {
+				maxLoopLabel = w
+			}
+		}
+		if end := loopBase + 2*len(lay.backEdges) + 2 + maxLoopLabel; end > canvasW {
+			canvasW = end
+		}
+	}
+
+	// Gate labels float to the right of their node; grow the canvas so a gated
+	// node near the right edge doesn't clip its label off the drawing.
+	for i := range lay.nodes {
+		if lay.nodes[i].gate && lay.nodes[i].gateLabel != "" {
+			gw := lipgloss.Width(truncateTitle(lay.nodes[i].gateLabel, chartLabelMax)) + 3 // "⇢ " + a leading gap
+			if end := xs[i] + bw + 1 + gw; end > canvasW {
+				canvasW = end
+			}
+		}
+	}
 
 	cx := func(idx int) int { return xs[idx] + bw/2 }
+
+	// labels accumulates floating text layers (edge guards, loop captions, gate
+	// checks) composited above the connector base but below the node boxes.
+	var labels []*lipgloss.Layer
+	addLabel := func(text string, x, y int, st lipgloss.Style) {
+		text = truncateTitle(text, chartLabelMax)
+		if text == "" {
+			return
+		}
+		labels = append(labels, lipgloss.NewLayer(st.Render(text)).X(x).Y(y))
+	}
+	// addLabelCentered anchors the text on center column cx (rather than its left
+	// edge), so an edge guard reads centered on the connector instead of hanging
+	// off to one side.
+	addLabelCentered := func(text string, cx, y int, st lipgloss.Style) {
+		text = truncateTitle(text, chartLabelMax)
+		if text == "" {
+			return
+		}
+		x := cx - lipgloss.Width(text)/2
+		if x < 0 {
+			x = 0
+		}
+		labels = append(labels, lipgloss.NewLayer(st.Render(text)).X(x).Y(y))
+	}
 
 	g := newChartGrid(canvasW, totalH)
 
@@ -232,8 +300,8 @@ func renderChart(wf *workflow.Workflow, width int) string {
 		pcx, ccx := cx(e.from), cx(e.to)
 		pBottom := ys[e.from] + bh // first blank row under the parent box
 		cTop := ys[e.to]
-		busRow := cTop - chartVGap // horizontal routing row
-		arrowRow := cTop - 1       // arrowhead sits directly above the child
+		busRow := cTop - vgap // horizontal routing row
+		arrowRow := cTop - 1  // arrowhead sits directly above the child
 
 		g.drawV(pcx, pBottom, busRow, cls) // down the parent column to the bus
 		g.addBit(pcx, pBottom, dirUp, cls) // stub connecting up into the parent box
@@ -244,13 +312,21 @@ func renderChart(wf *workflow.Workflow, width int) string {
 			arrow = CondArrowGlyph
 		}
 		g.setRune(ccx, arrowRow, []rune(arrow)[0], cls)
+
+		// The guard label sits centered on the connector: horizontally on the
+		// child's center column, vertically on the reserved mid-row (cTop-2, the
+		// middle of the 3-row inter-rank gap). vgap was bumped above precisely so
+		// this row exists whenever any edge is labeled.
+		if e.conditional && e.label != "" {
+			addLabelCentered(e.label, ccx, cTop-2, theme.Chart.Conditional)
+		}
 	}
 
 	// Loop back-edges, routed up a dedicated right-side channel: out of the loop
 	// step's right edge, up the channel, back into the goto target's right edge
 	// with a left-pointing arrowhead, marked with the loop glyph.
 	for k, be := range lay.backEdges {
-		chanX := totalW + 1 + k*2
+		chanX := loopBase + k*2
 		if chanX >= canvasW {
 			chanX = canvasW - 1
 		}
@@ -264,13 +340,27 @@ func renderChart(wf *workflow.Workflow, width int) string {
 		g.drawH(gRow, gRight, chanX, clsBack)
 		g.setRune(gRight, gRow, []rune(ArrowLeftGlyph)[0], clsBack)
 		g.setRune(chanX, (sRow+gRow)/2, []rune(LoopGlyph)[0], clsBack)
+
+		// Loop caption (guard + ≤N bound) hangs to the right of the channel at its
+		// vertical midpoint; the right margin was sized to hold it.
+		addLabel(be.label, chanX+2, (sRow+gRow)/2, theme.Chart.BackEdge)
+	}
+
+	// Gate captions float just right of their node at box mid-height, prefixed
+	// with the gate glyph. The in-box ⇢ marker stays as the at-a-glance cue.
+	for i := range lay.nodes {
+		if lay.nodes[i].gate && lay.nodes[i].gateLabel != "" {
+			addLabel(GateGlyph+" "+lay.nodes[i].gateLabel, xs[i]+bw+1, ys[i]+bh/2, theme.Chart.Gate)
+		}
 	}
 
 	base := g.render()
 
-	// Composite the node boxes on top of the connector base at their positions.
-	layers := make([]*lipgloss.Layer, 0, len(lay.nodes)+1)
+	// Composite base → labels → boxes. Labels are appended before the boxes so a
+	// long label that runs under an adjacent node is painted over by that box.
+	layers := make([]*lipgloss.Layer, 0, 1+len(labels)+len(lay.nodes))
 	layers = append(layers, lipgloss.NewLayer(base))
+	layers = append(layers, labels...)
 	for i := range lay.nodes {
 		box := renderNodeBox(lay.nodes[i], innerW)
 		layers = append(layers, lipgloss.NewLayer(box).X(xs[i]).Y(ys[i]).Z(1))

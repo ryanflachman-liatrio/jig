@@ -659,6 +659,7 @@ The chart is a direct, deterministic drawing of the constructs above:
 - **Nodes** are steps, boxed and colored by `type` (agent / command / review),
   the same palette the step list uses for its type badges. A `⇢` marks a step
   with a `[step.validate]` gate; a `↺` marks a step that carries a `[step.loop]`.
+  The gate's check is spelled out next to the box (`⇢ go build`, `⇢ exists`, …).
 - **Layers (top → bottom)** are longest-path ranks over `depends_on`: a step sits
   one row below its deepest dependency, so edges always flow downward. Steps in
   the same rank are ordered left-to-right by their position in the file.
@@ -666,10 +667,15 @@ The chart is a direct, deterministic drawing of the constructs above:
   a parent and fan in above a child (`▼`).
 - **Conditional edges** — the one edge a step's `when` guard decorates — use a
   hollow arrowhead (`▽`) in the conditional color, since `when` gates an existing
-  dependency rather than adding a new one.
+  dependency rather than adding a new one. The guard is labeled beside the edge
+  in compact form (e.g. `review == approve`).
 - **Back-edges** — bounded `[step.loop]` goto targets — are a distinct class
   routed up a dedicated channel on the right (`↺`, `◄`), reflecting that they are
-  the only cycles in the graph and are capped by `max_iterations`.
+  the only cycles in the graph and are capped by `max_iterations`. The channel is
+  captioned with the loop guard and its bound (e.g. `review == revise  ≤3`).
+
+Long labels are truncated with an ellipsis; the guard-labeled edges reserve an
+extra row between ranks so the text never overlaps a connector.
 
 The chart is laid out to fit the panel width. A graph wider than the panel (a
 rank with many parallel steps) renders at its natural width; in chart mode the

@@ -169,8 +169,14 @@ run = "x"
 			if from == "gate" && !e.conditional {
 				t.Errorf("gate→guarded edge should be conditional")
 			}
+			if from == "gate" && e.label != "gate" {
+				t.Errorf("gate→guarded label = %q, want %q", e.label, "gate")
+			}
 			if from == "other" && e.conditional {
 				t.Errorf("other→guarded edge should not be conditional")
+			}
+			if from == "other" && e.label != "" {
+				t.Errorf("other→guarded label = %q, want empty", e.label)
 			}
 		}
 	})
@@ -209,6 +215,9 @@ max_iterations = 4
 		if be.maxIter != 4 {
 			t.Errorf("back-edge maxIter = %d, want 4", be.maxIter)
 		}
+		if want := "check == redo  ≤4"; be.label != want {
+			t.Errorf("back-edge label = %q, want %q", be.label, want)
+		}
 		// The loop must not have leaked into the forward depends_on edge set as a
 		// check→work edge (which would create a cycle in the layered layout).
 		for _, e := range lay.edges {
@@ -240,6 +249,9 @@ output_exists = true
 		lay := layoutChart(wf)
 		if !nodeByID(lay, "build").gate {
 			t.Errorf("build node should be marked as a gate")
+		}
+		if got := nodeByID(lay, "build").gateLabel; got != "exists" {
+			t.Errorf("build gateLabel = %q, want %q", got, "exists")
 		}
 	})
 }
