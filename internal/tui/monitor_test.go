@@ -283,6 +283,73 @@ func TestMonitorWithJournal(t *testing.T) {
 	}
 }
 
+// TestMonitorCostTokens verifies that StepStatus events drive the per-step
+// token/cost metadata line and the run-total row, that both survive the narrow
+// (80-col) Steps panel without being clipped, and that a re-run accumulates
+// (cumulative, never refunded).
+func TestMonitorCostTokens(t *testing.T) {
+	m := newMonitorModel("rc")
+	// Deliberately narrow so a regression that pushes metrics off the panel edge
+	// (the two-line-row fix) is caught: assert against the rendered View, not the
+	// raw body, since the raw body always contains the substrings.
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
+	m, _ = m.Update(engineEventMsg{event: engine.RunStarted{
+		RunID: "rc", Workflow: "feature", Steps: []string{"a", "b"},
+	}})
+
+	costA, costB := 0.0012, 0.0034
+	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+		RunID: "rc", StepID: "a", To: step.StatusSucceeded, Cost: &costA, Tokens: 1500,
+	}})
+	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+		RunID: "rc", StepID: "b", To: step.StatusSucceeded, Cost: &costB, Tokens: 2000,
+	}})
+
+	if m.totalTokens != 3500 {
+		t.Errorf("totalTokens = %d, want 3500", m.totalTokens)
+	}
+	if want := costA + costB; m.totalCost != want {
+		t.Errorf("totalCost = %v, want %v", m.totalCost, want)
+	}
+
+	// The distinct per-step token values (1.5k, 2.0k) come only from the per-step
+	// metadata lines; the total row shows 3.5k. Finding all three in the rendered
+	// View proves the per-step metrics are visible (not clipped) and the total row
+	// renders too.
+	view := ansiStrip(m.View())
+	for _, want := range []string{"1.5k tok", "$0.0012", "2.0k tok", "$0.0034", "Total", "3.5k tok", "$0.0046"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("rendered view missing %q:\n%s", want, view)
+		}
+	}
+
+	// Re-running step a and completing again: the engine folds the cumulative
+	// figure onto the event (earlier attempt + new attempt), so the monitor
+	// reflects the higher total — a reset/retry is not refunded.
+	// The engine attaches the step's cumulative figure to every transition,
+	// including →Running, so the display never blanks mid re-run.
+	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+		RunID: "rc", StepID: "a", From: step.StatusSucceeded, To: step.StatusRunning,
+		Cost: &costA, Tokens: 1500,
+	}})
+	// While re-running, the event still carries the prior cumulative (engine
+	// accrues at completion), so the total does not blank.
+	if m.totalTokens != 3500 {
+		t.Errorf("during re-run totalTokens = %d, want 3500", m.totalTokens)
+	}
+	costA2 := costA * 2 // cumulative: attempt 1 + attempt 2
+	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+		RunID: "rc", StepID: "a", From: step.StatusRunning, To: step.StatusSucceeded,
+		Cost: &costA2, Tokens: 3000,
+	}})
+	if m.totalTokens != 3000+2000 {
+		t.Errorf("after re-run totalTokens = %d, want 5000", m.totalTokens)
+	}
+	if want := costA2 + costB; m.totalCost != want {
+		t.Errorf("after re-run totalCost = %v, want %v", m.totalCost, want)
+	}
+}
+
 func newMonitorWithSteps(t *testing.T) monitorModel {
 	t.Helper()
 	m := newMonitorModel("run-1")

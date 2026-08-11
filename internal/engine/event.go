@@ -38,6 +38,14 @@ type StepStatus struct {
 	// a policy limit (e.g. "error_max_turns", "error_max_budget_usd"). Empty for
 	// non-agent failures and for all non-failing transitions.
 	Subtype string
+	// Cost and Tokens carry the step's SDK-reported dollar cost and total token
+	// count on its terminal transition (Succeeded/Failed/Skipped), so the monitor
+	// can show per-step figures and a running total live — and on journal replay —
+	// without re-reading result.json. Cost is nil (and Tokens 0) for non-terminal
+	// transitions and when the SDK reported nothing; the nil vs. 0 distinction on
+	// Cost separates "unknown" from a reported "$0.00".
+	Cost   *float64
+	Tokens int
 }
 
 // StepOutput carries a streaming text delta from an in-flight agent step.

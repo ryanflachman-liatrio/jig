@@ -45,3 +45,33 @@ func TestStatusStoppedDistinct(t *testing.T) {
 		}
 	}
 }
+
+// TestTokenCount verifies TokenCount sums all four token buckets and reports
+// (0, false) when usage is absent, so the UI can distinguish "unknown" from 0.
+func TestTokenCount(t *testing.T) {
+	// Absent usage: not known.
+	if n, ok := (&Result{}).TokenCount(); ok || n != 0 {
+		t.Errorf("nil usage: got (%d, %v), want (0, false)", n, ok)
+	}
+
+	usage := map[string]any{
+		"input_tokens":                float64(100),
+		"output_tokens":               float64(20),
+		"cache_creation_input_tokens": float64(5),
+		"cache_read_input_tokens":     float64(1000),
+	}
+	r := &Result{Usage: &usage}
+	n, ok := r.TokenCount()
+	if !ok {
+		t.Fatal("expected ok for populated usage")
+	}
+	if want := 100 + 20 + 5 + 1000; n != want {
+		t.Errorf("TokenCount = %d, want %d", n, want)
+	}
+
+	// A partial map (only input) still totals what is present.
+	partial := map[string]any{"input_tokens": float64(42)}
+	if n, ok := (&Result{Usage: &partial}).TokenCount(); !ok || n != 42 {
+		t.Errorf("partial usage: got (%d, %v), want (42, true)", n, ok)
+	}
+}

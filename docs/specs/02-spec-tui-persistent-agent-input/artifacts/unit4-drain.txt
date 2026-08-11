@@ -1,10 +1,10 @@
 ╭─ Steps ──────────────────────╮╭─ a ──────────────────────────────────────────╮
-│ ▌ ○  a   pending           — ││   ○  pending                                 │
-│   ○  b   pending           — ││                                              │
-│   ○  c   pending           — ││   transcript unavailable (persistence off)   │
-│                              ││                                              │
-│                              ││                                              │
-│                              ││                                              │
+│ ▌ ○  a   pending             ││   ○  pending                                 │
+│      —                       ││                                              │
+│   ○  b   pending             ││   transcript unavailable (persistence off)   │
+│      —                       ││                                              │
+│   ○  c   pending             ││                                              │
+│      —                       ││                                              │
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
@@ -26,12 +26,12 @@
 --- frame ---
 
 ╭─ Steps ──────────────────────╮╭─ a ──────────────────────────────────────────╮
-│ ▌ ○  a   pending           — ││   ○  pending                                 │
-│   ○  b   pending           — ││                                              │
-│   ○  c   pending           — ││   transcript unavailable (persistence off)   │
-│                              ││                                              │
-│                              ││                                              │
-│                              ││                                              │
+│ ▌ ○  a   pending             ││   ○  pending                                 │
+│      —                       ││                                              │
+│   ○  b   pending             ││   transcript unavailable (persistence off)   │
+│      —                       ││                                              │
+│   ○  c   pending             ││                                              │
+│      —                       ││                                              │
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
@@ -53,12 +53,12 @@
 --- frame ---
 
 ╭─ Steps ──────────────────────╮╭─ a ──────────────────────────────────────────╮
-│ ▌ ○  a   pending           — ││   ○  pending                                 │
-│   ○  b   pending           — ││                                              │
-│   ○  c   pending           — ││   transcript unavailable (persistence off)   │
-│                              ││                                              │
-│                              ││                                              │
-│                              ││                                              │
+│ ▌ ○  a   pending             ││   ○  pending                                 │
+│      —                       ││                                              │
+│   ○  b   pending             ││   transcript unavailable (persistence off)   │
+│      —                       ││                                              │
+│   ○  c   pending             ││                                              │
+│      —                       ││                                              │
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │

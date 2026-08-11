@@ -111,9 +111,11 @@ type monitorModel struct {
 	// runErr is an engine-level failure (worktree setup, max_iterations) that is
 	// not attributable to a single step. Set by the engine.RunError event.
 	runErr string
-	// totalCost is the summed TotalCostUSD across all steps, from the last Snapshot.
-	// Zero means "no cost reported" — not "$0.00 spent".
-	totalCost float64
+	// totalCost / totalTokens are the summed cost and token counts across all
+	// steps, recomputed whenever a step reaches a terminal state (live) and on
+	// snapshot/journal load. Zero means "nothing reported" — not "$0.00 / 0 spent".
+	totalCost   float64
+	totalTokens int
 
 	// Two-panel navigation: focus selects the active region; cursor selects the
 	// step in the Steps panel. chatStep is the step whose transcript the right
@@ -308,6 +310,7 @@ type monitorStep struct {
 	err     string   // failure reason when status == StatusFailed
 	subtype string   // SDK result subtype for agent policy-limit failures
 	cost    *float64 // TotalCostUSD from step.Result; nil when not yet known
+	tokens  int      // total tokens processed; 0 when not yet known
 }
 
 func newMonitorModel(runID string) monitorModel {
@@ -331,6 +334,7 @@ func (m monitorModel) withSnapshot(snap engine.RunSnapshot) monitorModel {
 	m.done = snap.Done
 	m.failed = snap.Failed
 	m.totalCost = snap.TotalCostUSD
+	m.totalTokens = snap.TotalTokens
 	m.steps = make([]monitorStep, len(snap.Steps))
 	m.index = make(map[string]int, len(snap.Steps))
 	if m.stepOutput == nil {
@@ -350,13 +354,17 @@ func (m monitorModel) withSnapshot(snap engine.RunSnapshot) monitorModel {
 	}
 	for i, st := range snap.Steps {
 		ms := monitorStep{id: st.ID, status: st.Status}
-		if st.Result != nil {
-			if st.Status == step.StatusFailed {
-				ms.err = st.Result.Err
-				ms.subtype = st.Result.Subtype
-			}
-			ms.cost = st.Result.TotalCostUSD
+		if st.Result != nil && st.Status == step.StatusFailed {
+			ms.err = st.Result.Err
+			ms.subtype = st.Result.Subtype
 		}
+		// Cumulative spend across all attempts (step.State.SpentUSD), not the
+		// latest Result — a reset/retry still cost what it cost.
+		if st.SpentUSD > 0 {
+			cost := st.SpentUSD
+			ms.cost = &cost
+		}
+		ms.tokens = st.SpentTokens
 		m.steps[i] = ms
 		m.index[st.ID] = i
 	}
@@ -1195,6 +1203,12 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		if ev.To == step.StatusSucceeded || ev.To == step.StatusFailed || ev.To == step.StatusSkipped {
 			m.steps[i].end = time.Now()
 		}
+		// Every StepStatus carries the step's cumulative cost/tokens (the engine
+		// accrues each attempt and never refunds a reset/retry), so reflect them on
+		// every transition and refresh the running totals.
+		m.steps[i].cost = ev.Cost
+		m.steps[i].tokens = ev.Tokens
+		m.recomputeTotals()
 		// Remove every queue entry for a step that is no longer blocked. Prune on
 		// any transition away from a parked state (needs_input, awaiting_recovery)
 		// and on all terminal transitions — but not the entry into a parked state,
@@ -1533,7 +1547,7 @@ func (m *monitorModel) ensureCursorVisible() {
 	if !m.ready {
 		return
 	}
-	row := listBodyHeaderLines + m.cursor
+	row := listBodyHeaderLines + m.cursor*stepRowLines
 	const margin = 2
 	top := m.vp.YOffset()
 	bottom := top + m.vp.Height() - 1
@@ -1557,6 +1571,11 @@ func (m monitorModel) body() string {
 // starts at line 0; this stays 0 to keep the ensureCursorVisible row math honest.
 const listBodyHeaderLines = 0
 
+// stepRowLines is how many rendered lines each step occupies in listBody (a
+// status line plus a metadata line). ensureCursorVisible multiplies the cursor
+// index by this to map a step to its first viewport row.
+const stepRowLines = 2
+
 func (m monitorModel) listBody() string {
 	var b strings.Builder
 
@@ -1572,38 +1591,55 @@ func (m monitorModel) listBody() string {
 		}
 	}
 
+	// Each step renders on two lines (stepRowLines): an at-a-glance status line
+	// and a dim metadata line. The Steps panel is only ~1/3 of the terminal, so
+	// packing id, status, duration, messages, tokens and cost onto one line would
+	// push the right-hand columns off the panel edge (they were being clipped).
+	// Splitting onto a second line keeps every field visible at any width.
 	for i, s := range m.steps {
 		cursor := "  "
 		if i == m.cursor {
 			cursor = theme.SelectedBar.Render(CursorBar) + " "
 		}
 		indicator, style := stepIndicator(s.status)
-		dur := stepDuration(s)
-		msgs := ""
-		if n := m.msgCount[s.id]; n > 0 {
-			msgs = theme.Question.Render(fmt.Sprintf("%d msg", n))
-		}
-		costStr := ""
-		if c := stepCostStr(s); c != "" {
-			costStr = theme.Question.Render(c)
-		}
-		line := fmt.Sprintf("%s%s  %s  %s  %s  %s  %s",
+
+		// Line 1: status glyph, id, status text (+ policy-limit badge).
+		head := fmt.Sprintf("%s%s  %s  %s",
 			cursor,
 			indicator,
 			style.Render(padRight(s.id, idWidth)),
-			statusStyle(s.status).Render(fmt.Sprintf("%-16s", string(s.status))),
-			theme.Question.Render(padRight(dur, 10)),
-			msgs,
-			costStr,
+			statusStyle(s.status).Render(string(s.status)),
 		)
 		if label := subtypeBadgeLabel(s.subtype); label != "" {
-			line += "  " + theme.Badge.Error.Render(label)
+			head += "  " + theme.Badge.Error.Render(label)
 		}
 		if i == m.cursor {
-			b.WriteString(theme.SelectedLine.Render(line) + "\n")
+			b.WriteString(theme.SelectedLine.Render(head) + "\n")
 		} else {
-			b.WriteString(line + "\n")
+			b.WriteString(head + "\n")
 		}
+
+		// Line 2: dim metadata, indented under the id. Tokens and cost lead so
+		// they survive when a narrow panel clips the trailing duration/messages.
+		var meta []string
+		if t := stepTokensStr(s); t != "" {
+			meta = append(meta, t)
+		}
+		if c := stepCostStr(s); c != "" {
+			meta = append(meta, c)
+		}
+		meta = append(meta, stepDuration(s))
+		if n := m.msgCount[s.id]; n > 0 {
+			meta = append(meta, fmt.Sprintf("%d msg", n))
+		}
+		b.WriteString("     " + theme.Question.Render(strings.Join(meta, " · ")) + "\n")
+	}
+
+	// Run total, directly beneath the step table: summed tokens and cost across
+	// every step. Shown once anything has been reported (a $0.00/0-token run
+	// reports nothing, so the row stays hidden until there is something to total).
+	if total := m.totalsStr(); total != "" {
+		b.WriteString("  " + theme.SelectedLine.Render("Total") + "  " + total + "\n")
 	}
 
 	b.WriteString("\n")
@@ -2481,6 +2517,61 @@ func stepCostStr(s monitorStep) string {
 	return fmt.Sprintf("$%.4f", *s.cost)
 }
 
+// stepTokensStr returns a compact token string for a step, or "" when no tokens
+// are known yet (still running, or a command/review step with no usage).
+func stepTokensStr(s monitorStep) string {
+	if s.tokens == 0 {
+		return ""
+	}
+	return humanTokens(s.tokens) + " tok"
+}
+
+// humanTokens formats a token count compactly: raw below 1k, then k/M with one
+// decimal so a step's context size reads at a glance without column drift.
+func humanTokens(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1e3)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
+// recomputeTotals sums the per-step (already cumulative) cost and token figures
+// into the run totals. Each step's figure is the engine's cumulative spend
+// across all its attempts, so the sum is the run's true total — inclusive of
+// resets, retries, and loop re-runs. Called on every StepStatus.
+func (m *monitorModel) recomputeTotals() {
+	var cost float64
+	var tokens int
+	for _, s := range m.steps {
+		if s.cost != nil {
+			cost += *s.cost
+		}
+		tokens += s.tokens
+	}
+	m.totalCost = cost
+	m.totalTokens = tokens
+}
+
+// totalsStr renders the run's summed tokens and cost as a single styled string,
+// or "" when neither has been reported yet. Used for the Steps-panel total row.
+func (m monitorModel) totalsStr() string {
+	var parts []string
+	if m.totalTokens > 0 {
+		parts = append(parts, humanTokens(m.totalTokens)+" tok")
+	}
+	if m.totalCost > 0 {
+		parts = append(parts, fmt.Sprintf("$%.4f", m.totalCost))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return theme.Question.Render(strings.Join(parts, "  "))
+}
+
 // securityView renders the Security region: a compact list of findings by
 // severity, visible only when at least one finding exists. Every row is rendered
 // verbatim (not through glamour) so redacted previews like [aws-key:…MPLE] are
@@ -2630,10 +2721,8 @@ func (m monitorModel) footerView() string {
 	if m.hasGate() && m.focus != focusGate {
 		hint = "tab to gate  •  " + hint
 	}
-	// Append per-run cost to the status when any cost has been reported.
-	if m.totalCost > 0 {
-		status += "  " + theme.Question.Render(fmt.Sprintf("$%.4f total", m.totalCost))
-	}
+	// The per-run cost/token total lives at the bottom of the Steps panel
+	// (listBody's Total row), not the footer.
 	// Clip to the terminal width so a long hint line never overflows the panels
 	// and skews JoinVertical's per-line width (which would break the box borders).
 	f := theme.Footer

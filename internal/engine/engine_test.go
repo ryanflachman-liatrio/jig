@@ -744,6 +744,72 @@ max_retries = 2
 	}
 }
 
+// failCostExec returns a failing Result carrying a fixed cost/token usage on
+// every call, so a retried step accrues once per attempt.
+type failCostExec struct {
+	cost   float64
+	tokens int
+}
+
+func (e *failCostExec) Execute(_ context.Context, _ StepRequest, _ Reporter) (*step.Result, error) {
+	usage := map[string]any{"input_tokens": float64(e.tokens)}
+	return &step.Result{
+		Status:       step.StatusFailed,
+		Err:          "boom",
+		TotalCostUSD: &e.cost,
+		Usage:        &usage,
+	}, nil
+}
+
+// TestRunSnapshotCostCumulative verifies the run total counts every attempt: a
+// step that fails and retries is billed for each attempt, so a reset/retry adds
+// to the total rather than refunding the earlier attempt (see step.State.SpentUSD).
+func TestRunSnapshotCostCumulative(t *testing.T) {
+	const toml = `
+[workflow]
+name = "retry-cost"
+version = "0.1"
+
+[[step]]
+id = "flaky"
+type = "command"
+run = "false"
+on_failure = "retry"
+max_retries = 2
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	exec := &failCostExec{cost: 0.001, tokens: 500}
+	mgr := NewManager(exec, "")
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1 original + 2 retries = 3 attempts, then abort at the recovery gate.
+	collectEventsAborting(t, ch, run, 5*time.Second)
+
+	snap := run.Snapshot()
+	if want := 3 * 0.001; !floatNear(snap.TotalCostUSD, want) {
+		t.Errorf("TotalCostUSD = %v, want %v (3 attempts, not refunded)", snap.TotalCostUSD, want)
+	}
+	if want := 3 * 500; snap.TotalTokens != want {
+		t.Errorf("TotalTokens = %v, want %v (3 attempts)", snap.TotalTokens, want)
+	}
+}
+
+func floatNear(a, b float64) bool {
+	d := a - b
+	if d < 0 {
+		d = -d
+	}
+	return d < 1e-9
+}
+
 // TestScheduler_ContinuePolicy verifies that a failing step with on_failure =
 // "continue" allows dependent steps to run and the run finishes with Failed=true.
 func TestScheduler_ContinuePolicy(t *testing.T) {
@@ -1927,10 +1993,11 @@ block_on = "mystep.status == 'blocked'"
 	_ = ctx
 }
 
-// costExec is a testExec variant whose outcomes carry TotalCostUSD so
-// TestRunSnapshotCost can verify the snapshot sums them correctly.
+// costExec is a testExec variant whose outcomes carry TotalCostUSD and a token
+// usage map so TestRunSnapshotCost can verify the snapshot sums them correctly.
 type costOutcome struct {
-	cost float64
+	cost   float64
+	tokens int
 }
 
 type costExec struct {
@@ -1942,6 +2009,15 @@ func (e *costExec) Execute(_ context.Context, req StepRequest, _ Reporter) (*ste
 	res := &step.Result{Status: step.StatusSucceeded}
 	if out.cost != 0 {
 		res.TotalCostUSD = &out.cost
+	}
+	if out.tokens != 0 {
+		// Split across input/output the way the SDK reports usage; TokenCount sums
+		// the buckets back to the total.
+		usage := map[string]any{
+			"input_tokens":  float64(out.tokens - out.tokens/4),
+			"output_tokens": float64(out.tokens / 4),
+		}
+		res.Usage = &usage
 	}
 	return res, nil
 }
@@ -1977,9 +2053,9 @@ depends_on = ["b"]
 	}
 
 	exec := &costExec{outcomes: map[string]costOutcome{
-		"a": {cost: 0.001},
-		"b": {cost: 0.002},
-		// "c" has no cost reported: TotalCostUSD stays nil
+		"a": {cost: 0.001, tokens: 1000},
+		"b": {cost: 0.002, tokens: 2000},
+		// "c" has no cost/usage reported: TotalCostUSD stays nil, tokens 0
 	}}
 	mgr := NewManager(exec, "")
 	_, ctrl := mgr.Subscribe()
@@ -1988,19 +2064,39 @@ depends_on = ["b"]
 		t.Fatal(err)
 	}
 
+	// Terminal StepStatus events must carry the per-step cost/token figures so the
+	// monitor can total them live and on journal replay.
+	gotCost := map[string]float64{}
+	gotTokens := map[string]int{}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	for {
 		select {
 		case e := <-ctrl:
+			if ss, ok := e.(StepStatus); ok && ss.To == step.StatusSucceeded {
+				if ss.Cost != nil {
+					gotCost[ss.StepID] = *ss.Cost
+				}
+				gotTokens[ss.StepID] = ss.Tokens
+			}
 			if _, ok := e.(RunFinished); ok {
 				snap := run.Snapshot()
 				if !snap.Done {
 					t.Fatal("expected run to be done after RunFinished")
 				}
-				const want = 0.001 + 0.002
-				if snap.TotalCostUSD != want {
-					t.Errorf("TotalCostUSD = %v, want %v", snap.TotalCostUSD, want)
+				const wantCost = 0.001 + 0.002
+				if snap.TotalCostUSD != wantCost {
+					t.Errorf("TotalCostUSD = %v, want %v", snap.TotalCostUSD, wantCost)
+				}
+				if want := 1000 + 2000; snap.TotalTokens != want {
+					t.Errorf("TotalTokens = %v, want %v", snap.TotalTokens, want)
+				}
+				if gotCost["a"] != 0.001 || gotCost["b"] != 0.002 {
+					t.Errorf("StepStatus.Cost = %v, want a=0.001 b=0.002", gotCost)
+				}
+				if gotTokens["a"] != 1000 || gotTokens["b"] != 2000 {
+					t.Errorf("StepStatus.Tokens = %v, want a=1000 b=2000", gotTokens)
 				}
 				return
 			}
