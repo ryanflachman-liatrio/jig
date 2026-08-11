@@ -1,10 +1,10 @@
 ╭─ Steps ──────────────────────╮╭─ a ──────────────────────────────────────────╮
-│ ▌ ○  a   pending           — ││                                              │
-│   ○  b   pending           — ││   proposed changes                           │
-│   ○  c   pending           — ││                                              │
-│                              ││   ── diff ─────────────────────────────      │
-│                              ││   @@ -1,3 +1,3 @@                            │
-│                              ││    context                                   │
+│ ▌ ○  a   pending             ││                                              │
+│      —                       ││   proposed changes                           │
+│   ○  b   pending             ││                                              │
+│      —                       ││   ── diff ─────────────────────────────      │
+│   ○  c   pending             ││   @@ -1,3 +1,3 @@                            │
+│      —                       ││    context                                   │
 │                              ││   -old line                                  │
 │                              ││   +new line                                  │
 │                              ││    context                                   │

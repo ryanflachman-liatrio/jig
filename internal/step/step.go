@@ -52,6 +52,14 @@ type State struct {
 	// that makes re-runs legible in the transcript and gates nothing.
 	Generation int
 	Result     *Result
+	// SpentUSD / SpentTokens accumulate the cost and tokens of every executor
+	// attempt for this step — across retries, loop re-runs, resets, and resumed
+	// sessions. Result holds only the latest attempt; these are cumulative,
+	// because a reset or retry does not refund what an earlier attempt already
+	// cost. The scheduler adds each completed attempt's figures here and never
+	// zeroes them (reset clears Result/Attempt/Iteration but keeps spend).
+	SpentUSD    float64
+	SpentTokens int
 }
 
 // Result is what execution produced; serialized as result.json by the manifest
@@ -72,4 +80,29 @@ type Result struct {
 	// A nil pointer means the SDK did not report cost (vs. a reported $0.00).
 	TotalCostUSD *float64        `json:"total_cost_usd,omitempty"`
 	Usage        *map[string]any `json:"usage,omitempty"`
+}
+
+// TokenCount sums the token buckets in the SDK usage map — input, output, and
+// both cache buckets — into a single total for the tokens the step processed.
+// Returns (0, false) when no usage was reported so callers can distinguish
+// "not yet known" from a genuine zero. The SDK decodes usage from JSON, so its
+// numeric values arrive as float64.
+func (r *Result) TokenCount() (int, bool) {
+	if r.Usage == nil {
+		return 0, false
+	}
+	usage := *r.Usage
+	total, found := 0, false
+	for _, k := range []string{
+		"input_tokens",
+		"output_tokens",
+		"cache_creation_input_tokens",
+		"cache_read_input_tokens",
+	} {
+		if f, ok := usage[k].(float64); ok {
+			total += int(f)
+			found = true
+		}
+	}
+	return total, found
 }

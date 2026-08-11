@@ -97,6 +97,7 @@ type RunSnapshot struct {
 	Done         bool
 	Failed       bool
 	TotalCostUSD float64 // sum of all steps' TotalCostUSD; 0.0 when none reported
+	TotalTokens  int     // sum of all steps' token counts; 0 when none reported
 }
 
 // Start validates wf and spawns a scheduler goroutine for it, returning the
@@ -1387,6 +1388,19 @@ func (s *scheduler) handle(msg schedMsg) {
 	case stepDoneMsg:
 		s.inFlight--
 		delete(s.reporters, m.stepID)
+		// Accrue this attempt's cost/tokens once, before any early-return branch
+		// (stopped, recovery-parked, failed) — every executor invocation was paid
+		// for, so retries, loop re-runs, and resumed sessions all add to the step's
+		// cumulative spend rather than replacing it. This is the single accrual
+		// point; transition() and snapshot() only read the accumulators.
+		if st := s.states[m.stepID]; st != nil && m.result != nil {
+			if m.result.TotalCostUSD != nil {
+				st.SpentUSD += *m.result.TotalCostUSD
+			}
+			if tok, ok := m.result.TokenCount(); ok {
+				st.SpentTokens += tok
+			}
+		}
 		// Release the worker's child context and drop it from the registry — the
 		// worker has exited, so its CancelFunc has no further use.
 		if cancel, ok := s.stepCancels[m.stepID]; ok {
@@ -2746,6 +2760,16 @@ func (s *scheduler) transition(stepID string, from, to step.Status) {
 		ev.Err = state.Result.Err
 		ev.Subtype = state.Result.Subtype
 	}
+	// Attach the step's cumulative cost/tokens so the monitor can display per-step
+	// figures and a running total live (and on journal replay) without re-reading
+	// result.json. Carried on every transition — not just the terminal one — so a
+	// step re-running after a reset/retry keeps showing what earlier attempts
+	// already cost instead of blanking to zero. Zero means "nothing spent yet".
+	if state.SpentUSD > 0 {
+		cost := state.SpentUSD
+		ev.Cost = &cost
+	}
+	ev.Tokens = state.SpentTokens
 	s.emit(ev)
 }
 
@@ -2789,6 +2813,7 @@ func (s *scheduler) snapshot() RunSnapshot {
 	states := make([]step.State, len(s.wf.Steps))
 	allDone := true
 	var totalCost float64
+	var totalTokens int
 	for i, wfStep := range s.wf.Steps {
 		st := s.states[wfStep.ID]
 		states[i] = *st
@@ -2797,9 +2822,10 @@ func (s *scheduler) snapshot() RunSnapshot {
 		default:
 			allDone = false
 		}
-		if st.Result != nil && st.Result.TotalCostUSD != nil {
-			totalCost += *st.Result.TotalCostUSD
-		}
+		// Cumulative across every attempt (see step.State.SpentUSD), so a run that
+		// retried or reset a step reports the full amount it actually paid.
+		totalCost += st.SpentUSD
+		totalTokens += st.SpentTokens
 	}
 	return RunSnapshot{
 		ID:           s.runID,
@@ -2808,6 +2834,7 @@ func (s *scheduler) snapshot() RunSnapshot {
 		Done:         allDone,
 		Failed:       s.anyFailed(),
 		TotalCostUSD: totalCost,
+		TotalTokens:  totalTokens,
 	}
 }
 
