@@ -54,6 +54,16 @@ type selectorModel struct {
 	height  int
 }
 
+// Charmtone tokens for the list delegate — the only place in the tui package
+// that directly references raw palette colors rather than theme styles.
+const (
+	hexCharple = "#6B50FF" // primary   (violet)
+	hexDolly   = "#FF60FF" // secondary (magenta)
+	hexSash    = "#ECEBF0" // fgBase
+	hexSquid   = "#858392" // fgMuted
+	hexOyster  = "#605F6B" // fgDim
+)
+
 func newSelectorModel() selectorModel {
 	delegate := list.NewDefaultDelegate()
 	// Repaint the stock delegate in Charmtone: the selected row gets a charple
@@ -182,9 +192,9 @@ func (m selectorModel) capturesText() bool {
 
 func (m selectorModel) footerView() string {
 	if m.list.FilterState() == list.Filtering {
-		return theme.Footer.Render("  " + shared.HintString(m.keys.Apply, m.keys.Clear, shared.KeyQuit))
+		return shared.Theme.Footer.Render("  " + shared.HintString(m.keys.Apply, m.keys.Clear, shared.KeyQuit))
 	}
-	return theme.Footer.Render("  " + shared.HintString(m.keys.Nav, m.keys.Filter, m.keys.Open, shared.KeyHelp, shared.KeyQuit))
+	return shared.Theme.Footer.Render("  " + shared.HintString(m.keys.Nav, m.keys.Filter, m.keys.Open, shared.KeyHelp, shared.KeyQuit))
 }
 
 func (m selectorModel) View() string {
@@ -192,11 +202,11 @@ func (m selectorModel) View() string {
 	case m.loading:
 		return "\n  Scanning " + workflowsDir + "…\n"
 	case m.err != nil:
-		return "\n  " + theme.Error.Render("Failed to scan "+workflowsDir+": "+m.err.Error()) + "\n"
+		return "\n  " + shared.Theme.Error.Render("Failed to scan "+workflowsDir+": "+m.err.Error()) + "\n"
 	case len(m.list.Items()) == 0:
-		return "\n  " + theme.Title.Render("No workflows found") + "\n\n" +
-			theme.Question.Render("  Add a <name>.toml with a [workflow] table under "+workflowsDir+"/.") +
-			"\n\n" + theme.Footer.Render("  "+shared.HintString(shared.KeyQuit)) + "\n"
+		return "\n  " + shared.Theme.Title.Render("No workflows found") + "\n\n" +
+			shared.Theme.Question.Render("  Add a <name>.toml with a [workflow] table under "+workflowsDir+"/.") +
+			"\n\n" + shared.Theme.Footer.Render("  "+shared.HintString(shared.KeyQuit)) + "\n"
 	}
 	footer := m.footerView()
 	body := shared.Panel("Workflows", m.list.View(), m.width, m.height-lipgloss.Height(footer), true)

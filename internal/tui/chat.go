@@ -65,7 +65,7 @@ type chatModel struct {
 func newChatModel(ctx context.Context, darkBackground bool) tea.Model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
-	s.Style = theme.Spinner
+	s.Style = shared.Theme.Spinner
 
 	// enter submits the prompt (handled in Update); width is deferred to the
 	// first resize. withoutBorder: the Message panel owns the frame, so the
@@ -118,22 +118,22 @@ func (m chatModel) fatalLine() string {
 	if !m.fatal || m.fatalErr == nil {
 		return ""
 	}
-	line := theme.Error.Render("⚠ " + m.fatalErr.Error())
+	line := shared.Theme.Error.Render("⚠ " + m.fatalErr.Error())
 	if m.width > 0 {
-		line = theme.Error.MaxWidth(m.width).Render("⚠ " + m.fatalErr.Error())
+		line = shared.Theme.Error.MaxWidth(m.width).Render("⚠ " + m.fatalErr.Error())
 	}
 	return line
 }
 
 func (m chatModel) footerView() string {
 	if m.fatal {
-		return theme.Footer.Render("  " + shared.HintString(shared.KeyQuit))
+		return shared.Theme.Footer.Render("  " + shared.HintString(shared.KeyQuit))
 	}
 	if m.ready && len(m.turns) > 0 {
 		hint := shared.HintString(m.keys.Send, m.keys.Newline, m.keys.SwitchFocus, shared.KeyQuit)
-		return theme.Footer.Render(fmt.Sprintf("  %s (%.0f%%)", hint, m.viewport.ScrollPercent()*100))
+		return shared.Theme.Footer.Render(fmt.Sprintf("  %s (%.0f%%)", hint, m.viewport.ScrollPercent()*100))
 	}
-	return theme.Footer.Render("  " + shared.HintString(m.keys.Send, m.keys.Newline, shared.KeyQuit))
+	return shared.Theme.Footer.Render("  " + shared.HintString(m.keys.Send, m.keys.Newline, shared.KeyQuit))
 }
 
 func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {

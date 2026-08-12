@@ -184,7 +184,7 @@ func (m detailModel) titleText() string {
 
 func (m detailModel) footerView() string {
 	// Run and Toggle drop out automatically when disabled (no workflow loaded).
-	return theme.Footer.Render("  " + shared.HintString(m.keys.Run, m.keys.Toggle, m.keys.Runs, m.keys.Back, shared.KeyHelp, shared.KeyQuit))
+	return shared.Theme.Footer.Render("  " + shared.HintString(m.keys.Run, m.keys.Toggle, m.keys.Runs, m.keys.Back, shared.KeyHelp, shared.KeyQuit))
 }
 
 // helpSections satisfies helpProvider: the workflow detail actions plus the
@@ -210,15 +210,15 @@ func (m detailModel) body() string {
 	var b strings.Builder
 	b.WriteString("\n")
 	if m.meta.Version != "" {
-		b.WriteString("  " + theme.Question.Render("v"+m.meta.Version) + "\n")
+		b.WriteString("  " + shared.Theme.Question.Render("v"+m.meta.Version) + "\n")
 	}
 	if m.meta.Description != "" {
-		b.WriteString("  " + theme.Question.Render(m.meta.Description) + "\n")
+		b.WriteString("  " + shared.Theme.Question.Render(m.meta.Description) + "\n")
 	}
-	b.WriteString("  " + theme.Path.Render(m.path) + "\n\n")
+	b.WriteString("  " + shared.Theme.Path.Render(m.path) + "\n\n")
 
 	if m.loadErr != nil {
-		b.WriteString("  " + theme.Error.Render(IconError+" invalid workflow") + "\n\n")
+		b.WriteString("  " + shared.Theme.Error.Render(shared.IconError+" invalid workflow") + "\n\n")
 		// The loader aggregates every problem; indent the multi-line message.
 		for _, line := range strings.Split(strings.TrimRight(m.loadErr.Error(), "\n"), "\n") {
 			b.WriteString("  " + line + "\n")
@@ -226,8 +226,8 @@ func (m detailModel) body() string {
 		return b.String()
 	}
 
-	b.WriteString("  " + theme.Valid.Render(IconSuccess+" valid") +
-		theme.Question.Render(fmt.Sprintf("  ·  %d step(s)", len(m.wf.Steps))) + "\n\n")
+	b.WriteString("  " + shared.Theme.Valid.Render(shared.IconSuccess+" valid") +
+		shared.Theme.Question.Render(fmt.Sprintf("  ·  %d step(s)", len(m.wf.Steps))) + "\n\n")
 	if m.viewMode {
 		b.WriteString(m.chartView())
 	} else {
@@ -261,16 +261,16 @@ func (m detailModel) stepsView() string {
 	for i, s := range steps {
 		typ := string(s.Type)
 		badge := typ
-		if style, ok := theme.Step.Types[typ]; ok {
+		if style, ok := shared.Theme.Step.Types[typ]; ok {
 			badge = style.Render(typ)
 		}
 		fmt.Fprintf(&b, "  %2d  %s  %s",
 			i+1,
-			theme.Step.ID.Render(padRight(s.ID, idWidth)),
+			shared.Theme.Step.ID.Render(padRight(s.ID, idWidth)),
 			padRight(badge, len(typ), 8),
 		)
 		for _, mk := range stepMarkers(s) {
-			b.WriteString("  " + theme.Marker.Render(mk))
+			b.WriteString("  " + shared.Theme.Marker.Render(mk))
 		}
 		b.WriteString("\n")
 	}

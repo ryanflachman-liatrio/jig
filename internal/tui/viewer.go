@@ -36,7 +36,7 @@ func (m *chatModel) renderActiveTurn() {
 
 	var b strings.Builder
 	if t.question != "" {
-		b.WriteString(theme.UserPrompt.Render("You") + "\n" + t.question)
+		b.WriteString(shared.Theme.UserPrompt.Render("You") + "\n" + t.question)
 		b.WriteString("\n\n")
 	}
 
@@ -44,7 +44,7 @@ func (m *chatModel) renderActiveTurn() {
 	case isActiveStream:
 		b.WriteString(t.answer)
 	case t.isError:
-		b.WriteString(theme.Error.Render("Error: " + t.answer))
+		b.WriteString(shared.Theme.Error.Render("Error: " + t.answer))
 	default:
 		if t.rendered == "" && m.renderer != nil {
 			if out, err := m.renderer.Render(t.answer); err == nil {
@@ -120,7 +120,7 @@ func (m *chatModel) handleResize(msg tea.WindowSizeMsg) {
 	// as garbled keystrokes. The Charmtone theme is dark-only, so
 	// m.darkBackground no longer selects the style.
 	m.renderer, _ = glamour.NewTermRenderer(
-		glamour.WithStyles(theme.Markdown),
+		glamour.WithStyles(shared.Theme.Markdown),
 		glamour.WithWordWrap(wordWrap),
 	)
 

@@ -246,7 +246,7 @@ func (m *runsModel) ensureCursorVisible() {
 }
 
 func (m runsModel) footerView() string {
-	return theme.Footer.Render("  " + shared.HintString(m.keys.NewRun, m.keys.Open, m.keys.Back, shared.KeyHelp, shared.KeyQuit))
+	return shared.Theme.Footer.Render("  " + shared.HintString(m.keys.NewRun, m.keys.Open, m.keys.Back, shared.KeyHelp, shared.KeyQuit))
 }
 
 // helpSections satisfies helpProvider: the run-list navigation and actions plus
@@ -268,7 +268,7 @@ func (m runsModel) rowsBody() string {
 	for i, row := range m.rows {
 		cursor := "  "
 		if i == m.cursor {
-			cursor = theme.SelectedBar.Render(CursorBar) + " "
+			cursor = shared.Theme.SelectedBar.Render(shared.CursorBar) + " "
 		}
 
 		status := runRowStatus(row)
@@ -282,7 +282,7 @@ func (m runsModel) rowsBody() string {
 			progress,
 		)
 		if i == m.cursor {
-			b.WriteString(theme.SelectedLine.Render(line) + "\n")
+			b.WriteString(shared.Theme.SelectedLine.Render(line) + "\n")
 		} else {
 			b.WriteString(line + "\n")
 		}
@@ -292,9 +292,9 @@ func (m runsModel) rowsBody() string {
 
 func (m runsModel) View() string {
 	if len(m.rows) == 0 {
-		return "\n  " + theme.Title.Render("No runs yet") + "\n\n" +
-			theme.Question.Render("  Press r in a workflow detail to start a run.") + "\n\n" +
-			theme.Footer.Render("  "+shared.HintString(m.keys.Back, shared.KeyQuit)) + "\n"
+		return "\n  " + shared.Theme.Title.Render("No runs yet") + "\n\n" +
+			shared.Theme.Question.Render("  Press r in a workflow detail to start a run.") + "\n\n" +
+			shared.Theme.Footer.Render("  "+shared.HintString(m.keys.Back, shared.KeyQuit)) + "\n"
 	}
 
 	footer := m.footerView()
@@ -308,12 +308,12 @@ func (m runsModel) View() string {
 
 func runRowStatus(row runRow) string {
 	if row.failed {
-		return theme.Error.Render("failed")
+		return shared.Theme.Error.Render("failed")
 	}
 	if row.done {
-		return theme.Valid.Render("done")
+		return shared.Theme.Valid.Render("done")
 	}
-	return theme.Running.Render("running")
+	return shared.Theme.Running.Render("running")
 }
 
 func runRowProgress(row runRow) string {

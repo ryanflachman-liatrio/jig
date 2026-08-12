@@ -376,10 +376,10 @@ func (m rootModel) View() tea.View {
 	// v2 declares alt-screen and the full-screen background on the View itself
 	// (the compositor paints BackgroundColor edge-to-edge, so nested styled
 	// spans no longer punch holes in a screen-wide background — the reason the
-	// Pepper canvas was blocked on v1). theme.Canvas is Charmtone Pepper.
+	// Pepper canvas was blocked on v1). shared.Theme.Canvas is Charmtone Pepper.
 	v := tea.NewView(content)
 	v.AltScreen = true
-	v.BackgroundColor = theme.Canvas
+	v.BackgroundColor = shared.Theme.Canvas
 	return v
 }
 
