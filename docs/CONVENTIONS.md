@@ -40,6 +40,21 @@ with no architectural benefit.
 `internal/tui/monitor/` (new package) when the model is only consumed by one
 caller and the tests rely on unexported access.
 
+### The root model is the permanent exception
+
+The compositor model (`rootModel` in `internal/tui/`) holds every screen
+subpackage and is the package's public entry point (`tui.New`). It can never
+be extracted into its own subpackage — doing so would require every screen
+subpackage to import `tui/root`, which in turn imports them, creating a cycle.
+
+The root model therefore stays in `internal/tui/` indefinitely. It is split
+across same-package files by concern (`root.go`, `root_update.go`,
+`root_cmds.go`), but it has no subpackage directory of its own.
+
+**Rule:** every screen model eventually gets its own subpackage. The root
+compositor stays in the parent package permanently — it is the only file in
+`internal/tui/` that is not a candidate for subpackage extraction.
+
 ### Subpackages require a shared foundation package first
 
 A subpackage creates a package boundary. If the code being extracted depends
