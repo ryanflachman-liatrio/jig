@@ -69,29 +69,11 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.resize()
+		m = m.resize()
 		return m, nil
 
 	case workflowLoadedMsg:
-		m.loaded = true
-		m.meta = msg.meta
-		m.wf = msg.wf
-		m.loadErr = msg.err
-		m.keys.Run.SetEnabled(m.wf != nil)
-		// The chart is only meaningful for a valid graph; keep the toggle out of
-		// the footer (and unmatched) until one loads.
-		m.keys.Toggle.SetEnabled(m.wf != nil)
-		if m.wf == nil && m.viewMode {
-			// A prior valid workflow was charted, then a reload failed: fall back
-			// to the list so body() never charts a nil workflow.
-			m.viewMode = false
-			m.applyViewMode()
-		}
-		if m.ready {
-			m.vp.SetContent(m.body())
-			m.vp.GotoTop()
-		}
-		return m, nil
+		return m.applyLoaded(msg), nil
 
 	case tea.KeyPressMsg:
 		switch {
@@ -99,7 +81,7 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 			return m, func() tea.Msg { return monitor.ShowRunsMsg{} }
 		case keybind.Matches(msg, m.keys.Toggle):
 			m.viewMode = !m.viewMode
-			m.applyViewMode()
+			m = m.applyViewMode()
 			if m.ready {
 				m.vp.SetContent(m.body())
 				m.vp.SetXOffset(0)
@@ -120,9 +102,31 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 	return m, cmd
 }
 
+func (m detailModel) applyLoaded(msg workflowLoadedMsg) detailModel {
+	m.loaded = true
+	m.meta = msg.meta
+	m.wf = msg.wf
+	m.loadErr = msg.err
+	m.keys.Run.SetEnabled(m.wf != nil)
+	// The chart is only meaningful for a valid graph; keep the toggle out of
+	// the footer (and unmatched) until one loads.
+	m.keys.Toggle.SetEnabled(m.wf != nil)
+	if m.wf == nil && m.viewMode {
+		// A prior valid workflow was charted, then a reload failed: fall back
+		// to the list so body() never charts a nil workflow.
+		m.viewMode = false
+		m = m.applyViewMode()
+	}
+	if m.ready {
+		m.vp.SetContent(m.body())
+		m.vp.GotoTop()
+	}
+	return m
+}
+
 // resize (re)builds the viewport to fit the panel's inner area, leaving one row
 // for the footer help line below the box.
-func (m *detailModel) resize() {
+func (m detailModel) resize() detailModel {
 	hFrame, vFrame := shared.PanelFrame()
 	footerHeight := lipgloss.Height(m.footerView())
 	vpWidth := m.width - hFrame
@@ -140,12 +144,13 @@ func (m *detailModel) resize() {
 		// Set horizontal-scroll bindings to match the current mode: the list view
 		// keeps them unbound (content fits the panel width); the chart view binds
 		// them as the wide-graph escape hatch. See applyViewMode.
-		m.applyViewMode()
+		m = m.applyViewMode()
 	} else {
 		m.vp.SetWidth(vpWidth)
 		m.vp.SetHeight(vpHeight)
 	}
 	m.vp.SetContent(m.body())
+	return m
 }
 
 // applyViewMode reconciles the toggle-dependent state after viewMode flips (or on
@@ -158,7 +163,7 @@ func (m *detailModel) resize() {
 // vim h/l) as the escape hatch. Because the default scroll keys ("left"/"h")
 // collide with Back's vim aliases, Back sheds them in chart mode so left/h reach
 // the viewport; esc/q/backspace still leave the screen.
-func (m *detailModel) applyViewMode() {
+func (m detailModel) applyViewMode() detailModel {
 	if m.viewMode {
 		m.keys.Toggle.SetHelp("v", "list")
 		m.keys.Back.SetKeys("esc", "q", "backspace")
@@ -171,6 +176,7 @@ func (m *detailModel) applyViewMode() {
 		m.vp.KeyMap.Left.Unbind()
 		m.vp.KeyMap.Right.Unbind()
 	}
+	return m
 }
 
 // titleText is the detail panel's title: the workflow name, falling back to the
@@ -196,7 +202,6 @@ func (m detailModel) helpSections() []shared.HelpSection {
 	}
 }
 
-// capturesText: the detail screen never captures free text.
 func (m detailModel) capturesText() bool { return false }
 
 // body renders the header and step list into the viewport's content.
@@ -246,6 +251,8 @@ func (m detailModel) chartView() string {
 	return chart.RenderChart(m.wf, m.vpWidth)
 }
 
+const stepTypeBadgeWidth = 8
+
 // stepsView renders one line per step: an index, the step id, a type badge, and
 // any loop/gate/guard annotations.
 func (m detailModel) stepsView() string {
@@ -266,8 +273,8 @@ func (m detailModel) stepsView() string {
 		}
 		fmt.Fprintf(&b, "  %2d  %s  %s",
 			i+1,
-			shared.Theme.Step.ID.Render(padRight(s.ID, idWidth)),
-			padRight(badge, len(typ), 8),
+			shared.Theme.Step.ID.Render(shared.PadRight(s.ID, idWidth)),
+			shared.PadRight(badge, len(typ), stepTypeBadgeWidth),
 		)
 		for _, mk := range stepMarkers(s) {
 			b.WriteString("  " + shared.Theme.Marker.Render(mk))
@@ -296,8 +303,6 @@ func stepMarkers(s workflow.Step) []string {
 	}
 	return out
 }
-
-var padRight = shared.PadRight
 
 func (m detailModel) View() string {
 	if !m.ready {
