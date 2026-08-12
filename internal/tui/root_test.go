@@ -13,6 +13,7 @@ import (
 	"jig/internal/engine"
 	"jig/internal/runner"
 	"jig/internal/tui/detail"
+	"jig/internal/tui/selector"
 	"jig/internal/tui/shared"
 )
 
@@ -38,7 +39,7 @@ run = "echo hi"
 	mgr := engine.NewManager(exec, "")
 	var m tea.Model = New(context.Background(), mgr)
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m, _ = m.Update(discoverWorkflowsCmd(dir)())
+	m, _ = m.Update(selector.DiscoverCmd(dir)())
 
 	if view := m.View().Content; !strings.Contains(view, "mini") {
 		t.Fatalf("selector view missing workflow name:\n%s", view)
@@ -50,10 +51,10 @@ run = "echo hi"
 	if cmd == nil {
 		t.Fatal("enter produced no command")
 	}
-	if _, ok := cmd().(showDetailMsg); !ok {
-		t.Fatalf("enter did not produce showDetailMsg, got %T", cmd())
+	if _, ok := cmd().(selector.ShowDetailMsg); !ok {
+		t.Fatalf("enter did not produce selector.ShowDetailMsg, got %T", cmd())
 	}
-	m, _ = m.Update(showDetailMsg{path: path})
+	m, _ = m.Update(selector.ShowDetailMsg{Path: path})
 
 	// The detail screen loads asynchronously; deliver the load result directly.
 	m, _ = m.Update(detail.New(path).Init()())
@@ -99,7 +100,7 @@ run = "echo hi"
 	mgr := engine.NewManager(exec, "")
 	var m tea.Model = New(context.Background(), mgr)
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m, _ = m.Update(discoverWorkflowsCmd(dir)())
+	m, _ = m.Update(selector.DiscoverCmd(dir)())
 
 	// "?" opens the overlay over the selector.
 	m, _ = m.Update(tea.KeyPressMsg{Code: '?', Text: "?"})

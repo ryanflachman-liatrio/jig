@@ -1,4 +1,4 @@
-package tui
+package selector
 
 import (
 	"os"
@@ -31,7 +31,7 @@ func TestDiscoverWorkflows(t *testing.T) {
 	write("notes.txt", "[workflow]\nname = \"ignored\"\n")
 	write("config.toml", "[defaults]\nmodel = \"claude\"\n")
 
-	msg, ok := discoverWorkflowsCmd(dir)().(workflowsLoadedMsg)
+	msg, ok := DiscoverCmd(dir)().(workflowsLoadedMsg)
 	if !ok {
 		t.Fatalf("expected workflowsLoadedMsg")
 	}
@@ -50,7 +50,7 @@ func TestDiscoverWorkflows(t *testing.T) {
 	}
 
 	// A missing directory is an empty result, not an error.
-	msg, _ = discoverWorkflowsCmd(filepath.Join(dir, "does-not-exist"))().(workflowsLoadedMsg)
+	msg, _ = DiscoverCmd(filepath.Join(dir, "does-not-exist"))().(workflowsLoadedMsg)
 	if msg.err != nil || len(msg.items) != 0 {
 		t.Fatalf("missing dir: got err=%v items=%d, want nil/0", msg.err, len(msg.items))
 	}
@@ -60,7 +60,7 @@ func TestDiscoverWorkflows(t *testing.T) {
 // bubbles-list internal title/help chrome stripped (the panel border and the
 // external footer now supply those).
 func TestSelector(t *testing.T) {
-	m := newSelectorModel()
+	m := New()
 	m, _ = m.Update(workflowsLoadedMsg{items: []list.Item{
 		workflowItem{name: "alpha", desc: "first", path: "a.toml"},
 		workflowItem{name: "beta", desc: "second", path: "b.toml"},

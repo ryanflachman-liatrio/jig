@@ -18,30 +18,6 @@ import (
 // digit loop that needs the option index). Those carry help text for the footer
 // but are never passed to keybind.Matches; they are called out inline.
 
-// ── selector ─────────────────────────────────────────────────────────────────
-
-// selectorKeys covers the workflow picker. Navigation and filtering are owned by
-// the embedded bubbles list; Nav/Filter/Apply/Clear are display-only so the
-// footer stays honest about what the list accepts, while Open is the one binding
-// the selector itself matches.
-type selectorKeys struct {
-	Nav    keybind.Binding // display-only (list-owned)
-	Filter keybind.Binding // display-only (list-owned)
-	Open   keybind.Binding // matched
-	Apply  keybind.Binding // display-only (list-owned, filtering)
-	Clear  keybind.Binding // display-only (list-owned, filtering)
-}
-
-func defaultSelectorKeys() selectorKeys {
-	return selectorKeys{
-		Nav:    keybind.NewBinding(keybind.WithKeys("up", "down", "k", "j"), keybind.WithHelp("↑/↓", "navigate")),
-		Filter: keybind.NewBinding(keybind.WithKeys("/"), keybind.WithHelp("/", "filter")),
-		Open:   keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "open")),
-		Apply:  keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "apply")),
-		Clear:  keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "clear filter")),
-	}
-}
-
 // ── chat ─────────────────────────────────────────────────────────────────────
 
 // chatKeys covers the standalone streaming chat. ToOutput (esc) and FocusInput

@@ -13,6 +13,7 @@ import (
 	"jig/internal/tui/detail"
 	"jig/internal/tui/monitor"
 	"jig/internal/tui/runs"
+	"jig/internal/tui/selector"
 	"jig/internal/tui/shared"
 )
 
@@ -28,9 +29,6 @@ const (
 
 // ── messages ─────────────────────────────────────────────────────────────────
 
-// showDetailMsg asks the root to open the detail screen for a workflow file.
-type showDetailMsg struct{ path string }
-
 // runsHydratedMsg carries runs recovered from disk at startup, one seq-ordered
 // event slice per run (oldest first), for the runs list to fold in. It is
 // produced once by hydrateRunsCmd so a fresh session shows runs from earlier
@@ -41,7 +39,7 @@ type runsHydratedMsg struct{ runs [][]engine.Event }
 
 type rootModel struct {
 	active   screen
-	selector selectorModel
+	selector selector.Model
 	detail   detail.Model
 	runs     runs.Model
 	monitor  monitor.Model
@@ -69,6 +67,12 @@ type helpProvider interface {
 	helpSections() []shared.HelpSection
 	capturesText() bool
 }
+
+// selectorHelpBridge adapts selector.Model to the local helpProvider interface.
+type selectorHelpBridge struct{ m selector.Model }
+
+func (b selectorHelpBridge) helpSections() []shared.HelpSection { return b.m.HelpSections() }
+func (b selectorHelpBridge) capturesText() bool                 { return b.m.CapturesText() }
 
 // detailHelpBridge adapts detail.Model to the local helpProvider interface.
 type detailHelpBridge struct{ m detail.Model }
@@ -99,7 +103,7 @@ func (m rootModel) activeProvider() helpProvider {
 	case screenMonitor:
 		return monitorHelpBridge{m.monitor}
 	default:
-		return m.selector
+		return selectorHelpBridge{m.selector}
 	}
 }
 
@@ -109,7 +113,7 @@ func New(ctx context.Context, mgr *engine.Manager) tea.Model {
 	live, ctrl := mgr.Subscribe()
 	return rootModel{
 		active:     screenSelector,
-		selector:   newSelectorModel(),
+		selector:   selector.New(),
 		runs:       runs.NewModel(),
 		ctx:        ctx,
 		manager:    mgr,
@@ -121,7 +125,7 @@ func New(ctx context.Context, mgr *engine.Manager) tea.Model {
 
 func (m rootModel) Init() tea.Cmd {
 	return tea.Batch(
-		discoverWorkflowsCmd(workflowsDir),
+		m.selector.Init(),
 		hydrateRunsCmd(m.manager),
 		waitForLiveEventCmd(m.liveEvents),
 		waitForCtrlEventCmd(m.ctrlEvents),

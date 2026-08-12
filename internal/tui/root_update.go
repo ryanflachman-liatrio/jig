@@ -8,6 +8,7 @@ import (
 	"jig/internal/tui/detail"
 	"jig/internal/tui/monitor"
 	"jig/internal/tui/runs"
+	"jig/internal/tui/selector"
 	"jig/internal/tui/shared"
 	"jig/internal/workflow"
 )
@@ -35,8 +36,8 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, mc
 
 	// ── navigation ────────────────────────────────────────────────────────
-	case showDetailMsg:
-		return m.openDetail(msg.path)
+	case selector.ShowDetailMsg:
+		return m.openDetail(msg.Path)
 
 	case detail.BackMsg:
 		m.active = screenSelector
