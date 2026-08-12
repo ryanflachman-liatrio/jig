@@ -1,4 +1,4 @@
-package tui
+package runs
 
 import (
 	"fmt"
@@ -8,15 +8,15 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"jig/internal/engine"
-	"jig/internal/tui/monitor"
 	"jig/internal/step"
+	"jig/internal/tui/monitor"
 )
 
 // TestRuns verifies the runs screen renders inside a "Runs" panel and that
 // scrolling keeps the selected row visible within the framed viewport when there
 // are more runs than fit the inner height.
 func TestRuns(t *testing.T) {
-	m := newRunsModel()
+	m := NewModel()
 	// A short terminal so the row list overflows the panel's inner height.
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
 
@@ -62,7 +62,7 @@ func TestRuns(t *testing.T) {
 // newest run, and that once scrolled the selection follows its run rather than
 // jumping when a newer run pushes in above it.
 func TestRunsNewestFirst(t *testing.T) {
-	m := newRunsModel()
+	m := NewModel()
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 
 	// Arrive out of chronological order.
@@ -101,7 +101,7 @@ func TestRunsNewestFirst(t *testing.T) {
 // as live events do, and that a run already tracked from this session is not
 // overwritten by its (possibly staler) journal group.
 func TestRunsHydrate(t *testing.T) {
-	m := newRunsModel()
+	m := NewModel()
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
 
 	// A run started live this session — seeded from RunStarted only, so it is
@@ -125,7 +125,7 @@ func TestRunsHydrate(t *testing.T) {
 			engine.RunFinished{RunID: "past-1", Failed: true},
 		},
 	}
-	m = m.hydrate(past)
+	m = m.Hydrate(past)
 
 	if len(m.rows) != 2 {
 		t.Fatalf("rows: want 2 (live + past), got %d", len(m.rows))

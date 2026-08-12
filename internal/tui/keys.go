@@ -62,28 +62,6 @@ func defaultDetailKeys() detailKeys {
 	}
 }
 
-// ── runs ─────────────────────────────────────────────────────────────────────
-
-// runsKeys covers the run list. Up/Down are matched but not shown (the footer
-// stays as it was, advertising the actions rather than the cursor keys).
-type runsKeys struct {
-	Up     keybind.Binding // matched
-	Down   keybind.Binding // matched
-	Open   keybind.Binding // matched
-	NewRun keybind.Binding // matched
-	Back   keybind.Binding // matched
-}
-
-func defaultRunsKeys() runsKeys {
-	return runsKeys{
-		Up:     keybind.NewBinding(keybind.WithKeys("up", "k"), keybind.WithHelp("↑/k", "up")),
-		Down:   keybind.NewBinding(keybind.WithKeys("down", "j"), keybind.WithHelp("↓/j", "down")),
-		Open:   keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "monitor")),
-		NewRun: keybind.NewBinding(keybind.WithKeys("r"), keybind.WithHelp("r", "new run")),
-		Back:   keybind.NewBinding(keybind.WithKeys("esc", "q", "backspace", "h", "left"), keybind.WithHelp("esc", "back")),
-	}
-}
-
 // ── chat ─────────────────────────────────────────────────────────────────────
 
 // chatKeys covers the standalone streaming chat. ToOutput (esc) and FocusInput

@@ -12,6 +12,7 @@ import (
 
 	"jig/internal/engine"
 	"jig/internal/tui/monitor"
+	"jig/internal/tui/runs"
 	"jig/internal/tui/shared"
 	"jig/internal/workflow"
 )
@@ -37,9 +38,6 @@ type backToSelectorMsg struct{}
 // startRunMsg asks the root to start a new run for the given workflow.
 type startRunMsg struct{ wf *workflow.Workflow }
 
-// showMonitorMsg asks the root to open the monitor for a specific run.
-type showMonitorMsg struct{ runID string }
-
 // runsHydratedMsg carries runs recovered from disk at startup, one seq-ordered
 // event slice per run (oldest first), for the runs list to fold in. It is
 // produced once by hydrateRunsCmd so a fresh session shows runs from earlier
@@ -52,7 +50,7 @@ type rootModel struct {
 	active   screen
 	selector selectorModel
 	detail   detailModel
-	runs     runsModel
+	runs     runs.Model
 	monitor  monitor.Model
 
 	ctx        context.Context
@@ -85,6 +83,12 @@ type monitorHelpBridge struct{ m monitor.Model }
 func (b monitorHelpBridge) helpSections() []shared.HelpSection { return b.m.HelpSections() }
 func (b monitorHelpBridge) capturesText() bool                 { return b.m.CapturesText() }
 
+// runsHelpBridge adapts runs.Model to the local helpProvider interface.
+type runsHelpBridge struct{ m runs.Model }
+
+func (b runsHelpBridge) helpSections() []shared.HelpSection { return b.m.HelpSections() }
+func (b runsHelpBridge) capturesText() bool                 { return b.m.CapturesText() }
+
 // activeProvider returns the help sections + text-capture state of the screen
 // currently driving the UI.
 func (m rootModel) activeProvider() helpProvider {
@@ -92,7 +96,7 @@ func (m rootModel) activeProvider() helpProvider {
 	case screenDetail:
 		return m.detail
 	case screenRuns:
-		return m.runs
+		return runsHelpBridge{m.runs}
 	case screenMonitor:
 		return monitorHelpBridge{m.monitor}
 	default:
@@ -107,7 +111,7 @@ func New(ctx context.Context, mgr *engine.Manager) tea.Model {
 	return rootModel{
 		active:     screenSelector,
 		selector:   newSelectorModel(),
-		runs:       newRunsModel(),
+		runs:       runs.NewModel(),
 		ctx:        ctx,
 		manager:    mgr,
 		liveEvents: live,
@@ -187,17 +191,15 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(sizeCmd, m.detail.Init())
 
 	case backToSelectorMsg:
-		switch m.active {
-		case screenDetail:
-			m.active = screenSelector
-		case screenRuns:
-			// Go back to whatever workflow's detail we came from; if none, selector.
-			if m.detail.loaded {
-				m.active = screenDetail
-			} else {
-				m.active = screenSelector
-			}
-		default:
+		// Only detail emits this; selector has no back action.
+		m.active = screenSelector
+		return m, nil
+
+	case runs.BackMsg:
+		// Go back to whatever workflow's detail we came from; if none, selector.
+		if m.detail.loaded {
+			m.active = screenDetail
+		} else {
 			m.active = screenSelector
 		}
 		return m, nil
@@ -207,23 +209,23 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case runsHydratedMsg:
-		m.runs = m.runs.hydrate(msg.runs)
+		m.runs = m.runs.Hydrate(msg.runs)
 		return m, nil
 
-	case showMonitorMsg:
+	case runs.ShowMonitorMsg:
 		// Preserve monitor state when returning to the same run — events that
 		// arrived while on other screens are already reflected, and we avoid
 		// an unnecessary Snapshot() call.
-		if m.monitor.RunID != msg.runID {
-			m.monitor = monitor.New(msg.runID)
+		if m.monitor.RunID != msg.RunID {
+			m.monitor = monitor.New(msg.RunID)
 			// RunDir lets the monitor read per-step transcripts from disk. Set it
 			// before WithSnapshot so it preserves it.
-			m.monitor.RunDir = m.manager.RunDir(msg.runID)
+			m.monitor.RunDir = m.manager.RunDir(msg.RunID)
 			// Seed with a snapshot so already-completed or in-progress steps
 			// show up immediately. Snapshot() is safe for completed runs. A run
 			// from an earlier session has no handle, so fall back to replaying its
 			// journal from disk — the same events a Snapshot would carry.
-			if run, ok := m.handles[msg.runID]; ok {
+			if run, ok := m.handles[msg.RunID]; ok {
 				snap := run.Snapshot()
 				m.monitor = m.monitor.WithSnapshot(snap)
 			} else if evs, err := engine.ReplayJournal(m.monitor.RunDir); err == nil && len(evs) > 0 {
@@ -323,21 +325,10 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case startRunMsg:
-		if msg.wf == nil {
-			return m, nil
-		}
-		run, err := m.manager.Start(msg.wf)
-		if err != nil {
-			return m, nil
-		}
-		m.handles[run.ID] = run
-		m.runs = m.runs.withWorkflow(msg.wf)
-		// Navigate straight to the monitor so prompts and review gates are visible immediately.
-		m.monitor = monitor.New(run.ID)
-		m.monitor.RunDir = m.manager.RunDir(run.ID)
-		m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
-		m.active = screenMonitor
-		return m, nil
+		return m.startRun(msg.wf)
+
+	case runs.StartRunMsg:
+		return m.startRun(msg.Wf)
 	}
 
 	// All other messages go to the active screen.
@@ -383,6 +374,24 @@ func (m rootModel) View() tea.View {
 	return v
 }
 
+func (m rootModel) startRun(wf *workflow.Workflow) (tea.Model, tea.Cmd) {
+	if wf == nil {
+		return m, nil
+	}
+	run, err := m.manager.Start(wf)
+	if err != nil {
+		return m, nil
+	}
+	m.handles[run.ID] = run
+	m.runs = m.runs.WithWorkflow(wf)
+	// Navigate straight to the monitor so prompts and review gates are visible immediately.
+	m.monitor = monitor.New(run.ID)
+	m.monitor.RunDir = m.manager.RunDir(run.ID)
+	m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+	m.active = screenMonitor
+	return m, nil
+}
+
 // hydrateRunsCmd reads the runs persisted on disk and replays each journal into
 // its event stream, off the UI goroutine, so the runs list can show runs from
 // earlier sessions at startup. It emits one runsHydratedMsg; runs whose journal
@@ -394,15 +403,15 @@ func hydrateRunsCmd(mgr *engine.Manager) tea.Cmd {
 		if err != nil || len(ids) == 0 {
 			return runsHydratedMsg{}
 		}
-		runs := make([][]engine.Event, 0, len(ids))
+		groups := make([][]engine.Event, 0, len(ids))
 		for _, id := range ids {
 			evs, err := engine.ReplayJournal(mgr.RunDir(id))
 			if err != nil || len(evs) == 0 {
 				continue
 			}
-			runs = append(runs, evs)
+			groups = append(groups, evs)
 		}
-		return runsHydratedMsg{runs: runs}
+		return runsHydratedMsg{runs: groups}
 	}
 }
 
