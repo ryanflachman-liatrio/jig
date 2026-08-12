@@ -70,7 +70,7 @@ func newChatModel(ctx context.Context, darkBackground bool) tea.Model {
 	// enter submits the prompt (handled in Update); width is deferred to the
 	// first resize. withoutBorder: the Message panel owns the frame, so the
 	// textarea must not draw its own box (avoids a double border).
-	ta := newInputTextarea("Ask Claude... (enter to send, alt+enter for newline, ctrl+c to quit)", 0, 3, withoutBorder())
+	ta := shared.NewInputTextarea("Ask Claude... (enter to send, alt+enter for newline, ctrl+c to quit)", 0, 3, shared.WithoutBorder())
 
 	return chatModel{
 		textarea:       ta,
@@ -127,13 +127,13 @@ func (m chatModel) fatalLine() string {
 
 func (m chatModel) footerView() string {
 	if m.fatal {
-		return theme.Footer.Render("  " + hintString(keyQuit))
+		return theme.Footer.Render("  " + shared.HintString(shared.KeyQuit))
 	}
 	if m.ready && len(m.turns) > 0 {
-		hint := hintString(m.keys.Send, m.keys.Newline, m.keys.SwitchFocus, keyQuit)
+		hint := shared.HintString(m.keys.Send, m.keys.Newline, m.keys.SwitchFocus, shared.KeyQuit)
 		return theme.Footer.Render(fmt.Sprintf("  %s (%.0f%%)", hint, m.viewport.ScrollPercent()*100))
 	}
-	return theme.Footer.Render("  " + hintString(m.keys.Send, m.keys.Newline, keyQuit))
+	return theme.Footer.Render("  " + shared.HintString(m.keys.Send, m.keys.Newline, shared.KeyQuit))
 }
 
 func (m chatModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {

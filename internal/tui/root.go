@@ -12,6 +12,7 @@ import (
 
 	"jig/internal/engine"
 	"jig/internal/tui/monitor"
+	"jig/internal/tui/shared"
 	"jig/internal/workflow"
 )
 
@@ -69,11 +70,20 @@ type rootModel struct {
 	height int
 }
 
+// helpProvider is implemented by every screen model that contributes a help
+// overlay. capturesText reports whether the screen is currently capturing free
+// text (a list filter, a gate textarea), in which case "?" is a literal
+// character and must not open the overlay.
+type helpProvider interface {
+	helpSections() []shared.HelpSection
+	capturesText() bool
+}
+
 // monitorHelpBridge adapts monitor.Model to the local helpProvider interface.
 type monitorHelpBridge struct{ m monitor.Model }
 
-func (b monitorHelpBridge) helpSections() []helpSection { return b.m.HelpSections() }
-func (b monitorHelpBridge) capturesText() bool          { return b.m.CapturesText() }
+func (b monitorHelpBridge) helpSections() []shared.HelpSection { return b.m.HelpSections() }
+func (b monitorHelpBridge) capturesText() bool                 { return b.m.CapturesText() }
 
 // activeProvider returns the help sections + text-capture state of the screen
 // currently driving the UI.
@@ -118,7 +128,7 @@ func (m rootModel) Init() tea.Cmd {
 func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		if keybind.Matches(msg, keyQuit) {
+		if keybind.Matches(msg, shared.KeyQuit) {
 			return m, tea.Quit
 		}
 		// Help is a global modal owned by the root. While open it swallows every
@@ -126,12 +136,12 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// it. When closed, "?" opens it — unless the active screen is capturing free
 		// text, where "?" is a literal character.
 		if m.showHelp {
-			if keybind.Matches(msg, keyHelp) || msg.String() == "esc" {
+			if keybind.Matches(msg, shared.KeyHelp) || msg.String() == "esc" {
 				m.showHelp = false
 			}
 			return m, nil
 		}
-		if keybind.Matches(msg, keyHelp) && !m.activeProvider().capturesText() {
+		if keybind.Matches(msg, shared.KeyHelp) && !m.activeProvider().capturesText() {
 			m.showHelp = true
 			return m, nil
 		}
@@ -361,7 +371,7 @@ func (m rootModel) View() tea.View {
 	// a lipgloss Canvas) so the screen shows through around the box, and the same
 	// "?" chord surfaces context-appropriate keys everywhere.
 	if m.showHelp {
-		content = renderHelpOverlay(content, m.width, m.height, m.activeProvider().helpSections())
+		content = shared.RenderHelpOverlay(content, m.width, m.height, m.activeProvider().helpSections())
 	}
 	// v2 declares alt-screen and the full-screen background on the View itself
 	// (the compositor paints BackgroundColor edge-to-edge, so nested styled

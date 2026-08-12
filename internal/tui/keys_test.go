@@ -8,6 +8,7 @@ import (
 	keybind "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
+	"jig/internal/tui/shared"
 	"jig/internal/workflow"
 )
 
@@ -19,7 +20,7 @@ func TestHintStringSkipsDisabled(t *testing.T) {
 	off := keybind.NewBinding(keybind.WithKeys("b"), keybind.WithHelp("b", "beta"))
 	off.SetEnabled(false)
 
-	got := hintString(on, off, keyQuit)
+	got := shared.HintString(on, off, shared.KeyQuit)
 	if strings.Contains(got, "beta") {
 		t.Errorf("disabled binding leaked into hint: %q", got)
 	}

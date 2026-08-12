@@ -12,6 +12,7 @@ import (
 
 	"jig/internal/engine"
 	"jig/internal/runner"
+	"jig/internal/tui/shared"
 )
 
 // TestSelectToDetailFlow drives the root model without a terminal: discover a
@@ -174,8 +175,8 @@ func TestHelpOverlayCompositesOverBase(t *testing.T) {
 	}
 	base := strings.Join(rows, "\n")
 
-	sections := []helpSection{{Title: "Global", Bindings: []keybind.Binding{keyHelp, keyQuit}}}
-	out := renderHelpOverlay(base, w, h, sections)
+	sections := []shared.HelpSection{{Title: "Global", Bindings: []keybind.Binding{shared.KeyHelp, shared.KeyQuit}}}
+	out := shared.RenderHelpOverlay(base, w, h, sections)
 
 	if !strings.Contains(out, "jig · help") {
 		t.Fatalf("modal content missing:\n%s", out)

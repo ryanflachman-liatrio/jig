@@ -184,15 +184,15 @@ func (m detailModel) titleText() string {
 
 func (m detailModel) footerView() string {
 	// Run and Toggle drop out automatically when disabled (no workflow loaded).
-	return theme.Footer.Render("  " + hintString(m.keys.Run, m.keys.Toggle, m.keys.Runs, m.keys.Back, keyHelp, keyQuit))
+	return theme.Footer.Render("  " + shared.HintString(m.keys.Run, m.keys.Toggle, m.keys.Runs, m.keys.Back, shared.KeyHelp, shared.KeyQuit))
 }
 
 // helpSections satisfies helpProvider: the workflow detail actions plus the
 // global chord. Run drops out when disabled, mirroring the footer.
-func (m detailModel) helpSections() []helpSection {
-	return []helpSection{
+func (m detailModel) helpSections() []shared.HelpSection {
+	return []shared.HelpSection{
 		{Title: "Workflow", Bindings: []keybind.Binding{m.keys.Run, m.keys.Toggle, m.keys.Runs, m.keys.Back}},
-		{Title: "Global", Bindings: []keybind.Binding{keyHelp, keyQuit}},
+		{Title: "Global", Bindings: []keybind.Binding{shared.KeyHelp, shared.KeyQuit}},
 	}
 }
 

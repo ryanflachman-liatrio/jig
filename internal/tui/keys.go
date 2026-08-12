@@ -2,8 +2,6 @@ package tui
 
 import (
 	keybind "charm.land/bubbles/v2/key"
-
-	"jig/internal/tui/shared"
 )
 
 // keys.go is the single home for every key.Binding in the TUI, mirroring the
@@ -19,14 +17,6 @@ import (
 // "1-9") whose per-key matching is done elsewhere (a viewport keymap, or a
 // digit loop that needs the option index). Those carry help text for the footer
 // but are never passed to keybind.Matches; they are called out inline.
-
-// keyQuit and keyHelp alias the shared globals so existing tui files continue
-// to reference them without change.
-var keyQuit = shared.KeyQuit
-var keyHelp = shared.KeyHelp
-
-// hintString delegates to the shared package.
-func hintString(bindings ...keybind.Binding) string { return shared.HintString(bindings...) }
 
 // ── selector ─────────────────────────────────────────────────────────────────
 

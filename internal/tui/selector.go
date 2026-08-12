@@ -167,10 +167,10 @@ func (m *selectorModel) resize() {
 // filter state, mirroring lazygit's global keybind bar.
 // helpSections satisfies helpProvider: the selector's list navigation, filter,
 // and open action, plus the global chord.
-func (m selectorModel) helpSections() []helpSection {
-	return []helpSection{
+func (m selectorModel) helpSections() []shared.HelpSection {
+	return []shared.HelpSection{
 		{Title: "Workflows", Bindings: []keybind.Binding{m.keys.Nav, m.keys.Filter, m.keys.Open, m.keys.Apply, m.keys.Clear}},
-		{Title: "Global", Bindings: []keybind.Binding{keyHelp, keyQuit}},
+		{Title: "Global", Bindings: []keybind.Binding{shared.KeyHelp, shared.KeyQuit}},
 	}
 }
 
@@ -182,9 +182,9 @@ func (m selectorModel) capturesText() bool {
 
 func (m selectorModel) footerView() string {
 	if m.list.FilterState() == list.Filtering {
-		return theme.Footer.Render("  " + hintString(m.keys.Apply, m.keys.Clear, keyQuit))
+		return theme.Footer.Render("  " + shared.HintString(m.keys.Apply, m.keys.Clear, shared.KeyQuit))
 	}
-	return theme.Footer.Render("  " + hintString(m.keys.Nav, m.keys.Filter, m.keys.Open, keyHelp, keyQuit))
+	return theme.Footer.Render("  " + shared.HintString(m.keys.Nav, m.keys.Filter, m.keys.Open, shared.KeyHelp, shared.KeyQuit))
 }
 
 func (m selectorModel) View() string {
@@ -196,7 +196,7 @@ func (m selectorModel) View() string {
 	case len(m.list.Items()) == 0:
 		return "\n  " + theme.Title.Render("No workflows found") + "\n\n" +
 			theme.Question.Render("  Add a <name>.toml with a [workflow] table under "+workflowsDir+"/.") +
-			"\n\n" + theme.Footer.Render("  "+hintString(keyQuit)) + "\n"
+			"\n\n" + theme.Footer.Render("  "+shared.HintString(shared.KeyQuit)) + "\n"
 	}
 	footer := m.footerView()
 	body := shared.Panel("Workflows", m.list.View(), m.width, m.height-lipgloss.Height(footer), true)

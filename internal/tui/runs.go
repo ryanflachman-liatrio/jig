@@ -246,15 +246,15 @@ func (m *runsModel) ensureCursorVisible() {
 }
 
 func (m runsModel) footerView() string {
-	return theme.Footer.Render("  " + hintString(m.keys.NewRun, m.keys.Open, m.keys.Back, keyHelp, keyQuit))
+	return theme.Footer.Render("  " + shared.HintString(m.keys.NewRun, m.keys.Open, m.keys.Back, shared.KeyHelp, shared.KeyQuit))
 }
 
 // helpSections satisfies helpProvider: the run-list navigation and actions plus
 // the global chord.
-func (m runsModel) helpSections() []helpSection {
-	return []helpSection{
+func (m runsModel) helpSections() []shared.HelpSection {
+	return []shared.HelpSection{
 		{Title: "Runs", Bindings: []keybind.Binding{m.keys.Up, m.keys.Down, m.keys.Open, m.keys.NewRun, m.keys.Back}},
-		{Title: "Global", Bindings: []keybind.Binding{keyHelp, keyQuit}},
+		{Title: "Global", Bindings: []keybind.Binding{shared.KeyHelp, shared.KeyQuit}},
 	}
 }
 
@@ -294,7 +294,7 @@ func (m runsModel) View() string {
 	if len(m.rows) == 0 {
 		return "\n  " + theme.Title.Render("No runs yet") + "\n\n" +
 			theme.Question.Render("  Press r in a workflow detail to start a run.") + "\n\n" +
-			theme.Footer.Render("  "+hintString(m.keys.Back, keyQuit)) + "\n"
+			theme.Footer.Render("  "+shared.HintString(m.keys.Back, shared.KeyQuit)) + "\n"
 	}
 
 	footer := m.footerView()
