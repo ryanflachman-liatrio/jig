@@ -1,4 +1,6 @@
-package tui
+// Package chart computes and renders the workflow DAG as a top-down flowchart.
+// layout.go is the pure layout pass (no lipgloss, no I/O); render.go draws it.
+package chart
 
 import (
 	"strconv"
@@ -32,8 +34,9 @@ type chartNode struct {
 	typ       string // step type: agent | command | review
 	rank      int    // longest-path depth over depends_on (0 = no deps)
 	gate      bool   // has a [step.validate] gate
-	gateLabel string // compact description of the gate's check (empty if no gate)
-	loop      *chartLoop
+	gateLabel string // compact description of the gate's check; populated for
+	// future box label rendering but not yet drawn (render.go places only the glyph).
+	loop *chartLoop
 }
 
 // chartLoop is the bounded back-edge hanging off a step, mirrored onto its node
@@ -46,7 +49,8 @@ type chartLoop struct {
 // chartEdge is a depends_on edge from one node to another (always lower rank to
 // higher rank, since rank strictly increases along a dependency). conditional
 // marks the edge the step's `when` guard decorates; label is that guard in
-// compact form, drawn beside the edge.
+// compact form, reserved for future compositor-layer label rendering (the
+// current renderer places only the arrowhead glyph).
 type chartEdge struct {
 	from, to    int // wf.Steps indices
 	conditional bool
@@ -56,6 +60,8 @@ type chartEdge struct {
 // chartBackEdge is a bounded loop back-edge from the looping step back to its
 // goto target (higher up the graph). Drawn as a distinct class and routed in a
 // dedicated right-side channel so it never tangles with the downward DAG edges.
+// label is populated for future compositor-layer label rendering; the current
+// renderer places only the loop glyph at the channel midpoint.
 type chartBackEdge struct {
 	from, to int // wf.Steps indices: loop step -> goto target
 	maxIter  int

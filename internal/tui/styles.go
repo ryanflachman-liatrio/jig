@@ -24,12 +24,6 @@ const (
 	BarThick  = shared.BarThick
 	CursorBar = shared.CursorBar
 	RuleGlyph = shared.RuleGlyph
-	LoopGlyph = shared.LoopGlyph
-	GateGlyph = shared.GateGlyph
-
-	ArrowDownGlyph = shared.ArrowDownGlyph
-	CondArrowGlyph = shared.CondArrowGlyph
-	ArrowLeftGlyph = shared.ArrowLeftGlyph
 )
 
 // Hex color aliases for selector.go which references the old unexported

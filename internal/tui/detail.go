@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"jig/internal/tui/chart"
 	"jig/internal/tui/monitor"
 	"jig/internal/tui/shared"
 	"jig/internal/workflow"
@@ -242,7 +243,7 @@ func (m detailModel) chartView() string {
 	if m.wf == nil {
 		return m.stepsView()
 	}
-	return renderChart(m.wf, m.vpWidth)
+	return chart.RenderChart(m.wf, m.vpWidth)
 }
 
 // stepsView renders one line per step: an index, the step id, a type badge, and
@@ -296,8 +297,6 @@ func stepMarkers(s workflow.Step) []string {
 	return out
 }
 
-// padRight is a package-level alias for shared.PadRight so other tui files
-// (chart_render.go, monitor_steps.go) can reference it without change.
 var padRight = shared.PadRight
 
 func (m detailModel) View() string {

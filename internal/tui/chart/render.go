@@ -1,18 +1,17 @@
-package tui
+package chart
 
 import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
 
+	"jig/internal/tui/shared"
 	"jig/internal/workflow"
 )
 
-// chart_render.go draws the layered layout (chart_layout.go) as a mermaid-style
-// top-down flowchart. It follows the help.go compositing recipe: connectors are
-// drawn into a hand-built rune grid (the base layer) and the node boxes are
-// composited on top via a lipgloss v2 Compositor/Canvas. No SetCell, no new
-// imports — the grid is plain []rune rows turned into a styled string.
+// render.go draws the layered layout (layout.go) as a mermaid-style top-down
+// flowchart. Connectors are drawn into a hand-built rune grid (the base layer)
+// and the node boxes are composited on top via a lipgloss v2 Compositor/Canvas.
 //
 // The grid stores connectors as per-cell direction bitmasks (up/down/left/right)
 // so junctions resolve to the correct box-drawing rune (│ ─ ╭ ╮ ╰ ╯ ├ ┤ ┬ ┴ ┼)
@@ -42,9 +41,12 @@ const (
 	dirRight
 )
 
-// connector cell classes (higher wins when strokes overlap).
+// connClass identifies which edge class a connector cell belongs to. Higher
+// values win when strokes from multiple classes overlap at a junction.
+type connClass int
+
 const (
-	clsNormal = iota
+	clsNormal connClass = iota
 	clsCond
 	clsBack
 )
@@ -73,7 +75,7 @@ var boxRunes = map[int]rune{
 type chartGrid struct {
 	w, h  int
 	bits  [][]int
-	class [][]int
+	class [][]connClass
 	over  [][]rune
 }
 
@@ -86,11 +88,11 @@ func newChartGrid(w, h int) *chartGrid {
 	}
 	g := &chartGrid{w: w, h: h}
 	g.bits = make([][]int, h)
-	g.class = make([][]int, h)
+	g.class = make([][]connClass, h)
 	g.over = make([][]rune, h)
 	for y := 0; y < h; y++ {
 		g.bits[y] = make([]int, w)
-		g.class[y] = make([]int, w)
+		g.class[y] = make([]connClass, w)
 		g.over[y] = make([]rune, w)
 	}
 	return g
@@ -101,7 +103,7 @@ func (g *chartGrid) inBounds(x, y int) bool {
 }
 
 // addBit ORs a direction bit into a cell and raises its class.
-func (g *chartGrid) addBit(x, y, bit, cls int) {
+func (g *chartGrid) addBit(x, y, bit int, cls connClass) {
 	if !g.inBounds(x, y) {
 		return
 	}
@@ -113,7 +115,7 @@ func (g *chartGrid) addBit(x, y, bit, cls int) {
 
 // setRune stamps an override rune (e.g. an arrowhead) that renders instead of
 // the cell's bit-derived rune.
-func (g *chartGrid) setRune(x, y int, r rune, cls int) {
+func (g *chartGrid) setRune(x, y int, r rune, cls connClass) {
 	if !g.inBounds(x, y) {
 		return
 	}
@@ -124,7 +126,7 @@ func (g *chartGrid) setRune(x, y int, r rune, cls int) {
 }
 
 // drawV connects a vertical run down column x from y1 to y2 (order-agnostic).
-func (g *chartGrid) drawV(x, y1, y2, cls int) {
+func (g *chartGrid) drawV(x, y1, y2 int, cls connClass) {
 	if y1 > y2 {
 		y1, y2 = y2, y1
 	}
@@ -141,7 +143,7 @@ func (g *chartGrid) drawV(x, y1, y2, cls int) {
 }
 
 // drawH connects a horizontal run along row y from x1 to x2 (order-agnostic).
-func (g *chartGrid) drawH(y, x1, x2, cls int) {
+func (g *chartGrid) drawH(y, x1, x2 int, cls connClass) {
 	if x1 > x2 {
 		x1, x2 = x2, x1
 	}
@@ -157,11 +159,11 @@ func (g *chartGrid) drawH(y, x1, x2, cls int) {
 	}
 }
 
-// renderChart lays out and draws the whole chart to fit within width columns,
+// RenderChart lays out and draws the whole chart to fit within width columns,
 // returning a styled multi-line string. When the graph is wider than width the
 // chart renders at its natural width (the detail view offers horizontal scroll
 // as the escape hatch).
-func renderChart(wf *workflow.Workflow, width int) string {
+func RenderChart(wf *workflow.Workflow, width int) string {
 	lay := layoutChart(wf)
 	if len(lay.nodes) == 0 {
 		return ""
@@ -257,11 +259,11 @@ func renderChart(wf *workflow.Workflow, width int) string {
 		g.addBit(pcx, pBottom, dirUp, cls) // stub connecting up into the parent box
 		g.drawH(busRow, pcx, ccx, cls)     // across to the child column
 		g.drawV(ccx, busRow, arrowRow, cls)
-		arrow := ArrowDownGlyph
+		arrow := []rune(shared.ArrowDownGlyph)[0]
 		if e.conditional {
-			arrow = CondArrowGlyph
+			arrow = []rune(shared.CondArrowGlyph)[0]
 		}
-		g.setRune(ccx, arrowRow, []rune(arrow)[0], cls)
+		g.setRune(ccx, arrowRow, arrow, cls)
 	}
 
 	// Loop back-edges, routed up a dedicated right-side channel: out of the loop
@@ -280,8 +282,8 @@ func renderChart(wf *workflow.Workflow, width int) string {
 		g.drawH(sRow, sRight, chanX, clsBack)
 		g.drawV(chanX, gRow, sRow, clsBack)
 		g.drawH(gRow, gRight, chanX, clsBack)
-		g.setRune(gRight, gRow, []rune(ArrowLeftGlyph)[0], clsBack)
-		g.setRune(chanX, (sRow+gRow)/2, []rune(LoopGlyph)[0], clsBack)
+		g.setRune(gRight, gRow, []rune(shared.ArrowLeftGlyph)[0], clsBack)
+		g.setRune(chanX, (sRow+gRow)/2, []rune(shared.LoopGlyph)[0], clsBack)
 	}
 
 	base := g.render()
@@ -319,10 +321,10 @@ func chartInnerWidth(nodes []chartNode) int {
 func nodeTypeLine(n chartNode) string {
 	line := n.typ
 	if n.gate {
-		line += " " + GateGlyph
+		line += " " + shared.GateGlyph
 	}
 	if n.loop != nil {
-		line += " " + LoopGlyph
+		line += " " + shared.LoopGlyph
 	}
 	return line
 }
@@ -330,17 +332,17 @@ func nodeTypeLine(n chartNode) string {
 // renderNodeBox renders one node into a fixed-width rounded box, colored by step
 // type (agent/command/review) from the shared theme.Step.Types map.
 func renderNodeBox(n chartNode, innerW int) string {
-	box := theme.Chart.Box
-	label := theme.Chart.Label
-	if ts, ok := theme.Step.Types[n.typ]; ok {
+	box := shared.Theme.Chart.Box
+	label := shared.Theme.Chart.Label
+	if ts, ok := shared.Theme.Step.Types[n.typ]; ok {
 		box = box.BorderForeground(ts.GetForeground())
 		label = ts
 	}
 
-	id := truncateTitle(n.id, innerW)
-	typ := truncateTitle(nodeTypeLine(n), innerW)
-	line1 := padRight(theme.Step.ID.Render(id), lipgloss.Width(id), innerW)
-	line2 := padRight(label.Render(typ), lipgloss.Width(typ), innerW)
+	id := shared.TruncateTitle(n.id, innerW)
+	typ := shared.TruncateTitle(nodeTypeLine(n), innerW)
+	line1 := shared.PadRight(shared.Theme.Step.ID.Render(id), lipgloss.Width(id), innerW)
+	line2 := shared.PadRight(label.Render(typ), lipgloss.Width(typ), innerW)
 	return box.Render(line1 + "\n" + line2)
 }
 
@@ -349,21 +351,21 @@ func renderNodeBox(n chartNode, innerW int) string {
 // spaces. Consecutive cells of the same class are styled as one run to keep the
 // escape-code volume down.
 func (g *chartGrid) render() string {
-	edgeStyle := func(cls int) lipgloss.Style {
+	edgeStyle := func(cls connClass) lipgloss.Style {
 		switch cls {
 		case clsCond:
-			return theme.Chart.Conditional
+			return shared.Theme.Chart.Conditional
 		case clsBack:
-			return theme.Chart.BackEdge
+			return shared.Theme.Chart.BackEdge
 		default:
-			return theme.Chart.Edge
+			return shared.Theme.Chart.Edge
 		}
 	}
 
 	var b strings.Builder
 	for y := 0; y < g.h; y++ {
 		var run strings.Builder
-		runCls := -1
+		runCls := connClass(-1)
 		flush := func() {
 			if run.Len() == 0 {
 				return

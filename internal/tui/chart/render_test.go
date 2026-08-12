@@ -1,4 +1,4 @@
-package tui
+package chart
 
 import (
 	"flag"
@@ -9,9 +9,9 @@ import (
 )
 
 // updateGolden regenerates the .golden fixtures instead of comparing against
-// them: `go test ./internal/tui -run TestChartGolden -update`. Because the chart
-// layout is fully deterministic (longest-path ranks over depends_on + Steps-order
-// within a rank), the rendered art is stable and safe to golden-test.
+// them: `go test ./internal/tui/chart -run TestChartGolden -update`. Because
+// the chart layout is fully deterministic (longest-path ranks over depends_on +
+// Steps-order within a rank), the rendered art is stable and safe to golden-test.
 var updateGolden = flag.Bool("update", false, "update chart golden files")
 
 // ansiEscape strips SGR color codes so the goldens are readable box-art and do
@@ -23,7 +23,7 @@ var ansiEscape = regexp.MustCompile("\x1b\\[[0-9;]*m")
 func goldenChart(t *testing.T, name, src string, width int) {
 	t.Helper()
 	wf := mustDecode(t, src)
-	got := ansiEscape.ReplaceAllString(renderChart(wf, width), "")
+	got := ansiEscape.ReplaceAllString(RenderChart(wf, width), "")
 
 	path := filepath.Join("testdata", name+".golden")
 	if *updateGolden {

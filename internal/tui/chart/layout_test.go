@@ -1,4 +1,4 @@
-package tui
+package chart
 
 import (
 	"testing"

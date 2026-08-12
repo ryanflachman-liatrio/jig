@@ -73,7 +73,7 @@ skill = "s"
 		m, _ = m.Update(tea.KeyPressMsg{Code: rune(key[0]), Text: key})
 		return m
 	}
-	plain := func(s string) string { return ansiEscape.ReplaceAllString(s, "") }
+	plain := ansiStrip
 
 	t.Run("footer and help advertise the toggle once a workflow loads", func(t *testing.T) {
 		m := load()
