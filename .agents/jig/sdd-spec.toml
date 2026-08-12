@@ -1,0 +1,188 @@
+# =============================================================================
+# SDD Phase 1 (sdd-1) as a jig workflow.
+#
+# Replicates the Liatrio Spec-Driven Development "Generate Specification" phase:
+#   idea → context assessment → tech research → scope check → clarification gate
+#   (with question rounds) → write spec → review-and-refine — as an inspectable DAG.
+#
+# The sdd skill recovers deterministic orchestration on top of a stateless
+# invocation via a SKILL.md router + assess-sdd-state.py. jig makes that
+# machinery unnecessary: the graph IS the router, phase transitions ARE edges,
+# and run state is held by the engine. The two most delicate parts of sdd-1 map
+# onto first-class jig constructs:
+#   - the "Clarification status: sufficient/insufficient" declaration → a typed
+#     producer verdict (`[step.schema]` enum) instead of a prose honor-system;
+#   - the questions-file "STOP AND WAIT → read answers → re-check" round-trip →
+#     block_on (engine-enforced pause + same-session resume, bounded cap).
+#
+# Step mapping to sdd-1:
+#   mkdir_spec     → Step 1: Create spec directory
+#   context_assess → Step 2a: Context assessment (codebase only)
+#   tech_research  → Step 2b: Latest-standards research (web)
+#   scope_assess   → Step 3: Initial scope assessment
+#   scope_gate     → Step 3: "ALWAYS pause" human gate (fires only when off-size)
+#   clarify        → Step 4: Clarification sufficiency check + question rounds
+#   write_spec     → Step 5: Spec generation
+#   spec_review    → Step 6: Review and refinement loop
+#
+# Validate with:  go run ./cmd/jig validate examples/sdd-spec.toml
+# =============================================================================
+
+[workflow]
+name        = "sdd-spec"
+version     = "1"
+description = "SDD Phase 1 — turn an idea into a validated spec under docs/specs/."
+
+[defaults]
+model           = "claude-opus-4-8"
+effort          = "high"
+permission_mode = "acceptEdits"
+max_parallel    = 2
+
+# ─── 1. Create the spec directory (deterministic; sdd-1 Step 1) ───────────────
+[[step]]
+id   = "mkdir_spec"
+type = "command"
+run  = "mkdir -p docs/specs"
+
+# ─── 2a. Context assessment (sdd-1 Step 2a) ───────────────────────────────────
+# Reads the codebase and docs; no web search. Surfaces the technologies list
+# that tech_research uses to know what to look up.
+# The "if the user gave no input, ask for it" rule becomes from="user" inputs:
+# the engine pauses and prompts before the step runs.
+[[step]]
+id            = "context_assess"
+type          = "agent"
+depends_on    = ["mkdir_spec"]
+skill         = "../skills/sdd-context-assess"
+inputs        = [
+  { from = "user", label = "Describe the feature to spec (paste any reference material):", as = "request" },
+  { from = "user", label = "What should this spec be called? (kebab-case, e.g. user-authentication):", as = "spec_name" },
+]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "ground the spec in the real codebase and surface technologies for research"
+
+  [step.schema]
+  spec_name      = "text"           # echoed from user input — passed to all downstream steps
+  technologies   = { list = "text" } # frameworks/services for tech_research to look up
+  repo_standards = { list = "text" }
+
+# ─── 2b. Latest-standards research (sdd-1 Step 2b) ───────────────────────────
+# Web-searches current best practices for each technology context_assess surfaced.
+# Runs after context_assess so it knows exactly what to research.
+[[step]]
+id            = "tech_research"
+type          = "agent"
+depends_on    = ["context_assess"]
+skill         = "../skills/sdd-tech-research"
+inputs        = ["@context_assess.summary", "@context_assess.technologies"]
+allowed_tools = ["WebSearch", "WebFetch"]
+isolation     = "none"
+
+  [step.schema]
+  research_notes = { list = { technology = "text", source = "text", recency = "text", practice = "text", tension = "text" } }
+
+# ─── 3. Scope assessment (sdd-1 Step 3) ───────────────────────────────────────
+# Receives both codebase and research summaries so tech complexity informs sizing.
+[[step]]
+id            = "scope_assess"
+type          = "agent"
+depends_on    = ["context_assess", "tech_research"]
+skill         = "../skills/sdd-scope-assess"
+inputs        = ["@context_assess.summary", "@tech_research.summary"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.schema]
+  sizing    = { enum = ["too_large", "too_small", "just_right"] }
+  rationale = "text"
+
+# ─── 4. Scope gate — fires ONLY when sizing is off (sdd-1 "ALWAYS pause") ──────
+# just_right skips this node and flows straight on. Otherwise a human decides
+# whether to proceed or narrow; "narrow" loops back to re-assess with feedback.
+[[step]]
+id           = "scope_gate"
+type         = "review"
+depends_on   = ["scope_assess"]
+when         = "scope_assess.sizing != 'just_right'"
+review       = "@scope_assess.summary"
+output_type  = { enum = ["proceed", "narrow"] }
+max_messages = 5
+
+  [step.loop]
+  when           = "scope_gate == 'narrow'"
+  goto           = "scope_assess"
+  max_iterations = 3
+  feedback       = "@scope_gate"
+
+# ─── 5. Clarification gate + question rounds (sdd-1 Step 4 — the heart) ────────
+# block_on parks the step whenever the agent declares itself insufficient; the
+# TUI opens a compose box, the human answers, and the agent resumes the SAME
+# session and re-runs the sufficiency check. Bounded by the engine's 20-round cap
+# — the exact "STOP AND WAIT → read answers → re-check" loop, engine-enforced.
+#
+# depends_on includes scope_assess (for @scope_assess.summary ref) AND scope_gate
+# (to prevent racing with the scope loop when sizing is off).
+[[step]]
+id            = "clarify"
+type          = "agent"
+depends_on    = ["context_assess", "tech_research", "scope_assess", "scope_gate"]
+skill         = "../skills/sdd-clarify"
+inputs        = ["@context_assess.summary", "@tech_research.summary", "@scope_assess.summary", "@context_assess.spec_name"]
+allowed_tools = ["Read", "Grep", "Glob", "Write", "Bash"]
+block_on      = "clarify.sufficiency == 'insufficient'"
+isolation     = "none"
+
+  # `status` is reserved (execution disposition), so the domain verdict gets its
+  # own field. This is a nice tell: jig separates "did the step run" (base status)
+  # from "is the context sufficient" (a declared verdict) — two things sdd-1's
+  # prose "Clarification status" declaration conflates.
+  [step.schema]
+  sufficiency = { enum = ["sufficient", "insufficient"] }
+  questions   = { list = { topic = "text", options = { list = "text" }, recommended = "text" } }
+
+# ─── 6. Generate the spec (sdd-1 Step 5) ──────────────────────────────────────
+# Reachable only once clarify is sufficient. The agent creates the directory and
+# file at docs/specs/[spec_name]/[spec_name].md using the user-supplied name.
+# The "use the EXACT structure" rule becomes a deterministic [step.validate] gate.
+#
+# NOTE — jig's `output` is a static string; it can't interpolate @context_assess.spec_name
+# at parse time. The workaround: the agent writes to the correct path itself using
+# the spec_name it receives as input, reports the path in spec_path, and puts the
+# full content in spec_content so spec_review can render it.
+[[step]]
+id            = "write_spec"
+type          = "agent"
+depends_on    = ["context_assess", "tech_research", "clarify"]
+skill         = "../skills/sdd-write-spec"
+inputs        = ["@context_assess.summary", "@tech_research.summary", "@clarify.summary", "@context_assess.spec_name"]
+allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit", "Bash"]
+isolation     = "none"
+
+  [step.schema]
+  spec_path    = "text"   # canonical path written (e.g. docs/specs/foo/foo.md)
+  spec_content = "text"   # full spec markdown — rendered by spec_review
+
+  [step.validate]
+  command = "find docs/specs -name '*.md' -not -name 'questions.md' | xargs grep -l '## Demoable Units of Work' | xargs grep -l '## Non-Goals' | grep -q ."
+
+# ─── 7. Review & refine until satisfied (sdd-1 Step 6) ─────────────────────────
+# The human reviews the rendered spec, may send follow-up messages, and either
+# approves or sends it back. "revise" loops to write_spec with the feedback as an
+# input — the bounded equivalent of "iterate based on feedback until satisfied."
+[[step]]
+id           = "spec_review"
+type         = "review"
+depends_on   = ["write_spec"]
+review       = "@write_spec.spec_content"   # full spec text, glamour-rendered
+output_type  = { enum = ["approve", "revise"] }
+max_messages = 10
+
+  [step.loop]
+  when           = "spec_review == 'revise'"
+  goto           = "write_spec"
+  max_iterations = 5
+  feedback       = "@spec_review"

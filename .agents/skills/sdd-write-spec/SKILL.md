@@ -10,12 +10,16 @@ validate against.
 
 ## Output
 
-Write the spec to the `output` path handed to you. Use this exact structure —
-a deterministic gate checks for the mandatory sections, so do not rename or omit
-them:
+You receive `spec_name` as an input — the kebab-case name the user chose (e.g.
+`user-authentication`). Create the directory `docs/specs/[spec_name]/` and write
+the spec to `docs/specs/[spec_name]/[spec_name].md`. Use Bash to create the
+directory (`mkdir -p`) before writing.
+
+Use this exact structure — a deterministic gate checks for the mandatory sections,
+so do not rename or omit them:
 
 ```markdown
-# [NN]-spec-[feature-name].md
+# [spec_name].md
 
 ## Introduction/Overview
 [The feature and the problem it solves; primary goal in 2-3 sentences.]
@@ -60,6 +64,14 @@ deviation from external guidance and why.]
 Before finishing: keep the language domain-neutral, ensure the Demoable Units can
 be validated in at least one of API/UI/CLI/data/infra contexts, and define Proof
 Artifacts as observable outcomes rather than tool-specific rituals.
+
+## Schema fields
+
+After writing the file, populate your schema output:
+
+- `spec_path` — the exact path you wrote to (e.g. `docs/specs/user-auth/user-auth.md`)
+- `spec_content` — the full markdown text of the spec (copy it verbatim from the file)
+- `summary` — a 2-3 sentence plain-language description of what the spec covers
 
 ## What not to do
 

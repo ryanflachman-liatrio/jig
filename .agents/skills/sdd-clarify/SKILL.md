@@ -38,8 +38,9 @@ Do not punt material ambiguity to a later phase or to an Open Question.
 Populate `questions`. Each entry has a `topic`, a list of `options`, and a
 `recommended` answer with a short justification comparing it to the alternatives.
 Bias recommendations toward the smallest, most reviewable, junior-friendly slice.
-Also write the questions to a file `docs/specs/questions.md` for the user to
-answer in place.
+Also write the questions to `docs/specs/[spec_name]/questions.md` (you receive
+`spec_name` as an input) for the user to answer in place. Use Bash to create the
+directory first (`mkdir -p docs/specs/[spec_name]`) before writing the file.
 
 ## The block-and-resume loop
 
