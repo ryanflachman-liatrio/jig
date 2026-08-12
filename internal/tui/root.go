@@ -10,10 +10,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"jig/internal/engine"
+	"jig/internal/tui/detail"
 	"jig/internal/tui/monitor"
 	"jig/internal/tui/runs"
 	"jig/internal/tui/shared"
-	"jig/internal/workflow"
 )
 
 // screen identifies which sub-model is currently driving the UI.
@@ -31,12 +31,6 @@ const (
 // showDetailMsg asks the root to open the detail screen for a workflow file.
 type showDetailMsg struct{ path string }
 
-// backToSelectorMsg asks the root to return to the selector.
-type backToSelectorMsg struct{}
-
-// startRunMsg asks the root to start a new run for the given workflow.
-type startRunMsg struct{ wf *workflow.Workflow }
-
 // runsHydratedMsg carries runs recovered from disk at startup, one seq-ordered
 // event slice per run (oldest first), for the runs list to fold in. It is
 // produced once by hydrateRunsCmd so a fresh session shows runs from earlier
@@ -48,7 +42,7 @@ type runsHydratedMsg struct{ runs [][]engine.Event }
 type rootModel struct {
 	active   screen
 	selector selectorModel
-	detail   detailModel
+	detail   detail.Model
 	runs     runs.Model
 	monitor  monitor.Model
 
@@ -76,6 +70,12 @@ type helpProvider interface {
 	capturesText() bool
 }
 
+// detailHelpBridge adapts detail.Model to the local helpProvider interface.
+type detailHelpBridge struct{ m detail.Model }
+
+func (b detailHelpBridge) helpSections() []shared.HelpSection { return b.m.HelpSections() }
+func (b detailHelpBridge) capturesText() bool                 { return b.m.CapturesText() }
+
 // monitorHelpBridge adapts monitor.Model to the local helpProvider interface.
 type monitorHelpBridge struct{ m monitor.Model }
 
@@ -93,7 +93,7 @@ func (b runsHelpBridge) capturesText() bool                 { return b.m.Capture
 func (m rootModel) activeProvider() helpProvider {
 	switch m.active {
 	case screenDetail:
-		return m.detail
+		return detailHelpBridge{m.detail}
 	case screenRuns:
 		return runsHelpBridge{m.runs}
 	case screenMonitor:

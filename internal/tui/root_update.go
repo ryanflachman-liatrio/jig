@@ -5,6 +5,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"jig/internal/engine"
+	"jig/internal/tui/detail"
 	"jig/internal/tui/monitor"
 	"jig/internal/tui/runs"
 	"jig/internal/tui/shared"
@@ -37,14 +38,13 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case showDetailMsg:
 		return m.openDetail(msg.path)
 
-	case backToSelectorMsg:
-		// Only detail emits this; selector has no back action.
+	case detail.BackMsg:
 		m.active = screenSelector
 		return m, nil
 
 	case runs.BackMsg:
 		// Go back to whatever workflow's detail we came from; if none, selector.
-		if m.detail.loaded {
+		if m.detail.Loaded {
 			m.active = screenDetail
 		} else {
 			m.active = screenSelector
@@ -132,8 +132,8 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case startRunMsg:
-		return m.startRun(msg.wf)
+	case detail.StartRunMsg:
+		return m.startRun(msg.Wf)
 
 	case runs.StartRunMsg:
 		return m.startRun(msg.Wf)
@@ -182,7 +182,7 @@ func (m rootModel) updateWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) 
 	m.width, m.height = msg.Width, msg.Height
 	var sc, dc, rc, mc tea.Cmd
 	m.selector, sc = m.selector.Update(msg)
-	if m.detail.ready {
+	if m.detail.Ready {
 		m.detail, dc = m.detail.Update(msg)
 	}
 	m.runs, rc = m.runs.Update(msg)
@@ -204,7 +204,7 @@ func (m rootModel) updateEngineEvent(msg monitor.EngineEventMsg) (tea.Model, tea
 }
 
 func (m rootModel) openDetail(path string) (tea.Model, tea.Cmd) {
-	m.detail = newDetailModel(path)
+	m.detail = detail.New(path)
 	var sizeCmd tea.Cmd
 	m.detail, sizeCmd = m.detail.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 	m.active = screenDetail

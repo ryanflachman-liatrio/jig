@@ -12,6 +12,7 @@ import (
 
 	"jig/internal/engine"
 	"jig/internal/runner"
+	"jig/internal/tui/detail"
 	"jig/internal/tui/shared"
 )
 
@@ -55,7 +56,7 @@ run = "echo hi"
 	m, _ = m.Update(showDetailMsg{path: path})
 
 	// The detail screen loads asynchronously; deliver the load result directly.
-	m, _ = m.Update(loadWorkflowCmd(path)())
+	m, _ = m.Update(detail.New(path).Init()())
 	view := m.View().Content
 	for _, want := range []string{"mini", "valid", "hello", "command"} {
 		if !strings.Contains(view, want) {
@@ -68,36 +69,12 @@ run = "echo hi"
 	if cmd == nil {
 		t.Fatal("esc produced no command")
 	}
-	if _, ok := cmd().(backToSelectorMsg); !ok {
-		t.Fatalf("esc did not produce backToSelectorMsg, got %T", cmd())
+	if _, ok := cmd().(detail.BackMsg); !ok {
+		t.Fatalf("esc did not produce detail.BackMsg, got %T", cmd())
 	}
-	m, _ = m.Update(backToSelectorMsg{})
+	m, _ = m.Update(detail.BackMsg{})
 	if view := m.View().Content; !strings.Contains(view, "mini") {
 		t.Fatalf("did not return to selector:\n%s", view)
-	}
-}
-
-// TestDetailShowsValidationError confirms an invalid workflow still lists and
-// its detail view surfaces the validation failure rather than crashing.
-func TestDetailShowsValidationError(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "broken.toml")
-	os.WriteFile(path, []byte(`
-[workflow]
-name = "broken"
-
-[[step]]
-id = "oops"
-type = "command"
-`), 0o644)
-
-	m := newDetailModel(path)
-	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m, _ = m.Update(loadWorkflowCmd(path)())
-
-	view := m.View()
-	if !strings.Contains(view, "broken") || !strings.Contains(view, "invalid") {
-		t.Fatalf("expected invalid-workflow detail view:\n%s", view)
 	}
 }
 
