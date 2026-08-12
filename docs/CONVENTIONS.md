@@ -40,6 +40,64 @@ with no architectural benefit.
 `internal/tui/monitor/` (new package) when the model is only consumed by one
 caller and the tests rely on unexported access.
 
+### Subpackages require a shared foundation package first
+
+A subpackage creates a package boundary. If the code being extracted depends
+on presentation primitives (`theme`, `panel()`, icon constants, `hintString()`)
+that also live in the parent package, extracting it naively produces a circular
+import: the parent imports the subpackage for its model; the subpackage imports
+the parent for its primitives.
+
+The solution is a foundation package — `internal/tui/shared/` — that contains
+only shared presentation primitives and depends on nothing in `internal/tui/`.
+Both the parent and each subpackage import `shared`; neither imports the other.
+
+```
+internal/tui/shared/   ← styles, panel, input, keys, help overlay
+       ↑                  no imports from tui/
+internal/tui/          ← root, selector, detail, runs, chat
+       ↑                  imports shared
+internal/tui/monitor/  ← monitor model, msgs, keys
+                          imports shared, not tui
+```
+
+**Rule:** before extracting a subpackage, check whether it references any
+primitives from the parent. If it does, those primitives belong in `shared`,
+not the parent. Extract `shared` first, then extract the subpackage.
+
+### Migration: thin aliases let existing files migrate gradually
+
+Moving everything to `shared` at once would require updating hundreds of
+`theme.X`, `panel(...)`, `IconSuccess` references across all existing files in
+one commit. Instead, keep the existing files working via thin local aliases
+in the parent package:
+
+```go
+// internal/tui/styles.go — bridge during migration
+package tui
+import "jig/internal/tui/shared"
+const IconSuccess = shared.IconSuccess  // const alias
+var theme = shared.Theme               // var alias for the singleton
+```
+
+```go
+// internal/tui/panel.go — bridge during migration
+package tui
+import "jig/internal/tui/shared"
+func panel(title, body string, width, height int, focused bool) string {
+    return shared.Panel(title, body, width, height, focused)
+}
+func panelFrame() (int, int) { return shared.PanelFrame() }
+```
+
+Each screen (`selector`, `detail`, `runs`, `chat`) can then be moved to its
+own subpackage independently, switching to `shared.X` directly when it does.
+The aliases are removed when the last file in the parent that uses them moves.
+
+**Rule:** during a multi-step migration, use const/var/func aliases to keep
+the parent compiling. Remove each alias when no remaining file in the parent
+needs it.
+
 ### Constants live with their concern
 
 Don't collect unrelated constants into a single block at the top of the file
@@ -167,10 +225,16 @@ to bisect a regression.
 **Rule:** split first (green tests), clean second (green tests again). Commit
 each pass separately.
 
-### Tests don't need to change when splitting files
+### Tests don't need to change when splitting files within a package
 
 If the new files are in the same package as the old file, every test that
 compiled before will compile after — package-level visibility is unchanged.
-If you find yourself exporting symbols or moving tests to make a refactor
-work, that's a signal the refactor is adding a package boundary that doesn't
-belong yet.
+If you find yourself exporting symbols or moving tests to make a same-package
+file split work, that's a signal the refactor is adding a package boundary
+that doesn't belong yet.
+
+When moving code to a true subpackage, tests must move with it. White-box
+tests (those that access unexported fields) belong in the subpackage itself
+(`package monitor`), not in `package monitor_test`. This preserves the same
+access they had before, and avoids the need to export internal state just to
+satisfy a test.
