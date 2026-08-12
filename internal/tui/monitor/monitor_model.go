@@ -1,9 +1,10 @@
-package tui
+package monitor
 
 import (
 	"strings"
 	"time"
 
+	keybind "charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
 	"charm.land/glamour/v2"
@@ -12,6 +13,7 @@ import (
 	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/transcript"
+	"jig/internal/tui/shared"
 )
 
 // focusRegion is which of the monitor's three regions currently holds keyboard
@@ -90,11 +92,12 @@ type pendingInputEntry struct {
 	scrollOffset int
 }
 
-// monitorModel is the per-run view: a live step-status table for one run,
+// Model is the per-run view: a live step-status table for one run,
 // updated as engine events arrive. The user can press esc to return to the
 // runs list.
-type monitorModel struct {
-	runID    string
+type Model struct {
+	RunID    string
+	RunDir   string
 	workflow string
 	keys     monitorKeys
 	steps    []monitorStep
@@ -118,10 +121,9 @@ type monitorModel struct {
 	cursor   int    // selected step in the Steps panel
 	chatStep string // step whose transcript the Transcript panel renders
 
-	// Phase 5 chat rendering. runDir locates the per-step transcript.jsonl on
+	// Phase 5 chat rendering. RunDir locates the per-step transcript.jsonl on
 	// disk; the transcript file — not the lossy event bus — is what the
 	// Transcript panel renders (as themed Charmtone markdown).
-	runDir string
 
 	// chatEntries is the currently-loaded (windowed) transcript for chatStep,
 	// re-read on entry and on each StepMessage for that step. chatElided counts
@@ -162,7 +164,7 @@ type monitorModel struct {
 	reviews map[string]engine.ReviewRequest
 
 	// promptTextarea is the active textarea, rebuilt from the current entry's draft
-	// via newInputTextarea on every entry switch (request/prompt/review-compose kinds).
+	// via shared.NewInputTextarea on every entry switch (request/prompt/review-compose kinds).
 	promptTextarea textarea.Model
 
 	// secFindings is the list of security findings produced during this run,
@@ -226,7 +228,7 @@ const (
 )
 
 const (
-	// gateTextareaRows is the content-row count passed to newInputTextarea for
+	// gateTextareaRows is the content-row count passed to shared.NewInputTextarea for
 	// every gate entry that uses a textarea (inputKindRequest, inputKindPrompt,
 	// and review compose). Changing it here propagates to gateBodyHeight().
 	gateTextareaRows = 4
@@ -282,9 +284,10 @@ type monitorStep struct {
 	tokens  int      // total tokens processed; 0 when not yet known
 }
 
-func newMonitorModel(runID string) monitorModel {
-	return monitorModel{
-		runID:          runID,
+// New creates a fresh monitor model for the given runID.
+func New(runID string) Model {
+	return Model{
+		RunID:          runID,
 		keys:           defaultMonitorKeys(),
 		index:          make(map[string]int),
 		stepOutput:     make(map[string]*strings.Builder),
@@ -296,9 +299,9 @@ func newMonitorModel(runID string) monitorModel {
 	}
 }
 
-// withSnapshot initialises the monitor from a RunSnapshot so the user sees
+// WithSnapshot initialises the monitor from a RunSnapshot so the user sees
 // current state immediately when navigating to an already-running run.
-func (m monitorModel) withSnapshot(snap engine.RunSnapshot) monitorModel {
+func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 	m.workflow = snap.Workflow
 	m.done = snap.Done
 	m.failed = snap.Failed
@@ -340,12 +343,12 @@ func (m monitorModel) withSnapshot(snap engine.RunSnapshot) monitorModel {
 	return m
 }
 
-// withJournal rebuilds the monitor from a run's replayed journal — the recovery
+// WithJournal rebuilds the monitor from a run's replayed journal — the recovery
 // path for a run from an earlier session, where no in-memory Run handle exists to
 // Snapshot(). It folds the same events a live run emits (reconstructing the step
 // list, statuses, and done/failed), then points the Transcript panel at the first
 // step so content shows on open without waiting for an event that will never
-// arrive. runDir must be set before calling so the transcript load can find the
+// arrive. RunDir must be set before calling so the transcript load can find the
 // step files.
 //
 // Any gate entries a finished run's journal contains (a review or recovery
@@ -353,10 +356,126 @@ func (m monitorModel) withSnapshot(snap engine.RunSnapshot) monitorModel {
 // cleanly finished run folds down to an empty queue. A run that died while parked
 // keeps its historical prompt, but the root guards every gate action on a live
 // handle, so a recovered prompt is inert.
-func (m monitorModel) withJournal(evs []engine.Event) monitorModel {
+func (m Model) WithJournal(evs []engine.Event) Model {
 	for _, e := range evs {
 		m, _ = m.handleEngineEvent(e)
 	}
 	m.reloadTranscript()
 	return m
 }
+
+// HelpSections returns the sections to show for the monitor's current focus and
+// gate state for the help overlay.
+func (m Model) HelpSections() []shared.HelpSection {
+	var sections []shared.HelpSection
+
+	switch {
+	case m.focus == focusGate && m.hasGate():
+		sections = append(sections, m.gateHelpSection())
+	case m.focus == focusTranscript:
+		sections = append(sections, shared.HelpSection{
+			Title: "Transcript",
+			Bindings: []keybind.Binding{
+				m.keys.Scroll, m.keys.GotoTop, m.keys.GotoBottom,
+				m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll,
+				m.keys.TransToSteps, m.keys.TransLeave,
+			},
+		})
+	default: // focusSteps
+		// Mirror footerView's eligibility gating so disabled lifecycle actions
+		// drop out of the overlay exactly as they drop out of the footer.
+		stopKey := m.keys.StopStep
+		resetKey := m.keys.ResetStep
+		resumeKey := m.keys.ResumeStep
+		if m.done || m.cursor >= len(m.steps) {
+			stopKey.SetEnabled(false)
+			resetKey.SetEnabled(false)
+			resumeKey.SetEnabled(false)
+		} else {
+			st := m.steps[m.cursor]
+			stopKey.SetEnabled(st.status == step.StatusRunning)
+			resumeKey.SetEnabled(st.status == step.StatusStopped)
+			switch st.status {
+			case step.StatusSucceeded, step.StatusFailed, step.StatusSkipped,
+				step.StatusStopped, step.StatusAwaitingReview:
+				resetKey.SetEnabled(true)
+			default:
+				resetKey.SetEnabled(false)
+			}
+		}
+		sections = append(sections, shared.HelpSection{
+			Title: "Steps",
+			Bindings: []keybind.Binding{
+				m.keys.StepsNav, m.keys.OpenTranscript,
+				stopKey, resetKey, resumeKey, m.keys.StepsLeave,
+			},
+		})
+	}
+
+	// Focus + Global sections are shown on every screen.
+	sections = append(sections, shared.HelpSection{
+		Title:    "Focus",
+		Bindings: []keybind.Binding{m.keys.FocusNext, m.keys.FocusPrev, m.keys.PanelFocus},
+	})
+	sections = append(sections, shared.HelpSection{
+		Title:    "Global",
+		Bindings: []keybind.Binding{shared.KeyHelp, shared.KeyQuit},
+	})
+	return sections
+}
+
+// gateHelpSection builds the section for the currently-active gate entry.
+func (m Model) gateHelpSection() shared.HelpSection {
+	entry, ok := m.activeEntry()
+	if !ok {
+		return shared.HelpSection{Title: "Gate", Bindings: []keybind.Binding{m.keys.GateBlur}}
+	}
+	entryNav := m.keys.GateEntryNav
+	entryNav.SetEnabled(len(m.inputQueue) > 1)
+
+	sec := shared.HelpSection{Title: "Gate"}
+	switch entry.kind {
+	case inputKindRequest:
+		sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, entryNav, m.keys.GateBlur}
+	case inputKindQuestion:
+		multi := entry.question != nil &&
+			entry.questionIdx < len(entry.question.Questions) &&
+			entry.question.Questions[entry.questionIdx].MultiSelect
+		if multi {
+			sec.Bindings = []keybind.Binding{m.keys.ToggleOpt, m.keys.QuestionScroll, m.keys.QConfirm, entryNav, m.keys.GateBlur}
+		} else {
+			sec.Bindings = []keybind.Binding{m.keys.Answer, m.keys.QuestionScroll, entryNav, m.keys.GateBlur}
+		}
+	case inputKindReview:
+		switch {
+		case entry.composing:
+			sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, m.keys.GateBlur}
+		case entry.review != nil && entry.review.AllowMessage:
+			sec.Bindings = []keybind.Binding{m.keys.Verdict, m.keys.Message, entryNav, m.keys.GateBlur}
+		default:
+			sec.Bindings = []keybind.Binding{m.keys.Verdict, entryNav, m.keys.GateBlur}
+		}
+	case inputKindPrompt:
+		sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, entryNav, m.keys.GateBlur}
+	case inputKindRecovery:
+		switch {
+		case entry.composing:
+			sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, m.keys.GateBlur}
+		case entry.recovery != nil && entry.recovery.CanResume:
+			sec.Bindings = []keybind.Binding{m.keys.RecoverRetry, m.keys.RecoverGuide, m.keys.RecoverSkip, m.keys.RecoverAbort, entryNav, m.keys.GateBlur}
+		default:
+			sec.Bindings = []keybind.Binding{m.keys.RecoverRetry, m.keys.RecoverSkip, m.keys.RecoverAbort, entryNav, m.keys.GateBlur}
+		}
+	case inputKindIntegrationConflict:
+		sec.Bindings = []keybind.Binding{m.keys.IntegrationResolve, m.keys.RecoverAbort, entryNav, m.keys.GateBlur}
+	case inputKindFinalMerge:
+		sec.Bindings = []keybind.Binding{m.keys.FinalMergeApprove, m.keys.FinalMergeDiscard, entryNav, m.keys.GateBlur}
+	case inputKindResetConfirm:
+		sec.Bindings = []keybind.Binding{m.keys.GateBlur}
+	}
+	return sec
+}
+
+// CapturesText reports whether a gate textarea is capturing free text; delegates
+// to textareaActive. Satisfies the helpProvider interface needed by root.
+func (m Model) CapturesText() bool { return m.textareaActive() }

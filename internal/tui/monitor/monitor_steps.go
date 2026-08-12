@@ -1,4 +1,4 @@
-package tui
+package monitor
 
 import (
 	"fmt"
@@ -8,6 +8,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"jig/internal/step"
+	"jig/internal/tui/shared"
 )
 
 // listBodyHeaderLines is the number of lines listBody renders above the step
@@ -23,15 +24,15 @@ const stepRowLines = 2
 // body returns the Steps-panel body. Retained for tests that assert list content
 // directly; View() renders both panels. transcriptText returns the Transcript
 // panel body.
-func (m monitorModel) body() string {
+func (m Model) body() string {
 	return m.listBody()
 }
 
-func (m monitorModel) listBody() string {
+func (m Model) listBody() string {
 	var b strings.Builder
 
 	if len(m.steps) == 0 {
-		b.WriteString("  " + theme.Question.Render("Waiting for run to start…") + "\n")
+		b.WriteString("  " + shared.Theme.Question.Render("Waiting for run to start…") + "\n")
 		return b.String()
 	}
 
@@ -50,7 +51,7 @@ func (m monitorModel) listBody() string {
 	for i, s := range m.steps {
 		cursor := "  "
 		if i == m.cursor {
-			cursor = theme.SelectedBar.Render(CursorBar) + " "
+			cursor = shared.Theme.SelectedBar.Render(shared.CursorBar) + " "
 		}
 		indicator, style := stepIndicator(s.status)
 
@@ -58,14 +59,14 @@ func (m monitorModel) listBody() string {
 		head := fmt.Sprintf("%s%s  %s  %s",
 			cursor,
 			indicator,
-			style.Render(padRight(s.id, idWidth)),
+			style.Render(shared.PadRight(s.id, idWidth)),
 			statusStyle(s.status).Render(string(s.status)),
 		)
 		if label := subtypeBadgeLabel(s.subtype); label != "" {
-			head += "  " + theme.Badge.Error.Render(label)
+			head += "  " + shared.Theme.Badge.Error.Render(label)
 		}
 		if i == m.cursor {
-			b.WriteString(theme.SelectedLine.Render(head) + "\n")
+			b.WriteString(shared.Theme.SelectedLine.Render(head) + "\n")
 		} else {
 			b.WriteString(head + "\n")
 		}
@@ -83,23 +84,23 @@ func (m monitorModel) listBody() string {
 		if n := m.msgCount[s.id]; n > 0 {
 			meta = append(meta, fmt.Sprintf("%d msg", n))
 		}
-		b.WriteString("     " + theme.Question.Render(strings.Join(meta, " · ")) + "\n")
+		b.WriteString("     " + shared.Theme.Question.Render(strings.Join(meta, " · ")) + "\n")
 	}
 
 	// Run total, directly beneath the step table: summed tokens and cost across
 	// every step. Shown once anything has been reported (a $0.00/0-token run
 	// reports nothing, so the row stays hidden until there is something to total).
 	if total := m.totalsStr(); total != "" {
-		b.WriteString("  " + theme.SelectedLine.Render("Total") + "  " + total + "\n")
+		b.WriteString("  " + shared.Theme.SelectedLine.Render("Total") + "  " + total + "\n")
 	}
 
 	b.WriteString("\n")
 	if m.done {
 		if m.failed {
-			b.WriteString("  " + theme.Error.Render(IconError+" run failed") + "\n")
+			b.WriteString("  " + shared.Theme.Error.Render(shared.IconError+" run failed") + "\n")
 			m.writeFailureReasons(&b)
 		} else {
-			b.WriteString("  " + theme.Valid.Render(IconSuccess+" run complete") + "\n")
+			b.WriteString("  " + shared.Theme.Valid.Render(shared.IconSuccess+" run complete") + "\n")
 		}
 	}
 
@@ -127,7 +128,7 @@ func (m monitorModel) listBody() string {
 		if len(recent) > outputMaxLines {
 			recent = recent[len(recent)-outputMaxLines:]
 		}
-		b.WriteString("\n  " + theme.Question.Render("▸ "+s.id) + "\n")
+		b.WriteString("\n  " + shared.Theme.Question.Render("▸ "+s.id) + "\n")
 		for _, l := range recent {
 			b.WriteString("    " + l + "\n")
 		}
@@ -141,7 +142,7 @@ func (m monitorModel) listBody() string {
 // summary only says "✗ run failed" — the reason lives in the events but was
 // never rendered. Reasons wrap to the view width so a long shell error or gate
 // detail stays readable.
-func (m monitorModel) writeFailureReasons(b *strings.Builder) {
+func (m Model) writeFailureReasons(b *strings.Builder) {
 	wrapW := m.width - 6
 	if wrapW < 20 {
 		wrapW = 20
@@ -149,51 +150,51 @@ func (m monitorModel) writeFailureReasons(b *strings.Builder) {
 	wrap := lipgloss.NewStyle().Width(wrapW)
 
 	if m.runErr != "" {
-		b.WriteString("    " + theme.Error.Render(wrap.Render("engine: "+m.runErr)) + "\n")
+		b.WriteString("    " + shared.Theme.Error.Render(wrap.Render("engine: "+m.runErr)) + "\n")
 	}
 	for _, s := range m.steps {
 		if s.status != step.StatusFailed || s.err == "" {
 			continue
 		}
-		b.WriteString("    " + theme.Error.Render(wrap.Render(s.id+": "+s.err)) + "\n")
+		b.WriteString("    " + shared.Theme.Error.Render(wrap.Render(s.id+": "+s.err)) + "\n")
 	}
 }
 
 func stepIndicator(s step.Status) (string, lipgloss.Style) {
 	switch s {
 	case step.StatusPending:
-		return "○", theme.Question
+		return "○", shared.Theme.Question
 	case step.StatusRunning:
-		return "●", theme.Running
+		return "●", shared.Theme.Running
 	case step.StatusSucceeded:
-		return "✓", theme.Valid
+		return "✓", shared.Theme.Valid
 	case step.StatusFailed:
-		return "✗", theme.Error
+		return "✗", shared.Theme.Error
 	case step.StatusSkipped:
-		return "—", theme.Question
+		return "—", shared.Theme.Question
 	case step.StatusValidating:
-		return "⇢", theme.Question
+		return "⇢", shared.Theme.Question
 	case step.StatusAwaitingReview:
-		return "?", theme.Marker
+		return "?", shared.Theme.Marker
 	case step.StatusNeedsInput:
-		return "⊙", theme.Marker
+		return "⊙", shared.Theme.Marker
 	case step.StatusAwaitingRecovery:
-		return "⚠", theme.Error
+		return "⚠", shared.Theme.Error
 	default:
-		return "·", theme.Question
+		return "·", shared.Theme.Question
 	}
 }
 
 func statusStyle(s step.Status) lipgloss.Style {
 	switch s {
 	case step.StatusRunning:
-		return theme.Running
+		return shared.Theme.Running
 	case step.StatusSucceeded:
-		return theme.Valid
+		return shared.Theme.Valid
 	case step.StatusFailed:
-		return theme.Error
+		return shared.Theme.Error
 	default:
-		return theme.Question
+		return shared.Theme.Question
 	}
 }
 
@@ -268,7 +269,7 @@ func humanTokens(n int) string {
 // into the run totals. Each step's figure is the engine's cumulative spend
 // across all its attempts, so the sum is the run's true total — inclusive of
 // resets, retries, and loop re-runs. Called on every StepStatus.
-func (m *monitorModel) recomputeTotals() {
+func (m *Model) recomputeTotals() {
 	var cost float64
 	var tokens int
 	for _, s := range m.steps {
@@ -283,7 +284,7 @@ func (m *monitorModel) recomputeTotals() {
 
 // totalsStr renders the run's summed tokens and cost as a single styled string,
 // or "" when neither has been reported yet. Used for the Steps-panel total row.
-func (m monitorModel) totalsStr() string {
+func (m Model) totalsStr() string {
 	var parts []string
 	if m.totalTokens > 0 {
 		parts = append(parts, humanTokens(m.totalTokens)+" tok")
@@ -294,5 +295,5 @@ func (m monitorModel) totalsStr() string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return theme.Question.Render(strings.Join(parts, "  "))
+	return shared.Theme.Question.Render(strings.Join(parts, "  "))
 }

@@ -1,4 +1,4 @@
-package tui
+package monitor
 
 import (
 	keybind "charm.land/bubbles/v2/key"
@@ -7,16 +7,16 @@ import (
 	"jig/internal/step"
 )
 
-func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
+func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.resize()
 		return m, nil
 
-	case engineEventMsg:
+	case EngineEventMsg:
 		var evCmd tea.Cmd
-		m, evCmd = m.handleEngineEvent(msg.event)
+		m, evCmd = m.handleEngineEvent(msg.Event)
 		// The Transcript panel always shows the cursor's step; point it at the
 		// first step as soon as the run's steps are known (eager reload).
 		if m.chatStep == "" && m.cursor < len(m.steps) {
@@ -27,7 +27,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 		// it is dirtied only when the event touches the visible step — a parallel
 		// step's stream never repaints the panel you are viewing.
 		m.dirtyList = true
-		if m.eventAffectsChat(msg.event) {
+		if m.eventAffectsChat(msg.Event) {
 			m.dirtyChat = true
 		}
 		// Leading edge: when the frame loop is idle, this event opens a fresh burst
@@ -38,9 +38,9 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 		if !m.ticking {
 			m.flushDirty()
 		}
-		return m, tea.Batch(evCmd, m.ensureFrame())
+		return m, tea.Batch(evCmd, m.EnsureFrame())
 
-	case monitorTickMsg:
+	case TickMsg:
 		// One animation frame: advance the live clock (a running step's elapsed
 		// column changes even with no new events) and flush whatever is dirty.
 		if m.anyRunning() {
@@ -57,16 +57,16 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 		m.ticking = false
 		return m, nil
 
-	case showResetConfirmMsg:
-		if msg.runID != m.runID {
+	case ShowResetConfirmMsg:
+		if msg.RunID != m.RunID {
 			return m, nil
 		}
 		// Mid-graph reset: show a confirmation gate entry naming the blast radius.
 		// No focus steal on arrival (Decision 6); the user can tab to act on it.
-		rc := &resetConfirmEntry{runID: msg.runID, stepID: msg.stepID, closure: msg.closure}
+		rc := &resetConfirmEntry{runID: msg.RunID, stepID: msg.StepID, closure: msg.Closure}
 		m.inputQueue = append(m.inputQueue, pendingInputEntry{
 			kind:         inputKindResetConfirm,
-			stepID:       msg.stepID,
+			stepID:       msg.StepID,
 			resetConfirm: rc,
 		})
 		m.refreshPanels()
@@ -155,7 +155,7 @@ func (m monitorModel) Update(msg tea.Msg) (monitorModel, tea.Cmd) {
 }
 
 // hasGate reports whether the input queue has any pending entries.
-func (m monitorModel) hasGate() bool {
+func (m Model) hasGate() bool {
 	return len(m.inputQueue) > 0
 }
 
@@ -163,7 +163,7 @@ func (m monitorModel) hasGate() bool {
 // text in the shared textarea, in which case printable keys (including "?") are
 // literal input rather than commands. Mirrors the message-routing condition in
 // Update so the two never disagree.
-func (m monitorModel) textareaActive() bool {
+func (m Model) textareaActive() bool {
 	if m.focus != focusGate {
 		return false
 	}
@@ -184,7 +184,7 @@ func (m monitorModel) textareaActive() bool {
 // currently present: Steps and Transcript are always present; Gate only when a
 // gate is pending. In the narrow single-panel fallback the two panels still
 // cycle (toggling which one is shown), so both remain present.
-func (m monitorModel) cycleFocus(dir int) focusRegion {
+func (m Model) cycleFocus(dir int) focusRegion {
 	regions := []focusRegion{focusSteps, focusTranscript}
 	if m.hasGate() {
 		regions = append(regions, focusGate)
@@ -203,7 +203,7 @@ func (m monitorModel) cycleFocus(dir int) focusRegion {
 // aliasPanelFocus maps left/right to the two side-by-side panels: right focuses
 // Transcript, left focuses Steps. From the Gate, left/right returns to a panel so
 // the user can leave the gate the same way tab does.
-func (m monitorModel) aliasPanelFocus(key string) focusRegion {
+func (m Model) aliasPanelFocus(key string) focusRegion {
 	if key == "right" {
 		return focusTranscript
 	}
@@ -213,7 +213,7 @@ func (m monitorModel) aliasPanelFocus(key string) focusRegion {
 // updateSteps handles keys when the Steps panel holds focus: j/k move the
 // selection cursor (eagerly reloading the Transcript per Resolved Decision 10),
 // and esc/q leave to the runs list.
-func (m monitorModel) updateSteps(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
+func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch {
 	case keybind.Matches(msg, m.keys.Down):
 		if m.cursor < len(m.steps)-1 {
@@ -237,15 +237,15 @@ func (m monitorModel) updateSteps(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 		m.refreshPanels()
 		return m, nil
 	case keybind.Matches(msg, m.keys.StepsLeave):
-		return m, func() tea.Msg { return showRunsMsg{} }
+		return m, func() tea.Msg { return ShowRunsMsg{} }
 
 	// ── spec 08 C4: stop/reset/resume ─────────────────────────────────────────
 	case keybind.Matches(msg, m.keys.StopStep):
 		if !m.done && m.cursor < len(m.steps) {
 			st := m.steps[m.cursor]
 			if st.status == step.StatusRunning {
-				runID, stepID := m.runID, st.id
-				return m, func() tea.Msg { return stopStepMsg{runID: runID, stepID: stepID} }
+				runID, stepID := m.RunID, st.id
+				return m, func() tea.Msg { return StopStepMsg{RunID: runID, StepID: stepID} }
 			}
 		}
 		return m, nil
@@ -260,8 +260,8 @@ func (m monitorModel) updateSteps(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 			switch st.status {
 			case step.StatusSucceeded, step.StatusFailed, step.StatusSkipped,
 				step.StatusStopped, step.StatusAwaitingReview:
-				runID, stepID := m.runID, st.id
-				return m, func() tea.Msg { return requestResetMsg{runID: runID, stepID: stepID} }
+				runID, stepID := m.RunID, st.id
+				return m, func() tea.Msg { return RequestResetMsg{RunID: runID, StepID: stepID} }
 			}
 		}
 		return m, nil
@@ -270,8 +270,8 @@ func (m monitorModel) updateSteps(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 		if !m.done && m.cursor < len(m.steps) {
 			st := m.steps[m.cursor]
 			if st.status == step.StatusStopped {
-				runID, stepID := m.runID, st.id
-				return m, func() tea.Msg { return resumeStepMsg{runID: runID, stepID: stepID} }
+				runID, stepID := m.RunID, st.id
+				return m, func() tea.Msg { return ResumeStepMsg{RunID: runID, StepID: stepID} }
 			}
 		}
 		return m, nil
@@ -286,7 +286,7 @@ func (m monitorModel) updateSteps(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 // the block cursor, enter/space toggle the cursored block, o toggles all, and
 // h/esc return focus to the Steps panel. Remaining keys
 // (j/k/ctrl+d/ctrl+u/pgup/pgdn) scroll the transcript viewport.
-func (m monitorModel) updateTranscript(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
+func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	// G jumps to the bottom and re-enables auto-scroll (always processed first
 	// so shift+G never starts a gg chord).
 	if keybind.Matches(msg, m.keys.GotoBottom) {
@@ -315,7 +315,7 @@ func (m monitorModel) updateTranscript(msg tea.KeyPressMsg) (monitorModel, tea.C
 		m.refreshPanels()
 		return m, nil
 	case keybind.Matches(msg, m.keys.TransLeave):
-		return m, func() tea.Msg { return showRunsMsg{} }
+		return m, func() tea.Msg { return ShowRunsMsg{} }
 	case keybind.Matches(msg, m.keys.NextBlock):
 		// Move the block cursor to the next collapsible block.
 		if n := len(m.chatBlocks); n > 0 {
@@ -352,7 +352,7 @@ func (m monitorModel) updateTranscript(msg tea.KeyPressMsg) (monitorModel, tea.C
 
 // refreshPanels re-renders both always-visible panels into their viewports. A
 // no-op until the first resize makes the model ready.
-func (m *monitorModel) refreshPanels() {
+func (m *Model) refreshPanels() {
 	if !m.ready {
 		return
 	}

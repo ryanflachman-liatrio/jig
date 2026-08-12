@@ -1,4 +1,4 @@
-package tui
+package monitor
 
 import (
 	"encoding/json"
@@ -10,11 +10,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"jig/internal/engine"
+	"jig/internal/tui/shared"
 )
 
 // activeEntry returns a pointer to the entry at activeInputIdx, or (nil, false)
 // when the queue is empty or the index is out of range.
-func (m monitorModel) activeEntry() (*pendingInputEntry, bool) {
+func (m Model) activeEntry() (*pendingInputEntry, bool) {
 	if len(m.inputQueue) == 0 || m.activeInputIdx < 0 || m.activeInputIdx >= len(m.inputQueue) {
 		return nil, false
 	}
@@ -26,7 +27,7 @@ func (m monitorModel) activeEntry() (*pendingInputEntry, bool) {
 // was last, activeInputIdx clamps to the new last; if the queue empties, focus
 // returns to Steps. Always rebuilds promptTextarea via loadActiveTextarea so the
 // textarea tracks the new active entry without callers needing to know.
-func (m *monitorModel) removeEntryAt(i int) {
+func (m *Model) removeEntryAt(i int) {
 	if i < 0 || i >= len(m.inputQueue) {
 		return
 	}
@@ -45,7 +46,7 @@ func (m *monitorModel) removeEntryAt(i int) {
 
 // syncActiveTextarea saves the current textarea content into the active entry's
 // draft field so it survives tab-navigation between entries or a gate blur.
-func (m *monitorModel) syncActiveTextarea() {
+func (m *Model) syncActiveTextarea() {
 	if m.activeInputIdx < 0 || m.activeInputIdx >= len(m.inputQueue) {
 		return
 	}
@@ -63,7 +64,7 @@ func (m *monitorModel) syncActiveTextarea() {
 // loadActiveTextarea rebuilds m.promptTextarea from the active entry's draft
 // with the correct placeholder and height for its kind. Called after entry
 // navigation (tab/shift+tab) and after removeEntryAt advances the index.
-func (m *monitorModel) loadActiveTextarea() {
+func (m *Model) loadActiveTextarea() {
 	if m.activeInputIdx < 0 || m.activeInputIdx >= len(m.inputQueue) {
 		m.promptTextarea = textarea.Model{}
 		return
@@ -71,7 +72,7 @@ func (m *monitorModel) loadActiveTextarea() {
 	entry := &m.inputQueue[m.activeInputIdx]
 	switch entry.kind {
 	case inputKindRequest:
-		ta := newInputTextarea("Message to agent…", m.gateInnerWidth(), gateTextareaRows, withoutBorder())
+		ta := shared.NewInputTextarea("Message to agent…", m.gateInnerWidth(), gateTextareaRows, shared.WithoutBorder())
 		ta.SetValue(entry.draft)
 		m.promptTextarea = ta
 	case inputKindPrompt:
@@ -79,12 +80,12 @@ func (m *monitorModel) loadActiveTextarea() {
 		if label == "" {
 			label = "Input…"
 		}
-		ta := newInputTextarea(label, m.gateInnerWidth(), gateTextareaRows, withoutBorder())
+		ta := shared.NewInputTextarea(label, m.gateInnerWidth(), gateTextareaRows, shared.WithoutBorder())
 		ta.SetValue(entry.draft)
 		m.promptTextarea = ta
 	case inputKindReview:
 		if entry.composing {
-			ta := newInputTextarea("Message to agent…", m.gateInnerWidth(), gateTextareaRows, withoutBorder())
+			ta := shared.NewInputTextarea("Message to agent…", m.gateInnerWidth(), gateTextareaRows, shared.WithoutBorder())
 			ta.SetValue(entry.draft)
 			m.promptTextarea = ta
 		} else {
@@ -92,7 +93,7 @@ func (m *monitorModel) loadActiveTextarea() {
 		}
 	case inputKindRecovery:
 		if entry.composing {
-			ta := newInputTextarea("Guidance for the retry (optional)…", m.gateInnerWidth(), gateTextareaRows, withoutBorder())
+			ta := shared.NewInputTextarea("Guidance for the retry (optional)…", m.gateInnerWidth(), gateTextareaRows, shared.WithoutBorder())
 			ta.SetValue(entry.draft)
 			m.promptTextarea = ta
 		} else {
@@ -129,7 +130,7 @@ func kindName(k pendingInputKind) string {
 // updateGate handles keys when the gate holds focus. Dispatches by the active
 // entry's kind; each submit path reads routing IDs from the entry, emits the
 // unchanged routing message, and removes the entry (auto-advance via removeEntryAt).
-func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
+func (m Model) updateGate(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	entry, ok := m.activeEntry()
 	if !ok {
 		return m, nil
@@ -166,7 +167,7 @@ func (m monitorModel) updateGate(msg tea.KeyPressMsg) (monitorModel, tea.Cmd) {
 	return m, nil
 }
 
-func (m monitorModel) updateGateRequest(msg tea.KeyPressMsg, entry *pendingInputEntry) (monitorModel, tea.Cmd) {
+func (m Model) updateGateRequest(msg tea.KeyPressMsg, entry *pendingInputEntry) (Model, tea.Cmd) {
 	if keybind.Matches(msg, m.keys.Submit) {
 		text := m.promptTextarea.Value()
 		if text == "" {
@@ -176,7 +177,7 @@ func (m monitorModel) updateGateRequest(msg tea.KeyPressMsg, entry *pendingInput
 		m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
 		m.refreshPanels()
 		return m, func() tea.Msg {
-			return agentInputMsg{runID: inp.RunID, stepID: inp.StepID, text: text}
+			return AgentInputMsg{RunID: inp.RunID, StepID: inp.StepID, Text: text}
 		}
 	}
 	var taCmd tea.Cmd
@@ -185,7 +186,7 @@ func (m monitorModel) updateGateRequest(msg tea.KeyPressMsg, entry *pendingInput
 	return m, taCmd
 }
 
-func (m monitorModel) updateGateQuestion(msg tea.KeyPressMsg, entry *pendingInputEntry) (monitorModel, tea.Cmd) {
+func (m Model) updateGateQuestion(msg tea.KeyPressMsg, entry *pendingInputEntry) (Model, tea.Cmd) {
 	idx := m.activeInputIdx
 	// q cancels the question and delivers a "cancelled" answer so the engine
 	// can continue; esc is caught by GateBlur above (blurs without cancelling).
@@ -194,11 +195,11 @@ func (m monitorModel) updateGateQuestion(msg tea.KeyPressMsg, entry *pendingInpu
 		m.removeEntryAt(idx)
 		m.refreshPanels()
 		return m, func() tea.Msg {
-			return agentQuestionResponseMsg{
-				runID:     q.RunID,
-				stepID:    q.StepID,
-				toolUseID: q.ToolUseID,
-				answer:    "cancelled",
+			return AgentQuestionResponseMsg{
+				RunID:     q.RunID,
+				StepID:    q.StepID,
+				ToolUseID: q.ToolUseID,
+				Answer:    "cancelled",
 			}
 		}
 	}
@@ -260,7 +261,7 @@ func (m monitorModel) updateGateQuestion(msg tea.KeyPressMsg, entry *pendingInpu
 	return m, nil
 }
 
-func (m monitorModel) updateGatePrompt(msg tea.KeyPressMsg, entry *pendingInputEntry) (monitorModel, tea.Cmd) {
+func (m Model) updateGatePrompt(msg tea.KeyPressMsg, entry *pendingInputEntry) (Model, tea.Cmd) {
 	if keybind.Matches(msg, m.keys.Submit) {
 		text := m.promptTextarea.Value()
 		if text == "" {
@@ -270,11 +271,11 @@ func (m monitorModel) updateGatePrompt(msg tea.KeyPressMsg, entry *pendingInputE
 		m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
 		m.refreshPanels()
 		return m, func() tea.Msg {
-			return userInputResponseMsg{
-				runID:  pr.RunID,
-				stepID: pr.StepID,
-				as:     pr.As,
-				text:   text,
+			return UserInputResponseMsg{
+				RunID:  pr.RunID,
+				StepID: pr.StepID,
+				As:     pr.As,
+				Text:   text,
 			}
 		}
 	}
@@ -284,7 +285,7 @@ func (m monitorModel) updateGatePrompt(msg tea.KeyPressMsg, entry *pendingInputE
 	return m, taCmd
 }
 
-func (m monitorModel) updateGateReview(msg tea.KeyPressMsg, entry *pendingInputEntry) (monitorModel, tea.Cmd) {
+func (m Model) updateGateReview(msg tea.KeyPressMsg, entry *pendingInputEntry) (Model, tea.Cmd) {
 	if entry.composing {
 		if keybind.Matches(msg, m.keys.ComposeCancel) {
 			m.inputQueue[m.activeInputIdx].composing = false
@@ -301,7 +302,7 @@ func (m monitorModel) updateGateReview(msg tea.KeyPressMsg, entry *pendingInputE
 			m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
 			m.refreshPanels()
 			return m, func() tea.Msg {
-				return reviewMessageMsg{runID: rev.RunID, stepID: rev.StepID, text: text}
+				return ReviewMessageMsg{RunID: rev.RunID, StepID: rev.StepID, Text: text}
 			}
 		}
 		var taCmd tea.Cmd
@@ -321,14 +322,14 @@ func (m monitorModel) updateGateReview(msg tea.KeyPressMsg, entry *pendingInputE
 			m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
 			m.refreshPanels()
 			return m, func() tea.Msg {
-				return reviewVerdictMsg{runID: rev.RunID, stepID: rev.StepID, verdict: ch}
+				return ReviewVerdictMsg{RunID: rev.RunID, StepID: rev.StepID, Verdict: ch}
 			}
 		}
 	}
 	return m, nil
 }
 
-func (m monitorModel) updateGateRecovery(msg tea.KeyPressMsg, entry *pendingInputEntry) (monitorModel, tea.Cmd) {
+func (m Model) updateGateRecovery(msg tea.KeyPressMsg, entry *pendingInputEntry) (Model, tea.Cmd) {
 	rec := entry.recovery
 	if entry.composing {
 		// Composing guidance: enter resumes the failed session with the error
@@ -338,7 +339,7 @@ func (m monitorModel) updateGateRecovery(msg tea.KeyPressMsg, entry *pendingInpu
 			m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
 			m.refreshPanels()
 			return m, func() tea.Msg {
-				return recoverResponseMsg{runID: rec.RunID, stepID: rec.StepID, action: engine.RecoverResume, text: text}
+				return RecoverResponseMsg{RunID: rec.RunID, StepID: rec.StepID, Action: engine.RecoverResume, Text: text}
 			}
 		}
 		var taCmd tea.Cmd
@@ -350,7 +351,7 @@ func (m monitorModel) updateGateRecovery(msg tea.KeyPressMsg, entry *pendingInpu
 		m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
 		m.refreshPanels()
 		return m, func() tea.Msg {
-			return recoverResponseMsg{runID: rec.RunID, stepID: rec.StepID, action: engine.RecoverRetry}
+			return RecoverResponseMsg{RunID: rec.RunID, StepID: rec.StepID, Action: engine.RecoverRetry}
 		}
 	}
 	if rec.CanResume && keybind.Matches(msg, m.keys.RecoverGuide) {
@@ -363,20 +364,20 @@ func (m monitorModel) updateGateRecovery(msg tea.KeyPressMsg, entry *pendingInpu
 		m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
 		m.refreshPanels()
 		return m, func() tea.Msg {
-			return recoverResponseMsg{runID: rec.RunID, stepID: rec.StepID, action: engine.RecoverSkip}
+			return RecoverResponseMsg{RunID: rec.RunID, StepID: rec.StepID, Action: engine.RecoverSkip}
 		}
 	}
 	if keybind.Matches(msg, m.keys.RecoverAbort) {
 		m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
 		m.refreshPanels()
 		return m, func() tea.Msg {
-			return recoverResponseMsg{runID: rec.RunID, stepID: rec.StepID, action: engine.RecoverAbort}
+			return RecoverResponseMsg{RunID: rec.RunID, StepID: rec.StepID, Action: engine.RecoverAbort}
 		}
 	}
 	return m, nil
 }
 
-func (m monitorModel) updateGateIntegration(msg tea.KeyPressMsg, entry *pendingInputEntry) (monitorModel, tea.Cmd) {
+func (m Model) updateGateIntegration(msg tea.KeyPressMsg, entry *pendingInputEntry) (Model, tea.Cmd) {
 	ic := entry.integration
 	// Resolve: the operator merged the conflict in the run worktree; the engine
 	// finishes the integration. Abort: fail the step (→ recovery gate).
@@ -384,47 +385,47 @@ func (m monitorModel) updateGateIntegration(msg tea.KeyPressMsg, entry *pendingI
 		m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
 		m.refreshPanels()
 		return m, func() tea.Msg {
-			return resolveIntegrationResponseMsg{runID: ic.RunID, stepID: ic.StepID, abort: false}
+			return ResolveIntegrationResponseMsg{RunID: ic.RunID, StepID: ic.StepID, Abort: false}
 		}
 	}
 	if keybind.Matches(msg, m.keys.RecoverAbort) {
 		m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
 		m.refreshPanels()
 		return m, func() tea.Msg {
-			return resolveIntegrationResponseMsg{runID: ic.RunID, stepID: ic.StepID, abort: true}
+			return ResolveIntegrationResponseMsg{RunID: ic.RunID, StepID: ic.StepID, Abort: true}
 		}
 	}
 	return m, nil
 }
 
-func (m monitorModel) updateGateFinalMerge(msg tea.KeyPressMsg, entry *pendingInputEntry) (monitorModel, tea.Cmd) {
+func (m Model) updateGateFinalMerge(msg tea.KeyPressMsg, entry *pendingInputEntry) (Model, tea.Cmd) {
 	fm := entry.finalMerge
 	// Approve lands the run branch onto the base; discard leaves it in place.
 	if keybind.Matches(msg, m.keys.FinalMergeApprove) {
 		m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
 		m.refreshPanels()
 		return m, func() tea.Msg {
-			return finalMergeResponseMsg{runID: fm.RunID, approve: true}
+			return FinalMergeResponseMsg{RunID: fm.RunID, Approve: true}
 		}
 	}
 	if keybind.Matches(msg, m.keys.FinalMergeDiscard) {
 		m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
 		m.refreshPanels()
 		return m, func() tea.Msg {
-			return finalMergeResponseMsg{runID: fm.RunID, approve: false}
+			return FinalMergeResponseMsg{RunID: fm.RunID, Approve: false}
 		}
 	}
 	return m, nil
 }
 
-func (m monitorModel) updateGateResetConfirm(msg tea.KeyPressMsg, entry *pendingInputEntry) (monitorModel, tea.Cmd) {
+func (m Model) updateGateResetConfirm(msg tea.KeyPressMsg, entry *pendingInputEntry) (Model, tea.Cmd) {
 	rc := entry.resetConfirm
 	// y confirms the reset; n / esc / GateBlur cancel (esc caught above).
 	if msg.String() == "y" {
 		m.removeEntryAt(m.activeInputIdx)
 		m.refreshPanels()
 		return m, func() tea.Msg {
-			return resetStepMsg{runID: rc.runID, stepID: rc.stepID}
+			return ResetStepMsg{RunID: rc.runID, StepID: rc.stepID}
 		}
 	}
 	if msg.String() == "n" {
@@ -436,8 +437,8 @@ func (m monitorModel) updateGateResetConfirm(msg tea.KeyPressMsg, entry *pending
 
 // advanceQuestion records the answer for the current question and advances the
 // question index on the active entry. When all questions are answered it removes
-// the entry and emits agentQuestionResponseMsg with the formatted answer.
-func (m monitorModel) advanceQuestion(answer string) (monitorModel, tea.Cmd) {
+// the entry and emits AgentQuestionResponseMsg with the formatted answer.
+func (m Model) advanceQuestion(answer string) (Model, tea.Cmd) {
 	idx := m.activeInputIdx
 	if idx < 0 || idx >= len(m.inputQueue) || m.inputQueue[idx].kind != inputKindQuestion {
 		return m, nil
@@ -457,11 +458,11 @@ func (m monitorModel) advanceQuestion(answer string) (monitorModel, tea.Cmd) {
 	m.refreshPanels()
 	formatted := formatQuestionAnswers(q.Questions, answers)
 	return m, func() tea.Msg {
-		return agentQuestionResponseMsg{
-			runID:     q.RunID,
-			stepID:    q.StepID,
-			toolUseID: q.ToolUseID,
-			answer:    formatted,
+		return AgentQuestionResponseMsg{
+			RunID:     q.RunID,
+			StepID:    q.StepID,
+			ToolUseID: q.ToolUseID,
+			Answer:    formatted,
 		}
 	}
 }

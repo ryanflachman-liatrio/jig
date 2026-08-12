@@ -82,7 +82,7 @@ skill = "s"
 		}
 		found := false
 		for _, sec := range m.helpSections() {
-			for _, b := range sec.bindings {
+			for _, b := range sec.Bindings {
 				if b.Enabled() && b.Help().Key == "v" {
 					found = true
 				}

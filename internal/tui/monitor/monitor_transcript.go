@@ -1,4 +1,4 @@
-package tui
+package monitor
 
 import (
 	"encoding/json"
@@ -11,13 +11,14 @@ import (
 	"jig/internal/datastore"
 	"jig/internal/step"
 	"jig/internal/transcript"
+	"jig/internal/tui/shared"
 )
 
 // reloadTranscript re-points the Transcript panel at the cursor's step and reads
 // its transcript eagerly (Resolved Decision 10), resetting per-step view state so
 // block-cursor/expand toggles never carry over between steps (seq keys are only
 // meaningful within one step's transcript).
-func (m *monitorModel) reloadTranscript() {
+func (m *Model) reloadTranscript() {
 	if m.cursor >= len(m.steps) {
 		return
 	}
@@ -46,14 +47,14 @@ func (m *monitorModel) reloadTranscript() {
 // chatWindowMax entries so a long run stays bounded, and flatten the collapsible
 // blocks so the block cursor and expand toggles have a stable index. Safe to
 // call while the writer appends: the reader opens, reads to EOF, and closes.
-func (m *monitorModel) loadChat() {
+func (m *Model) loadChat() {
 	m.chatEntries = nil
 	m.chatBlocks = nil
 	m.chatElided = 0
-	if m.runDir == "" || m.chatStep == "" {
+	if m.RunDir == "" || m.chatStep == "" {
 		return
 	}
-	r, err := transcript.Open(datastore.TranscriptPath(m.runDir, m.chatStep))
+	r, err := transcript.Open(datastore.TranscriptPath(m.RunDir, m.chatStep))
 	if err != nil {
 		return
 	}
@@ -98,7 +99,7 @@ func collapsible(t transcript.BlockType) bool {
 // chatBody renders one step's agent chat chain from its transcript: assistant
 // text (markdown), reasoning, tool calls with inputs, and tool results, with
 // large blocks collapsed to chatCollapseWidth and iteration/retry separators.
-func (m monitorModel) chatBody() string {
+func (m Model) chatBody() string {
 	var b strings.Builder
 
 	// The step id now titles the Transcript panel border, so no in-body title
@@ -106,9 +107,9 @@ func (m monitorModel) chatBody() string {
 	i, ok := m.index[m.chatStep]
 	if !ok {
 		if m.chatStep == "" {
-			b.WriteString("  " + theme.Question.Render("select a step") + "\n")
+			b.WriteString("  " + shared.Theme.Question.Render("select a step") + "\n")
 		} else {
-			b.WriteString("  " + theme.Question.Render("no such step") + "\n")
+			b.WriteString("  " + shared.Theme.Question.Render("no such step") + "\n")
 		}
 		return b.String()
 	}
@@ -127,42 +128,42 @@ func (m monitorModel) chatBody() string {
 		// Review steps have no transcript. Show the diff here so the reviewer can
 		// read it while the verdict choices live in the gate entry (Decision 2/ADR 0005).
 		if rev, ok := m.reviews[m.chatStep]; ok {
-			b.WriteString("  " + theme.Chat.Hint.Render("proposed changes") + "\n\n")
+			b.WriteString("  " + shared.Theme.Chat.Hint.Render("proposed changes") + "\n\n")
 			if rev.Diff != "" {
 				writeDiff(&b, rev.Diff)
 				b.WriteString("\n")
 			}
 			return b.String()
 		}
-		if m.runDir == "" {
-			b.WriteString("  " + theme.Question.Render("transcript unavailable (persistence off)") + "\n")
+		if m.RunDir == "" {
+			b.WriteString("  " + shared.Theme.Question.Render("transcript unavailable (persistence off)") + "\n")
 		} else if !running && !hasTail {
-			b.WriteString("  " + theme.Question.Render("no output yet") + "\n")
+			b.WriteString("  " + shared.Theme.Question.Render("no output yet") + "\n")
 		}
 	}
 
 	if m.chatElided > 0 {
-		b.WriteString("  " + theme.Chat.Hint.Render(
+		b.WriteString("  " + shared.Theme.Chat.Hint.Render(
 			fmt.Sprintf("… %d earlier message(s) elided", m.chatElided)) + "\n\n")
 	}
 
 	lastIter, lastAttempt, lastGen := -1, -1, -1
 	for _, e := range m.chatEntries {
 		if lastGen != -1 && e.Generation > lastGen {
-			b.WriteString("\n  " + theme.Marker.Render(
+			b.WriteString("\n  " + shared.Theme.Marker.Render(
 				fmt.Sprintf("── re-run %d ──", e.Generation+1)) + "\n\n")
 		}
 		if lastIter != -1 && e.Iteration > lastIter {
-			b.WriteString("\n  " + theme.Marker.Render(
+			b.WriteString("\n  " + shared.Theme.Marker.Render(
 				fmt.Sprintf("── iteration %d ──", e.Iteration+1)) + "\n\n")
 		}
 		if lastAttempt != -1 && e.Attempt > lastAttempt {
-			b.WriteString("\n  " + theme.Marker.Render(
+			b.WriteString("\n  " + shared.Theme.Marker.Render(
 				fmt.Sprintf("── retry %d ──", e.Attempt)) + "\n\n")
 		}
 		lastIter, lastAttempt, lastGen = e.Iteration, e.Attempt, e.Generation
 
-		b.WriteString("  " + theme.Chat.Hint.Render(fmt.Sprintf("#%d %s", e.Seq, e.Role)) + "\n")
+		b.WriteString("  " + shared.Theme.Chat.Hint.Render(fmt.Sprintf("#%d %s", e.Seq, e.Role)) + "\n")
 		for bi, blk := range e.Blocks {
 			key := blockKey{seq: e.Seq, block: bi}
 			m.writeBlock(&b, key, blk, e.Role)
@@ -173,7 +174,7 @@ func (m monitorModel) chatBody() string {
 	// Live tail: the current, not-yet-finalized bubble. Reset on each
 	// StepMessage, so it shows only deltas past the last finalized entry.
 	if running && hasTail {
-		b.WriteString("  " + theme.Question.Render("typing…") + "\n")
+		b.WriteString("  " + shared.Theme.Question.Render("typing…") + "\n")
 		tail := m.stepOutput[m.chatStep].String()
 		lines := strings.Split(tail, "\n")
 		if len(lines) > outputMaxLines {
@@ -191,7 +192,7 @@ func (m monitorModel) chatBody() string {
 // system text (command output) is shown verbatim so terminal output is not
 // reflowed as prose; thinking, tool_use, and tool_result collapse to
 // chatCollapseWidth until expanded.
-func (m monitorModel) writeBlock(b *strings.Builder, key blockKey, blk transcript.Block, role transcript.Role) {
+func (m Model) writeBlock(b *strings.Builder, key blockKey, blk transcript.Block, role transcript.Role) {
 	switch blk.Type {
 	case transcript.BlockText:
 		if role == transcript.RoleSystem {
@@ -200,21 +201,21 @@ func (m monitorModel) writeBlock(b *strings.Builder, key blockKey, blk transcrip
 		}
 		b.WriteString(m.renderMarkdown(key, blk.Text))
 	case transcript.BlockThinking:
-		m.writeCollapsible(b, key, theme.Chat.Thinking, theme.Chat.BarThinking, IconThinking+" reasoning", blk.Text, "", false, blk.Truncated)
+		m.writeCollapsible(b, key, shared.Theme.Chat.Thinking, shared.Theme.Chat.BarThinking, shared.IconThinking+" reasoning", blk.Text, "", false, blk.Truncated)
 	case transcript.BlockToolUse:
-		m.writeCollapsible(b, key, theme.Chat.ToolCall, theme.Chat.BarToolCall, IconToolCall+" "+blk.Name, string(blk.Input), fenceJSON(string(blk.Input)), false, false)
+		m.writeCollapsible(b, key, shared.Theme.Chat.ToolCall, shared.Theme.Chat.BarToolCall, shared.IconToolCall+" "+blk.Name, string(blk.Input), fenceJSON(string(blk.Input)), false, false)
 	case transcript.BlockToolResult:
-		m.writeCollapsible(b, key, theme.Chat.ToolResult, theme.Chat.BarToolResult, IconToolResult+" result", blk.Content, fenceJSON(blk.Content), blk.IsError, blk.Truncated)
+		m.writeCollapsible(b, key, shared.Theme.Chat.ToolResult, shared.Theme.Chat.BarToolResult, shared.IconToolResult+" result", blk.Content, fenceJSON(blk.Content), blk.IsError, blk.Truncated)
 	default:
-		b.WriteString("  " + theme.Question.Render("[unsupported block: "+string(blk.Type)+"]") + "\n")
+		b.WriteString("  " + shared.Theme.Question.Render("[unsupported block: "+string(blk.Type)+"]") + "\n")
 	}
 }
 
 // renderMarkdown renders a text block as markdown, caching the result per block.
-// The cache map is shared across the value copies of monitorModel, so writing to
+// The cache map is shared across the value copies of Model, so writing to
 // it here persists even though the receiver is by value; the map is invalidated
 // wholesale on a width change (rebuildRenderer).
-func (m monitorModel) renderMarkdown(key blockKey, text string) string {
+func (m Model) renderMarkdown(key blockKey, text string) string {
 	if cached, ok := m.chatRendered[key]; ok {
 		return cached
 	}
@@ -250,25 +251,25 @@ func fenceJSON(s string) string {
 // and a labelled header with a ▸/▾ affordance, then either a one-line preview
 // clipped to chatCollapseWidth or the bounded full content (also bar-accented).
 // The block under the chat cursor is highlighted so the expand target is
-// obvious; error results take theme.Error and the danger bar.
-func (m monitorModel) writeCollapsible(b *strings.Builder, key blockKey, labelStyle, barStyle lipgloss.Style, label, content, formattedContent string, isError, truncated bool) {
+// obvious; error results take shared.Theme.Error and the danger bar.
+func (m Model) writeCollapsible(b *strings.Builder, key blockKey, labelStyle, barStyle lipgloss.Style, label, content, formattedContent string, isError, truncated bool) {
 	expanded := m.chatExpandAll || m.chatExpand[key]
 	cursored := len(m.chatBlocks) > 0 && m.chatBlockCursor < len(m.chatBlocks) &&
 		m.chatBlocks[m.chatBlockCursor] == key
 
-	marker := CollapsedMarker
+	marker := shared.CollapsedMarker
 	if expanded {
-		marker = ExpandedMarker
+		marker = shared.ExpandedMarker
 	}
 	head := labelStyle
 	bar := barStyle
 	if isError {
-		head = theme.Error
-		bar = theme.Chat.BarError
+		head = shared.Theme.Error
+		bar = shared.Theme.Chat.BarError
 	}
-	barGlyph := bar.Render(BarThick)
+	barGlyph := bar.Render(shared.BarThick)
 	if cursored {
-		b.WriteString("  " + barGlyph + " " + theme.Chat.BlockCursor.Render(marker+" "+label))
+		b.WriteString("  " + barGlyph + " " + shared.Theme.Chat.BlockCursor.Render(marker+" "+label))
 	} else {
 		b.WriteString("  " + barGlyph + " " + marker + " " + head.Render(label))
 	}
@@ -276,10 +277,10 @@ func (m monitorModel) writeCollapsible(b *strings.Builder, key blockKey, labelSt
 	if !expanded {
 		shown, clipped := collapseLine(content)
 		if shown != "" {
-			b.WriteString("  " + theme.Question.Render(shown))
+			b.WriteString("  " + shared.Theme.Question.Render(shown))
 		}
 		if clipped || truncated {
-			b.WriteString(theme.Chat.Hint.Render(
+			b.WriteString(shared.Theme.Chat.Hint.Render(
 				fmt.Sprintf(" [%d chars]", utf8.RuneCountInString(content))))
 		}
 		b.WriteString("\n")
@@ -292,12 +293,12 @@ func (m monitorModel) writeCollapsible(b *strings.Builder, key blockKey, labelSt
 	} else {
 		var body strings.Builder
 		for _, l := range strings.Split(expandView(content), "\n") {
-			body.WriteString(theme.Question.Render(l) + "\n")
+			body.WriteString(shared.Theme.Question.Render(l) + "\n")
 		}
 		b.WriteString(withBar(bar, body.String()))
 	}
 	if truncated {
-		b.WriteString("    " + theme.Chat.Hint.Render("… (truncated at write)") + "\n")
+		b.WriteString("    " + shared.Theme.Chat.Hint.Render("… (truncated at write)") + "\n")
 	}
 }
 
@@ -306,7 +307,7 @@ func (m monitorModel) writeCollapsible(b *strings.Builder, key blockKey, labelSt
 // (e.g. glamour output); the bar is emitted before each line's styling begins so
 // nested SGR resets never clear it.
 func withBar(style lipgloss.Style, content string) string {
-	bar := style.Render(BarThick)
+	bar := style.Render(shared.BarThick)
 	var b strings.Builder
 	for _, l := range strings.Split(strings.TrimRight(content, "\n"), "\n") {
 		b.WriteString("  " + bar + " " + l + "\n")
@@ -359,7 +360,7 @@ func clampRunesTail(s string) string {
 // spaces, truncated to maxDiffLines. Shared by the review overlay in the list
 // view and the review-step drill-in in the chat view (Phase 6).
 func writeDiff(b *strings.Builder, diff string) {
-	b.WriteString("  " + theme.Question.Render("── diff ─────────────────────────────") + "\n")
+	b.WriteString("  " + shared.Theme.Question.Render("── diff ─────────────────────────────") + "\n")
 	lines := strings.Split(diff, "\n")
 	const maxDiffLines = 200
 	truncated := len(lines) > maxDiffLines
@@ -369,17 +370,17 @@ func writeDiff(b *strings.Builder, diff string) {
 	for _, line := range lines {
 		switch {
 		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++"):
-			b.WriteString("  " + theme.Diff.Add.Render(line) + "\n")
+			b.WriteString("  " + shared.Theme.Diff.Add.Render(line) + "\n")
 		case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---"):
-			b.WriteString("  " + theme.Diff.Remove.Render(line) + "\n")
+			b.WriteString("  " + shared.Theme.Diff.Remove.Render(line) + "\n")
 		case strings.HasPrefix(line, "@@"):
-			b.WriteString("  " + theme.Diff.Hunk.Render(line) + "\n")
+			b.WriteString("  " + shared.Theme.Diff.Hunk.Render(line) + "\n")
 		default:
 			b.WriteString("  " + line + "\n")
 		}
 	}
 	if truncated {
-		b.WriteString("  " + theme.Question.Render("… diff truncated") + "\n")
+		b.WriteString("  " + shared.Theme.Question.Render("… diff truncated") + "\n")
 	}
 }
 

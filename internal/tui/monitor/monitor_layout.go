@@ -1,9 +1,11 @@
-package tui
+package monitor
 
 import (
 	"charm.land/bubbles/v2/viewport"
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
+
+	"jig/internal/tui/shared"
 )
 
 // panelSplit computes the two panels' outer widths for the given total width per
@@ -12,7 +14,7 @@ import (
 // reports that the terminal is too narrow for both panels to meet their minimums,
 // so the caller should fall back to a single full-width focused panel.
 func panelSplit(width int) (stepsW, transcriptW int, narrow bool) {
-	hFrame, _ := panelFrame()
+	hFrame, _ := shared.PanelFrame()
 	// Both panels need at least their border frame; the Transcript additionally
 	// needs transcriptMinInnerWidth inner cells. Below this the split is impossible.
 	minTotal := stepsMinWidth + hFrame + transcriptMinInnerWidth
@@ -33,8 +35,8 @@ func panelSplit(width int) (stepsW, transcriptW int, narrow bool) {
 // resize fits both panels to the width split (Resolved Decision 11) minus the
 // footer and gate-strip rows. In the narrow fallback (Decision 14) each panel is
 // sized full-width, since only the focused one renders.
-func (m *monitorModel) resize() {
-	hFrame, vFrame := panelFrame()
+func (m *Model) resize() {
+	hFrame, vFrame := shared.PanelFrame()
 
 	footerH := lipgloss.Height(m.footerView())
 	// The gate strip is always rendered at a fixed height (Unit 2 — no layout shift
@@ -95,9 +97,9 @@ func (m *monitorModel) resize() {
 // gate textarea is borderless (the "Agent input" panel owns the frame, so a
 // bordered textarea would double-box), so it fills the panel's full inner width
 // — no textarea frame to subtract, only the panel's own hFrame.
-func (m monitorModel) gateInnerWidth() int {
-	panelHFrame, _ := panelFrame()
-	w := m.width - panelHFrame - theme.Textarea.Borderless.GetHorizontalFrameSize()
+func (m Model) gateInnerWidth() int {
+	panelHFrame, _ := shared.PanelFrame()
+	w := m.width - panelHFrame - shared.Theme.Textarea.Borderless.GetHorizontalFrameSize()
 	if w < 1 {
 		w = 1
 	}
@@ -117,8 +119,8 @@ func (m monitorModel) gateInnerWidth() int {
 //
 // inputKindQuestion is the only unbounded kind; its option list scrolls within
 // this height (Unit 6) and is therefore excluded from the max.
-func (m monitorModel) gateBodyHeight() int {
-	taVFrame := theme.Textarea.Borderless.GetVerticalFrameSize()
+func (m Model) gateBodyHeight() int {
+	taVFrame := shared.Theme.Textarea.Borderless.GetVerticalFrameSize()
 	// textarea case: header + label + textarea content rows (borderless: no frame)
 	textareaCaseH := gateHeaderRows + 1 + gateTextareaRows + taVFrame
 	// review case: header + label + bounded choices + [m] affordance + hint (Unit 5)
@@ -136,13 +138,13 @@ func (m monitorModel) gateBodyHeight() int {
 // word-wrap width in at construction, so a stale cache would wrap to the old
 // width (see turn.go / viewer.go for the same house rule). A static style (not
 // AutoStyle) avoids the OSC-11 stdin race documented in main.go.
-func (m *monitorModel) rebuildRenderer() {
+func (m *Model) rebuildRenderer() {
 	wordWrap := m.transcriptInnerW
 	if wordWrap < 1 {
 		wordWrap = 1
 	}
 	m.renderer, _ = glamour.NewTermRenderer(
-		glamour.WithStyles(theme.Markdown),
+		glamour.WithStyles(shared.Theme.Markdown),
 		glamour.WithWordWrap(wordWrap),
 	)
 	if m.lastTranscriptW != m.transcriptInnerW {
@@ -155,7 +157,7 @@ func (m *monitorModel) rebuildRenderer() {
 // as the cursor moves, keeping a small margin from the top and bottom edges. The
 // step rows now start at line 0 (the panel border carries the "Steps" title), so
 // the cursor index maps directly to a viewport row.
-func (m *monitorModel) ensureCursorVisible() {
+func (m *Model) ensureCursorVisible() {
 	if !m.ready {
 		return
 	}

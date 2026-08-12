@@ -13,6 +13,7 @@ import (
 
 	"jig/internal/engine"
 	"jig/internal/step"
+	"jig/internal/tui/monitor"
 	"jig/internal/workflow"
 )
 
@@ -62,8 +63,8 @@ func (m runsModel) Update(msg tea.Msg) (runsModel, tea.Cmd) {
 		m.resize()
 		return m, nil
 
-	case engineEventMsg:
-		m = m.handleEngineEvent(msg.event)
+	case monitor.EngineEventMsg:
+		m = m.handleEngineEvent(msg.Event)
 		m.syncViewport()
 		return m, nil
 
@@ -251,8 +252,8 @@ func (m runsModel) footerView() string {
 // the global chord.
 func (m runsModel) helpSections() []helpSection {
 	return []helpSection{
-		{title: "Runs", bindings: []keybind.Binding{m.keys.Up, m.keys.Down, m.keys.Open, m.keys.NewRun, m.keys.Back}},
-		{title: "Global", bindings: []keybind.Binding{keyHelp, keyQuit}},
+		{Title: "Runs", Bindings: []keybind.Binding{m.keys.Up, m.keys.Down, m.keys.Open, m.keys.NewRun, m.keys.Back}},
+		{Title: "Global", Bindings: []keybind.Binding{keyHelp, keyQuit}},
 	}
 }
 

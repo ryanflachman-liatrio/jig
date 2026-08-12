@@ -1,4 +1,4 @@
-package tui
+package monitor
 
 import (
 	"encoding/json"
@@ -17,6 +17,7 @@ import (
 	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/transcript"
+	"jig/internal/tui/shared"
 )
 
 // writeTranscript writes entries to step's transcript.jsonl under a fresh
@@ -56,7 +57,7 @@ func rawJSON(t *testing.T, v any) json.RawMessage {
 // reloads that step's transcript) and focuses the Transcript panel. The two-panel
 // monitor always shows the cursor's step, so this is a cursor move plus a focus
 // switch rather than a mode toggle.
-func enterChatStep(t *testing.T, m monitorModel, id string) monitorModel {
+func enterChatStep(t *testing.T, m Model, id string) Model {
 	t.Helper()
 	for m.steps[m.cursor].id != id {
 		before := m.cursor
@@ -91,11 +92,11 @@ func TestMonitorChatRendersBlocks(t *testing.T) {
 	})
 
 	m := newMonitorWithSteps(t)
-	m.runDir = runDir
+	m.RunDir = runDir
 	m = enterChatStep(t, m, "a")
 
 	body := m.chatBody()
-	for _, want := range []string{IconThinking + " reasoning", IconToolCall + " Read", IconToolResult + " result", "Reading the file"} {
+	for _, want := range []string{shared.IconThinking + " reasoning", shared.IconToolCall + " Read", shared.IconToolResult + " result", "Reading the file"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("chat body missing %q:\n%s", want, body)
 		}
@@ -114,7 +115,7 @@ func TestMonitorChatCollapseExpand(t *testing.T) {
 	})
 
 	m := newMonitorWithSteps(t)
-	m.runDir = runDir
+	m.RunDir = runDir
 	m = enterChatStep(t, m, "a")
 
 	collapsed := m.chatBody()
@@ -143,7 +144,7 @@ func TestMonitorChatBlockCursorToggle(t *testing.T) {
 	})
 
 	m := newMonitorWithSteps(t)
-	m.runDir = runDir
+	m.RunDir = runDir
 	m = enterChatStep(t, m, "a")
 
 	if strings.Contains(m.chatBody(), "END") {
@@ -172,7 +173,7 @@ func TestMonitorChatIterationSeparators(t *testing.T) {
 	})
 
 	m := newMonitorWithSteps(t)
-	m.runDir = runDir
+	m.RunDir = runDir
 	m = enterChatStep(t, m, "a")
 
 	if !strings.Contains(m.chatBody(), "iteration 2") {
@@ -201,7 +202,7 @@ func TestMonitorChatCommandOutput(t *testing.T) {
 	})
 
 	m := newMonitorWithSteps(t)
-	m.runDir = runDir
+	m.RunDir = runDir
 	m = enterChatStep(t, m, "a")
 
 	if !strings.Contains(m.chatBody(), "build output here") {
@@ -216,7 +217,7 @@ func TestMonitorChatReviewFallback(t *testing.T) {
 	m := newMonitorWithSteps(t) // no runDir: review steps have no transcript
 
 	// A review arrives; Decision 6 means no auto-focus.
-	m, _ = m.Update(engineEventMsg{event: engine.ReviewRequest{
+	m, _ = m.Update(EngineEventMsg{Event: engine.ReviewRequest{
 		RunID:   "run-1",
 		StepID:  "a",
 		Diff:    "@@ -1 +1 @@\n-old line\n+new line",
@@ -252,9 +253,9 @@ func TestMonitorWithJournal(t *testing.T) {
 		}},
 	})
 
-	m := newMonitorModel("r1")
-	m.runDir = runDir
-	m = m.withJournal([]engine.Event{
+	m := New("r1")
+	m.RunDir = runDir
+	m = m.WithJournal([]engine.Event{
 		engine.RunStarted{RunID: "r1", Workflow: "feature", Steps: []string{"a", "b"}},
 		engine.StepStatus{RunID: "r1", StepID: "a", To: step.StatusSucceeded},
 		engine.StepStatus{RunID: "r1", StepID: "b", To: step.StatusFailed, Err: "boom"},
@@ -288,20 +289,20 @@ func TestMonitorWithJournal(t *testing.T) {
 // (80-col) Steps panel without being clipped, and that a re-run accumulates
 // (cumulative, never refunded).
 func TestMonitorCostTokens(t *testing.T) {
-	m := newMonitorModel("rc")
+	m := New("rc")
 	// Deliberately narrow so a regression that pushes metrics off the panel edge
 	// (the two-line-row fix) is caught: assert against the rendered View, not the
 	// raw body, since the raw body always contains the substrings.
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 40})
-	m, _ = m.Update(engineEventMsg{event: engine.RunStarted{
+	m, _ = m.Update(EngineEventMsg{Event: engine.RunStarted{
 		RunID: "rc", Workflow: "feature", Steps: []string{"a", "b"},
 	}})
 
 	costA, costB := 0.0012, 0.0034
-	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID: "rc", StepID: "a", To: step.StatusSucceeded, Cost: &costA, Tokens: 1500,
 	}})
-	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID: "rc", StepID: "b", To: step.StatusSucceeded, Cost: &costB, Tokens: 2000,
 	}})
 
@@ -328,7 +329,7 @@ func TestMonitorCostTokens(t *testing.T) {
 	// reflects the higher total — a reset/retry is not refunded.
 	// The engine attaches the step's cumulative figure to every transition,
 	// including →Running, so the display never blanks mid re-run.
-	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID: "rc", StepID: "a", From: step.StatusSucceeded, To: step.StatusRunning,
 		Cost: &costA, Tokens: 1500,
 	}})
@@ -338,7 +339,7 @@ func TestMonitorCostTokens(t *testing.T) {
 		t.Errorf("during re-run totalTokens = %d, want 3500", m.totalTokens)
 	}
 	costA2 := costA * 2 // cumulative: attempt 1 + attempt 2
-	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID: "rc", StepID: "a", From: step.StatusRunning, To: step.StatusSucceeded,
 		Cost: &costA2, Tokens: 3000,
 	}})
@@ -350,11 +351,11 @@ func TestMonitorCostTokens(t *testing.T) {
 	}
 }
 
-func newMonitorWithSteps(t *testing.T) monitorModel {
+func newMonitorWithSteps(t *testing.T) Model {
 	t.Helper()
-	m := newMonitorModel("run-1")
+	m := New("run-1")
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m, _ = m.Update(engineEventMsg{event: engine.RunStarted{
+	m, _ = m.Update(EngineEventMsg{Event: engine.RunStarted{
 		RunID:    "run-1",
 		Workflow: "demo",
 		Steps:    []string{"a", "b", "c"},
@@ -415,7 +416,7 @@ func TestMonitorListNavigation(t *testing.T) {
 	}
 
 	// Selected row is marked in the list body with the cursor bar.
-	if !strings.Contains(m.body(), CursorBar) {
+	if !strings.Contains(m.body(), shared.CursorBar) {
 		t.Fatalf("list body missing cursor marker:\n%s", m.body())
 	}
 }
@@ -446,7 +447,7 @@ func TestMonitorEnterAndBack(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("esc with Steps focused produced no command")
 	}
-	if _, ok := cmd().(showRunsMsg); !ok {
+	if _, ok := cmd().(ShowRunsMsg); !ok {
 		t.Fatalf("esc with Steps focused did not emit showRunsMsg, got %T", cmd())
 	}
 }
@@ -477,7 +478,7 @@ func TestMonitorReviewQueued(t *testing.T) {
 		t.Fatalf("expected focusTranscript, got %v", m.focus)
 	}
 
-	m, _ = m.Update(engineEventMsg{event: engine.ReviewRequest{
+	m, _ = m.Update(EngineEventMsg{Event: engine.ReviewRequest{
 		RunID:   "run-1",
 		StepID:  "a",
 		Choices: []string{"approve", "reject"},
@@ -502,12 +503,12 @@ func TestMonitorReviewQueued(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("digit key produced no verdict command")
 	}
-	vm, ok := cmd().(reviewVerdictMsg)
+	vm, ok := cmd().(ReviewVerdictMsg)
 	if !ok {
 		t.Fatalf("expected reviewVerdictMsg, got %T", cmd())
 	}
-	if vm.verdict != "approve" {
-		t.Fatalf("expected verdict approve, got %q", vm.verdict)
+	if vm.Verdict != "approve" {
+		t.Fatalf("expected verdict approve, got %q", vm.Verdict)
 	}
 }
 
@@ -516,7 +517,7 @@ func TestMonitorReviewQueued(t *testing.T) {
 // hidden when the failed step has no resumable session.
 func TestMonitorRecoveryGate(t *testing.T) {
 	m := newMonitorWithSteps(t)
-	m, _ = m.Update(engineEventMsg{event: engine.RecoveryRequest{
+	m, _ = m.Update(EngineEventMsg{Event: engine.RecoveryRequest{
 		RunID:     "run-1",
 		StepID:    "a",
 		Err:       "git worktree add: fatal: a branch named 'jig/x/a' already exists",
@@ -542,23 +543,23 @@ func TestMonitorRecoveryGate(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("r produced no command")
 	}
-	rr, ok := cmd().(recoverResponseMsg)
+	rr, ok := cmd().(RecoverResponseMsg)
 	if !ok {
 		t.Fatalf("expected recoverResponseMsg, got %T", cmd())
 	}
-	if rr.action != engine.RecoverRetry || rr.stepID != "a" {
-		t.Fatalf("got action=%q stepID=%q; want retry/a", rr.action, rr.stepID)
+	if rr.Action != engine.RecoverRetry || rr.StepID != "a" {
+		t.Fatalf("got action=%q stepID=%q; want retry/a", rr.Action, rr.StepID)
 	}
 
 	// Abort routes to RecoverAbort.
 	m2 := newMonitorWithSteps(t)
-	m2, _ = m2.Update(engineEventMsg{event: engine.RecoveryRequest{RunID: "run-1", StepID: "a", Err: "boom"}})
+	m2, _ = m2.Update(EngineEventMsg{Event: engine.RecoveryRequest{RunID: "run-1", StepID: "a", Err: "boom"}})
 	m2.focus = focusGate
 	_, cmd = m2.Update(key("a"))
 	if cmd == nil {
 		t.Fatal("a produced no command")
 	}
-	if rr, ok := cmd().(recoverResponseMsg); !ok || rr.action != engine.RecoverAbort {
+	if rr, ok := cmd().(RecoverResponseMsg); !ok || rr.Action != engine.RecoverAbort {
 		t.Fatalf("expected RecoverAbort, got %+v (%T)", cmd(), cmd())
 	}
 }
@@ -568,7 +569,7 @@ func TestMonitorRecoveryGate(t *testing.T) {
 // failed step is resumable.
 func TestMonitorRecoveryGuidance(t *testing.T) {
 	m := newMonitorWithSteps(t)
-	m, _ = m.Update(engineEventMsg{event: engine.RecoveryRequest{
+	m, _ = m.Update(EngineEventMsg{Event: engine.RecoveryRequest{
 		RunID:     "run-1",
 		StepID:    "a",
 		Err:       "agent gave up",
@@ -590,15 +591,15 @@ func TestMonitorRecoveryGuidance(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("enter produced no command while composing guidance")
 	}
-	rr, ok := cmd().(recoverResponseMsg)
+	rr, ok := cmd().(RecoverResponseMsg)
 	if !ok {
 		t.Fatalf("expected recoverResponseMsg, got %T", cmd())
 	}
-	if rr.action != engine.RecoverResume || rr.stepID != "a" {
-		t.Fatalf("got action=%q stepID=%q; want resume/a", rr.action, rr.stepID)
+	if rr.Action != engine.RecoverResume || rr.StepID != "a" {
+		t.Fatalf("got action=%q stepID=%q; want resume/a", rr.Action, rr.StepID)
 	}
-	if rr.text != "hi" {
-		t.Fatalf("guidance text = %q, want %q", rr.text, "hi")
+	if rr.Text != "hi" {
+		t.Fatalf("guidance text = %q, want %q", rr.Text, "hi")
 	}
 }
 
@@ -608,7 +609,7 @@ func TestMonitorRecoveryGuidance(t *testing.T) {
 // TestMonitorGateNonBlocking).
 func TestMonitorGateConsumesKeys(t *testing.T) {
 	m := newMonitorWithSteps(t)
-	m, _ = m.Update(engineEventMsg{event: engine.ReviewRequest{
+	m, _ = m.Update(EngineEventMsg{Event: engine.ReviewRequest{
 		RunID:   "run-1",
 		StepID:  "a",
 		Choices: []string{"approve", "reject"},
@@ -626,7 +627,7 @@ func TestMonitorGateConsumesKeys(t *testing.T) {
 // per-step message count in the list.
 func TestMonitorMessageCount(t *testing.T) {
 	m := newMonitorWithSteps(t)
-	m, _ = m.Update(engineEventMsg{event: engine.StepMessage{
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepMessage{
 		RunID: "run-1", StepID: "a", Seq: 3,
 	}})
 	if got := m.msgCount["a"]; got != 3 {
@@ -636,7 +637,7 @@ func TestMonitorMessageCount(t *testing.T) {
 		t.Fatalf("list body missing message count:\n%s", m.body())
 	}
 	// Stale (lower) seq must not lower the count.
-	m, _ = m.Update(engineEventMsg{event: engine.StepMessage{
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepMessage{
 		RunID: "run-1", StepID: "a", Seq: 2,
 	}})
 	if got := m.msgCount["a"]; got != 3 {
@@ -649,7 +650,7 @@ func TestMonitorMessageCount(t *testing.T) {
 func TestMonitorAgentQuestionShowsPanel(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
-	m, _ = m.Update(engineEventMsg{event: engine.AgentQuestion{
+	m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{
 		RunID:     "run-1",
 		StepID:    "a",
 		ToolUseID: "tu1",
@@ -692,7 +693,7 @@ func TestMonitorAgentQuestionShowsPanel(t *testing.T) {
 func TestMonitorAgentQuestionSelectEmits(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
-	m, _ = m.Update(engineEventMsg{event: engine.AgentQuestion{
+	m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{
 		RunID:     "run-1",
 		StepID:    "a",
 		ToolUseID: "tu1",
@@ -713,15 +714,15 @@ func TestMonitorAgentQuestionSelectEmits(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("digit key produced no command")
 	}
-	msg, ok := cmd().(agentQuestionResponseMsg)
+	msg, ok := cmd().(AgentQuestionResponseMsg)
 	if !ok {
 		t.Fatalf("expected agentQuestionResponseMsg, got %T", cmd())
 	}
-	if msg.toolUseID != "tu1" {
-		t.Fatalf("expected toolUseID tu1, got %q", msg.toolUseID)
+	if msg.ToolUseID != "tu1" {
+		t.Fatalf("expected toolUseID tu1, got %q", msg.ToolUseID)
 	}
-	if !strings.Contains(msg.answer, "Beta") {
-		t.Fatalf("expected answer to contain 'Beta', got %q", msg.answer)
+	if !strings.Contains(msg.Answer, "Beta") {
+		t.Fatalf("expected answer to contain 'Beta', got %q", msg.Answer)
 	}
 	if len(m.inputQueue) > 0 {
 		t.Fatal("question entry should be removed from queue after answer is submitted")
@@ -733,7 +734,7 @@ func TestMonitorAgentQuestionSelectEmits(t *testing.T) {
 func TestMonitorAgentQuestionMultiSelect(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
-	m, _ = m.Update(engineEventMsg{event: engine.AgentQuestion{
+	m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{
 		RunID:     "run-1",
 		StepID:    "a",
 		ToolUseID: "tu2",
@@ -776,15 +777,15 @@ func TestMonitorAgentQuestionMultiSelect(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("enter produced no command")
 	}
-	resp, ok := cmd().(agentQuestionResponseMsg)
+	resp, ok := cmd().(AgentQuestionResponseMsg)
 	if !ok {
 		t.Fatalf("expected agentQuestionResponseMsg, got %T", cmd())
 	}
-	if !strings.Contains(resp.answer, "Logging") {
-		t.Fatalf("expected Logging in answer, got %q", resp.answer)
+	if !strings.Contains(resp.Answer, "Logging") {
+		t.Fatalf("expected Logging in answer, got %q", resp.Answer)
 	}
-	if strings.Contains(resp.answer, "Cache") {
-		t.Fatalf("Cache was toggled off but appears in answer: %q", resp.answer)
+	if strings.Contains(resp.Answer, "Cache") {
+		t.Fatalf("Cache was toggled off but appears in answer: %q", resp.Answer)
 	}
 }
 
@@ -793,7 +794,7 @@ func TestMonitorAgentQuestionMultiSelect(t *testing.T) {
 // while the Gate is focused.
 func TestMonitorAgentQuestionConsumesKeys(t *testing.T) {
 	m := newMonitorWithSteps(t)
-	m, _ = m.Update(engineEventMsg{event: engine.AgentQuestion{
+	m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{
 		RunID:     "run-1",
 		StepID:    "a",
 		ToolUseID: "tu1",
@@ -818,7 +819,7 @@ func TestMonitorStepSubtypeBadge(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
 	// Step "a" fails with error_max_turns.
-	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID:   "run-1",
 		StepID:  "a",
 		From:    step.StatusRunning,
@@ -827,7 +828,7 @@ func TestMonitorStepSubtypeBadge(t *testing.T) {
 		Subtype: "error_max_turns",
 	}})
 	// Step "b" fails with error_max_budget_usd.
-	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID:   "run-1",
 		StepID:  "b",
 		From:    step.StatusRunning,
@@ -836,7 +837,7 @@ func TestMonitorStepSubtypeBadge(t *testing.T) {
 		Subtype: "error_max_budget_usd",
 	}})
 	// Step "c" fails with a plain API error (no subtype annotation expected).
-	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID:   "run-1",
 		StepID:  "c",
 		From:    step.StatusRunning,
@@ -870,7 +871,7 @@ func TestMonitorStepSubtypeBadge(t *testing.T) {
 func TestMonitorAgentQuestionClearsOnResume(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
-	m, _ = m.Update(engineEventMsg{event: engine.AgentQuestion{
+	m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{
 		RunID:     "run-1",
 		StepID:    "a",
 		ToolUseID: "tu1",
@@ -883,7 +884,7 @@ func TestMonitorAgentQuestionClearsOnResume(t *testing.T) {
 	}
 
 	// Simulate the step resuming after the answer is delivered.
-	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID:  "run-1",
 		StepID: "a",
 		From:   step.StatusNeedsInput,
@@ -985,9 +986,9 @@ func ansiStrip(s string) string {
 // cancellation response so no reporter goroutine hangs.
 func TestMonitorGateNonBlocking(t *testing.T) {
 	// A gate that owes a tool_result: AskUserQuestion.
-	makeGate := func() monitorModel {
+	makeGate := func() Model {
 		m := newMonitorWithSteps(t)
-		m, _ = m.Update(engineEventMsg{event: engine.AgentQuestion{
+		m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{
 			RunID:     "run-1",
 			StepID:    "a",
 			ToolUseID: "tu1",
@@ -1030,12 +1031,12 @@ func TestMonitorGateNonBlocking(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("gate digit produced no command")
 	}
-	resp, ok := cmd().(agentQuestionResponseMsg)
+	resp, ok := cmd().(AgentQuestionResponseMsg)
 	if !ok {
 		t.Fatalf("expected agentQuestionResponseMsg, got %T", cmd())
 	}
-	if !strings.Contains(resp.answer, "Beta") {
-		t.Fatalf("expected answer Beta, got %q", resp.answer)
+	if !strings.Contains(resp.Answer, "Beta") {
+		t.Fatalf("expected answer Beta, got %q", resp.Answer)
 	}
 
 	// 3) esc while gate-focused blurs to Steps (ADR 0005 §esc-blurs). The entry
@@ -1078,7 +1079,7 @@ func TestMonitorEagerReload(t *testing.T) {
 	}
 
 	m := newMonitorWithSteps(t)
-	m.runDir = runDirA
+	m.RunDir = runDirA
 	// Force the initial eager load now that runDir is set.
 	m.chatStep = ""
 	m.reloadTranscript()
@@ -1109,8 +1110,8 @@ func TestGateSubmitRouting(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
 	// Enqueue two InputRequest entries from distinct steps.
-	m, _ = m.Update(engineEventMsg{event: engine.InputRequest{RunID: "run-1", StepID: "a"}})
-	m, _ = m.Update(engineEventMsg{event: engine.InputRequest{RunID: "run-1", StepID: "b"}})
+	m, _ = m.Update(EngineEventMsg{Event: engine.InputRequest{RunID: "run-1", StepID: "a"}})
+	m, _ = m.Update(EngineEventMsg{Event: engine.InputRequest{RunID: "run-1", StepID: "b"}})
 	if len(m.inputQueue) != 2 {
 		t.Fatalf("expected 2 queue entries, got %d", len(m.inputQueue))
 	}
@@ -1125,15 +1126,15 @@ func TestGateSubmitRouting(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("submit produced no command")
 	}
-	msg, ok := cmd().(agentInputMsg)
+	msg, ok := cmd().(AgentInputMsg)
 	if !ok {
 		t.Fatalf("expected agentInputMsg, got %T", cmd())
 	}
-	if msg.stepID != "a" {
-		t.Fatalf("expected stepID a, got %q", msg.stepID)
+	if msg.StepID != "a" {
+		t.Fatalf("expected stepID a, got %q", msg.StepID)
 	}
-	if msg.text != "hello" {
-		t.Fatalf("expected text hello, got %q", msg.text)
+	if msg.Text != "hello" {
+		t.Fatalf("expected text hello, got %q", msg.Text)
 	}
 	if len(m2.inputQueue) != 1 {
 		t.Fatalf("expected queue length 1 after submit, got %d", len(m2.inputQueue))
@@ -1147,12 +1148,12 @@ func TestGateSubmitRouting(t *testing.T) {
 	if cmd2 == nil {
 		t.Fatal("second submit produced no command")
 	}
-	msg2, ok := cmd2().(agentInputMsg)
+	msg2, ok := cmd2().(AgentInputMsg)
 	if !ok {
 		t.Fatalf("expected agentInputMsg for second submit, got %T", cmd2())
 	}
-	if msg2.stepID != "b" {
-		t.Fatalf("expected stepID b, got %q", msg2.stepID)
+	if msg2.StepID != "b" {
+		t.Fatalf("expected stepID b, got %q", msg2.StepID)
 	}
 }
 
@@ -1161,7 +1162,7 @@ func TestGateSubmitRouting(t *testing.T) {
 // and does not emit showRunsMsg.
 func TestQuestionCancel(t *testing.T) {
 	m := newMonitorWithSteps(t)
-	m, _ = m.Update(engineEventMsg{event: engine.AgentQuestion{
+	m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{
 		RunID:  "run-1",
 		StepID: "a",
 		Questions: []engine.AgentQuestionItem{
@@ -1181,12 +1182,12 @@ func TestQuestionCancel(t *testing.T) {
 		t.Fatal("q produced no command")
 	}
 	// Must not emit showRunsMsg.
-	if _, isRuns := cmd().(showRunsMsg); isRuns {
+	if _, isRuns := cmd().(ShowRunsMsg); isRuns {
 		t.Fatal("q must not emit showRunsMsg — user stays in monitor")
 	}
 	// Rerun cmd() to get the actual message (cmd() may only be called once — use a copy).
 	m2 := newMonitorWithSteps(t)
-	m2, _ = m2.Update(engineEventMsg{event: engine.AgentQuestion{
+	m2, _ = m2.Update(EngineEventMsg{Event: engine.AgentQuestion{
 		RunID:  "run-1",
 		StepID: "a",
 		Questions: []engine.AgentQuestionItem{
@@ -1197,15 +1198,15 @@ func TestQuestionCancel(t *testing.T) {
 	}})
 	m2.focus = focusGate
 	_, cmd2 := m2.Update(key("q"))
-	resp, ok := cmd2().(agentQuestionResponseMsg)
+	resp, ok := cmd2().(AgentQuestionResponseMsg)
 	if !ok {
 		t.Fatalf("expected agentQuestionResponseMsg, got %T", cmd2())
 	}
-	if resp.answer != "cancelled" {
-		t.Fatalf("expected answer cancelled, got %q", resp.answer)
+	if resp.Answer != "cancelled" {
+		t.Fatalf("expected answer cancelled, got %q", resp.Answer)
 	}
-	if resp.stepID != "a" {
-		t.Fatalf("expected stepID a, got %q", resp.stepID)
+	if resp.StepID != "a" {
+		t.Fatalf("expected stepID a, got %q", resp.StepID)
 	}
 	// Queue should be empty after cancel.
 	if len(m.inputQueue) != 0 {
@@ -1219,13 +1220,13 @@ func TestReviewComposeIsolation(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
 	// Enqueue two ReviewRequests from distinct steps.
-	m, _ = m.Update(engineEventMsg{event: engine.ReviewRequest{
+	m, _ = m.Update(EngineEventMsg{Event: engine.ReviewRequest{
 		RunID:        "run-1",
 		StepID:       "a",
 		Choices:      []string{"approve", "reject"},
 		AllowMessage: true,
 	}})
-	m, _ = m.Update(engineEventMsg{event: engine.ReviewRequest{
+	m, _ = m.Update(EngineEventMsg{Event: engine.ReviewRequest{
 		RunID:        "run-1",
 		StepID:       "b",
 		Choices:      []string{"approve", "reject"},
@@ -1264,7 +1265,7 @@ func TestReviewDiffInTranscript(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
 	// Enqueue a review with a diff.
-	m, _ = m.Update(engineEventMsg{event: engine.ReviewRequest{
+	m, _ = m.Update(EngineEventMsg{Event: engine.ReviewRequest{
 		RunID:   "run-1",
 		StepID:  "a",
 		Diff:    "@@ -1 +1 @@\n-removed\n+added",
@@ -1306,7 +1307,7 @@ func TestQuestionScroll(t *testing.T) {
 	for i := 1; i <= 10; i++ {
 		opts = append(opts, engine.AgentQuestionOption{Label: fmt.Sprintf("Option%d", i)})
 	}
-	m, _ = m.Update(engineEventMsg{event: engine.AgentQuestion{
+	m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{
 		RunID:  "run-1",
 		StepID: "a",
 		Questions: []engine.AgentQuestionItem{
@@ -1367,12 +1368,12 @@ func TestQuestionScroll(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("digit 1 produced no command while scrolled")
 	}
-	resp, ok := cmd().(agentQuestionResponseMsg)
+	resp, ok := cmd().(AgentQuestionResponseMsg)
 	if !ok {
 		t.Fatalf("expected agentQuestionResponseMsg from digit 1, got %T", cmd())
 	}
-	if !strings.Contains(resp.answer, "Option1") {
-		t.Fatalf("digit 1 selected wrong option: %q", resp.answer)
+	if !strings.Contains(resp.Answer, "Option1") {
+		t.Fatalf("digit 1 selected wrong option: %q", resp.Answer)
 	}
 	if len(m2.inputQueue) != 0 {
 		t.Fatalf("queue should be empty after answering, got %d", len(m2.inputQueue))
@@ -1389,7 +1390,7 @@ func TestCaptureUnit6Scroll(t *testing.T) {
 	for i := 1; i <= 10; i++ {
 		opts = append(opts, engine.AgentQuestionOption{Label: fmt.Sprintf("Option%d", i)})
 	}
-	m, _ = m.Update(engineEventMsg{event: engine.AgentQuestion{
+	m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{
 		RunID:  "run-1",
 		StepID: "a",
 		Questions: []engine.AgentQuestionItem{
@@ -1413,7 +1414,7 @@ func TestCaptureUnit6Scroll(t *testing.T) {
 func TestCaptureUnit5ReviewDiff(t *testing.T) {
 	const artifactPath = "../../docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit5-review-diff.txt"
 	m := newMonitorWithSteps(t)
-	m, _ = m.Update(engineEventMsg{event: engine.ReviewRequest{
+	m, _ = m.Update(EngineEventMsg{Event: engine.ReviewRequest{
 		RunID:        "run-1",
 		StepID:       "a",
 		Diff:         "@@ -1,3 +1,3 @@\n context\n-old line\n+new line\n context",
@@ -1436,8 +1437,8 @@ func TestCaptureUnit5ReviewDiff(t *testing.T) {
 func TestCaptureUnit4Drain(t *testing.T) {
 	const artifactPath = "../../docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit4-drain.txt"
 	m := newMonitorWithSteps(t)
-	m, _ = m.Update(engineEventMsg{event: engine.InputRequest{RunID: "run-1", StepID: "a"}})
-	m, _ = m.Update(engineEventMsg{event: engine.InputRequest{RunID: "run-1", StepID: "b"}})
+	m, _ = m.Update(EngineEventMsg{Event: engine.InputRequest{RunID: "run-1", StepID: "a"}})
+	m, _ = m.Update(EngineEventMsg{Event: engine.InputRequest{RunID: "run-1", StepID: "b"}})
 	m.focus = focusGate
 
 	var frames []string
@@ -1490,7 +1491,7 @@ func TestMonitorResizeRefits(t *testing.T) {
 // actions emit resolveIntegrationResponseMsg (resolve / abort).
 func TestMonitorIntegrationConflictGate(t *testing.T) {
 	m := newMonitorWithSteps(t)
-	m, _ = m.Update(engineEventMsg{event: engine.IntegrationConflictRequest{
+	m, _ = m.Update(EngineEventMsg{Event: engine.IntegrationConflictRequest{
 		RunID:  "run-1",
 		StepID: "a",
 		Paths:  []string{"shared.go"},
@@ -1509,29 +1510,29 @@ func TestMonitorIntegrationConflictGate(t *testing.T) {
 		t.Fatalf("integration actions not rendered:\n%s", strip)
 	}
 
-	// Resolve routes to resolveIntegrationResponseMsg{abort:false}.
+	// Resolve routes to ResolveIntegrationResponseMsg{abort:false}.
 	m.focus = focusGate
 	_, cmd := m.Update(key("r"))
 	if cmd == nil {
 		t.Fatal("r produced no command")
 	}
-	rr, ok := cmd().(resolveIntegrationResponseMsg)
+	rr, ok := cmd().(ResolveIntegrationResponseMsg)
 	if !ok {
 		t.Fatalf("expected resolveIntegrationResponseMsg, got %T", cmd())
 	}
-	if rr.abort || rr.stepID != "a" {
-		t.Fatalf("got abort=%v stepID=%q; want resolve/a", rr.abort, rr.stepID)
+	if rr.Abort || rr.StepID != "a" {
+		t.Fatalf("got abort=%v stepID=%q; want resolve/a", rr.Abort, rr.StepID)
 	}
 
-	// Abort routes to resolveIntegrationResponseMsg{abort:true}.
+	// Abort routes to ResolveIntegrationResponseMsg{abort:true}.
 	m2 := newMonitorWithSteps(t)
-	m2, _ = m2.Update(engineEventMsg{event: engine.IntegrationConflictRequest{RunID: "run-1", StepID: "a", Paths: []string{"x"}}})
+	m2, _ = m2.Update(EngineEventMsg{Event: engine.IntegrationConflictRequest{RunID: "run-1", StepID: "a", Paths: []string{"x"}}})
 	m2.focus = focusGate
 	_, cmd = m2.Update(key("a"))
 	if cmd == nil {
 		t.Fatal("a produced no command")
 	}
-	if rr, ok := cmd().(resolveIntegrationResponseMsg); !ok || !rr.abort {
+	if rr, ok := cmd().(ResolveIntegrationResponseMsg); !ok || !rr.Abort {
 		t.Fatalf("expected abort resolveIntegrationResponseMsg, got %+v (%T)", cmd(), cmd())
 	}
 }
@@ -1541,7 +1542,7 @@ func TestMonitorIntegrationConflictGate(t *testing.T) {
 // finalMergeResponseMsg (approve / discard).
 func TestMonitorFinalMergeGate(t *testing.T) {
 	m := newMonitorWithSteps(t)
-	m, _ = m.Update(engineEventMsg{event: engine.FinalMergeRequest{
+	m, _ = m.Update(EngineEventMsg{Event: engine.FinalMergeRequest{
 		RunID:     "run-1",
 		RunBranch: "jig/wf/run-1",
 		Base:      "main",
@@ -1560,41 +1561,41 @@ func TestMonitorFinalMergeGate(t *testing.T) {
 		t.Fatalf("final-merge actions not rendered:\n%s", strip)
 	}
 
-	// Approve routes to finalMergeResponseMsg{approve:true}.
+	// Approve routes to FinalMergeResponseMsg{approve:true}.
 	m.focus = focusGate
 	_, cmd := m.Update(key("y"))
 	if cmd == nil {
 		t.Fatal("y produced no command")
 	}
-	fr, ok := cmd().(finalMergeResponseMsg)
+	fr, ok := cmd().(FinalMergeResponseMsg)
 	if !ok {
 		t.Fatalf("expected finalMergeResponseMsg, got %T", cmd())
 	}
-	if !fr.approve || fr.runID != "run-1" {
-		t.Fatalf("got approve=%v runID=%q; want approve/run-1", fr.approve, fr.runID)
+	if !fr.Approve || fr.RunID != "run-1" {
+		t.Fatalf("got approve=%v runID=%q; want approve/run-1", fr.Approve, fr.RunID)
 	}
 
-	// Discard routes to finalMergeResponseMsg{approve:false}.
+	// Discard routes to FinalMergeResponseMsg{approve:false}.
 	m2 := newMonitorWithSteps(t)
-	m2, _ = m2.Update(engineEventMsg{event: engine.FinalMergeRequest{RunID: "run-1", RunBranch: "jig/wf/run-1", Base: "main"}})
+	m2, _ = m2.Update(EngineEventMsg{Event: engine.FinalMergeRequest{RunID: "run-1", RunBranch: "jig/wf/run-1", Base: "main"}})
 	m2.focus = focusGate
 	_, cmd = m2.Update(key("d"))
 	if cmd == nil {
 		t.Fatal("d produced no command")
 	}
-	if fr, ok := cmd().(finalMergeResponseMsg); !ok || fr.approve {
+	if fr, ok := cmd().(FinalMergeResponseMsg); !ok || fr.Approve {
 		t.Fatalf("expected discard finalMergeResponseMsg, got %+v (%T)", cmd(), cmd())
 	}
 }
 
-// buildResetMonitor creates a monitorModel with a fan-out workflow snapshot for
+// buildResetMonitor creates a Model with a fan-out workflow snapshot for
 // reset TUI tests. Steps: a (succeeded), b (succeeded, depends a), gate
 // (awaitingReview, depends b), d (succeeded, independent). Run is quiescent.
-func buildResetMonitor(t *testing.T) monitorModel {
+func buildResetMonitor(t *testing.T) Model {
 	t.Helper()
-	m := newMonitorModel("run-reset")
+	m := New("run-reset")
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	m, _ = m.Update(engineEventMsg{event: engine.RunStarted{
+	m, _ = m.Update(EngineEventMsg{Event: engine.RunStarted{
 		RunID:    "run-reset",
 		Workflow: "fanout",
 		Steps:    []string{"a", "d", "b", "gate"},
@@ -1605,7 +1606,7 @@ func buildResetMonitor(t *testing.T) monitorModel {
 		engine.StepStatus{RunID: "run-reset", StepID: "b", From: step.StatusPending, To: step.StatusSucceeded},
 		engine.StepStatus{RunID: "run-reset", StepID: "gate", From: step.StatusPending, To: step.StatusAwaitingReview},
 	} {
-		m, _ = m.Update(engineEventMsg{event: ev})
+		m, _ = m.Update(EngineEventMsg{Event: ev})
 	}
 	return m
 }
@@ -1618,7 +1619,7 @@ func TestResetConfirmation(t *testing.T) {
 	// Cursor starts at step 0 (a). Navigate to step 0 explicitly.
 	// Inject showResetConfirmMsg directly (as the root would after resolving closure).
 	closure := []string{"a", "b", "gate"}
-	m, _ = m.Update(showResetConfirmMsg{runID: "run-reset", stepID: "a", closure: closure})
+	m, _ = m.Update(ShowResetConfirmMsg{RunID: "run-reset", StepID: "a", Closure: closure})
 
 	// Confirmation entry must be in the queue.
 	if len(m.inputQueue) == 0 {
@@ -1648,10 +1649,10 @@ func TestResetConfirmation(t *testing.T) {
 		t.Fatal("expected a Cmd after y; got nil")
 	}
 	result := cmd()
-	if rsm, ok := result.(resetStepMsg); !ok {
+	if rsm, ok := result.(ResetStepMsg); !ok {
 		t.Fatalf("cmd() returned %T; want resetStepMsg", result)
-	} else if rsm.stepID != "a" {
-		t.Errorf("resetStepMsg.stepID = %q; want %q", rsm.stepID, "a")
+	} else if rsm.StepID != "a" {
+		t.Errorf("resetStepMsg.StepID = %q; want %q", rsm.StepID, "a")
 	}
 	_ = m2
 
@@ -1681,11 +1682,11 @@ func TestResetLinearTipTUI(t *testing.T) {
 		t.Fatal("expected a Cmd after r on a terminal step; got nil")
 	}
 	result := cmd()
-	if rrm, ok := result.(requestResetMsg); !ok {
+	if rrm, ok := result.(RequestResetMsg); !ok {
 		t.Fatalf("cmd() returned %T; want requestResetMsg", result)
 	} else {
-		if rrm.stepID != "a" {
-			t.Errorf("requestResetMsg.stepID = %q; want %q", rrm.stepID, "a")
+		if rrm.StepID != "a" {
+			t.Errorf("requestResetMsg.StepID = %q; want %q", rrm.StepID, "a")
 		}
 	}
 	_ = m2
@@ -1701,12 +1702,12 @@ func TestResetLinearTipTUI(t *testing.T) {
 	// gate is AwaitingReview — this IS a resettable status, so r is eligible.
 	// Navigate to a pending/running step that is NOT resettable.
 	// Create a separate model with a running step.
-	m2Running := newMonitorModel("run-running")
+	m2Running := New("run-running")
 	m2Running, _ = m2Running.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	m2Running, _ = m2Running.Update(engineEventMsg{event: engine.RunStarted{
+	m2Running, _ = m2Running.Update(EngineEventMsg{Event: engine.RunStarted{
 		RunID: "run-running", Workflow: "w", Steps: []string{"x"},
 	}})
-	m2Running, _ = m2Running.Update(engineEventMsg{event: engine.StepStatus{
+	m2Running, _ = m2Running.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID: "run-running", StepID: "x", From: step.StatusPending, To: step.StatusRunning,
 	}})
 	// x is Running → r key should emit stopStepMsg (not requestResetMsg),
@@ -1715,7 +1716,7 @@ func TestResetLinearTipTUI(t *testing.T) {
 	_, cmdRunning := m2Running.Update(key("r"))
 	if cmdRunning != nil {
 		if result := cmdRunning(); result != nil {
-			if _, isReset := result.(requestResetMsg); isReset {
+			if _, isReset := result.(RequestResetMsg); isReset {
 				t.Error("r on a running step should not emit requestResetMsg")
 			}
 		}
@@ -1723,7 +1724,7 @@ func TestResetLinearTipTUI(t *testing.T) {
 
 	// Settled run: done=true → r must produce no cmd.
 	mDone := buildResetMonitor(t)
-	mDone, _ = mDone.Update(engineEventMsg{event: engine.RunFinished{RunID: "run-reset", Failed: false}})
+	mDone, _ = mDone.Update(EngineEventMsg{Event: engine.RunFinished{RunID: "run-reset", Failed: false}})
 	_, cmdDone := mDone.Update(key("r"))
 	if cmdDone != nil {
 		if result := cmdDone(); result != nil {
@@ -1735,13 +1736,13 @@ func TestResetLinearTipTUI(t *testing.T) {
 // TestStopKey verifies that s on a running step emits stopStepMsg, and s on a
 // non-running step is a no-op.
 func TestStopKey(t *testing.T) {
-	m := newMonitorModel("run-stop")
+	m := New("run-stop")
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	m, _ = m.Update(engineEventMsg{event: engine.RunStarted{
+	m, _ = m.Update(EngineEventMsg{Event: engine.RunStarted{
 		RunID: "run-stop", Workflow: "w", Steps: []string{"x", "y"},
 	}})
 	// x transitions to Running, y stays Pending.
-	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID: "run-stop", StepID: "x", From: step.StatusPending, To: step.StatusRunning,
 	}})
 
@@ -1751,10 +1752,10 @@ func TestStopKey(t *testing.T) {
 		t.Fatal("expected Cmd after s on running step; got nil")
 	}
 	result := cmd()
-	if ssm, ok := result.(stopStepMsg); !ok {
+	if ssm, ok := result.(StopStepMsg); !ok {
 		t.Fatalf("cmd() returned %T; want stopStepMsg", result)
-	} else if ssm.stepID != "x" {
-		t.Errorf("stopStepMsg.stepID = %q; want %q", ssm.stepID, "x")
+	} else if ssm.StepID != "x" {
+		t.Errorf("stopStepMsg.StepID = %q; want %q", ssm.StepID, "x")
 	}
 
 	// Navigate to y (Pending). s → no stopStepMsg.
@@ -1765,7 +1766,7 @@ func TestStopKey(t *testing.T) {
 	_, cmd2 := m.Update(key("s"))
 	if cmd2 != nil {
 		if result := cmd2(); result != nil {
-			if _, isStop := result.(stopStepMsg); isStop {
+			if _, isStop := result.(StopStepMsg); isStop {
 				t.Error("s on a non-running step should not emit stopStepMsg")
 			}
 		}
@@ -1806,9 +1807,9 @@ func TestSecurityPane(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	// Build a minimal monitorModel with runDir set.
-	m := newMonitorModel("run1")
-	m.runDir = dir
+	// Build a minimal Model with runDir set.
+	m := New("run1")
+	m.RunDir = dir
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -1862,7 +1863,7 @@ func TestSecurityPane(t *testing.T) {
 	})
 
 	t.Run("empty when no findings", func(t *testing.T) {
-		m2 := newMonitorModel("run2")
+		m2 := New("run2")
 		if got := m2.securityView(); got != "" {
 			t.Errorf("securityView with no findings returned non-empty string: %q", got)
 		}
@@ -1875,8 +1876,8 @@ func TestSecurityPane(t *testing.T) {
 func TestMonitorHelpSections(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	titles := map[string]bool{}
-	for _, sec := range m.helpSections() {
-		titles[sec.title] = true
+	for _, sec := range m.HelpSections() {
+		titles[sec.Title] = true
 	}
 	for _, want := range []string{"Steps", "Focus", "Global"} {
 		if !titles[want] {
@@ -1888,10 +1889,10 @@ func TestMonitorHelpSections(t *testing.T) {
 // drainFrames flushes any scheduled frame(s) so the monitor settles to an idle
 // state (no frame in flight, no pending repaint) — the fixture starting point
 // for asserting on the next event.
-func drainFrames(t *testing.T, m monitorModel) monitorModel {
+func drainFrames(t *testing.T, m Model) Model {
 	t.Helper()
 	for i := 0; i < 8 && m.ticking; i++ {
-		m, _ = m.Update(monitorTickMsg(time.Now()))
+		m, _ = m.Update(TickMsg(time.Now()))
 	}
 	if m.ticking {
 		t.Fatal("frame loop did not settle after draining")
@@ -1906,7 +1907,7 @@ func TestMonitorLiveClockTicks(t *testing.T) {
 	m := drainFrames(t, newMonitorWithSteps(t))
 
 	// A step going Running schedules a frame.
-	m, cmd := m.Update(engineEventMsg{event: engine.StepStatus{
+	m, cmd := m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID: "run-1", StepID: "a", To: step.StatusRunning,
 	}})
 	if !m.ticking {
@@ -1917,7 +1918,7 @@ func TestMonitorLiveClockTicks(t *testing.T) {
 	}
 
 	// A frame while the step runs re-arms the loop (non-nil command).
-	m, cmd = m.Update(monitorTickMsg(time.Now()))
+	m, cmd = m.Update(TickMsg(time.Now()))
 	if cmd == nil {
 		t.Fatal("frame loop did not re-arm while a step was running")
 	}
@@ -1927,10 +1928,10 @@ func TestMonitorLiveClockTicks(t *testing.T) {
 
 	// Once the step finishes, the next frame flushes any pending repaint, then
 	// falls silent (no re-arm) and clears the guard so a future event restarts it.
-	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID: "run-1", StepID: "a", To: step.StatusSucceeded,
 	}})
-	m, cmd = m.Update(monitorTickMsg(time.Now()))
+	m, cmd = m.Update(TickMsg(time.Now()))
 	if cmd != nil {
 		t.Fatal("frame loop re-armed after all steps finished")
 	}
@@ -1947,7 +1948,7 @@ func TestMonitorFrameLeadingEdge(t *testing.T) {
 
 	// A single (non-running) status event flushes on the spot and, with nothing
 	// running and nothing left dirty, does not arm a frame at all.
-	m, cmd := m.Update(engineEventMsg{event: engine.StepStatus{
+	m, cmd := m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID: "run-1", StepID: "a", To: step.StatusSkipped,
 	}})
 	if m.dirtyList || m.dirtyChat {
@@ -1966,7 +1967,7 @@ func TestMonitorFrameCoalescesBurst(t *testing.T) {
 
 	// Put the visible step into Running so the frame loop stays armed — this is the
 	// streaming window during which deltas must coalesce.
-	m, cmd := m.Update(engineEventMsg{event: engine.StepStatus{
+	m, cmd := m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID: "run-1", StepID: "a", To: step.StatusRunning,
 	}})
 	if !m.ticking || cmd == nil {
@@ -1977,7 +1978,7 @@ func TestMonitorFrameCoalescesBurst(t *testing.T) {
 	// and the transcript repaint stays pending until a frame services it.
 	for i := 0; i < 20; i++ {
 		var c tea.Cmd
-		m, c = m.Update(engineEventMsg{event: engine.StepOutput{
+		m, c = m.Update(EngineEventMsg{Event: engine.StepOutput{
 			RunID: "run-1", StepID: "a", Delta: "chunk",
 		}})
 		if c != nil {
@@ -1989,7 +1990,7 @@ func TestMonitorFrameCoalescesBurst(t *testing.T) {
 	}
 
 	// A single frame flushes the coalesced repaint for the whole burst.
-	m, _ = m.Update(monitorTickMsg(time.Now()))
+	m, _ = m.Update(TickMsg(time.Now()))
 	if m.dirtyChat {
 		t.Fatal("frame did not flush the pending transcript repaint")
 	}
@@ -2003,12 +2004,12 @@ func TestMonitorFrameStepGating(t *testing.T) {
 
 	// Arm the loop (visible step running) so events coalesce into the dirty flags
 	// rather than flushing on the leading edge — that is what we want to inspect.
-	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID: "run-1", StepID: "a", To: step.StatusRunning,
 	}})
 
 	// A parallel step "b" streaming must not schedule a transcript repaint.
-	m, _ = m.Update(engineEventMsg{event: engine.StepOutput{
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepOutput{
 		RunID: "run-1", StepID: "b", Delta: "chunk",
 	}})
 	if m.dirtyChat {
@@ -2019,7 +2020,7 @@ func TestMonitorFrameStepGating(t *testing.T) {
 	}
 
 	// An event for the visible step "a" does dirty the transcript panel.
-	m, _ = m.Update(engineEventMsg{event: engine.StepMessage{
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepMessage{
 		RunID: "run-1", StepID: "a", Seq: 1,
 	}})
 	if !m.dirtyChat {
@@ -2032,7 +2033,7 @@ func TestMonitorFrameStepGating(t *testing.T) {
 func TestMonitorLiveClockNoDuplicateLoops(t *testing.T) {
 	m := drainFrames(t, newMonitorWithSteps(t))
 
-	m, cmd := m.Update(engineEventMsg{event: engine.StepStatus{
+	m, cmd := m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID: "run-1", StepID: "a", To: step.StatusRunning,
 	}})
 	if cmd == nil {
@@ -2040,7 +2041,7 @@ func TestMonitorLiveClockNoDuplicateLoops(t *testing.T) {
 	}
 
 	// A second concurrent Running step must not spawn another frame command.
-	m, cmd = m.Update(engineEventMsg{event: engine.StepStatus{
+	m, cmd = m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID: "run-1", StepID: "b", To: step.StatusRunning,
 	}})
 	if cmd != nil {

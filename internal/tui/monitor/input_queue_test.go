@@ -1,4 +1,4 @@
-package tui
+package monitor
 
 import (
 	"os"
@@ -19,7 +19,7 @@ func TestInputQueueIngest(t *testing.T) {
 	preFocus := m.focus
 
 	for _, stepID := range []string{"a", "b", "c"} {
-		m, _ = m.Update(engineEventMsg{event: engine.InputRequest{
+		m, _ = m.Update(EngineEventMsg{Event: engine.InputRequest{
 			RunID:  "run-1",
 			StepID: stepID,
 		}})
@@ -51,12 +51,12 @@ func TestInputQueueIngest(t *testing.T) {
 func TestInputQueueMixedKinds(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
-	m, _ = m.Update(engineEventMsg{event: engine.ReviewRequest{
+	m, _ = m.Update(EngineEventMsg{Event: engine.ReviewRequest{
 		RunID:   "run-1",
 		StepID:  "a",
 		Choices: []string{"approve"},
 	}})
-	m, _ = m.Update(engineEventMsg{event: engine.AgentQuestion{
+	m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{
 		RunID:     "run-1",
 		StepID:    "b",
 		ToolUseID: "tu1",
@@ -90,7 +90,7 @@ func TestInputQueuePruneOnStatus(t *testing.T) {
 
 	// Queue entries for all three steps.
 	for _, stepID := range []string{"a", "b", "c"} {
-		m, _ = m.Update(engineEventMsg{event: engine.InputRequest{
+		m, _ = m.Update(EngineEventMsg{Event: engine.InputRequest{
 			RunID:  "run-1",
 			StepID: stepID,
 		}})
@@ -100,7 +100,7 @@ func TestInputQueuePruneOnStatus(t *testing.T) {
 	}
 
 	// Prune step "b" (index 1).
-	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID:  "run-1",
 		StepID: "b",
 		From:   step.StatusNeedsInput,
@@ -123,10 +123,10 @@ func TestInputQueuePruneOnStatus(t *testing.T) {
 	}
 
 	// Prune the remaining two.
-	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID: "run-1", StepID: "a", From: step.StatusNeedsInput, To: step.StatusRunning,
 	}})
-	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID: "run-1", StepID: "c", From: step.StatusNeedsInput, To: step.StatusRunning,
 	}})
 
@@ -135,7 +135,7 @@ func TestInputQueuePruneOnStatus(t *testing.T) {
 	}
 
 	// Pruning on an already-empty queue must not panic.
-	m, _ = m.Update(engineEventMsg{event: engine.StepStatus{
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID: "run-1", StepID: "a", From: step.StatusRunning, To: step.StatusSucceeded,
 	}})
 	// No panic = pass.
@@ -159,7 +159,7 @@ func TestGateFixedHeight(t *testing.T) {
 	}
 
 	// Send an InputRequest so the gate switches from placeholder to active.
-	m, _ = m.Update(engineEventMsg{event: engine.InputRequest{
+	m, _ = m.Update(EngineEventMsg{Event: engine.InputRequest{
 		RunID:  "run-1",
 		StepID: "a",
 	}})
@@ -238,7 +238,7 @@ func TestGateDraftPreservation(t *testing.T) {
 
 	// Enqueue two InputRequest entries for distinct steps.
 	for _, id := range []string{"a", "b"} {
-		m, _ = m.Update(engineEventMsg{event: engine.InputRequest{RunID: "run-1", StepID: id}})
+		m, _ = m.Update(EngineEventMsg{Event: engine.InputRequest{RunID: "run-1", StepID: id}})
 	}
 	if len(m.inputQueue) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(m.inputQueue))
@@ -308,7 +308,7 @@ func TestGateDraftPreservation(t *testing.T) {
 func TestGateEscBlurs(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
-	m, _ = m.Update(engineEventMsg{event: engine.InputRequest{RunID: "run-1", StepID: "a"}})
+	m, _ = m.Update(EngineEventMsg{Event: engine.InputRequest{RunID: "run-1", StepID: "a"}})
 	if len(m.inputQueue) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(m.inputQueue))
 	}
@@ -319,7 +319,7 @@ func TestGateEscBlurs(t *testing.T) {
 	if cmd != nil {
 		// Execute the command and check it does not produce a showRunsMsg.
 		result := cmd()
-		if _, ok := result.(showRunsMsg); ok {
+		if _, ok := result.(ShowRunsMsg); ok {
 			runsNavigated = true
 		}
 	}
@@ -344,7 +344,7 @@ func init() {
 	_ = captureUnit3NavFrames // called by TestGateNavFrames
 }
 
-func captureUnit3NavFrames(m monitorModel) {
+func captureUnit3NavFrames(m Model) {
 	frames := make([]string, 0, 3)
 
 	// Frame 1: [1 / 2] active.
@@ -371,7 +371,7 @@ func TestGateNavFrames(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
 	for _, id := range []string{"a", "b"} {
-		m, _ = m.Update(engineEventMsg{event: engine.InputRequest{RunID: "run-1", StepID: id}})
+		m, _ = m.Update(EngineEventMsg{Event: engine.InputRequest{RunID: "run-1", StepID: id}})
 	}
 	m.focus = focusGate
 	m.loadActiveTextarea()

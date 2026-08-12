@@ -1,4 +1,4 @@
-package tui
+package monitor
 
 import (
 	"strings"
@@ -13,10 +13,10 @@ import (
 	"jig/internal/step"
 )
 
-func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) {
+func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 	switch ev := e.(type) {
 	case engine.RunStarted:
-		if ev.RunID != m.runID {
+		if ev.RunID != m.RunID {
 			return m, nil
 		}
 		m.workflow = ev.Workflow
@@ -28,7 +28,7 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		}
 
 	case engine.StepStatus:
-		if ev.RunID != m.runID {
+		if ev.RunID != m.RunID {
 			return m, nil
 		}
 		i, ok := m.index[ev.StepID]
@@ -69,7 +69,7 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		}
 
 	case engine.ReviewRequest:
-		if ev.RunID != m.runID {
+		if ev.RunID != m.RunID {
 			return m, nil
 		}
 		// Retain the request so the Transcript panel can show the diff when the step
@@ -87,7 +87,7 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		})
 
 	case engine.RecoveryRequest:
-		if ev.RunID != m.runID {
+		if ev.RunID != m.RunID {
 			return m, nil
 		}
 		// A step failed and parked for a recovery decision. Append a gate entry; no
@@ -100,7 +100,7 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		})
 
 	case engine.IntegrationConflictRequest:
-		if ev.RunID != m.runID {
+		if ev.RunID != m.RunID {
 			return m, nil
 		}
 		// A step's squash-merge conflicted and parked. Append a gate entry; no
@@ -113,7 +113,7 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		})
 
 	case engine.FinalMergeRequest:
-		if ev.RunID != m.runID {
+		if ev.RunID != m.RunID {
 			return m, nil
 		}
 		// The run reached terminal with a non-empty run branch; the operator lands or
@@ -127,7 +127,7 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		})
 
 	case engine.InputRequest:
-		if ev.RunID != m.runID {
+		if ev.RunID != m.RunID {
 			return m, nil
 		}
 		// Decision 6: no focus steal on arrival.
@@ -146,7 +146,7 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		}
 
 	case engine.AgentQuestion:
-		if ev.RunID != m.runID {
+		if ev.RunID != m.RunID {
 			return m, nil
 		}
 		// Update the step badge immediately — the scheduler inbox notification
@@ -165,7 +165,7 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		})
 
 	case engine.StepMessage:
-		if ev.RunID != m.runID {
+		if ev.RunID != m.RunID {
 			return m, nil
 		}
 		if m.msgCount == nil {
@@ -188,7 +188,7 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		}
 
 	case engine.PromptRequest:
-		if ev.RunID != m.runID {
+		if ev.RunID != m.RunID {
 			return m, nil
 		}
 		// Decision 6: no focus steal on arrival.
@@ -207,7 +207,7 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		}
 
 	case engine.StepOutput:
-		if ev.RunID != m.runID {
+		if ev.RunID != m.RunID {
 			return m, nil
 		}
 		if m.stepOutput == nil {
@@ -221,7 +221,7 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		buf.WriteString(ev.Delta)
 
 	case engine.RunError:
-		if ev.RunID != m.runID {
+		if ev.RunID != m.RunID {
 			return m, nil
 		}
 		// Engine-level failures (worktree setup, max_iterations) are not tied to a
@@ -230,19 +230,19 @@ func (m monitorModel) handleEngineEvent(e engine.Event) (monitorModel, tea.Cmd) 
 		m.runErr = ev.Err
 
 	case engine.RunFinished:
-		if ev.RunID != m.runID {
+		if ev.RunID != m.RunID {
 			return m, nil
 		}
 		m.done = true
 		m.failed = ev.Failed
 
 	case engine.SecurityFinding:
-		if ev.RunID != m.runID {
+		if ev.RunID != m.RunID {
 			return m, nil
 		}
 		// File is truth: read all findings from findings.jsonl to get the full
 		// Detail field (redacted-secret preview) that the event omits.
-		fPath := datastore.FindingsPath(m.runDir)
+		fPath := datastore.FindingsPath(m.RunDir)
 		if findings, err := sentinel.ReadAll(fPath); err == nil {
 			m.secFindings = findings
 		} else {

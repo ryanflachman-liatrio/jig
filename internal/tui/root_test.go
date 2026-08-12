@@ -174,7 +174,7 @@ func TestHelpOverlayCompositesOverBase(t *testing.T) {
 	}
 	base := strings.Join(rows, "\n")
 
-	sections := []helpSection{{title: "Global", bindings: []keybind.Binding{keyHelp, keyQuit}}}
+	sections := []helpSection{{Title: "Global", Bindings: []keybind.Binding{keyHelp, keyQuit}}}
 	out := renderHelpOverlay(base, w, h, sections)
 
 	if !strings.Contains(out, "jig · help") {

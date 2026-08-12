@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"jig/internal/engine"
+	"jig/internal/tui/monitor"
 	"jig/internal/step"
 )
 
@@ -23,7 +24,7 @@ func TestRuns(t *testing.T) {
 	// newest-first by ID, so run-29 lands at the top and run-00 at the bottom.
 	for i := 0; i < 30; i++ {
 		id := fmt.Sprintf("run-%02d", i)
-		m, _ = m.Update(engineEventMsg{event: engine.RunStarted{
+		m, _ = m.Update(monitor.EngineEventMsg{Event: engine.RunStarted{
 			RunID:    id,
 			Workflow: "wf",
 			Steps:    []string{"a", "b"},
@@ -66,7 +67,7 @@ func TestRunsNewestFirst(t *testing.T) {
 
 	// Arrive out of chronological order.
 	for _, id := range []string{"20260731-100000-a", "20260731-120000-c", "20260731-110000-b"} {
-		m, _ = m.Update(engineEventMsg{event: engine.RunStarted{
+		m, _ = m.Update(monitor.EngineEventMsg{Event: engine.RunStarted{
 			RunID: id, Workflow: "wf", Steps: []string{"s"},
 		}})
 	}
@@ -85,7 +86,7 @@ func TestRunsNewestFirst(t *testing.T) {
 	// top, but the selection stays on the run it was on.
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"}) // → row 1 (…-b)
 	selected := m.rows[m.cursor].id
-	m, _ = m.Update(engineEventMsg{event: engine.RunStarted{
+	m, _ = m.Update(monitor.EngineEventMsg{Event: engine.RunStarted{
 		RunID: "20260731-130000-d", Workflow: "wf", Steps: []string{"s"},
 	}})
 	if m.rows[0].id != "20260731-130000-d" {
@@ -105,7 +106,7 @@ func TestRunsHydrate(t *testing.T) {
 
 	// A run started live this session — seeded from RunStarted only, so it is
 	// still running.
-	m, _ = m.Update(engineEventMsg{event: engine.RunStarted{
+	m, _ = m.Update(monitor.EngineEventMsg{Event: engine.RunStarted{
 		RunID: "live-1", Workflow: "wf", Steps: []string{"a", "b"},
 	}})
 

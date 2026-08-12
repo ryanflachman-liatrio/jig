@@ -168,8 +168,8 @@ func (m *selectorModel) resize() {
 // and open action, plus the global chord.
 func (m selectorModel) helpSections() []helpSection {
 	return []helpSection{
-		{title: "Workflows", bindings: []keybind.Binding{m.keys.Nav, m.keys.Filter, m.keys.Open, m.keys.Apply, m.keys.Clear}},
-		{title: "Global", bindings: []keybind.Binding{keyHelp, keyQuit}},
+		{Title: "Workflows", Bindings: []keybind.Binding{m.keys.Nav, m.keys.Filter, m.keys.Open, m.keys.Apply, m.keys.Clear}},
+		{Title: "Global", Bindings: []keybind.Binding{keyHelp, keyQuit}},
 	}
 }
 

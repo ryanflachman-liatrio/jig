@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"jig/internal/engine"
+	"jig/internal/tui/monitor"
 	"jig/internal/workflow"
 )
 
@@ -35,9 +36,6 @@ type backToSelectorMsg struct{}
 // startRunMsg asks the root to start a new run for the given workflow.
 type startRunMsg struct{ wf *workflow.Workflow }
 
-// showRunsMsg asks the root to switch to the runs list.
-type showRunsMsg struct{}
-
 // showMonitorMsg asks the root to open the monitor for a specific run.
 type showMonitorMsg struct{ runID string }
 
@@ -47,122 +45,6 @@ type showMonitorMsg struct{ runID string }
 // sessions instead of an empty list.
 type runsHydratedMsg struct{ runs [][]engine.Event }
 
-// reviewVerdictMsg is emitted by the monitor when the user selects a verdict
-// for a review step. The root delivers it to the run via Run.Resolve.
-type reviewVerdictMsg struct {
-	runID   string
-	stepID  string
-	verdict string
-}
-
-// userInputResponseMsg is emitted by the monitor when the user submits text
-// for a from="user" input. The root delivers it via Run.ProvideUserInput.
-type userInputResponseMsg struct {
-	runID  string
-	stepID string
-	as     string
-	text   string
-}
-
-// reviewMessageMsg is emitted by the monitor when the user submits a free-text
-// message to the reviewed agent step. The root delivers it via Run.Message.
-type reviewMessageMsg struct {
-	runID  string
-	stepID string
-	text   string
-}
-
-// agentInputMsg is emitted by the monitor when the user submits a response to
-// an agent step blocked by block_on. The root delivers it via Run.SendInput.
-type agentInputMsg struct {
-	runID  string
-	stepID string
-	text   string
-}
-
-// agentQuestionResponseMsg is emitted by the monitor when the user answers an
-// AskUserQuestion call. The root delivers it via Run.AnswerQuestion.
-type agentQuestionResponseMsg struct {
-	runID     string
-	stepID    string
-	toolUseID string
-	answer    string
-}
-
-// recoverResponseMsg is emitted by the monitor when the user picks a recovery
-// action for a step parked in awaiting_recovery. The root delivers it via
-// Run.Recover. action is engine.RecoverRetry / RecoverResume / RecoverAbort;
-// text is optional guidance for the resume path.
-type recoverResponseMsg struct {
-	runID  string
-	stepID string
-	action string
-	text   string
-}
-
-// resolveIntegrationResponseMsg is emitted by the monitor when the user resolves
-// or aborts a step parked on an integration conflict. The root delivers it via
-// Run.ResolveIntegration. abort=false finishes the merge; abort=true fails the step.
-type resolveIntegrationResponseMsg struct {
-	runID  string
-	stepID string
-	abort  bool
-}
-
-// finalMergeResponseMsg is emitted by the monitor when the user answers the
-// final-merge gate. The root delivers it via Run.FinalMerge: approve lands the
-// run branch onto the base; discard leaves the run branch in place.
-type finalMergeResponseMsg struct {
-	runID   string
-	approve bool
-}
-
-// stopStepMsg is emitted by the monitor when the user presses the stop key on
-// a running step. The root delivers it via Run.Stop (spec 07 B1 / spec 08 C4).
-type stopStepMsg struct {
-	runID  string
-	stepID string
-}
-
-// resumeStepMsg is emitted by the monitor when the user presses the resume key
-// on a stopped step. The root delivers it via Run.Resume (spec 07 B2 / spec 08 C4).
-type resumeStepMsg struct {
-	runID   string
-	stepID  string
-	message string
-}
-
-// requestResetMsg is emitted by the monitor when the user presses the reset key
-// on a terminal/stopped step. The root resolves the closure via Run.ClosureOf
-// and either confirms immediately (empty downstream) or shows a confirmation.
-type requestResetMsg struct {
-	runID  string
-	stepID string
-}
-
-// resetStepMsg is emitted after the user confirms a reset (or immediately when
-// the closure has no downstream steps). The root delivers it via Run.Reset.
-type resetStepMsg struct {
-	runID  string
-	stepID string
-}
-
-// showResetConfirmMsg is emitted by the root to the monitor when the closure
-// has downstream steps, asking the monitor to show the confirmation gate entry.
-type showResetConfirmMsg struct {
-	runID   string
-	stepID  string
-	closure []string // all steps that will be reset (incl. target)
-}
-
-// engineEventMsg wraps one engine.Event for delivery as a tea.Msg.
-// isLive distinguishes which channel the event arrived on so the root can
-// re-arm the correct drain loop after processing.
-type engineEventMsg struct {
-	event  engine.Event
-	isLive bool
-}
-
 // ── root model ───────────────────────────────────────────────────────────────
 
 type rootModel struct {
@@ -170,7 +52,7 @@ type rootModel struct {
 	selector selectorModel
 	detail   detailModel
 	runs     runsModel
-	monitor  monitorModel
+	monitor  monitor.Model
 
 	ctx        context.Context
 	manager    *engine.Manager
@@ -187,6 +69,12 @@ type rootModel struct {
 	height int
 }
 
+// monitorHelpBridge adapts monitor.Model to the local helpProvider interface.
+type monitorHelpBridge struct{ m monitor.Model }
+
+func (b monitorHelpBridge) helpSections() []helpSection { return b.m.HelpSections() }
+func (b monitorHelpBridge) capturesText() bool          { return b.m.CapturesText() }
+
 // activeProvider returns the help sections + text-capture state of the screen
 // currently driving the UI.
 func (m rootModel) activeProvider() helpProvider {
@@ -196,7 +84,7 @@ func (m rootModel) activeProvider() helpProvider {
 	case screenRuns:
 		return m.runs
 	case screenMonitor:
-		return m.monitor
+		return monitorHelpBridge{m.monitor}
 	default:
 		return m.selector
 	}
@@ -260,12 +148,12 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(sc, dc, rc, mc)
 
 	// ── engine events ─────────────────────────────────────────────────────
-	case engineEventMsg:
+	case monitor.EngineEventMsg:
 		var rc, mc tea.Cmd
 		m.runs, rc = m.runs.Update(msg)
 		m.monitor, mc = m.monitor.Update(msg)
 		var rearm tea.Cmd
-		if msg.isLive {
+		if msg.IsLive {
 			rearm = waitForLiveEventCmd(m.liveEvents)
 		} else {
 			rearm = waitForCtrlEventCmd(m.ctrlEvents)
@@ -275,7 +163,7 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// The monitor's live-clock tick is routed unconditionally (like engine events)
 	// so the loop keeps advancing even while the user is on another screen; the
 	// monitor stops re-arming it once no step is running.
-	case monitorTickMsg:
+	case monitor.TickMsg:
 		var mc tea.Cmd
 		m.monitor, mc = m.monitor.Update(msg)
 		return m, mc
@@ -304,7 +192,7 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case showRunsMsg:
+	case monitor.ShowRunsMsg:
 		m.active = screenRuns
 		return m, nil
 
@@ -316,111 +204,111 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Preserve monitor state when returning to the same run — events that
 		// arrived while on other screens are already reflected, and we avoid
 		// an unnecessary Snapshot() call.
-		if m.monitor.runID != msg.runID {
-			m.monitor = newMonitorModel(msg.runID)
-			// runDir lets the monitor read per-step transcripts from disk. Set it
-			// before withSnapshot so it preserves it.
-			m.monitor.runDir = m.manager.RunDir(msg.runID)
+		if m.monitor.RunID != msg.runID {
+			m.monitor = monitor.New(msg.runID)
+			// RunDir lets the monitor read per-step transcripts from disk. Set it
+			// before WithSnapshot so it preserves it.
+			m.monitor.RunDir = m.manager.RunDir(msg.runID)
 			// Seed with a snapshot so already-completed or in-progress steps
 			// show up immediately. Snapshot() is safe for completed runs. A run
 			// from an earlier session has no handle, so fall back to replaying its
 			// journal from disk — the same events a Snapshot would carry.
 			if run, ok := m.handles[msg.runID]; ok {
 				snap := run.Snapshot()
-				m.monitor = m.monitor.withSnapshot(snap)
-			} else if evs, err := engine.ReplayJournal(m.monitor.runDir); err == nil && len(evs) > 0 {
-				m.monitor = m.monitor.withJournal(evs)
+				m.monitor = m.monitor.WithSnapshot(snap)
+			} else if evs, err := engine.ReplayJournal(m.monitor.RunDir); err == nil && len(evs) > 0 {
+				m.monitor = m.monitor.WithJournal(evs)
 			}
 		}
 		m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		m.active = screenMonitor
 		// A run seeded from a snapshot/journal may already have a step running (or the
 		// prior frame loop fell silent while off-screen); restart the live clock.
-		return m, m.monitor.ensureFrame()
+		return m, m.monitor.EnsureFrame()
 
-	case reviewVerdictMsg:
-		if run, ok := m.handles[msg.runID]; ok {
-			run.Resolve(msg.stepID, msg.verdict)
+	case monitor.ReviewVerdictMsg:
+		if run, ok := m.handles[msg.RunID]; ok {
+			run.Resolve(msg.StepID, msg.Verdict)
 		}
 		return m, nil
 
-	case reviewMessageMsg:
-		if run, ok := m.handles[msg.runID]; ok {
-			run.Message(msg.stepID, msg.text)
+	case monitor.ReviewMessageMsg:
+		if run, ok := m.handles[msg.RunID]; ok {
+			run.Message(msg.StepID, msg.Text)
 		}
 		return m, nil
 
-	case agentInputMsg:
-		if run, ok := m.handles[msg.runID]; ok {
-			run.SendInput(msg.stepID, msg.text)
+	case monitor.AgentInputMsg:
+		if run, ok := m.handles[msg.RunID]; ok {
+			run.SendInput(msg.StepID, msg.Text)
 		}
 		return m, nil
 
-	case agentQuestionResponseMsg:
-		if run, ok := m.handles[msg.runID]; ok {
-			run.AnswerQuestion(msg.stepID, msg.toolUseID, msg.answer)
+	case monitor.AgentQuestionResponseMsg:
+		if run, ok := m.handles[msg.RunID]; ok {
+			run.AnswerQuestion(msg.StepID, msg.ToolUseID, msg.Answer)
 		}
 		return m, nil
 
-	case recoverResponseMsg:
-		if run, ok := m.handles[msg.runID]; ok {
-			run.Recover(msg.stepID, msg.action, msg.text)
+	case monitor.RecoverResponseMsg:
+		if run, ok := m.handles[msg.RunID]; ok {
+			run.Recover(msg.StepID, msg.Action, msg.Text)
 		}
 		return m, nil
 
-	case resolveIntegrationResponseMsg:
-		if run, ok := m.handles[msg.runID]; ok {
-			run.ResolveIntegration(msg.stepID, msg.abort)
+	case monitor.ResolveIntegrationResponseMsg:
+		if run, ok := m.handles[msg.RunID]; ok {
+			run.ResolveIntegration(msg.StepID, msg.Abort)
 		}
 		return m, nil
 
-	case finalMergeResponseMsg:
-		if run, ok := m.handles[msg.runID]; ok {
-			run.FinalMerge(msg.approve)
+	case monitor.FinalMergeResponseMsg:
+		if run, ok := m.handles[msg.RunID]; ok {
+			run.FinalMerge(msg.Approve)
 		}
 		return m, nil
 
-	case stopStepMsg:
-		if run, ok := m.handles[msg.runID]; ok {
-			run.Stop(msg.stepID)
+	case monitor.StopStepMsg:
+		if run, ok := m.handles[msg.RunID]; ok {
+			run.Stop(msg.StepID)
 		}
 		return m, nil
 
-	case resumeStepMsg:
-		if run, ok := m.handles[msg.runID]; ok {
-			run.Resume(msg.stepID, msg.message)
+	case monitor.ResumeStepMsg:
+		if run, ok := m.handles[msg.RunID]; ok {
+			run.Resume(msg.StepID, msg.Message)
 		}
 		return m, nil
 
-	case requestResetMsg:
-		run, ok := m.handles[msg.runID]
+	case monitor.RequestResetMsg:
+		run, ok := m.handles[msg.RunID]
 		if !ok {
 			return m, nil
 		}
-		closure := run.ClosureOf(msg.stepID)
+		closure := run.ClosureOf(msg.StepID)
 		if len(closure) <= 1 {
 			// Linear tip: reset immediately, no confirmation needed.
-			run.Reset(msg.stepID)
+			run.Reset(msg.StepID)
 			return m, nil
 		}
 		// Mid-graph reset: ask the monitor to show the confirmation gate entry.
 		var monCmd tea.Cmd
-		m.monitor, monCmd = m.monitor.Update(showResetConfirmMsg{
-			runID:   msg.runID,
-			stepID:  msg.stepID,
-			closure: closure,
+		m.monitor, monCmd = m.monitor.Update(monitor.ShowResetConfirmMsg{
+			RunID:   msg.RunID,
+			StepID:  msg.StepID,
+			Closure: closure,
 		})
 		return m, monCmd
 
-	case resetStepMsg:
-		if run, ok := m.handles[msg.runID]; ok {
-			run.Reset(msg.stepID)
+	case monitor.ResetStepMsg:
+		if run, ok := m.handles[msg.RunID]; ok {
+			run.Reset(msg.StepID)
 		}
 		return m, nil
 
-	case userInputResponseMsg:
-		if run, ok := m.handles[msg.runID]; ok {
-			run.ProvideUserInput(msg.stepID, msg.as, msg.text)
+	case monitor.UserInputResponseMsg:
+		if run, ok := m.handles[msg.RunID]; ok {
+			run.ProvideUserInput(msg.StepID, msg.As, msg.Text)
 		}
 		return m, nil
 
@@ -435,8 +323,8 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.handles[run.ID] = run
 		m.runs = m.runs.withWorkflow(msg.wf)
 		// Navigate straight to the monitor so prompts and review gates are visible immediately.
-		m.monitor = newMonitorModel(run.ID)
-		m.monitor.runDir = m.manager.RunDir(run.ID)
+		m.monitor = monitor.New(run.ID)
+		m.monitor.RunDir = m.manager.RunDir(run.ID)
 		m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		m.active = screenMonitor
 		return m, nil
@@ -516,7 +404,7 @@ func waitForLiveEventCmd(ch <-chan engine.Event) tea.Cmd {
 		if !ok {
 			return nil
 		}
-		return engineEventMsg{event: e, isLive: true}
+		return monitor.EngineEventMsg{Event: e, IsLive: true}
 	}
 }
 
@@ -528,6 +416,7 @@ func waitForCtrlEventCmd(ch <-chan engine.Event) tea.Cmd {
 		if !ok {
 			return nil
 		}
-		return engineEventMsg{event: e, isLive: false}
+		return monitor.EngineEventMsg{Event: e, IsLive: false}
 	}
 }
+

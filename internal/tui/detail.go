@@ -9,6 +9,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"jig/internal/tui/monitor"
+	"jig/internal/tui/shared"
 	"jig/internal/workflow"
 )
 
@@ -93,7 +95,7 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 	case tea.KeyPressMsg:
 		switch {
 		case keybind.Matches(msg, m.keys.Runs):
-			return m, func() tea.Msg { return showRunsMsg{} }
+			return m, func() tea.Msg { return monitor.ShowRunsMsg{} }
 		case keybind.Matches(msg, m.keys.Toggle):
 			m.viewMode = !m.viewMode
 			m.applyViewMode()
@@ -188,8 +190,8 @@ func (m detailModel) footerView() string {
 // global chord. Run drops out when disabled, mirroring the footer.
 func (m detailModel) helpSections() []helpSection {
 	return []helpSection{
-		{title: "Workflow", bindings: []keybind.Binding{m.keys.Run, m.keys.Toggle, m.keys.Runs, m.keys.Back}},
-		{title: "Global", bindings: []keybind.Binding{keyHelp, keyQuit}},
+		{Title: "Workflow", Bindings: []keybind.Binding{m.keys.Run, m.keys.Toggle, m.keys.Runs, m.keys.Back}},
+		{Title: "Global", Bindings: []keybind.Binding{keyHelp, keyQuit}},
 	}
 }
 
@@ -294,24 +296,9 @@ func stepMarkers(s workflow.Step) []string {
 	return out
 }
 
-// padRight pads s with spaces to visibleWidth. When the string carries ANSI
-// styling, pass the unstyled length as the second arg so padding math ignores
-// the escape codes; a third arg overrides the target width.
-func padRight(s string, args ...int) string {
-	width := 0
-	visible := len(s)
-	switch len(args) {
-	case 1:
-		width = args[0]
-	case 2:
-		visible = args[0]
-		width = args[1]
-	}
-	if pad := width - visible; pad > 0 {
-		return s + strings.Repeat(" ", pad)
-	}
-	return s
-}
+// padRight is a package-level alias for shared.PadRight so other tui files
+// (chart_render.go, monitor_steps.go) can reference it without change.
+var padRight = shared.PadRight
 
 func (m detailModel) View() string {
 	if !m.ready {

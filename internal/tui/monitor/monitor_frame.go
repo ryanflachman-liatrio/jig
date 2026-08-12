@@ -1,4 +1,4 @@
-package tui
+package monitor
 
 import (
 	"time"
@@ -15,23 +15,18 @@ import (
 // handful of renders instead of one full re-render per delta.
 const monitorFrameInterval = 100 * time.Millisecond
 
-// monitorTickMsg drives the frame loop: the live elapsed-time clock and the
-// coalesced panel repaint. It carries the tick time only for provenance; the
-// duration column reads wall-clock time when it renders.
-type monitorTickMsg time.Time
-
 // monitorTickCmd schedules the next frame. The loop re-arms itself from the
-// monitorTickMsg handler while a step runs or a panel is dirty, then falls silent.
+// TickMsg handler while a step runs or a panel is dirty, then falls silent.
 func monitorTickCmd() tea.Cmd {
 	return tea.Tick(monitorFrameInterval, func(t time.Time) tea.Msg {
-		return monitorTickMsg(t)
+		return TickMsg(t)
 	})
 }
 
 // flushDirty repaints whichever panels are marked dirty and clears their flags.
 // It no-ops before the first resize (no viewport yet — resize repaints itself),
 // so the dirty flags survive until there is something to render into.
-func (m *monitorModel) flushDirty() {
+func (m *Model) flushDirty() {
 	if !m.ready {
 		return
 	}
@@ -48,10 +43,10 @@ func (m *monitorModel) flushDirty() {
 	}
 }
 
-// ensureFrame schedules a frame if one is not already in flight and there is
+// EnsureFrame schedules a frame if one is not already in flight and there is
 // work to do (a dirty panel or a running clock). It is the single entry point
 // that arms the loop, so concurrent events never stack duplicate tickers.
-func (m *monitorModel) ensureFrame() tea.Cmd {
+func (m *Model) EnsureFrame() tea.Cmd {
 	if m.ticking {
 		return nil
 	}
@@ -67,7 +62,7 @@ func (m *monitorModel) ensureFrame() tea.Cmd {
 // events (streaming output, tool calls, liveness, status) matter only when they
 // belong to chatStep, so a parallel step's stream does not trigger the expensive
 // glamour re-render. Everything else is low-frequency and conservatively repaints.
-func (m monitorModel) eventAffectsChat(e engine.Event) bool {
+func (m Model) eventAffectsChat(e engine.Event) bool {
 	switch ev := e.(type) {
 	case engine.StepStatus:
 		return ev.StepID == m.chatStep
@@ -84,7 +79,7 @@ func (m monitorModel) eventAffectsChat(e engine.Event) bool {
 
 // anyRunning reports whether at least one step is currently executing — the
 // condition under which the frame loop keeps advancing the live clock.
-func (m monitorModel) anyRunning() bool {
+func (m Model) anyRunning() bool {
 	for _, s := range m.steps {
 		if s.status == step.StatusRunning {
 			return true

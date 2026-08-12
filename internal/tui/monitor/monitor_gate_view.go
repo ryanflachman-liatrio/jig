@@ -1,10 +1,12 @@
-package tui
+package monitor
 
 import (
 	"fmt"
 	"strings"
 
 	"charm.land/lipgloss/v2"
+
+	"jig/internal/tui/shared"
 )
 
 // clipReason wraps s to width and truncates to at most maxLines, appending an
@@ -38,14 +40,14 @@ func clipReason(s string, width, maxLines int) string {
 // the queue is empty — so the Steps and Transcript panels never resize on input
 // arrival or departure (Spec Unit 2). The panel height is always
 // gateBodyHeight()+vFrame, and the border is blurred when focus != focusGate.
-func (m monitorModel) gateStrip() string {
-	_, vFrame := panelFrame()
+func (m Model) gateStrip() string {
+	_, vFrame := shared.PanelFrame()
 	fixedH := m.gateBodyHeight() + vFrame
 
 	// Empty queue: render a placeholder panel with a blurred border.
 	if !m.hasGate() {
-		placeholder := "\n  " + theme.Chat.Hint.Render("No pending agent inputs")
-		return panel("Agent input", placeholder, m.width, fixedH, false)
+		placeholder := "\n  " + shared.Theme.Chat.Hint.Render("No pending agent inputs")
+		return shared.Panel("Agent input", placeholder, m.width, fixedH, false)
 	}
 
 	entry, _ := m.activeEntry()
@@ -55,7 +57,7 @@ func (m monitorModel) gateStrip() string {
 		// [N / M]  step-id  (kind) header above every active entry body (task 3.4).
 		n := len(m.inputQueue)
 		header := fmt.Sprintf("[%d / %d]  %s  (%s)", m.activeInputIdx+1, n, entry.stepID, kindName(entry.kind))
-		b.WriteString(theme.Title.Render(header) + "\n")
+		b.WriteString(shared.Theme.Title.Render(header) + "\n")
 		switch entry.kind {
 		case inputKindRequest:
 			m.renderGateRequest(&b, entry)
@@ -76,14 +78,14 @@ func (m monitorModel) gateStrip() string {
 		}
 	}
 
-	return panel("Agent input", b.String(), m.width, fixedH, m.focus == focusGate)
+	return shared.Panel("Agent input", b.String(), m.width, fixedH, m.focus == focusGate)
 }
 
-func (m monitorModel) renderGateRequest(b *strings.Builder, entry *pendingInputEntry) {
+func (m Model) renderGateRequest(b *strings.Builder, entry *pendingInputEntry) {
 	b.WriteString(m.promptTextarea.View())
 }
 
-func (m monitorModel) renderGateQuestion(b *strings.Builder, entry *pendingInputEntry) {
+func (m Model) renderGateQuestion(b *strings.Builder, entry *pendingInputEntry) {
 	if entry.questionIdx < len(entry.question.Questions) {
 		q := entry.question.Questions[entry.questionIdx]
 
@@ -128,13 +130,13 @@ func (m monitorModel) renderGateQuestion(b *strings.Builder, entry *pendingInput
 		}
 
 		if q.Header != "" {
-			b.WriteString("  " + theme.Question.Render("["+q.Header+"]") + "\n")
+			b.WriteString("  " + shared.Theme.Question.Render("["+q.Header+"]") + "\n")
 		}
 		b.WriteString("  " + q.Question + "\n\n")
 
 		if scrollable {
 			if scrollOffset > 0 {
-				b.WriteString("    " + theme.Chat.Hint.Render("▲ more") + "\n")
+				b.WriteString("    " + shared.Theme.Chat.Hint.Render("▲ more") + "\n")
 			} else {
 				b.WriteString("\n") // placeholder keeps height stable
 			}
@@ -165,28 +167,28 @@ func (m monitorModel) renderGateQuestion(b *strings.Builder, entry *pendingInput
 
 		if scrollable {
 			if end < len(q.Options) {
-				b.WriteString("    " + theme.Chat.Hint.Render("▼ more") + "\n")
+				b.WriteString("    " + shared.Theme.Chat.Hint.Render("▼ more") + "\n")
 			} else {
 				b.WriteString("\n") // placeholder keeps height stable
 			}
 		}
 
 		if q.MultiSelect {
-			b.WriteString("\n    " + theme.Chat.Hint.Render("enter to confirm selection") + "\n")
+			b.WriteString("\n    " + shared.Theme.Chat.Hint.Render("enter to confirm selection") + "\n")
 		}
 		if len(entry.question.Questions) > 1 {
-			b.WriteString("    " + theme.Chat.Hint.Render(
+			b.WriteString("    " + shared.Theme.Chat.Hint.Render(
 				fmt.Sprintf("question %d of %d", entry.questionIdx+1, len(entry.question.Questions))) + "\n")
 		}
 	}
 }
 
-func (m monitorModel) renderGatePrompt(b *strings.Builder, entry *pendingInputEntry) {
-	b.WriteString("  " + theme.Question.Render(entry.prompt.Label) + "\n\n")
+func (m Model) renderGatePrompt(b *strings.Builder, entry *pendingInputEntry) {
+	b.WriteString("  " + shared.Theme.Question.Render(entry.prompt.Label) + "\n\n")
 	b.WriteString(m.promptTextarea.View())
 }
 
-func (m monitorModel) renderGateReview(b *strings.Builder, entry *pendingInputEntry) {
+func (m Model) renderGateReview(b *strings.Builder, entry *pendingInputEntry) {
 	if entry.composing {
 		b.WriteString(m.promptTextarea.View())
 	} else {
@@ -196,11 +198,11 @@ func (m monitorModel) renderGateReview(b *strings.Builder, entry *pendingInputEn
 		if entry.review.AllowMessage {
 			b.WriteString("    [m] message\n")
 		}
-		b.WriteString("\n    " + theme.Chat.Hint.Render("diff shown in Transcript — select this step") + "\n")
+		b.WriteString("\n    " + shared.Theme.Chat.Hint.Render("diff shown in Transcript — select this step") + "\n")
 	}
 }
 
-func (m monitorModel) renderGateRecovery(b *strings.Builder, entry *pendingInputEntry) {
+func (m Model) renderGateRecovery(b *strings.Builder, entry *pendingInputEntry) {
 	if entry.composing {
 		b.WriteString(m.promptTextarea.View())
 	} else {
@@ -209,7 +211,7 @@ func (m monitorModel) renderGateRecovery(b *strings.Builder, entry *pendingInput
 		reasonLines := strings.Split(reason, "\n")
 		for i := 0; i < 2; i++ {
 			if i < len(reasonLines) {
-				b.WriteString("  " + theme.Error.Render(reasonLines[i]) + "\n")
+				b.WriteString("  " + shared.Theme.Error.Render(reasonLines[i]) + "\n")
 			} else {
 				b.WriteString("\n") // pad to keep height stable
 			}
@@ -224,7 +226,7 @@ func (m monitorModel) renderGateRecovery(b *strings.Builder, entry *pendingInput
 	}
 }
 
-func (m monitorModel) renderGateIntegration(b *strings.Builder, entry *pendingInputEntry) {
+func (m Model) renderGateIntegration(b *strings.Builder, entry *pendingInputEntry) {
 	// Name the conflicted paths (bounded to two rows for a fixed strip
 	// height), then the resolve/abort affordances.
 	paths := strings.Join(entry.integration.Paths, ", ")
@@ -234,7 +236,7 @@ func (m monitorModel) renderGateIntegration(b *strings.Builder, entry *pendingIn
 	pathLines := strings.Split(clipReason("conflict in "+paths, m.gateInnerWidth()-2, 2), "\n")
 	for i := 0; i < 2; i++ {
 		if i < len(pathLines) {
-			b.WriteString("  " + theme.Error.Render(pathLines[i]) + "\n")
+			b.WriteString("  " + shared.Theme.Error.Render(pathLines[i]) + "\n")
 		} else {
 			b.WriteString("\n")
 		}
@@ -243,19 +245,19 @@ func (m monitorModel) renderGateIntegration(b *strings.Builder, entry *pendingIn
 	b.WriteString("    [a] abort run\n")
 }
 
-func (m monitorModel) renderGateFinalMerge(b *strings.Builder, entry *pendingInputEntry) {
+func (m Model) renderGateFinalMerge(b *strings.Builder, entry *pendingInputEntry) {
 	fm := entry.finalMerge
 	base := fm.Base
 	if base == "" {
 		base = "working branch"
 	}
 	line := clipReason("merge "+fm.RunBranch+" → "+base, m.gateInnerWidth()-2, 1)
-	b.WriteString("  " + theme.Marker.Render(line) + "\n\n")
+	b.WriteString("  " + shared.Theme.Marker.Render(line) + "\n\n")
 	b.WriteString("    [y] merge onto " + base + "\n")
 	b.WriteString("    [d] discard (leave run branch)\n")
 }
 
-func (m monitorModel) renderGateResetConfirm(b *strings.Builder, entry *pendingInputEntry) {
+func (m Model) renderGateResetConfirm(b *strings.Builder, entry *pendingInputEntry) {
 	rc := entry.resetConfirm
 	count := len(rc.closure) - 1 // downstream steps (excluding the target itself)
 	ids := strings.Join(rc.closure, ", ")
@@ -264,7 +266,7 @@ func (m monitorModel) renderGateResetConfirm(b *strings.Builder, entry *pendingI
 	lineRows := strings.Split(line, "\n")
 	for i := 0; i < 2; i++ {
 		if i < len(lineRows) {
-			b.WriteString("  " + theme.Error.Render(lineRows[i]) + "\n")
+			b.WriteString("  " + shared.Theme.Error.Render(lineRows[i]) + "\n")
 		} else {
 			b.WriteString("\n")
 		}
