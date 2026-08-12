@@ -133,7 +133,7 @@ func (m selectorModel) Update(msg tea.Msg) (selectorModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.resize()
+		m = m.resize()
 		return m, nil
 
 	case workflowsLoadedMsg:
@@ -159,7 +159,7 @@ func (m selectorModel) Update(msg tea.Msg) (selectorModel, tea.Cmd) {
 
 // resize fits the list to the panel's inner area, leaving room for the footer
 // line rendered below the box.
-func (m *selectorModel) resize() {
+func (m selectorModel) resize() selectorModel {
 	hFrame, vFrame := shared.PanelFrame()
 	footerH := lipgloss.Height(m.footerView())
 	w := m.width - hFrame
@@ -171,10 +171,9 @@ func (m *selectorModel) resize() {
 		h = 1
 	}
 	m.list.SetSize(w, h)
+	return m
 }
 
-// footerView is the single plain hint line below the panel; it branches on the
-// filter state, mirroring lazygit's global keybind bar.
 // helpSections satisfies helpProvider: the selector's list navigation, filter,
 // and open action, plus the global chord.
 func (m selectorModel) helpSections() []shared.HelpSection {
@@ -190,6 +189,8 @@ func (m selectorModel) capturesText() bool {
 	return m.list.FilterState() == list.Filtering
 }
 
+// footerView renders the single hint line below the panel; it branches on the
+// filter state, mirroring lazygit's global keybind bar.
 func (m selectorModel) footerView() string {
 	if m.list.FilterState() == list.Filtering {
 		return shared.Theme.Footer.Render("  " + shared.HintString(m.keys.Apply, m.keys.Clear, shared.KeyQuit))
