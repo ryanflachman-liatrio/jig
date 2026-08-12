@@ -13,6 +13,8 @@ import (
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
 	claudecode "github.com/severity1/claude-agent-sdk-go"
+
+	"jig/internal/tui/shared"
 )
 
 // focusTarget identifies which pane currently receives non-global key
@@ -283,7 +285,7 @@ func (m chatModel) View() tea.View {
 		return tea.NewView("Initializing...\n")
 	}
 
-	_, vFrame := panelFrame()
+	_, vFrame := shared.PanelFrame()
 	width := m.width
 	if width < 1 {
 		width = 1
@@ -294,8 +296,8 @@ func (m chatModel) View() tea.View {
 	convH := m.viewport.Height() + vFrame
 	msgH := m.textarea.Height() + vFrame
 
-	conversation := panel(m.conversationTitle(), m.viewport.View(), width, convH, m.focus == focusOutput)
-	message := panel(m.messageTitle(), m.textarea.View(), width, msgH, m.focus == focusInput)
+	conversation := shared.Panel(m.conversationTitle(), m.viewport.View(), width, convH, m.focus == focusOutput)
+	message := shared.Panel(m.messageTitle(), m.textarea.View(), width, msgH, m.focus == focusInput)
 
 	parts := []string{conversation, message}
 	if line := m.fatalLine(); line != "" {

@@ -14,6 +14,7 @@ import (
 	"jig/internal/engine"
 	"jig/internal/step"
 	"jig/internal/tui/monitor"
+	"jig/internal/tui/shared"
 	"jig/internal/workflow"
 )
 
@@ -195,7 +196,7 @@ func (m runsModel) handleEngineEvent(e engine.Event) runsModel {
 // resize fits the run-row viewport to the panel's inner area, leaving a row for
 // the footer below the box.
 func (m *runsModel) resize() {
-	hFrame, vFrame := panelFrame()
+	hFrame, vFrame := shared.PanelFrame()
 	footerH := lipgloss.Height(m.footerView())
 	w := m.width - hFrame
 	h := m.height - vFrame - footerH
@@ -301,7 +302,7 @@ func (m runsModel) View() string {
 	if m.ready {
 		content = m.vp.View()
 	}
-	body := panel("Runs", content, m.width, m.height-lipgloss.Height(footer), true)
+	body := shared.Panel("Runs", content, m.width, m.height-lipgloss.Height(footer), true)
 	return body + "\n" + footer
 }
 

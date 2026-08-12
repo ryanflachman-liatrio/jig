@@ -7,6 +7,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
+
+	"jig/internal/tui/shared"
 )
 
 // renderActiveTurn rebuilds the viewport's content from m.turns[m.activeTurn].
@@ -74,7 +76,7 @@ func (m *chatModel) renderActiveTurn() {
 func (m *chatModel) handleResize(msg tea.WindowSizeMsg) {
 	m.width, m.height = msg.Width, msg.Height
 
-	hFrame, vFrame := panelFrame()
+	hFrame, vFrame := shared.PanelFrame()
 
 	footerHeight := lipgloss.Height(m.footerView())
 	fatalHeight := lipgloss.Height(m.fatalLine())

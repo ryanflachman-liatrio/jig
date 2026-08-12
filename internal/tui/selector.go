@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"jig/internal/tui/shared"
 	"jig/internal/workflow"
 )
 
@@ -149,7 +150,7 @@ func (m selectorModel) Update(msg tea.Msg) (selectorModel, tea.Cmd) {
 // resize fits the list to the panel's inner area, leaving room for the footer
 // line rendered below the box.
 func (m *selectorModel) resize() {
-	hFrame, vFrame := panelFrame()
+	hFrame, vFrame := shared.PanelFrame()
 	footerH := lipgloss.Height(m.footerView())
 	w := m.width - hFrame
 	h := m.height - vFrame - footerH
@@ -198,6 +199,6 @@ func (m selectorModel) View() string {
 			"\n\n" + theme.Footer.Render("  "+hintString(keyQuit)) + "\n"
 	}
 	footer := m.footerView()
-	body := panel("Workflows", m.list.View(), m.width, m.height-lipgloss.Height(footer), true)
+	body := shared.Panel("Workflows", m.list.View(), m.width, m.height-lipgloss.Height(footer), true)
 	return body + "\n" + footer
 }

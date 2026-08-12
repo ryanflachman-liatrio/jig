@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
+
+	"jig/internal/tui/shared"
 )
 
 // TestPanel verifies the pure-presentation titled-panel helper: it draws the
@@ -33,7 +35,7 @@ func TestPanel(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			out := panel(tc.title, "body line\nsecond", width, height, tc.focused)
+			out := shared.Panel(tc.title, "body line\nsecond", width, height, tc.focused)
 
 			// Rounded corners present on all four sides.
 			for _, corner := range []string{"╭", "╮", "╰", "╯"} {
@@ -71,12 +73,12 @@ func TestPanel(t *testing.T) {
 // vertical frame so callers never fall back to magic numbers, and that the
 // vertical frame includes the hand-built top edge row.
 func TestPanelFrame(t *testing.T) {
-	h, v := panelFrame()
+	h, v := shared.PanelFrame()
 	if h <= 0 || v <= 0 {
 		t.Fatalf("panelFrame() = (%d, %d), want both > 0", h, v)
 	}
 	// A panel of exactly the frame size renders an empty body with no overflow.
-	out := panel("T", "", 10, v+1, true)
+	out := shared.Panel("T", "", 10, v+1, true)
 	if got := lipgloss.Height(out); got != v+1 {
 		t.Errorf("height = %d, want %d", got, v+1)
 	}

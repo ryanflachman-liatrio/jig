@@ -123,7 +123,7 @@ func (m detailModel) Update(msg tea.Msg) (detailModel, tea.Cmd) {
 // resize (re)builds the viewport to fit the panel's inner area, leaving one row
 // for the footer help line below the box.
 func (m *detailModel) resize() {
-	hFrame, vFrame := panelFrame()
+	hFrame, vFrame := shared.PanelFrame()
 	footerHeight := lipgloss.Height(m.footerView())
 	vpWidth := m.width - hFrame
 	vpHeight := m.height - vFrame - footerHeight
@@ -304,6 +304,6 @@ func (m detailModel) View() string {
 		return "\n  Loading…\n"
 	}
 	footer := m.footerView()
-	body := panel(m.titleText(), m.vp.View(), m.width, m.height-lipgloss.Height(footer), true)
+	body := shared.Panel(m.titleText(), m.vp.View(), m.width, m.height-lipgloss.Height(footer), true)
 	return lipgloss.JoinVertical(lipgloss.Left, body, footer)
 }
