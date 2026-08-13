@@ -22,6 +22,34 @@ type HelpProvider interface {
 	CapturesText() bool
 }
 
+// RenderConfirmOverlay composites a centered confirmation box over base using
+// the same Compositor technique as RenderHelpOverlay.  title is rendered in
+// the danger color; body lines follow; a fixed hint closes the box.
+func RenderConfirmOverlay(base, title, body string, width, height int) string {
+	var content strings.Builder
+	content.WriteString(Theme.Error.Render(title))
+	content.WriteString("\n\n")
+	content.WriteString(Theme.Question.Render(body))
+	content.WriteString("\n\n")
+	content.WriteString(Theme.Help.Desc.Render("y to confirm · n or esc to cancel"))
+
+	box := Theme.Help.Box.Render(content.String())
+
+	x := (width - lipgloss.Width(box)) / 2
+	y := (height - lipgloss.Height(box)) / 2
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+	comp := lipgloss.NewCompositor(
+		lipgloss.NewLayer(base),
+		lipgloss.NewLayer(box).X(x).Y(y).Z(1),
+	)
+	return lipgloss.NewCanvas(width, height).Compose(comp).Render()
+}
+
 // RenderHelpOverlay composites the modal box centered over base — the live
 // screen — using a lipgloss v2 Canvas so the underlying screen shows through
 // around the box (the box layer draws on top; cells it does not cover keep the

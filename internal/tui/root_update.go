@@ -4,6 +4,7 @@ import (
 	keybind "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
+	"jig/internal/datastore"
 	"jig/internal/engine"
 	"jig/internal/tui/detail"
 	"jig/internal/tui/monitor"
@@ -133,6 +134,11 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case runs.RequestDeleteMsg:
+		m.confirmDelete = true
+		m.pendingDeleteID = msg.RunID
+		return m, nil
+
 	case detail.StartRunMsg:
 		return m.startRun(msg.Wf)
 
@@ -162,6 +168,19 @@ func (m rootModel) handleGlobalKey(msg tea.KeyPressMsg) (rootModel, tea.Cmd, boo
 	if keybind.Matches(msg, shared.KeyQuit) {
 		return m, tea.Quit, true
 	}
+	// Delete-confirm is a blocking modal: it swallows every key except y/n/esc.
+	// Checked before help so "?" is also swallowed while the confirm is open.
+	if m.confirmDelete {
+		switch msg.String() {
+		case "y":
+			m, cmd := m.handleDeleteConfirmed()
+			return m, cmd, true
+		default:
+			m.confirmDelete = false
+			m.pendingDeleteID = ""
+		}
+		return m, nil, true
+	}
 	// Help is a global modal owned by the root. While open it swallows every
 	// key except its own toggle and esc, so nothing fires on the screen behind
 	// it. When closed, "?" opens it — unless the active screen is capturing free
@@ -177,6 +196,32 @@ func (m rootModel) handleGlobalKey(msg tea.KeyPressMsg) (rootModel, tea.Cmd, boo
 		return m, nil, true
 	}
 	return m, nil, false
+}
+
+// handleDeleteConfirmed executes a confirmed run deletion: removes the row
+// from the runs list, cancels the run if it is still live (deferring the
+// directory delete until RunFinished arrives), or deletes the directory
+// immediately for a finished run.  If the monitor is currently showing the
+// deleted run, navigates back to the runs list.
+func (m rootModel) handleDeleteConfirmed() (rootModel, tea.Cmd) {
+	m.confirmDelete = false
+	runID := m.pendingDeleteID
+	m.pendingDeleteID = ""
+
+	m.runs = m.runs.DeleteRun(runID)
+
+	if m.monitor.RunID == runID {
+		m.active = screenRuns
+	}
+
+	if run, ok := m.handles[runID]; ok {
+		run.Cancel()
+		m.pendingDeletions[runID] = true
+		delete(m.handles, runID)
+	} else {
+		datastore.DeleteRun(m.manager.Root(), runID)
+	}
+	return m, nil
 }
 
 func (m rootModel) updateWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) {
@@ -200,6 +245,14 @@ func (m rootModel) updateEngineEvent(msg monitor.EngineEventMsg) (tea.Model, tea
 		rearm = waitForLiveEventCmd(m.liveEvents)
 	} else {
 		rearm = waitForCtrlEventCmd(m.ctrlEvents)
+	}
+	// Delete the run directory once the scheduler goroutine has stopped writing
+	// to it — signalled by RunFinished for a run in the pending-deletions set.
+	if fin, ok := msg.Event.(engine.RunFinished); ok {
+		if m.pendingDeletions[fin.RunID] {
+			datastore.DeleteRun(m.manager.Root(), fin.RunID)
+			delete(m.pendingDeletions, fin.RunID)
+		}
 	}
 	return m, tea.Batch(rearm, rc, mc)
 }

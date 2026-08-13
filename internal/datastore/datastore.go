@@ -117,6 +117,17 @@ func OutputJSONPath(runDir, stepID string) string {
 	return filepath.Join(runDir, "steps", stepID, "output.json")
 }
 
+// DeleteRun removes the entire run directory for runID from disk.  It is a
+// no-op when root is empty (persistence-off path) or when the directory does
+// not exist.  It does not call RunDir, so no directories are created as a
+// side-effect.
+func DeleteRun(root, runID string) error {
+	if root == "" {
+		return nil
+	}
+	return os.RemoveAll(filepath.Join(root, "runs", runID))
+}
+
 // ClearStepOutputs removes the derived per-step outputs for stepID —
 // result.json, output.md, and output.json — so a reset step starts fresh.
 // transcript.jsonl is intentionally left intact: it is append-only and a

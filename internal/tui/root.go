@@ -55,6 +55,17 @@ type rootModel struct {
 	// overlay over the active screen and swallows all other keys.
 	showHelp bool
 
+	// confirmDelete and pendingDeleteID drive the delete-confirmation overlay.
+	// Root owns this (mirroring showHelp) so it can cancel live runs directly
+	// and swallow keys in handleGlobalKey while the modal is open.
+	confirmDelete   bool
+	pendingDeleteID string
+
+	// pendingDeletions tracks live runIDs whose directories should be removed
+	// once the engine emits RunFinished (Cancel is async — we can't remove the
+	// directory until the scheduler goroutine has stopped writing to it).
+	pendingDeletions map[string]bool
+
 	width  int
 	height int
 }
@@ -112,14 +123,15 @@ func (m rootModel) activeProvider() helpProvider {
 func New(ctx context.Context, mgr *engine.Manager) tea.Model {
 	live, ctrl := mgr.Subscribe()
 	return rootModel{
-		active:     screenSelector,
-		selector:   selector.New(),
-		runs:       runs.NewModel(),
-		ctx:        ctx,
-		manager:    mgr,
-		liveEvents: live,
-		ctrlEvents: ctrl,
-		handles:    make(map[string]*engine.Run),
+		active:           screenSelector,
+		selector:         selector.New(),
+		runs:             runs.NewModel(),
+		ctx:              ctx,
+		manager:          mgr,
+		liveEvents:       live,
+		ctrlEvents:       ctrl,
+		handles:          make(map[string]*engine.Run),
+		pendingDeletions: make(map[string]bool),
 	}
 }
 
@@ -149,6 +161,12 @@ func (m rootModel) View() tea.View {
 	// "?" chord surfaces context-appropriate keys everywhere.
 	if m.showHelp {
 		content = shared.RenderHelpOverlay(content, m.width, m.height, m.activeProvider().helpSections())
+	}
+	// The delete-confirm overlay is also root-owned so it can swallow all keys
+	// and call run.Cancel() directly without a round-trip message.
+	if m.confirmDelete {
+		body := m.pendingDeleteID + "\n\nRunning steps will be cancelled.\nAll output will be permanently deleted."
+		content = shared.RenderConfirmOverlay(content, "Delete run?", body, m.width, m.height)
 	}
 	// v2 declares alt-screen and the full-screen background on the View itself
 	// (the compositor paints BackgroundColor edge-to-edge, so nested styled

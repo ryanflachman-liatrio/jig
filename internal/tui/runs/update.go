@@ -49,11 +49,36 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				wf := m.wf
 				return m, func() tea.Msg { return StartRunMsg{Wf: wf} }
 			}
+		case keybind.Matches(msg, m.keys.Delete):
+			if m.cursor < len(m.rows) {
+				id := m.rows[m.cursor].id
+				return m, func() tea.Msg { return RequestDeleteMsg{RunID: id} }
+			}
 		case keybind.Matches(msg, m.keys.Back):
 			return m, func() tea.Msg { return BackMsg{} }
 		}
 	}
 	return m, nil
+}
+
+// DeleteRun removes the row for runID from the list, rebuilds the index, and
+// clamps the cursor so it stays in bounds.
+func (m Model) DeleteRun(runID string) Model {
+	filtered := m.rows[:0]
+	for _, row := range m.rows {
+		if row.id != runID {
+			filtered = append(filtered, row)
+		}
+	}
+	m.rows = filtered
+	m.index = make(map[string]int, len(m.rows))
+	for i, row := range m.rows {
+		m.index[row.id] = i
+	}
+	if m.cursor >= len(m.rows) && m.cursor > 0 {
+		m.cursor = len(m.rows) - 1
+	}
+	return m.syncViewport()
 }
 
 // Hydrate folds runs recovered from disk into the list — one grouped,

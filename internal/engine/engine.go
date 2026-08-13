@@ -65,6 +65,10 @@ func (m *Manager) SetMonitors(monitors []sentinel.MonitorDef) {
 	m.monitors = monitors
 }
 
+// Root returns the .jig/ directory configured for this manager, or "" when
+// persistence is disabled.
+func (m *Manager) Root() string { return m.root }
+
 // RunDir returns the on-disk directory for runID without creating it, or "" when
 // persistence is disabled (root == ""). Readers such as the TUI transcript view
 // use it to locate a run's per-step transcript files; the path mirrors the
