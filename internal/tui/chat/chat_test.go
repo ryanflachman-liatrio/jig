@@ -1,4 +1,4 @@
-package tui
+package chat
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 // model's presentation state alone, which is all these tests exercise.
 func newReadyChat(t *testing.T) chatModel {
 	t.Helper()
-	m := newChatModel(context.Background(), true).(chatModel)
+	m := New(context.Background(), true).(chatModel)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	cm, ok := updated.(chatModel)
 	if !ok {

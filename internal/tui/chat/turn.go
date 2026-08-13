@@ -1,4 +1,4 @@
-package tui
+package chat
 
 // turn is one question/answer pair, rendered into its own pane. answer
 // accumulates in place while the response streams; rendered is a

@@ -1,4 +1,4 @@
-package tui
+package chat
 
 // primaryBorderSeq is the SGR truecolor foreground for the Charple primary
 // token (#6B50FF) that lipgloss emits for the focused panel border. Used by
