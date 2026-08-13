@@ -154,14 +154,25 @@ func (m *Model) rebuildRenderer() {
 }
 
 // ensureCursorVisible nudges the viewport so the selected step stays on screen
-// as the cursor moves, keeping a small margin from the top and bottom edges. The
-// step rows now start at line 0 (the panel border carries the "Steps" title), so
-// the cursor index maps directly to a viewport row.
+// as the cursor moves, keeping a small margin from the top and bottom edges.
+// Step rows occupy stepRowLines (2) physical lines; file rows occupy 1. We sum
+// variable row heights up to the cursor rather than multiplying by stepRowLines
+// so that expanded file trees don't skew the scroll offset.
 func (m *Model) ensureCursorVisible() {
 	if !m.ready {
 		return
 	}
-	row := listBodyHeaderLines + m.cursor*stepRowLines
+	row := listBodyHeaderLines
+	for i, r := range m.visibleRows() {
+		if i == m.cursor {
+			break
+		}
+		if r.isFileRow() {
+			row++
+		} else {
+			row += stepRowLines
+		}
+	}
 	const margin = 2
 	top := m.vp.YOffset()
 	bottom := top + m.vp.Height() - 1
