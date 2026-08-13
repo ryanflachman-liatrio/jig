@@ -442,19 +442,27 @@ func (m Model) fileBody() string {
 		return b.String()
 	}
 
-	// Use a synthetic blockKey that will never collide with transcript blocks:
-	// seq=-1 is not a valid transcript sequence number.
-	fileKey := blockKey{seq: -1, block: 0}
+	// Render directly without the transcript block cache: the cache key
+	// (blockKey) is integer-only, so there's no stable per-file key, and file
+	// content is read fresh from disk each call anyway.
+	render := func(text string) string {
+		if m.renderer != nil {
+			if r, err := m.renderer.Render(text); err == nil {
+				return r
+			}
+		}
+		return text
+	}
 
 	switch kind {
 	case kindMarkdown:
-		b.WriteString(m.renderMarkdown(fileKey, content))
+		b.WriteString(render(content))
 	case kindJSON:
 		fenced := fenceJSON(content)
 		if fenced == "" {
 			fenced = content
 		}
-		b.WriteString(m.renderMarkdown(fileKey, fenced))
+		b.WriteString(render(fenced))
 	default:
 		writeVerbatim(&b, content)
 	}
