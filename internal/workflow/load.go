@@ -48,6 +48,9 @@ func Decode(data, baseDir string) (*Workflow, error) {
 	if err := wf.resolveAgentFiles(baseDir); err != nil {
 		return nil, err
 	}
+	if err := wf.resolveOutputTemplates(baseDir); err != nil {
+		return nil, err
+	}
 
 	// Load built-in and project-local profiles, then apply them. Profiles run
 	// after agent_file resolution (explicit step fields and file-derived values

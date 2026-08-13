@@ -54,6 +54,27 @@ func (wf *Workflow) resolveAgentFiles(baseDir string) error {
 	return nil
 }
 
+// resolveOutputTemplates reads each agent step's output_template file and stores
+// the body in outputTemplateBody. baseDir == "" skips file reads (structural-only
+// mode), mirroring the resolveAgentFiles pattern.
+func (wf *Workflow) resolveOutputTemplates(baseDir string) error {
+	if baseDir == "" {
+		return nil
+	}
+	for i := range wf.Steps {
+		s := &wf.Steps[i]
+		if s.OutputTemplate == "" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(baseDir, s.OutputTemplate))
+		if err != nil {
+			return fmt.Errorf("agent step %q: output_template %q not found", s.ID, s.OutputTemplate)
+		}
+		s.outputTemplateBody = strings.TrimSpace(string(data))
+	}
+	return nil
+}
+
 // parseAgentFile splits a Claude agent file into its frontmatter fields and body.
 // The frontmatter is the small flat subset jig needs (name/description/tools/
 // model); unknown keys are ignored so richer agent files still load. `tools`

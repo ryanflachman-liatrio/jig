@@ -251,8 +251,13 @@ func (v *validator) checkAgent(s *Step) {
 			v.errf("agent step %q: %s/SKILL.md not found", s.ID, s.Skill)
 		}
 	}
-	// A set AgentFile has already been read and parsed by resolveAgentFiles;
-	// any error there aborts the load before we get here.
+	// AgentFile and OutputTemplate are already read by resolveAgentFiles /
+	// resolveOutputTemplates; any error there aborts the load before we get here.
+	if s.OutputTemplate != "" && v.baseDir != "" {
+		if _, err := os.Stat(filepath.Join(v.baseDir, s.OutputTemplate)); err != nil {
+			v.errf("agent step %q: output_template %q not found", s.ID, s.OutputTemplate)
+		}
+	}
 	if s.Isolation != IsolationWorktree && s.Isolation != IsolationNone {
 		v.errf("agent step %q has invalid isolation %q (want worktree|none)", s.ID, s.Isolation)
 	}

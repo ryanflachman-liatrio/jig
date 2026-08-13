@@ -51,11 +51,12 @@ run  = "mkdir -p docs/specs"
 # The "if the user gave no input, ask for it" rule becomes from="user" inputs:
 # the engine pauses and prompts before the step runs.
 [[step]]
-id            = "context_assess"
-type          = "agent"
-depends_on    = ["mkdir_spec"]
-skill         = "../skills/sdd-context-assess"
-inputs        = [
+id              = "context_assess"
+type            = "agent"
+depends_on      = ["mkdir_spec"]
+skill           = "../skills/sdd-context-assess"
+output_template = "templates/context-assess.md"
+inputs          = [
   { from = "user", label = "Describe the feature to spec (paste any reference material):", as = "request" },
   { from = "user", label = "What should this spec be called? (kebab-case, e.g. user-authentication):", as = "spec_name" },
 ]

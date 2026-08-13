@@ -253,6 +253,13 @@ type Step struct {
 	MaxBudgetUSD      float64     `toml:"max_budget_usd"`
 	PermissionMode    string      `toml:"permission_mode"`
 
+	// OutputTemplate is a path (relative to the workflow file) to a markdown
+	// template that structures the agent's text response. The engine reads it at
+	// load time and appends it under the ## Output prompt section so the agent
+	// fills its sections in the conversation — no agent Write tool required.
+	OutputTemplate     string `toml:"output_template"`
+	outputTemplateBody string // resolved body, populated at load time
+
 	// AppendSystemPrompt is injected after the skill/agent-file prompt for
 	// per-step constraints. agentPrompt holds the body of a resolved AgentFile
 	// (the agent's system prompt); it is populated at load time, not decoded.
@@ -290,6 +297,11 @@ type Step struct {
 // The getter exists so runner.AgentExecutor can access it without importing
 // the workflow package's unexported fields directly.
 func (s *Step) AgentPrompt() string { return s.agentPrompt }
+
+// OutputTemplateBody returns the resolved markdown template body for this step,
+// or "" if no output_template was set. Populated at load time by
+// resolveOutputTemplates; the runner appends it under the ## Output section.
+func (s *Step) OutputTemplateBody() string { return s.outputTemplateBody }
 
 // InjectContextEnabled reports whether the engine should assemble and prepend
 // the deterministic "Workflow context" preamble for this agent step. The

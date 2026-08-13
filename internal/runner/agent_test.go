@@ -192,17 +192,20 @@ func TestCaptureStream_StructuredToolResultTruncated(t *testing.T) {
 	}
 }
 
-// TestCaptureStream_Artifact verifies output.md is written from the raw_result
-// base-schema field (not the streaming assistant text), and that an explicit
-// step.Output path receives the same content as a named artifact copy.
+// TestCaptureStream_Artifact verifies the engine writes raw_result.md from the
+// agent's last text turn (no agent Write tool required), that OutputPath points
+// to it, and that an explicit Step.Output path receives the same content.
 func TestCaptureStream_Artifact(t *testing.T) {
 	dir := t.TempDir()
 	explicitOut := filepath.Join(dir, "explicit.md")
 	tPath := filepath.Join(dir, "transcript.jsonl")
+	proseText := "# Done\nthe prose answer"
 
+	assistant := &claudecode.AssistantMessage{Content: []claudecode.ContentBlock{
+		&claudecode.TextBlock{Text: proseText},
+	}}
 	result := &claudecode.ResultMessage{
 		StructuredOutput: map[string]any{
-			"raw_result":  "# Done\nthe prose answer",
 			"summary":     "did the thing",
 			"status":      "succeeded",
 			"confidence":  "high",
@@ -215,39 +218,47 @@ func TestCaptureStream_Artifact(t *testing.T) {
 		TranscriptPath: tPath,
 	}
 
-	res, err := captureStream(scriptChan(result), req, &captureReporter{}, time.Now(), "")
+	res, err := captureStream(scriptChan(assistant, result), req, &captureReporter{}, time.Now(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// OutputPath points to the canonical run-dir output.md.
-	wantOutputMD := filepath.Join(dir, "output.md")
-	if res.OutputPath != wantOutputMD {
-		t.Errorf("OutputPath = %q, want %q", res.OutputPath, wantOutputMD)
+	// OutputPath points to engine-written raw_result.md.
+	wantRaw := filepath.Join(dir, "raw_result.md")
+	if res.OutputPath != wantRaw {
+		t.Errorf("OutputPath = %q, want %q", res.OutputPath, wantRaw)
 	}
-
-	// Canonical output.md contains raw_result.
-	got, err := os.ReadFile(wantOutputMD)
+	got, err := os.ReadFile(wantRaw)
 	if err != nil {
-		t.Fatalf("output.md not written: %v", err)
+		t.Fatalf("raw_result.md not written: %v", err)
 	}
-	if string(got) != "# Done\nthe prose answer" {
-		t.Errorf("output.md = %q, want raw_result prose", got)
+	if string(got) != proseText {
+		t.Errorf("raw_result.md = %q, want %q", string(got), proseText)
 	}
 
-	// output.json contains the full structured envelope.
-	outJSON := filepath.Join(dir, "output.json")
-	if _, err := os.Stat(outJSON); err != nil {
+	// output.json contains the structured envelope.
+	if _, err := os.Stat(filepath.Join(dir, "output.json")); err != nil {
 		t.Errorf("output.json not written: %v", err)
 	}
 
-	// The explicit output path also receives raw_result.
+	// output.md is rendered from structured metadata fields.
+	outMD, err := os.ReadFile(filepath.Join(dir, "output.md"))
+	if err != nil {
+		t.Fatalf("output.md not written: %v", err)
+	}
+	for _, want := range []string{"## Status", "succeeded", "## Summary"} {
+		if !strings.Contains(string(outMD), want) {
+			t.Errorf("output.md missing %q", want)
+		}
+	}
+
+	// Explicit output path receives the same prose content.
 	gotExplicit, err := os.ReadFile(explicitOut)
 	if err != nil {
 		t.Fatalf("explicit output not written: %v", err)
 	}
-	if string(gotExplicit) != "# Done\nthe prose answer" {
-		t.Errorf("explicit output = %q, want raw_result prose", gotExplicit)
+	if string(gotExplicit) != proseText {
+		t.Errorf("explicit output = %q, want prose text", gotExplicit)
 	}
 }
 
@@ -355,7 +366,7 @@ func TestBuildOptions_Empty(t *testing.T) {
 	if !ok {
 		t.Fatalf("base schema properties missing: %v", got.OutputFormat.Schema)
 	}
-	for _, base := range []string{"summary", "status", "raw_result", "confidence", "issues", "assumptions"} {
+	for _, base := range []string{"summary", "status", "confidence", "issues", "assumptions"} {
 		if _, ok := props[base]; !ok {
 			t.Errorf("base schema missing required field %q: %v", base, props)
 		}
@@ -391,7 +402,7 @@ func TestBuildOptions_Schema(t *testing.T) {
 		t.Errorf("schema missing declared field 'passed': %v", props)
 	}
 	// Base schema fields must also be present.
-	for _, base := range []string{"summary", "status", "raw_result", "confidence", "issues", "assumptions"} {
+	for _, base := range []string{"summary", "status", "confidence", "issues", "assumptions"} {
 		if _, ok := props[base]; !ok {
 			t.Errorf("schema missing base field %q: %v", base, props)
 		}

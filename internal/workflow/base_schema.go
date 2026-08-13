@@ -10,7 +10,6 @@ var BaseSchema = &Schema{
 		{Name: "assumptions", Type: FieldList, Elem: &Field{Name: "assumptions[]", Type: FieldText}},
 		{Name: "confidence", Type: FieldEnum, Enum: []string{"high", "medium", "low"}},
 		{Name: "issues", Type: FieldList, Elem: &Field{Name: "issues[]", Type: FieldText}},
-		{Name: "raw_result", Type: FieldText},
 		{Name: "status", Type: FieldEnum, Enum: []string{"succeeded", "partial", "failed", "blocked"}},
 		{Name: "summary", Type: FieldText},
 	},
