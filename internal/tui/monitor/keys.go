@@ -24,6 +24,7 @@ type monitorKeys struct {
 	Up             keybind.Binding // matched (k/up)
 	StepsNav       keybind.Binding // display-only ("j/k select")
 	OpenTranscript keybind.Binding // matched (enter/l → Transcript)
+	ToggleTree     keybind.Binding // matched (space → expand/collapse file tree)
 	StepsLeave     keybind.Binding // matched (esc/q/backspace/h → runs list)
 
 	// Transcript panel
@@ -86,6 +87,7 @@ func defaultMonitorKeys() monitorKeys {
 		Up:             keybind.NewBinding(keybind.WithKeys("k", "up"), keybind.WithHelp("↑/k", "up")),
 		StepsNav:       keybind.NewBinding(keybind.WithKeys("j", "k"), keybind.WithHelp("j/k", "select")),
 		OpenTranscript: keybind.NewBinding(keybind.WithKeys("enter", "l"), keybind.WithHelp("enter", "transcript")),
+		ToggleTree:     keybind.NewBinding(keybind.WithKeys("space"), keybind.WithHelp("space", "expand/collapse")),
 		StepsLeave:     keybind.NewBinding(keybind.WithKeys("esc", "q", "backspace", "h"), keybind.WithHelp("esc", "runs list")),
 
 		TransToSteps: keybind.NewBinding(keybind.WithKeys("esc", "h"), keybind.WithHelp("esc", "steps")),

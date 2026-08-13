@@ -212,11 +212,12 @@ func (m Model) aliasPanelFocus(key string) focusRegion {
 
 // updateSteps handles keys when the Steps panel holds focus: j/k move the
 // selection cursor (eagerly reloading the Transcript per Resolved Decision 10),
-// and esc/q leave to the runs list.
+// space toggles the file tree expand/collapse, and esc/q leave to the runs list.
 func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	rows := m.visibleRows()
 	switch {
 	case keybind.Matches(msg, m.keys.Down):
-		if m.cursor < len(m.steps)-1 {
+		if m.cursor < len(rows)-1 {
 			m.cursor++
 			m.ensureCursorVisible()
 			m.reloadTranscript()
@@ -232,16 +233,31 @@ func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 	case keybind.Matches(msg, m.keys.OpenTranscript):
-		// enter/l cross into the Transcript panel (the step is already loaded).
 		m.focus = focusTranscript
 		m.refreshPanels()
+		return m, nil
+	case keybind.Matches(msg, m.keys.ToggleTree):
+		// space: toggle expand/collapse on the cursored step.
+		// No-op if cursor is on a file row (files cannot be expanded).
+		if !m.cursorIsFileRow() {
+			stepID := m.cursorStepID()
+			if stepID != "" {
+				m.expanded[stepID] = !m.expanded[stepID]
+				// Discover and cache files on first expand.
+				if m.expanded[stepID] && len(m.stepFiles[stepID]) == 0 {
+					m.stepFiles[stepID] = stepOutputFiles(m.RunDir, stepID, "")
+				}
+				m.reloadTranscript()
+				m.refreshPanels()
+			}
+		}
 		return m, nil
 	case keybind.Matches(msg, m.keys.StepsLeave):
 		return m, func() tea.Msg { return ShowRunsMsg{} }
 
 	// ── spec 08 C4: stop/reset/resume ─────────────────────────────────────────
 	case keybind.Matches(msg, m.keys.StopStep):
-		if !m.done && m.cursor < len(m.steps) {
+		if !m.cursorIsFileRow() && !m.done && m.cursor < len(m.steps) {
 			st := m.steps[m.cursor]
 			if st.status == step.StatusRunning {
 				runID, stepID := m.RunID, st.id
@@ -251,12 +267,8 @@ func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m, nil
 
 	case keybind.Matches(msg, m.keys.ResetStep):
-		if !m.done && m.cursor < len(m.steps) {
+		if !m.cursorIsFileRow() && !m.done && m.cursor < len(m.steps) {
 			st := m.steps[m.cursor]
-			// Only terminal/stopped steps can be reset, and only when the run is
-			// quiescent (no worker in flight). We delegate the quiescence check to
-			// handleReset in the engine; the TUI pre-filters obviously ineligible
-			// cases to avoid a noisy no-op.
 			switch st.status {
 			case step.StatusSucceeded, step.StatusFailed, step.StatusSkipped,
 				step.StatusStopped, step.StatusAwaitingReview:
@@ -267,7 +279,7 @@ func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m, nil
 
 	case keybind.Matches(msg, m.keys.ResumeStep):
-		if !m.done && m.cursor < len(m.steps) {
+		if !m.cursorIsFileRow() && !m.done && m.cursor < len(m.steps) {
 			st := m.steps[m.cursor]
 			if st.status == step.StatusStopped {
 				runID, stepID := m.RunID, st.id
@@ -276,7 +288,6 @@ func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	// Other keys (scroll wheel, ctrl+d/u) scroll the Steps viewport.
 	var cmd tea.Cmd
 	m.vp, cmd = m.vp.Update(msg)
 	return m, cmd

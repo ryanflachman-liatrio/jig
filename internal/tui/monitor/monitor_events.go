@@ -45,6 +45,11 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		}
 		if ev.To == step.StatusSucceeded || ev.To == step.StatusFailed || ev.To == step.StatusSkipped {
 			m.steps[i].end = time.Now()
+			// Re-discover output files when a step reaches a terminal state — the
+			// runner may have just written output.md/output.json.
+			if m.RunDir != "" {
+				m.stepFiles[ev.StepID] = stepOutputFiles(m.RunDir, ev.StepID, "")
+			}
 		}
 		// Every StepStatus carries the step's cumulative cost/tokens (the engine
 		// accrues each attempt and never refunds a reset/retry), so reflect them on
@@ -170,6 +175,9 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		}
 		if m.msgCount == nil {
 			m.msgCount = make(map[string]int)
+		}
+		if m.stepFiles == nil {
+			m.stepFiles = make(map[string][]outputFile)
 		}
 		if ev.Seq > m.msgCount[ev.StepID] {
 			m.msgCount[ev.StepID] = ev.Seq

@@ -99,6 +99,11 @@ type Styles struct {
 	Step struct {
 		ID    lipgloss.Style
 		Types map[string]lipgloss.Style
+		Tree  struct {
+			ExpandAffordance lipgloss.Style
+			FileRow          lipgloss.Style
+			FileKind         lipgloss.Style
+		}
 	}
 
 	// Chart styles the read-only detail chart view (see chart/render.go): the
@@ -234,6 +239,9 @@ func DefaultTheme() Styles {
 		"command": lipgloss.NewStyle().Foreground(info),
 		"review":  lipgloss.NewStyle().Foreground(warning),
 	}
+	s.Step.Tree.ExpandAffordance = lipgloss.NewStyle().Foreground(fgMuted)
+	s.Step.Tree.FileRow = lipgloss.NewStyle().Foreground(fgBase).PaddingLeft(2)
+	s.Step.Tree.FileKind = lipgloss.NewStyle().Foreground(primary).Bold(true)
 	_ = bgLeast
 
 	// Chart: node box reuses the rounded border on a muted default color (the

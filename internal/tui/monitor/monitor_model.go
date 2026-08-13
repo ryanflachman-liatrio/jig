@@ -92,6 +92,22 @@ type pendingInputEntry struct {
 	scrollOffset int
 }
 
+// visibleRow is one row in the Steps panel flat list. Steps always appear; file
+// rows appear beneath their parent step only when it is expanded.
+type visibleRow struct {
+	kind   string // "step" or "file"
+	stepID string
+	file   *outputFile
+}
+
+func (r visibleRow) isStepRow() bool {
+	return r.kind == "step"
+}
+
+func (r visibleRow) isFileRow() bool {
+	return r.kind == "file"
+}
+
 // Model is the per-run view: a live step-status table for one run,
 // updated as engine events arrive. The user can press esc to return to the
 // runs list.
@@ -150,6 +166,12 @@ type Model struct {
 	// msgCount tracks the latest transcript entry seq observed per step (via
 	// StepMessage liveness events), used as a message count in the list.
 	msgCount map[string]int
+
+	expanded  map[string]bool
+	stepFiles map[string][]outputFile
+
+	selKind string // "file" when a file row is selected, "" otherwise
+	selFile string // absolute path of the selected file
 
 	// inputQueue holds every step currently blocked on a human, in arrival order.
 	// activeInputIdx is the entry currently shown in the gate strip. hasGate() is
@@ -296,6 +318,8 @@ func New(runID string) Model {
 		chatRendered:   make(map[blockKey]string),
 		reviews:        make(map[string]engine.ReviewRequest),
 		chatAutoScroll: true,
+		expanded:       make(map[string]bool),
+		stepFiles:      make(map[string][]outputFile),
 	}
 }
 
@@ -324,6 +348,12 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 	if m.reviews == nil {
 		m.reviews = make(map[string]engine.ReviewRequest)
 	}
+	if m.expanded == nil {
+		m.expanded = make(map[string]bool)
+	}
+	if m.stepFiles == nil {
+		m.stepFiles = make(map[string][]outputFile)
+	}
 	for i, st := range snap.Steps {
 		ms := monitorStep{id: st.ID, status: st.Status}
 		if st.Result != nil && st.Status == step.StatusFailed {
@@ -339,6 +369,15 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 		ms.tokens = st.SpentTokens
 		m.steps[i] = ms
 		m.index[st.ID] = i
+	}
+	// Re-discover output files per step and clamp cursor to visible row count.
+	for _, st := range snap.Steps {
+		if m.RunDir != "" {
+			m.stepFiles[st.ID] = stepOutputFiles(m.RunDir, st.ID, "")
+		}
+	}
+	if nRows := len(m.visibleRows()); m.cursor >= nRows && nRows > 0 {
+		m.cursor = nRows - 1
 	}
 	return m
 }
@@ -387,26 +426,36 @@ func (m Model) HelpSections() []shared.HelpSection {
 		stopKey := m.keys.StopStep
 		resetKey := m.keys.ResetStep
 		resumeKey := m.keys.ResumeStep
-		if m.done || m.cursor >= len(m.steps) {
+		if m.done || m.cursorIsFileRow() {
 			stopKey.SetEnabled(false)
 			resetKey.SetEnabled(false)
 			resumeKey.SetEnabled(false)
 		} else {
-			st := m.steps[m.cursor]
-			stopKey.SetEnabled(st.status == step.StatusRunning)
-			resumeKey.SetEnabled(st.status == step.StatusStopped)
-			switch st.status {
-			case step.StatusSucceeded, step.StatusFailed, step.StatusSkipped,
-				step.StatusStopped, step.StatusAwaitingReview:
-				resetKey.SetEnabled(true)
-			default:
+			stepID := m.cursorStepID()
+			if stepID == "" {
+				stopKey.SetEnabled(false)
 				resetKey.SetEnabled(false)
+				resumeKey.SetEnabled(false)
+			} else {
+				i, ok := m.index[stepID]
+				if ok {
+					st := m.steps[i]
+					stopKey.SetEnabled(st.status == step.StatusRunning)
+					resumeKey.SetEnabled(st.status == step.StatusStopped)
+					switch st.status {
+					case step.StatusSucceeded, step.StatusFailed, step.StatusSkipped,
+						step.StatusStopped, step.StatusAwaitingReview:
+						resetKey.SetEnabled(true)
+					default:
+						resetKey.SetEnabled(false)
+					}
+				}
 			}
 		}
 		sections = append(sections, shared.HelpSection{
 			Title: "Steps",
 			Bindings: []keybind.Binding{
-				m.keys.StepsNav, m.keys.OpenTranscript,
+				m.keys.StepsNav, m.keys.OpenTranscript, m.keys.ToggleTree,
 				stopKey, resetKey, resumeKey, m.keys.StepsLeave,
 			},
 		})
@@ -479,3 +528,47 @@ func (m Model) gateHelpSection() shared.HelpSection {
 // CapturesText reports whether a gate textarea is capturing free text; delegates
 // to textareaActive. Satisfies the helpProvider interface needed by root.
 func (m Model) CapturesText() bool { return m.textareaActive() }
+
+// visibleRows builds the flat row list for the Steps panel. Steps always
+// appear; file rows appear beneath their parent when it is expanded and has
+// accessible output files.
+func (m Model) visibleRows() []visibleRow {
+	var rows []visibleRow
+	for _, s := range m.steps {
+		rows = append(rows, visibleRow{kind: "step", stepID: s.id})
+		if !m.expanded[s.id] {
+			continue
+		}
+		files := m.stepFiles[s.id]
+		for i, f := range files {
+			if f.err != nil {
+				continue
+			}
+			rows = append(rows, visibleRow{
+				kind:   "file",
+				stepID: s.id,
+				file:   &files[i],
+			})
+		}
+	}
+	return rows
+}
+
+// cursorStepID returns the step ID of the row under the cursor.
+// Returns "" when the cursor is out of bounds.
+func (m Model) cursorStepID() string {
+	rows := m.visibleRows()
+	if m.cursor < 0 || m.cursor >= len(rows) {
+		return ""
+	}
+	return rows[m.cursor].stepID
+}
+
+// cursorIsFileRow reports whether the cursor is currently on a file row.
+func (m Model) cursorIsFileRow() bool {
+	rows := m.visibleRows()
+	if m.cursor < 0 || m.cursor >= len(rows) {
+		return false
+	}
+	return rows[m.cursor].isFileRow()
+}

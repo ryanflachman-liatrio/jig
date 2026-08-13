@@ -19,14 +19,35 @@ import (
 // block-cursor/expand toggles never carry over between steps (seq keys are only
 // meaningful within one step's transcript).
 func (m *Model) reloadTranscript() {
-	if m.cursor >= len(m.steps) {
+	stepID := m.cursorStepID()
+	if stepID == "" {
 		return
 	}
-	id := m.steps[m.cursor].id
-	if id == m.chatStep {
+
+	// File row: set selKind/selFile so chatBody renders the file.
+	rows := m.visibleRows()
+	if m.cursor >= 0 && m.cursor < len(rows) && rows[m.cursor].isFileRow() {
+		f := rows[m.cursor].file
+		if f != nil {
+			m.selKind = "file"
+			m.selFile = f.path
+			m.chatAutoScroll = false
+			m.pendingGPrefix = false
+			if m.ready {
+				m.chatVP.GotoTop()
+			}
+		}
 		return
 	}
-	m.chatStep = id
+
+	// Step row: revert to chat transcript.
+	m.selKind = ""
+	m.selFile = ""
+
+	if stepID == m.chatStep {
+		return
+	}
+	m.chatStep = stepID
 	m.chatBlockCursor = 0
 	m.chatExpandAll = false
 	m.chatExpand = make(map[blockKey]bool)
@@ -100,6 +121,10 @@ func collapsible(t transcript.BlockType) bool {
 // text (markdown), reasoning, tool calls with inputs, and tool results, with
 // large blocks collapsed to chatCollapseWidth and iteration/retry separators.
 func (m Model) chatBody() string {
+	if m.selKind == "file" && m.selFile != "" {
+		return m.fileBody()
+	}
+
 	var b strings.Builder
 
 	// The step id now titles the Transcript panel border, so no in-body title
@@ -391,4 +416,48 @@ func writeVerbatim(b *strings.Builder, text string) {
 	for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
 		b.WriteString("  " + line + "\n")
 	}
+}
+
+// fileBody renders the currently-selected output file in the Transcript pane.
+// Markdown goes through glamour, JSON is fenced+pretty then glamour, other
+// types are verbatim.
+func (m Model) fileBody() string {
+	var b strings.Builder
+	path := m.selFile
+
+	// Find the outputFile to get its kind.
+	kind := kindOther
+	for _, files := range m.stepFiles {
+		for _, f := range files {
+			if f.path == path {
+				kind = f.kind
+				break
+			}
+		}
+	}
+
+	content, placeholder := readOutputFile(path, kind)
+	if placeholder != "" {
+		b.WriteString("  " + shared.Theme.Question.Render(placeholder) + "\n")
+		return b.String()
+	}
+
+	// Use a synthetic blockKey that will never collide with transcript blocks:
+	// seq=-1 is not a valid transcript sequence number.
+	fileKey := blockKey{seq: -1, block: 0}
+
+	switch kind {
+	case kindMarkdown:
+		b.WriteString(m.renderMarkdown(fileKey, content))
+	case kindJSON:
+		fenced := fenceJSON(content)
+		if fenced == "" {
+			fenced = content
+		}
+		b.WriteString(m.renderMarkdown(fileKey, fenced))
+	default:
+		writeVerbatim(&b, content)
+	}
+
+	return b.String()
 }

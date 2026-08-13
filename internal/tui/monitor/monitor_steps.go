@@ -43,48 +43,91 @@ func (m Model) listBody() string {
 		}
 	}
 
-	// Each step renders on two lines (stepRowLines): an at-a-glance status line
-	// and a dim metadata line. The Steps panel is only ~1/3 of the terminal, so
-	// packing id, status, duration, messages, tokens and cost onto one line would
-	// push the right-hand columns off the panel edge (they were being clipped).
-	// Splitting onto a second line keeps every field visible at any width.
-	for i, s := range m.steps {
-		cursor := "  "
-		if i == m.cursor {
-			cursor = shared.Theme.SelectedBar.Render(shared.CursorBar) + " "
-		}
-		indicator, style := stepIndicator(s.status)
+	rows := m.visibleRows()
 
-		// Line 1: status glyph, id, status text (+ policy-limit badge).
-		head := fmt.Sprintf("%s%s  %s  %s",
-			cursor,
-			indicator,
-			style.Render(shared.PadRight(s.id, idWidth)),
-			statusStyle(s.status).Render(string(s.status)),
-		)
-		if label := subtypeBadgeLabel(s.subtype); label != "" {
-			head += "  " + shared.Theme.Badge.Error.Render(label)
-		}
-		if i == m.cursor {
-			b.WriteString(shared.Theme.SelectedLine.Render(head) + "\n")
-		} else {
-			b.WriteString(head + "\n")
-		}
+	for i, row := range rows {
+		if row.isStepRow() {
+			si, ok := m.index[row.stepID]
+			if !ok {
+				continue
+			}
+			s := m.steps[si]
 
-		// Line 2: dim metadata, indented under the id. Tokens and cost lead so
-		// they survive when a narrow panel clips the trailing duration/messages.
-		var meta []string
-		if t := stepTokensStr(s); t != "" {
-			meta = append(meta, t)
+			cursor := "  "
+			if i == m.cursor {
+				cursor = shared.Theme.SelectedBar.Render(shared.CursorBar) + " "
+			}
+
+			// Show expand/collapse affordance if there are any visible (non-errored) files.
+			hasVisibleFiles := false
+			for _, f := range m.stepFiles[s.id] {
+				if f.err == nil {
+					hasVisibleFiles = true
+					break
+				}
+			}
+			affordance := " "
+			if hasVisibleFiles {
+				if m.expanded[s.id] {
+					affordance = shared.Theme.Step.Tree.ExpandAffordance.Render(shared.ExpandedMarker)
+				} else {
+					affordance = shared.Theme.Step.Tree.ExpandAffordance.Render(shared.CollapsedMarker)
+				}
+			}
+
+			indicator, style := stepIndicator(s.status)
+
+			// Line 1: status glyph, id, status text (+ policy-limit badge).
+			head := fmt.Sprintf("%s%s%s  %s  %s",
+				cursor,
+				affordance,
+				indicator,
+				style.Render(shared.PadRight(s.id, idWidth)),
+				statusStyle(s.status).Render(string(s.status)),
+			)
+			if label := subtypeBadgeLabel(s.subtype); label != "" {
+				head += "  " + shared.Theme.Badge.Error.Render(label)
+			}
+			if i == m.cursor {
+				b.WriteString(shared.Theme.SelectedLine.Render(head) + "\n")
+			} else {
+				b.WriteString(head + "\n")
+			}
+
+			// Line 2: dim metadata, indented under the id.
+			var meta []string
+			if t := stepTokensStr(s); t != "" {
+				meta = append(meta, t)
+			}
+			if c := stepCostStr(s); c != "" {
+				meta = append(meta, c)
+			}
+			meta = append(meta, stepDuration(s))
+			if n := m.msgCount[s.id]; n > 0 {
+				meta = append(meta, fmt.Sprintf("%d msg", n))
+			}
+			b.WriteString("     " + shared.Theme.Question.Render(strings.Join(meta, " · ")) + "\n")
+		} else if row.isFileRow() {
+			cursor := "  "
+			if i == m.cursor {
+				cursor = shared.Theme.SelectedBar.Render(shared.CursorBar) + " "
+			}
+			fileMarker := ""
+			switch row.file.kind {
+			case kindMarkdown:
+				fileMarker = "md"
+			case kindJSON:
+				fileMarker = "json"
+			default:
+				fileMarker = "file"
+			}
+			line := fmt.Sprintf("%s  [%s] %s", cursor, fileMarker, row.file.name)
+			if i == m.cursor {
+				b.WriteString(shared.Theme.SelectedLine.Render(line) + "\n")
+			} else {
+				b.WriteString(shared.Theme.Step.Tree.FileRow.Render(line) + "\n")
+			}
 		}
-		if c := stepCostStr(s); c != "" {
-			meta = append(meta, c)
-		}
-		meta = append(meta, stepDuration(s))
-		if n := m.msgCount[s.id]; n > 0 {
-			meta = append(meta, fmt.Sprintf("%d msg", n))
-		}
-		b.WriteString("     " + shared.Theme.Question.Render(strings.Join(meta, " · ")) + "\n")
 	}
 
 	// Run total, directly beneath the step table: summed tokens and cost across
