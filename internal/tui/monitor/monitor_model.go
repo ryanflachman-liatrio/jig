@@ -163,6 +163,11 @@ type Model struct {
 	renderer     *glamour.TermRenderer
 	chatRendered map[blockKey]string
 
+	// fileRenderer is a variant of renderer with the document-level margin and
+	// block prefix/suffix zeroed so output file content renders flush to the panel
+	// edge without glamour's standard document framing.
+	fileRenderer *glamour.TermRenderer
+
 	// msgCount tracks the latest transcript entry seq observed per step (via
 	// StepMessage liveness events), used as a message count in the list.
 	msgCount map[string]int

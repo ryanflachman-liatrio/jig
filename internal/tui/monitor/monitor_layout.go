@@ -147,6 +147,29 @@ func (m *Model) rebuildRenderer() {
 		glamour.WithStyles(shared.Theme.Markdown),
 		glamour.WithWordWrap(wordWrap),
 	)
+	// fileRenderer strips all glamour document framing so output file content sits
+	// flush in the panel without extra blank lines or indentation:
+	//   - Document.Margin/Indent/BlockPrefix/BlockSuffix: removes the 2-column left
+	//     margin and the leading/trailing \n the default Document style adds.
+	//   - Document.Color: removes the styled-space background fill that pads every
+	//     line to word-wrap width (only visible when the terminal background
+	//     contrasts with color #252); syntax highlighting via Chroma is unaffected.
+	//   - CodeBlock.Margin: removes the 2-column code-block-level left indent
+	//     (separate from the document margin) so code starts at column 0.
+	// The leading blank line from glamour's code block top padding is stripped in
+	// fileBody() via stripBlankEdges.
+	fileStyle := shared.Theme.Markdown
+	zero := uint(0)
+	fileStyle.Document.Margin = &zero
+	fileStyle.Document.Indent = &zero
+	fileStyle.Document.BlockPrefix = ""
+	fileStyle.Document.BlockSuffix = ""
+	fileStyle.Document.Color = nil
+	fileStyle.CodeBlock.StyleBlock.Margin = &zero
+	m.fileRenderer, _ = glamour.NewTermRenderer(
+		glamour.WithStyles(fileStyle),
+		glamour.WithWordWrap(wordWrap),
+	)
 	if m.lastTranscriptW != m.transcriptInnerW {
 		m.chatRendered = make(map[blockKey]string)
 		m.lastTranscriptW = m.transcriptInnerW

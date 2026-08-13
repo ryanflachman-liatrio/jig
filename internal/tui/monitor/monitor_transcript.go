@@ -228,9 +228,11 @@ func (m Model) writeBlock(b *strings.Builder, key blockKey, blk transcript.Block
 	case transcript.BlockThinking:
 		m.writeCollapsible(b, key, shared.Theme.Chat.Thinking, shared.Theme.Chat.BarThinking, shared.IconThinking+" reasoning", blk.Text, "", false, blk.Truncated)
 	case transcript.BlockToolUse:
-		m.writeCollapsible(b, key, shared.Theme.Chat.ToolCall, shared.Theme.Chat.BarToolCall, shared.IconToolCall+" "+blk.Name, string(blk.Input), fenceJSON(string(blk.Input)), false, false)
+		inp := expandView(string(blk.Input))
+		m.writeCollapsible(b, key, shared.Theme.Chat.ToolCall, shared.Theme.Chat.BarToolCall, shared.IconToolCall+" "+blk.Name, inp, fenceJSON(inp), false, false)
 	case transcript.BlockToolResult:
-		m.writeCollapsible(b, key, shared.Theme.Chat.ToolResult, shared.Theme.Chat.BarToolResult, shared.IconToolResult+" result", blk.Content, fenceJSON(blk.Content), blk.IsError, blk.Truncated)
+		res := expandView(blk.Content)
+		m.writeCollapsible(b, key, shared.Theme.Chat.ToolResult, shared.Theme.Chat.BarToolResult, shared.IconToolResult+" result", res, fenceJSON(res), blk.IsError, blk.Truncated)
 	default:
 		b.WriteString("  " + shared.Theme.Question.Render("[unsupported block: "+string(blk.Type)+"]") + "\n")
 	}
@@ -258,9 +260,11 @@ func (m Model) renderMarkdown(key blockKey, text string) string {
 
 // fenceJSON pretty-prints s as a ```json fenced markdown block so it can be
 // rendered with syntax highlighting via renderMarkdown. Returns "" when s is
-// not valid JSON so callers can fall back to plain text.
+// not valid JSON so callers can fall back to plain text. The caller is
+// responsible for bounding s before passing it in (e.g. via expandView) when
+// the source is an unbounded transcript block; file content is pre-bounded by
+// readOutputFile's 256 KiB cap so no truncation is needed there.
 func fenceJSON(s string) string {
-	s = expandView(s)
 	var v any
 	if err := json.Unmarshal([]byte(s), &v); err != nil {
 		return ""
@@ -418,6 +422,47 @@ func writeVerbatim(b *strings.Builder, text string) {
 	}
 }
 
+// stripBlankEdges drops leading and trailing lines that are blank when ANSI
+// escape sequences are removed, then appends a single trailing newline.
+// Glamour always emits a blank first line above a code block (its internal
+// top-margin row) and a trailing blank; this trims both so the content sits
+// flush in the panel without wasted screen rows.
+func stripBlankEdges(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	start := 0
+	for start < len(lines) && strings.TrimSpace(stripSGR(lines[start])) == "" {
+		start++
+	}
+	end := len(lines)
+	for end > start && strings.TrimSpace(stripSGR(lines[end-1])) == "" {
+		end--
+	}
+	if start >= end {
+		return "\n"
+	}
+	return strings.Join(lines[start:end], "\n") + "\n"
+}
+
+// stripSGR removes ANSI SGR escape sequences from s so blank-line detection
+// can operate on visible content rather than styled spaces.
+func stripSGR(s string) string {
+	var b strings.Builder
+	inEsc := false
+	for _, r := range s {
+		switch {
+		case inEsc:
+			if r == 'm' {
+				inEsc = false
+			}
+		case r == '\x1b':
+			inEsc = true
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // fileBody renders the currently-selected output file in the Transcript pane.
 // Markdown goes through glamour, JSON is fenced+pretty then glamour, other
 // types are verbatim.
@@ -445,10 +490,12 @@ func (m Model) fileBody() string {
 	// Render directly without the transcript block cache: the cache key
 	// (blockKey) is integer-only, so there's no stable per-file key, and file
 	// content is read fresh from disk each call anyway.
+	// fileRenderer has document margin/prefix/suffix zeroed (see rebuildRenderer)
+	// so content sits flush in the panel without glamour's standard document framing.
 	render := func(text string) string {
-		if m.renderer != nil {
-			if r, err := m.renderer.Render(text); err == nil {
-				return r
+		if m.fileRenderer != nil {
+			if r, err := m.fileRenderer.Render(text); err == nil {
+				return stripBlankEdges(r)
 			}
 		}
 		return text
