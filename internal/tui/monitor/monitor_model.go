@@ -10,6 +10,7 @@ import (
 	"charm.land/glamour/v2"
 
 	"jig/internal/engine"
+	"jig/internal/helpchat"
 	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/transcript"
@@ -46,6 +47,7 @@ const (
 	inputKindIntegrationConflict                         // IntegrationConflictRequest (resolve / abort)
 	inputKindFinalMerge                                  // FinalMergeRequest (approve / discard)
 	inputKindResetConfirm                                // reset confirmation (y/n, default n — spec 08 C4)
+	inputKindHelpFinalMerge                              // final-merge gate triggered by help agent
 )
 
 // resetConfirmEntry holds the data for a pending reset confirmation gate entry.
@@ -232,6 +234,16 @@ type Model struct {
 	width  int
 	height int
 
+	// Help agent modal (ctrl+h). helpOpen/helpReady are the open/connected flags;
+	// helpModel is preserved across open/close cycles for the run's lifetime.
+	// helpGateReq/helpGateAns are the rendezvous channels for the final-merge gate.
+	helpOpen     bool
+	helpReady    bool
+	helpModel    helpchat.Model
+	run          *engine.Run
+	helpGateReq  chan struct{} // bidirectional: tools write, waitForGateReqCmd reads
+	helpGateAns  chan bool
+
 	// stepsInnerW / transcriptInnerW are the two panels' inner content widths,
 	// computed in resize() from the width split (Resolved Decision 11). narrow
 	// is true when the terminal is too narrow for both panels to meet their
@@ -326,6 +338,13 @@ func New(runID string) Model {
 		expanded:       make(map[string]bool),
 		stepFiles:      make(map[string][]outputFile),
 	}
+}
+
+// SetRun wires the live engine handle so the help agent can read run state and
+// dispatch recovery actions. Call this after New/WithSnapshot for live runs;
+// leave unset for journal-replayed runs (ctrl+h shows a static unavailable message).
+func (m *Model) SetRun(run *engine.Run) {
+	m.run = run
 }
 
 // WithSnapshot initialises the monitor from a RunSnapshot so the user sees
@@ -522,7 +541,7 @@ func (m Model) gateHelpSection() shared.HelpSection {
 		}
 	case inputKindIntegrationConflict:
 		sec.Bindings = []keybind.Binding{m.keys.IntegrationResolve, m.keys.RecoverAbort, entryNav, m.keys.GateBlur}
-	case inputKindFinalMerge:
+	case inputKindFinalMerge, inputKindHelpFinalMerge:
 		sec.Bindings = []keybind.Binding{m.keys.FinalMergeApprove, m.keys.FinalMergeDiscard, entryNav, m.keys.GateBlur}
 	case inputKindResetConfirm:
 		sec.Bindings = []keybind.Binding{m.keys.GateBlur}

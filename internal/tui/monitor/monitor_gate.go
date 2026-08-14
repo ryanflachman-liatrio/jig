@@ -120,6 +120,8 @@ func kindName(k pendingInputKind) string {
 		return "integration"
 	case inputKindFinalMerge:
 		return "final merge"
+	case inputKindHelpFinalMerge:
+		return "help merge"
 	case inputKindResetConfirm:
 		return "reset confirm"
 	default:
@@ -160,6 +162,8 @@ func (m Model) updateGate(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m.updateGateIntegration(msg, entry)
 	case inputKindFinalMerge:
 		return m.updateGateFinalMerge(msg, entry)
+	case inputKindHelpFinalMerge:
+		return m.updateGateHelpFinalMerge(msg)
 	case inputKindResetConfirm:
 		return m.updateGateResetConfirm(msg, entry)
 	}
@@ -414,6 +418,29 @@ func (m Model) updateGateFinalMerge(msg tea.KeyPressMsg, entry *pendingInputEntr
 		return m, func() tea.Msg {
 			return FinalMergeResponseMsg{RunID: fm.RunID, Approve: false}
 		}
+	}
+	return m, nil
+}
+
+// updateGateHelpFinalMerge handles y/d on the help-agent final-merge gate.
+// The verdict is written to helpGateAns (buffered size 1) so the blocked tool
+// handler can unblock; no monitor message is emitted because the response goes
+// directly to the tool rather than through the engine's ApproveMerge path.
+func (m Model) updateGateHelpFinalMerge(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	send := func(verdict bool) (Model, tea.Cmd) {
+		m.removeEntryAt(m.activeInputIdx)
+		m.refreshPanels()
+		ch := m.helpGateAns
+		return m, func() tea.Msg {
+			ch <- verdict
+			return nil
+		}
+	}
+	if keybind.Matches(msg, m.keys.FinalMergeApprove) {
+		return send(true)
+	}
+	if keybind.Matches(msg, m.keys.FinalMergeDiscard) {
+		return send(false)
 	}
 	return m, nil
 }

@@ -73,6 +73,8 @@ type monitorKeys struct {
 	StopStep   keybind.Binding // matched (s, steps panel: cancel a running step)
 	ResetStep  keybind.Binding // matched (r, steps panel: reset to a quiescent step)
 	ResumeStep keybind.Binding // matched (ctrl+r, steps panel: resume a stopped step)
+
+	ToggleHelp keybind.Binding // matched (ctrl+h: open/close the help agent modal)
 }
 
 func defaultMonitorKeys() monitorKeys {
@@ -130,5 +132,7 @@ func defaultMonitorKeys() monitorKeys {
 		StopStep:   keybind.NewBinding(keybind.WithKeys("s"), keybind.WithHelp("s", "stop")),
 		ResetStep:  keybind.NewBinding(keybind.WithKeys("r"), keybind.WithHelp("r", "reset")),
 		ResumeStep: keybind.NewBinding(keybind.WithKeys("ctrl+r"), keybind.WithHelp("ctrl+r", "resume")),
+
+		ToggleHelp: keybind.NewBinding(keybind.WithKeys("ctrl+h"), keybind.WithHelp("ctrl+h", "help agent")),
 	}
 }

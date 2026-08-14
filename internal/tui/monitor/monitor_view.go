@@ -11,6 +11,34 @@ import (
 	"jig/internal/tui/shared"
 )
 
+// helpOverlay composites the help chat modal over the base layout using the
+// same Compositor technique as RenderHelpOverlay. The modal takes 60% of the
+// width and 80% of the height, centered.
+func (m Model) helpOverlay(base string) string {
+	boxW := m.width * 60 / 100
+	boxH := m.height * 80 / 100
+	if boxW < 40 {
+		boxW = 40
+	}
+	if boxH < 10 {
+		boxH = 10
+	}
+	box := m.helpModel.View(boxW, boxH, false)
+	x := (m.width - lipgloss.Width(box)) / 2
+	y := (m.height - lipgloss.Height(box)) / 2
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+	comp := lipgloss.NewCompositor(
+		lipgloss.NewLayer(base),
+		lipgloss.NewLayer(box).X(x).Y(y).Z(1),
+	)
+	return lipgloss.NewCanvas(m.width, m.height).Compose(comp).Render()
+}
+
 // securityView renders the Security region: a compact list of findings by
 // severity, visible only when at least one finding exists. Every row is rendered
 // verbatim (not through glamour) so redacted previews like [aws-key:…MPLE] are
@@ -124,13 +152,13 @@ func (m Model) hintLabel() string {
 			return shared.HintString(m.keys.RecoverRetry, m.keys.RecoverSkip, m.keys.RecoverAbort, entryNav, m.keys.GateBlur)
 		case inputKindIntegrationConflict:
 			return shared.HintString(m.keys.IntegrationResolve, m.keys.RecoverAbort, entryNav, m.keys.GateBlur)
-		case inputKindFinalMerge:
+		case inputKindFinalMerge, inputKindHelpFinalMerge:
 			return shared.HintString(m.keys.FinalMergeApprove, m.keys.FinalMergeDiscard, entryNav, m.keys.GateBlur)
 		case inputKindResetConfirm:
 			return shared.HintString(m.keys.GateBlur) // y/n shown inline in the gate strip
 		}
 	case m.focus == focusTranscript:
-		return shared.HintString(m.keys.FocusFull, m.keys.Scroll, m.keys.GotoTop, m.keys.GotoBottom, m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll)
+		return shared.HintString(m.keys.FocusFull, m.keys.Scroll, m.keys.GotoTop, m.keys.GotoBottom, m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll, m.keys.ToggleHelp)
 	default: // focusSteps
 		// Gate eligibility: advertise stop/reset/resume only for eligible steps.
 		stopKey := m.keys.StopStep
@@ -152,7 +180,7 @@ func (m Model) hintLabel() string {
 				resetKey.SetEnabled(false)
 			}
 		}
-		return shared.HintString(m.keys.FocusFull, m.keys.StepsNav, stopKey, resetKey, resumeKey, m.keys.StepsLeave, shared.KeyHelp, shared.KeyQuit)
+		return shared.HintString(m.keys.FocusFull, m.keys.StepsNav, stopKey, resetKey, resumeKey, m.keys.ToggleHelp, m.keys.StepsLeave, shared.KeyHelp, shared.KeyQuit)
 	}
 	return ""
 }
@@ -218,5 +246,9 @@ func (m Model) View() string {
 	}
 
 	sec := m.securityView()
-	return lipgloss.JoinVertical(lipgloss.Left, panels, sec, gate, footer)
+	base := lipgloss.JoinVertical(lipgloss.Left, panels, sec, gate, footer)
+	if m.helpOpen {
+		return m.helpOverlay(base)
+	}
+	return base
 }

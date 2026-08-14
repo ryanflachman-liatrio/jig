@@ -280,6 +280,7 @@ func (m rootModel) openMonitor(runID string) (tea.Model, tea.Cmd) {
 		// replaying its journal — the same events a Snapshot would carry.
 		if run, ok := m.handles[runID]; ok {
 			m.monitor = m.monitor.WithSnapshot(run.Snapshot())
+			m.monitor.SetRun(run)
 		} else if evs, err := engine.ReplayJournal(m.monitor.RunDir); err == nil && len(evs) > 0 {
 			m.monitor = m.monitor.WithJournal(evs)
 		}
@@ -325,6 +326,7 @@ func (m rootModel) startRun(wf *workflow.Workflow) (tea.Model, tea.Cmd) {
 	// Navigate straight to the monitor so prompts and review gates are visible immediately.
 	m.monitor = monitor.New(run.ID)
 	m.monitor.RunDir = m.manager.RunDir(run.ID)
+	m.monitor.SetRun(run)
 	m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 	m.active = screenMonitor
 	return m, nil

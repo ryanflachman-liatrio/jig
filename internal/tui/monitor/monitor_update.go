@@ -4,6 +4,7 @@ import (
 	keybind "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
+	"jig/internal/helpchat"
 	"jig/internal/step"
 )
 
@@ -13,6 +14,27 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.resize()
 		return m, nil
+
+	case helpchat.ConnectedMsg, helpchat.ConnectErrMsg,
+		helpchat.DeltaMsg, helpchat.TurnCompleteMsg, helpchat.TurnErrorMsg:
+		if m.helpReady {
+			var hCmd tea.Cmd
+			m.helpModel, hCmd = m.helpModel.Update(msg)
+			return m, hCmd
+		}
+		return m, nil
+
+	case helpchat.DispatchedMsg:
+		return m, m.dispatchHelpAction(msg)
+
+	case helpchat.FinalMergeGateMsg:
+		// The tool handler is blocked waiting for gateAns. Show a gate entry so the
+		// operator can confirm. Re-arm the gate listener for subsequent gate calls.
+		m.inputQueue = append(m.inputQueue, pendingInputEntry{
+			kind:       inputKindHelpFinalMerge,
+		})
+		m.refreshPanels()
+		return m, waitForGateReqCmd(m.helpGateReq)
 
 	case EngineEventMsg:
 		var evCmd tea.Cmd
@@ -73,6 +95,21 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
+		// ctrl+h toggles the help agent modal from any focus region.
+		if keybind.Matches(msg, m.keys.ToggleHelp) {
+			return m.toggleHelpChat()
+		}
+		// When the help modal is open and captures text, route all key input to it.
+		if m.helpOpen {
+			if keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("esc"))) {
+				m.helpOpen = false
+				return m, nil
+			}
+			var hCmd tea.Cmd
+			m.helpModel, hCmd = m.helpModel.Update(msg)
+			return m, hCmd
+		}
+
 		// Focus-switch keys move keyboard focus between the present regions even
 		// while a gate is pending — gates are non-blocking (ADR 0002). Handled
 		// first so navigation is never frozen. In the Transcript panel the block
@@ -369,4 +406,87 @@ func (m *Model) refreshPanels() {
 	}
 	m.vp.SetContent(m.listBody())
 	m.chatVP.SetContent(m.chatBody())
+}
+
+// toggleHelpChat opens or closes the help agent modal.
+// On first open it initialises helpModel and fires connectCmd; subsequent
+// open/close cycles just flip helpOpen, preserving conversation history.
+func (m Model) toggleHelpChat() (Model, tea.Cmd) {
+	if m.helpOpen {
+		m.helpOpen = false
+		return m, nil
+	}
+	m.helpOpen = true
+	if m.helpReady {
+		return m, nil // already connected; preserve conversation state
+	}
+
+	// First open: create rendezvous channels, build helpModel, fire Init.
+	gateReq := make(chan struct{}, 1)
+	gateAns := make(chan bool, 1)
+	m.helpGateReq = gateReq
+	m.helpGateAns = gateAns
+
+	if m.run == nil {
+		// Journal-replayed run — pre-populate unavailable message, skip SDK connect.
+		m.helpModel = helpchat.NewUnavailable()
+		m.helpReady = true
+		return m, nil
+	}
+
+	snap := m.run.Snapshot()
+	m.helpModel = helpchat.New(m.run, m.RunDir, snap)
+	m.helpModel.SetChannels(gateReq, gateAns)
+	initCmd := m.helpModel.Init()
+	m.helpReady = true
+
+	// Arm the dispatch drain and gate listener.
+	var cmds []tea.Cmd
+	if initCmd != nil {
+		cmds = append(cmds, initCmd)
+	}
+	cmds = append(cmds, helpchat.WaitForDispatchCmd(m.helpModel.DispatchCh()))
+	cmds = append(cmds, waitForGateReqCmd(gateReq))
+	return m, tea.Batch(cmds...)
+}
+
+// dispatchHelpAction converts a helpchat.DispatchedMsg to the appropriate
+// monitor message and re-queues it so the root model handles it identically
+// to a keyboard-triggered gate action.
+func (m Model) dispatchHelpAction(msg helpchat.DispatchedMsg) tea.Cmd {
+	// Re-arm the dispatch drain first.
+	drainCmd := helpchat.WaitForDispatchCmd(m.helpModel.DispatchCh())
+	var innerCmd tea.Cmd
+	switch a := msg.Inner.(type) {
+	case helpchat.RecoverAction:
+		innerCmd = func() tea.Msg {
+			return RecoverResponseMsg{RunID: m.RunID, StepID: a.StepID, Action: a.Action, Text: a.Text}
+		}
+	case helpchat.ResetAction:
+		innerCmd = func() tea.Msg { return RequestResetMsg{RunID: m.RunID, StepID: a.StepID} }
+	case helpchat.StopAction:
+		innerCmd = func() tea.Msg { return StopStepMsg{RunID: m.RunID, StepID: a.StepID} }
+	case helpchat.ResumeAction:
+		innerCmd = func() tea.Msg { return ResumeStepMsg{RunID: m.RunID, StepID: a.StepID, Message: a.Message} }
+	case helpchat.ReviewVerdict:
+		innerCmd = func() tea.Msg {
+			return ReviewVerdictMsg{RunID: m.RunID, StepID: a.StepID, Verdict: a.Verdict}
+		}
+	case helpchat.ReviewMessage:
+		innerCmd = func() tea.Msg { return ReviewMessageMsg{RunID: m.RunID, StepID: a.StepID, Text: a.Text} }
+	}
+	if innerCmd != nil {
+		return tea.Batch(innerCmd, drainCmd)
+	}
+	return drainCmd
+}
+
+// waitForGateReqCmd blocks on the gate request channel (read by the monitor,
+// not the helpchat model) and returns FinalMergeGateMsg when the tool handler
+// signals that the operator's TUI confirmation is needed.
+func waitForGateReqCmd(gateReq <-chan struct{}) tea.Cmd {
+	return func() tea.Msg {
+		<-gateReq
+		return helpchat.FinalMergeGateMsg{}
+	}
 }

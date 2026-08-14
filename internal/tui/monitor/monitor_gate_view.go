@@ -73,6 +73,8 @@ func (m Model) gateStrip() string {
 			m.renderGateIntegration(&b, entry)
 		case inputKindFinalMerge:
 			m.renderGateFinalMerge(&b, entry)
+		case inputKindHelpFinalMerge:
+			m.renderGateHelpFinalMerge(&b)
 		case inputKindResetConfirm:
 			m.renderGateResetConfirm(&b, entry)
 		}
@@ -254,6 +256,14 @@ func (m Model) renderGateFinalMerge(b *strings.Builder, entry *pendingInputEntry
 	line := clipReason("merge "+fm.RunBranch+" → "+base, m.gateInnerWidth()-2, 1)
 	b.WriteString("  " + shared.Theme.Marker.Render(line) + "\n\n")
 	b.WriteString("    [y] merge onto " + base + "\n")
+	b.WriteString("    [d] discard (leave run branch)\n")
+}
+
+// renderGateHelpFinalMerge renders the confirmation gate entry for the
+// help-agent-triggered final-merge approval (tool resolve_review, step_id="final_merge").
+func (m Model) renderGateHelpFinalMerge(b *strings.Builder) {
+	b.WriteString("  " + shared.Theme.Marker.Render("Help agent is requesting final merge approval") + "\n\n")
+	b.WriteString("    [y] approve merge\n")
 	b.WriteString("    [d] discard (leave run branch)\n")
 }
 

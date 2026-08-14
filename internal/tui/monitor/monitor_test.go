@@ -14,6 +14,7 @@ import (
 
 	"jig/internal/datastore"
 	"jig/internal/engine"
+	"jig/internal/helpchat"
 	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/transcript"
@@ -2025,6 +2026,129 @@ func TestMonitorFrameStepGating(t *testing.T) {
 	}})
 	if !m.dirtyChat {
 		t.Fatal("event for the visible step did not dirty the transcript panel")
+	}
+}
+
+// TestToggleHelp_OpenClose verifies that ctrl+h opens the help modal, a second
+// ctrl+h closes it, and esc also closes it while open.
+func TestToggleHelp_OpenClose(t *testing.T) {
+	m := newMonitorWithSteps(t)
+
+	if m.helpOpen {
+		t.Fatal("help modal should start closed")
+	}
+
+	// First ctrl+h: opens the modal (run == nil → NewUnavailable path, no SDK connect).
+	ctrlH := tea.KeyPressMsg{Code: 'h', Mod: tea.ModCtrl}
+	m, _ = m.Update(ctrlH)
+	if !m.helpOpen {
+		t.Fatal("first ctrl+h did not open the help modal")
+	}
+	if !m.helpReady {
+		t.Fatal("helpReady should be true after first open (unavailable path)")
+	}
+
+	// Second ctrl+h: closes.
+	m, _ = m.Update(ctrlH)
+	if m.helpOpen {
+		t.Fatal("second ctrl+h did not close the help modal")
+	}
+
+	// Third ctrl+h to reopen, then esc to close.
+	m, _ = m.Update(ctrlH)
+	if !m.helpOpen {
+		t.Fatal("third ctrl+h did not reopen the help modal")
+	}
+	m, _ = m.Update(key("esc"))
+	if m.helpOpen {
+		t.Fatal("esc did not close the help modal")
+	}
+}
+
+// TestHelpDispatch_DispatchedMsg verifies that a DispatchedMsg carrying a
+// RecoverAction is converted to a RecoverResponseMsg by dispatchHelpAction and
+// the returned cmd produces that message when called.
+func TestHelpDispatch_DispatchedMsg(t *testing.T) {
+	m := newMonitorWithSteps(t)
+
+	dispatched := helpchat.DispatchedMsg{
+		Inner: helpchat.RecoverAction{StepID: "a", Action: "retry", Text: "try again"},
+	}
+
+	_, cmd := m.Update(dispatched)
+	if cmd == nil {
+		t.Fatal("DispatchedMsg returned nil cmd")
+	}
+
+	// The batch contains the inner action cmd and the re-armed drain cmd. Execute
+	// them until we get a RecoverResponseMsg (or exhaust without finding one).
+	msgs := runBatch(cmd)
+	var found *RecoverResponseMsg
+	for _, msg := range msgs {
+		if r, ok := msg.(RecoverResponseMsg); ok {
+			found = &r
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("no RecoverResponseMsg in batch; got %T values", msgs)
+	}
+	if found.StepID != "a" {
+		t.Errorf("StepID = %q, want %q", found.StepID, "a")
+	}
+	if found.Action != "retry" {
+		t.Errorf("Action = %q, want %q", found.Action, "retry")
+	}
+	if found.RunID != "run-1" {
+		t.Errorf("RunID = %q, want %q", found.RunID, "run-1")
+	}
+}
+
+// runBatch executes a tea.Cmd and collects the messages it produces within a
+// short timeout. Handles tea.BatchMsg by executing each sub-command in a
+// goroutine, collecting only those that return before the deadline (blocking
+// channel-drain cmds are skipped automatically).
+func runBatch(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	type result struct{ msg tea.Msg }
+	run := func(c tea.Cmd) <-chan tea.Msg {
+		ch := make(chan tea.Msg, 1)
+		go func() { ch <- c() }()
+		return ch
+	}
+	collect := func(cmds []tea.Cmd) []tea.Msg {
+		chans := make([]<-chan tea.Msg, len(cmds))
+		for i, c := range cmds {
+			chans[i] = run(c)
+		}
+		deadline := time.After(50 * time.Millisecond)
+		var out []tea.Msg
+		for _, ch := range chans {
+			select {
+			case m := <-ch:
+				if m != nil {
+					out = append(out, m)
+				}
+			case <-deadline:
+			}
+		}
+		return out
+	}
+
+	topCh := run(cmd)
+	select {
+	case top := <-topCh:
+		if top == nil {
+			return nil
+		}
+		if batch, ok := top.(tea.BatchMsg); ok {
+			return collect([]tea.Cmd(batch))
+		}
+		return []tea.Msg{top}
+	case <-time.After(50 * time.Millisecond):
+		return nil
 	}
 }
 
