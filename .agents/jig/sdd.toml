@@ -69,7 +69,7 @@
 [workflow]
 name        = "sdd"
 version     = "1"
-description = "SDD end-to-end — idea to validated, compliance-gated implementation in one graph."
+description = "SDD end-to-end — idea to changelog in one graph: spec, tasks, implement, validate, compliance."
 
 [defaults]
 model           = "claude-opus-4-8"
@@ -220,18 +220,67 @@ max_messages = 10
   feedback       = "@spec_review"
 
 # ════════════════════════════════════════════════════════════════════════
+# PHASE 1.5 — ARCH CHECK  (arch_fitness → arch_gate)
+# ════════════════════════════════════════════════════════════════════════
+
+# ─── 8. Architecture fitness check ───────────────────────────────────────────
+# Runs immediately after spec_review approves the spec. Reads ADR files,
+# architecture docs, and the spec to verify the proposed approach does not
+# violate existing architectural decisions or layering rules.
+# arch_gate only fires when violations are found — when the spec is
+# architecturally sound, arch_gate is guard-skipped and analyze_spec proceeds
+# without human intervention.
+[[step]]
+id            = "arch_fitness"
+type          = "agent"
+depends_on    = ["spec_review", "write_spec", "context_assess"]
+when          = "spec_review == 'approve'"
+skill         = "../skills/sdd-arch-fitness"
+inputs        = ["@write_spec.spec_path", "@write_spec.spec_content", "@context_assess.spec_name"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "verify the proposed spec does not violate existing ADRs, layering rules, or architecture constraints"
+
+  [step.schema]
+  arch_result  = { enum = ["pass", "flag"] }
+  violations   = { list = { constraint = "text", violation = "text", severity = { enum = ["blocking", "advisory"] } } }
+  arch_summary = "text"
+
+# ─── 9. Architecture gate — fires only when violations found ──────────────────
+# Guard-skipped (transparent) when arch passes — analyze_spec proceeds immediately.
+# 'override' lets the team proceed despite the violation (pragmatic decision,
+# documented in the review transcript). 'redesign' loops to write_spec so the
+# spec can be revised before task generation begins.
+[[step]]
+id           = "arch_gate"
+type         = "review"
+depends_on   = ["arch_fitness"]
+when         = "arch_fitness.arch_result == 'flag'"
+review       = "@arch_fitness.arch_summary"
+output_type  = { enum = ["override", "redesign"] }
+max_messages = 5
+
+  [step.loop]
+  when           = "arch_gate == 'redesign'"
+  goto           = "write_spec"
+  max_iterations = 3
+  feedback       = "@arch_gate"
+
+# ════════════════════════════════════════════════════════════════════════
 # PHASE 2 — TASKS  (analyze_spec → … → audit_review)
 # ════════════════════════════════════════════════════════════════════════
 
-# ─── 8. Analyze the spec and discover repo standards ──────────────────────────
+# ─── 10. Analyze the spec and discover repo standards ─────────────────────────
 # Phase 2 entry gate: only runs when spec_review approved the spec.
 # spec_name flows from @context_assess.spec_name — no second user prompt.
-# context_assess in depends_on provides the @ref source; spec_review provides
-# the phase-transition guard.
+# arch_gate in depends_on sequences after the fitness check (transparent when
+# arch passes; 'override' also continues; only 'redesign' loops back).
 [[step]]
 id            = "analyze_spec"
 type          = "agent"
-depends_on    = ["spec_review", "context_assess", "write_spec"]
+depends_on    = ["arch_gate", "spec_review", "context_assess", "write_spec"]
 when          = "spec_review == 'approve'"
 skill         = "../skills/sdd-analyze-spec"
 inputs        = ["@context_assess.spec_name", "@write_spec.spec_path"]
@@ -414,16 +463,29 @@ on_failure = "continue"
 output     = ".jig/lint-output.txt"
 script     = ".agents/jig/scripts/run-lint.sh"
 
+# ─── 16c. Test coverage gate ─────────────────────────────────────────────────
+# Runs after run_tests completes (reads the coverage profile it writes).
+# on_failure = "continue" lets the cycle complete — failing coverage appears in
+# the proof artifact and is surfaced at task_checkpoint for human decision.
+[[step]]
+id         = "check_coverage"
+type       = "command"
+depends_on = ["run_tests", "find_next_task"]
+when       = "find_next_task.progress == 'continue'"
+on_failure = "continue"
+output     = ".jig/coverage-output.txt"
+script     = ".agents/jig/scripts/check-coverage.sh"
+
 # ─── 17. Create proof artifact ────────────────────────────────────────────────
-# Runs after both test and lint results are available. Writes the reviewer-first
-# proof markdown file for the parent task.
+# Runs after tests, lint, and coverage results are all available. Writes the
+# reviewer-first proof markdown file incorporating all quality gate outputs.
 [[step]]
 id            = "create_proofs"
 type          = "agent"
-depends_on    = ["run_tests", "run_lint", "find_next_task"]
+depends_on    = ["run_tests", "run_lint", "check_coverage", "find_next_task"]
 when          = "find_next_task.progress == 'continue'"
 skill         = "../skills/sdd-create-proofs"
-inputs        = ["@find_next_task.task_path", "@find_next_task.spec_name", "@find_next_task.parent_task_num", "@find_next_task.task_title", "@run_tests", "@run_lint"]
+inputs        = ["@find_next_task.task_path", "@find_next_task.spec_name", "@find_next_task.parent_task_num", "@find_next_task.task_title", "@run_tests", "@run_lint", "@check_coverage"]
 allowed_tools = ["Read", "Write", "Bash"]
 isolation     = "none"
 
@@ -567,6 +629,38 @@ on_failure = "continue"
 output     = ".jig/proof-check-output.txt"
 script     = ".agents/jig/scripts/verify-proof-files.sh"
 
+# ─── 22d. Breaking change detection (parallel, deterministic) ────────────────
+# Detects unintentional API contract breaks (OpenAPI diff, buf breaking for
+# protobuf). Skips gracefully when no schema files are present.
+# on_failure = "continue" lets the validation report capture the finding.
+[[step]]
+id         = "check_breaking_changes"
+type       = "command"
+depends_on = ["discover_artifacts"]
+on_failure = "continue"
+output     = ".jig/breaking-changes-output.txt"
+script     = ".agents/jig/scripts/breaking-changes.sh"
+
+# ─── 22e. Performance analysis (parallel) ────────────────────────────────────
+# Reviews changed source files for performance anti-patterns: N+1 queries,
+# missing indexes, unbounded iterations, missing pagination. Runs in parallel
+# with the three other Phase 4 analysis steps.
+[[step]]
+id            = "analyze_performance"
+type          = "agent"
+depends_on    = ["discover_artifacts"]
+skill         = "../skills/sdd-analyze-performance"
+inputs        = ["@discover_artifacts.spec_path", "@discover_artifacts.changed_files", "@discover_artifacts.task_path"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "review changed files for performance anti-patterns against spec requirements"
+
+  [step.schema]
+  findings    = { list = { pattern = "text", location = "text", severity = { enum = ["blocking", "advisory", "info"] }, recommendation = "text" } }
+  perf_result = { enum = ["pass", "flag"] }
+
 # ─── 23. Assemble the final validation report ─────────────────────────────────
 # Synthesises the coverage matrix, compliance findings, and proof file check
 # into a single gated validation report. On a 'flag' loop run, re-examines the
@@ -574,7 +668,7 @@ script     = ".agents/jig/scripts/verify-proof-files.sh"
 [[step]]
 id            = "assemble_report"
 type          = "agent"
-depends_on    = ["build_coverage_matrix", "check_repo_compliance", "verify_proof_files", "discover_artifacts"]
+depends_on    = ["build_coverage_matrix", "check_repo_compliance", "verify_proof_files", "check_breaking_changes", "analyze_performance", "discover_artifacts"]
 skill         = "../skills/sdd-assemble-report"
 inputs        = [
   "@discover_artifacts.spec_path",
@@ -587,6 +681,9 @@ inputs        = [
   "@check_repo_compliance.gate_d1_triggered",
   "@check_repo_compliance.gate_e_result",
   "@verify_proof_files",
+  "@check_breaking_changes",
+  "@analyze_performance.findings",
+  "@analyze_performance.perf_result",
 ]
 allowed_tools = ["Read", "Grep", "Glob", "Write"]
 isolation     = "none"
@@ -773,3 +870,44 @@ max_messages = 10
   goto           = "assemble_compliance_report"
   max_iterations = 3
   feedback       = "@compliance_review"
+
+# ════════════════════════════════════════════════════════════════════════
+# PHASE 6 — CHANGELOG  (gen_changelog → commit_changelog)
+# ════════════════════════════════════════════════════════════════════════
+
+# ─── 39. Draft changelog entry ────────────────────────────────────────────────
+# Only runs when compliance_review approved. Reads the git log, spec, and
+# validation + compliance outcomes to draft a CHANGELOG.md entry summarising
+# what was built, proven, and cleared. Writes to CHANGELOG.md (prepending).
+[[step]]
+id            = "gen_changelog"
+type          = "agent"
+depends_on    = ["compliance_review", "discover_artifacts", "assemble_compliance_report"]
+when          = "compliance_review == 'approve'"
+skill         = "../skills/sdd-gen-changelog"
+inputs        = [
+  "@discover_artifacts.spec_path",
+  "@discover_artifacts.spec_name",
+  "@discover_artifacts.git_log",
+  "@assemble_compliance_report.compliance_status",
+]
+allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "draft a CHANGELOG.md entry summarising the spec, implementation, and compliance outcomes"
+
+  [step.schema]
+  changelog_entry = "text"
+  entry_written   = "bool"
+
+# ─── 40. Commit changelog ─────────────────────────────────────────────────────
+# Deterministic commit of the CHANGELOG.md update. Runs only after gen_changelog
+# completes and only when compliance was approved. compliance_review in depends_on
+# provides the guard reference; gen_changelog provides the content.
+[[step]]
+id         = "commit_changelog"
+type       = "command"
+depends_on = ["gen_changelog", "compliance_review"]
+when       = "compliance_review == 'approve'"
+script     = ".agents/jig/scripts/commit-changelog.sh"

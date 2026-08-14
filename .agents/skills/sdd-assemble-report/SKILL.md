@@ -19,6 +19,8 @@ Write to `docs/specs/{spec_name}/{spec_name}-validation.md`.
 | D1 | `gate_d1_triggered == true` | overall_status = "fail" |
 | E | `gate_e_result == "fail"` | overall_status = "fail" |
 | F | Any credential pattern found in proof artifacts | overall_status = "fail" (auto-CRITICAL) |
+| G | `@analyze_performance` output contains any `blocking` finding | overall_status = "fail" |
+| H | `@check_breaking_changes` output contains "BREAKING CHANGES DETECTED" | overall_status = "fail" |
 
 If ALL gates pass: `overall_status = "pass"`.
 
@@ -55,6 +57,15 @@ If ALL gates pass: `overall_status = "pass"`.
 | Severity | Issue | Impact | Recommendation |
 | --- | --- | --- | --- |
 
+## Performance Analysis
+
+| Pattern | Location | Severity | Recommendation |
+| --- | --- | --- | --- |
+
+## Breaking Change Detection
+
+[summary of check_breaking_changes output — PASS / SKIP / BREAKING CHANGES with details]
+
 ## Evidence Appendix
 
 ### Git Commits Analyzed
@@ -76,7 +87,10 @@ If ALL gates pass: `overall_status = "pass"`.
 
 Score findings 0–3 → CRITICAL/HIGH/MEDIUM/LOW:
 - Gate A/B/C/D1/E/F failures → CRITICAL or HIGH
+- Performance blocking findings → HIGH
+- Breaking API changes → HIGH
 - Missing supporting-file linkage → MEDIUM
+- Performance advisory findings → MEDIUM
 - Proof doc structure issues (no front-loaded context, missing inline screenshots) → LOW
 
 ## On a loop run (feedback from validation_review)
@@ -97,3 +111,4 @@ Score findings 0–3 → CRITICAL/HIGH/MEDIUM/LOW:
 - Do not re-run the parallel analysis — use the inputs as-is.
 - Do not modify implementation code.
 - Do not invent evidence not present in the inputs.
+- Do not ignore `perf_result == "flag"` — surface all performance findings in the report even if not gate-blocking.

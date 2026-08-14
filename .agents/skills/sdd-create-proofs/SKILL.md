@@ -56,6 +56,16 @@ Use Bash to create the directory first: `mkdir -p docs/specs/{spec_name}/{spec_n
 [content of the lint output file — use the @run_lint input]
 ~~~
 
+## Artifact: Test Coverage
+
+**What it proves:** Implementation maintains meaningful test coverage.
+**Why it matters:** Coverage below threshold is a signal that new code paths lack tests.
+**Command:** [the coverage command that was run]
+**Result summary:** [summarize: N% total coverage — PASS / FAIL / SKIP]
+~~~
+[content of the coverage output file — use the @check_coverage input]
+~~~
+
 ## Reviewer Conclusion
 [One paragraph: combined conclusion a reviewer should draw from the evidence above.]
 ```
@@ -69,6 +79,8 @@ For screenshots: show the artifact path above the image and embed inline with de
 ## Schema fields
 
 - `proof_path` — exact path written (e.g. `docs/specs/user-auth/user-auth-proofs/user-auth-task-1.0-proofs.md`)
+
+Note: `proof_path` remains the only schema field. The Test Coverage section is purely content within the proof document, not a separate schema output.
 
 ## What not to do
 

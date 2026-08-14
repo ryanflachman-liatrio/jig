@@ -5,7 +5,7 @@ set -e
 mkdir -p .jig
 
 if [ -f go.mod ]; then
-  go test ./... > .jig/test-output.txt 2>&1
+  go test -coverprofile=.jig/coverage.out ./... > .jig/test-output.txt 2>&1
 elif [ -f package.json ]; then
   npm test > .jig/test-output.txt 2>&1
 elif [ -f pyproject.toml ] || [ -f setup.py ]; then
