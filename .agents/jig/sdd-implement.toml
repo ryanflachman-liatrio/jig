@@ -1,0 +1,185 @@
+# =============================================================================
+# SDD Phase 3 (sdd-implement) as a jig workflow.
+#
+# Replicates the Liatrio Spec-Driven Development "Task Implementation" phase.
+# The key structural insight: a single implementation cycle is a DAG of seven
+# distinct steps, and the whole cycle is a bounded back-edge loop. On each
+# iteration the cycle implements exactly one parent task, verifies it, and
+# commits — then loops back to the next task until none remain.
+#
+# Parallelism: run_tests and run_lint are independent after implement_code and
+# run simultaneously (both depend only on implement_code).
+#
+# Step mapping to sdd-3:
+#   verify_audit       → Pre-work checklist: audit exists and all REQUIRED gates pass
+#   find_next_task     → Read task file, identify next [ ] parent task
+#   implement_code     → Sub-task execution protocol: [ ] → [~] → [x] for each sub-task
+#   run_tests          → Parent task completion checklist: run test suite (parallel)
+#   run_lint           → Parent task completion checklist: quality gates (parallel)
+#   create_proofs      → Proof artifact creation checklist: write reviewer-first proof file
+#   commit_task        → Commit validation protocol: git add + commit + verify
+#   task_checkpoint    → Human review of completed task; loop back for next task
+#   final_review       → Final sign-off on full implementation
+#
+# The implementation loop lives on task_checkpoint:
+#   when find_next_task.progress == 'continue' → loop back to find_next_task
+#   when find_next_task.progress == 'done'     → task_checkpoint guard-skips; final_review runs
+#
+# Validate with:  go run ./cmd/jig validate .agents/jig/sdd-implement.toml
+# =============================================================================
+
+[workflow]
+name        = "sdd-implement"
+version     = "1"
+description = "SDD Phase 3 — execute the task list, generate proof artifacts, and commit per parent task."
+
+[defaults]
+model           = "claude-opus-4-8"
+effort          = "high"
+permission_mode = "acceptEdits"
+max_parallel    = 2
+
+# ─── 1. Verify planning audit passed ─────────────────────────────────────────
+# Hard gate before any agent context opens. Fails with a clear message if no
+# passing audit file exists anywhere under docs/specs/, preventing accidental
+# implementation of a spec whose plan hasn't been approved.
+[[step]]
+id   = "verify_audit"
+type = "command"
+run  = "find docs/specs -name '*audit*.md' | xargs grep -l 'Overall Status: PASS' 2>/dev/null | grep -q . || (echo 'ERROR: no passing planning audit — run sdd-tasks first' >&2 && exit 1)"
+
+# ─── 2. Identify the next incomplete parent task ──────────────────────────────
+# Reads the task file and reports the next [ ] parent task. Emits 'done' once
+# all tasks are [x], at which point the loop exits and final_review fires.
+# User inputs are collected once here and reused on every loop iteration.
+[[step]]
+id            = "find_next_task"
+type          = "agent"
+depends_on    = ["verify_audit"]
+skill         = "../skills/sdd-find-next-task"
+inputs        = [
+  { from = "user", label = "Spec name (kebab-case, e.g. user-authentication):", as = "spec_name" },
+  { from = "user", label = "Checkpoint mode (task | batch — default: task):", as = "checkpoint_mode" },
+]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "read the task file and identify the next incomplete parent task, or confirm all tasks are done"
+
+  [step.schema]
+  progress           = { enum = ["continue", "done"] }
+  task_title         = "text"
+  task_path          = "text"
+  spec_name          = "text"
+  parent_task_num    = "text"
+  completion_summary = "text"
+
+# ─── 3. Implement all sub-tasks for the current parent task ───────────────────
+# Marks each sub-task [ ] → [~] → [x] as it goes, following repository
+# patterns and conventions. Writes the commit message to .jig/commit-msg.txt
+# for the commit_task step. Does NOT create the proof artifact (create_proofs)
+# and does NOT run git commit (commit_task).
+[[step]]
+id            = "implement_code"
+type          = "agent"
+depends_on    = ["find_next_task"]
+when          = "find_next_task.progress == 'continue'"
+skill         = "../skills/sdd-implement-code"
+inputs        = ["@find_next_task.task_path", "@find_next_task.spec_name", "@find_next_task.task_title", "@find_next_task.parent_task_num"]
+allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit", "Bash"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "implement every sub-task for the identified parent task, marking each complete in the task file"
+
+# ─── 4a. Run test suite ───────────────────────────────────────────────────────
+# Auto-detects the project's test runner and executes it. Runs in parallel
+# with run_lint. on_failure = "continue" lets the cycle complete so the proof
+# artifact captures the failing test output and the checkpoint surfaces it.
+[[step]]
+id         = "run_tests"
+type       = "command"
+depends_on = ["implement_code"]
+on_failure = "continue"
+output     = ".jig/test-output.txt"
+script     = ".agents/jig/scripts/run-tests.sh"
+
+# ─── 4b. Run lint and format checks ──────────────────────────────────────────
+# Parallel with run_tests. Detects the project's lint/format tooling and
+# verifies the implementation meets quality standards.
+[[step]]
+id         = "run_lint"
+type       = "command"
+depends_on = ["implement_code"]
+on_failure = "continue"
+output     = ".jig/lint-output.txt"
+script     = ".agents/jig/scripts/run-lint.sh"
+
+# ─── 5. Create proof artifact ─────────────────────────────────────────────────
+# Runs after both test and lint results are available. Writes the reviewer-first
+# proof markdown file for the parent task. Receives the test and lint output
+# files as inputs so the proofs capture the actual quality gate results.
+[[step]]
+id            = "create_proofs"
+type          = "agent"
+depends_on    = ["run_tests", "run_lint", "find_next_task"]
+when          = "find_next_task.progress == 'continue'"
+skill         = "../skills/sdd-create-proofs"
+inputs        = ["@find_next_task.task_path", "@find_next_task.spec_name", "@find_next_task.parent_task_num", "@find_next_task.task_title", "@run_tests", "@run_lint"]
+allowed_tools = ["Read", "Write", "Bash"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "write the reviewer-first proof artifact file incorporating test and lint results"
+
+  [step.schema]
+  proof_path = "text"
+
+# ─── 6. Stage and commit the parent task ──────────────────────────────────────
+# Reads the commit message written by implement_code and commits everything:
+# implementation files, updated task file, and the new proof artifact.
+[[step]]
+id         = "commit_task"
+type       = "command"
+depends_on = ["create_proofs", "find_next_task"]
+when       = "find_next_task.progress == 'continue'"
+script     = ".agents/jig/scripts/commit-task.sh"
+
+# ─── 7. Per-task human checkpoint ────────────────────────────────────────────
+# Shows the committed parent task for review. The loop back-edge drives the
+# full implementation cycle: when find_next_task.progress == 'continue', the
+# engine goes back to find_next_task to pick up the next parent task.
+# When progress == 'done', this step is guard-skipped and final_review runs.
+[[step]]
+id           = "task_checkpoint"
+type         = "review"
+depends_on   = ["commit_task", "find_next_task"]
+when         = "find_next_task.progress == 'continue'"
+review       = "@create_proofs.proof_path"
+output_type  = { enum = ["continue", "redo"] }
+max_messages = 5
+
+  [step.loop]
+  when           = "find_next_task.progress == 'continue'"
+  goto           = "find_next_task"
+  max_iterations = 15
+  feedback       = "@task_checkpoint"
+
+# ─── 8. Final sign-off ────────────────────────────────────────────────────────
+# Renders the completion summary from the last find_next_task run ('done').
+# 'flag_issues' loops back to find_next_task for a targeted fix pass;
+# 'approve' signals the implementation is ready for Phase 4 (sdd-validate).
+[[step]]
+id           = "final_review"
+type         = "review"
+depends_on   = ["task_checkpoint", "find_next_task"]
+review       = "@find_next_task.completion_summary"
+output_type  = { enum = ["approve", "flag_issues"] }
+max_messages = 10
+
+  [step.loop]
+  when           = "final_review == 'flag_issues'"
+  goto           = "find_next_task"
+  max_iterations = 3
+  feedback       = "@final_review"

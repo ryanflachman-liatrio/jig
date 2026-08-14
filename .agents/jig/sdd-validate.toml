@@ -1,0 +1,172 @@
+# =============================================================================
+# SDD Phase 4 (sdd-validate) as a jig workflow.
+#
+# Replicates the Liatrio Spec-Driven Development "Validate Spec Implementation"
+# phase. The key structural insight: validation decomposes into independent
+# analysis concerns that can run in parallel once the artifacts are discovered.
+#
+# Parallelism (steps 2, 3, 4 all depend only on discover_artifacts):
+#   build_coverage_matrix  — map each FR to its proof evidence
+#   check_repo_compliance  — verify standards adherence and git traceability
+#   verify_proof_files     — deterministic command: proof files exist on disk
+#
+# After all three complete, assemble_report synthesises the findings into the
+# single human-readable validation report.
+#
+# Step mapping to sdd-4:
+#   discover_artifacts     → Step 1: Input Discovery (locate spec/tasks/proofs/git log)
+#   build_coverage_matrix  → Step 3: Change Analysis + Step 4: Evidence Verification (FRs)
+#   check_repo_compliance  → Step 2: Git Commit Mapping + Step 4: Evidence Verification (standards)
+#   verify_proof_files     → Step 4: Detailed Checks — Proof Artifact Verification
+#   assemble_report        → Output: write the gated validation report
+#   validation_review      → Human reviews; 'flag' loops back to assemble_report with feedback
+#
+# Validate with:  go run ./cmd/jig validate .agents/jig/sdd-validate.toml
+# =============================================================================
+
+[workflow]
+name        = "sdd-validate"
+version     = "1"
+description = "SDD Phase 4 — validate implementation against spec requirements and produce a gated report."
+
+[defaults]
+model           = "claude-opus-4-8"
+effort          = "high"
+permission_mode = "acceptEdits"
+max_parallel    = 3
+
+# ─── 1. Discover all SDD artifacts ───────────────────────────────────────────
+# Locates spec, task list, audit, and proof directory. Runs git log to surface
+# implementation commits and changed files. Extracts the list of Functional
+# Requirements and expected proof artifact paths from the task file.
+# All parallel analysis steps downstream consume this structured artifact map.
+[[step]]
+id            = "discover_artifacts"
+type          = "agent"
+skill         = "../skills/sdd-discover-artifacts"
+inputs        = [
+  { from = "user", label = "Spec name (kebab-case, e.g. user-authentication):", as = "spec_name" },
+]
+allowed_tools = ["Read", "Grep", "Glob", "Bash"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "locate all SDD artifacts and collect git history for the parallel analysis steps"
+
+  [step.schema]
+  spec_path            = "text"
+  task_path            = "text"
+  audit_path           = "text"
+  proofs_dir           = "text"
+  spec_name            = "text"
+  git_log              = "text"
+  requirements         = { list = "text" }
+  proof_artifact_paths = { list = "text" }
+  changed_files        = { list = "text" }
+
+# ─── 2a. Build functional requirement coverage matrix (parallel) ──────────────
+# For each functional requirement in the spec, locates the corresponding proof
+# artifact(s) and records whether each can be verified (Verified/Failed/Unknown).
+# Runs in parallel with check_repo_compliance and verify_proof_files.
+[[step]]
+id            = "build_coverage_matrix"
+type          = "agent"
+depends_on    = ["discover_artifacts"]
+skill         = "../skills/sdd-build-coverage-matrix"
+inputs        = ["@discover_artifacts.spec_path", "@discover_artifacts.task_path", "@discover_artifacts.requirements", "@discover_artifacts.proof_artifact_paths"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "map every functional requirement to its proof artifact evidence and record Verified/Failed/Unknown"
+
+  [step.schema]
+  coverage_matrix   = { list = { requirement = "text", result = { enum = ["verified", "failed", "unknown"] }, evidence = "text" } }
+  fr_verified_count = "number"
+  fr_total          = "number"
+  gate_b_result     = { enum = ["pass", "fail"] }
+
+# ─── 2b. Check repository compliance and git traceability (parallel) ──────────
+# Verifies that the implementation follows identified repository standards and
+# that git commits map cleanly to requirements and tasks.
+# Runs in parallel with build_coverage_matrix and verify_proof_files.
+[[step]]
+id            = "check_repo_compliance"
+type          = "agent"
+depends_on    = ["discover_artifacts"]
+skill         = "../skills/sdd-check-repo-compliance"
+inputs        = ["@discover_artifacts.spec_path", "@discover_artifacts.task_path", "@discover_artifacts.git_log", "@discover_artifacts.changed_files", "@discover_artifacts.spec_name"]
+allowed_tools = ["Read", "Grep", "Glob", "Bash"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "verify repository standards compliance, git traceability, and detect out-of-scope core file changes"
+
+  [step.schema]
+  compliance_findings  = { list = { area = "text", result = { enum = ["verified", "failed", "unknown"] }, evidence = "text" } }
+  gate_d1_triggered    = "bool"
+  gate_e_result        = { enum = ["pass", "fail"] }
+
+# ─── 2c. Verify proof files exist on disk (parallel, deterministic) ───────────
+# Deterministic gate: confirms that proof artifact files are present under
+# docs/specs. A missing file is an immediate GATE C failure regardless of what
+# the coverage matrix says.
+[[step]]
+id         = "verify_proof_files"
+type       = "command"
+depends_on = ["discover_artifacts"]
+on_failure = "continue"
+output     = ".jig/proof-check-output.txt"
+script     = ".agents/jig/scripts/verify-proof-files.sh"
+
+# ─── 3. Assemble the final validation report ──────────────────────────────────
+# Synthesises the coverage matrix, compliance findings, and proof file check
+# into a single gated validation report. Evaluates all mandatory gates (A-F)
+# and the rubric (R1-R6). On a 'flag' loop run, re-examines the flagged
+# findings using the human's feedback and updates the report accordingly.
+[[step]]
+id            = "assemble_report"
+type          = "agent"
+depends_on    = ["build_coverage_matrix", "check_repo_compliance", "verify_proof_files", "discover_artifacts"]
+skill         = "../skills/sdd-assemble-report"
+inputs        = [
+  "@discover_artifacts.spec_path",
+  "@discover_artifacts.task_path",
+  "@discover_artifacts.spec_name",
+  "@discover_artifacts.git_log",
+  "@build_coverage_matrix.coverage_matrix",
+  "@build_coverage_matrix.gate_b_result",
+  "@check_repo_compliance.compliance_findings",
+  "@check_repo_compliance.gate_d1_triggered",
+  "@check_repo_compliance.gate_e_result",
+  "@verify_proof_files",
+]
+allowed_tools = ["Read", "Grep", "Glob", "Write"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "synthesise all analysis findings into the gated validation report; apply gate logic and write to disk"
+
+  [step.schema]
+  report_path    = "text"
+  overall_status = { enum = ["pass", "fail"] }
+  report_content = "text"
+
+# ─── 4. Human reviews the validation report ───────────────────────────────────
+# Renders the full validation report (coverage matrix, issues, evidence
+# appendix). 'flag' loops back to assemble_report with the reviewer's notes
+# so specific findings can be re-examined and the report updated. 'approve'
+# signals that this spec is validated and ready to merge.
+[[step]]
+id           = "validation_review"
+type         = "review"
+depends_on   = ["assemble_report"]
+review       = "@assemble_report.report_content"
+output_type  = { enum = ["approve", "flag"] }
+max_messages = 10
+
+  [step.loop]
+  when           = "validation_review == 'flag'"
+  goto           = "assemble_report"
+  max_iterations = 3
+  feedback       = "@validation_review"
