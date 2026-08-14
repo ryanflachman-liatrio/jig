@@ -689,6 +689,12 @@ type scheduler struct {
 	// This is the interactive equivalent of a static on_failure = "continue".
 	skippedByOperator map[string]bool
 
+	// skippedByGuard marks steps whose when= condition evaluated false. These
+	// steps are optional branches: a dependent should not be blocked just because
+	// an optional upstream node did not apply. They are transparent in depsReady,
+	// cascadeSkip, and anyPendingRunnable.
+	skippedByGuard map[string]bool
+
 	// reporters holds the active reporter for each in-flight step so
 	// agentQuestionAnswerMsg can route the answer to the correct channel.
 	reporters map[string]*reporter
@@ -759,6 +765,7 @@ func newScheduler(
 		recoverCount:        make(map[string]int),
 		seenEscalations:     make(map[string]bool),
 		skippedByOperator:   make(map[string]bool),
+		skippedByGuard:      make(map[string]bool),
 		reporters:           make(map[string]*reporter),
 		stepCancels:         make(map[string]context.CancelFunc),
 		stopping:            make(map[string]bool),
@@ -877,6 +884,7 @@ func (s *scheduler) nextReady() (*workflow.Step, bool) {
 			cond, _ := workflow.ParseCondition(st.When)
 			if !s.evalGuard(cond) {
 				s.transition(st.ID, state.Status, step.StatusSkipped)
+				s.skippedByGuard[st.ID] = true
 				s.cascadeSkip(st.ID)
 				continue
 			}
@@ -927,6 +935,12 @@ func (s *scheduler) depsReady(st *workflow.Step) bool {
 		if depState.Status == step.StatusSucceeded {
 			continue
 		}
+		// A guard-skipped dep is transparent when the dependent only uses it for
+		// sequencing (no @ref input). If the dependent references output data from
+		// the guard-skipped step it must still wait (and will be cascade-skipped).
+		if depState.Status == step.StatusSkipped && s.skippedByGuard[depID] && !stepRefsDep(st, depID) {
+			continue
+		}
 		// A failed dep is "ready" when it declared on_failure = "continue", or
 		// when a human skipped it at the recovery gate (RecoverSkip) — both mean
 		// "its failure does not block dependents."
@@ -968,7 +982,11 @@ func (s *scheduler) anyPendingRunnable() bool {
 	blocked := make(map[string]bool, len(s.states))
 	for id, st := range s.states {
 		if st.Status == step.StatusSkipped {
-			blocked[id] = true
+			// Guard-skipped steps are transparent optional branches — dependents
+			// should not be considered blocked just because the guard didn't fire.
+			if !s.skippedByGuard[id] {
+				blocked[id] = true
+			}
 		}
 		if st.Status == step.StatusFailed {
 			// An operator-skipped step (RecoverSkip) is transparent like a
@@ -2157,6 +2175,12 @@ func (s *scheduler) cascadeSkip(skipID string) {
 				if !toSkip[dep] {
 					continue
 				}
+				// Guard-skipped deps are transparent when the dependent only uses
+				// them for sequencing (no @ref input). If the dependent references
+				// output data from the guard-skipped step it must still be skipped.
+				if s.skippedByGuard[dep] && !stepRefsDep(st, dep) {
+					continue
+				}
 				// A skipped dep cascades unless the dep opted into "continue".
 				depStep := s.stepByID(dep)
 				if depStep == nil || depStep.OnFailure != workflow.FailContinue {
@@ -2174,6 +2198,17 @@ func (s *scheduler) cascadeSkip(skipID string) {
 		from := s.states[id].Status
 		s.transition(id, from, step.StatusSkipped)
 	}
+}
+
+// stepRefsDep reports whether any of st's inputs has Ref == depID, meaning st
+// requires output data from depID (as opposed to a pure sequencing dependency).
+func stepRefsDep(st *workflow.Step, depID string) bool {
+	for _, inp := range st.Inputs {
+		if inp.Ref == depID {
+			return true
+		}
+	}
+	return false
 }
 
 // dispatchUserPrompt parks an agent step that needs from="user" inputs on

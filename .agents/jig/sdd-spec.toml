@@ -125,8 +125,9 @@ max_messages = 5
 # session and re-runs the sufficiency check. Bounded by the engine's 20-round cap
 # — the exact "STOP AND WAIT → read answers → re-check" loop, engine-enforced.
 #
-# depends_on includes scope_assess (for @scope_assess.summary ref) AND scope_gate
-# (to prevent racing with the scope loop when sizing is off).
+# depends_on includes the @ref sources (context_assess, tech_research, scope_assess)
+# AND scope_gate for sequencing — prevents racing with the scope loop when sizing is off.
+# When scope_gate is guard-skipped (just_right), the engine treats it as transparent.
 [[step]]
 id            = "clarify"
 type          = "agent"

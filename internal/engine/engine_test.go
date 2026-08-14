@@ -1170,12 +1170,14 @@ when = "a == 'yes'"
 	}
 }
 
-// TestScheduler_WhenGuard_SkipCascade verifies that skipping a step due to a
-// false guard also cascades to transitive dependents.
-func TestScheduler_WhenGuard_SkipCascade(t *testing.T) {
+// TestScheduler_WhenGuard_SequencingDepRuns verifies that a step whose only
+// dependency on a guard-skipped step is sequencing (no @ref input) still runs.
+// This is the common pattern for optional gates: the downstream step lists the
+// gate in depends_on to prevent races, but does not consume its output.
+func TestScheduler_WhenGuard_SequencingDepRuns(t *testing.T) {
 	const toml = `
 [workflow]
-name = "guard-cascade"
+name = "guard-sequence"
 version = "0.1"
 
 [[step]]
@@ -1217,11 +1219,80 @@ depends_on = ["b"]
 
 	events := collectEvents(t, ch, 5*time.Second)
 
-	// Both b and c must be skipped.
+	// b must be skipped (guard false).
+	got := findStatus(events, "b")
+	if len(got) == 0 || got[len(got)-1] != step.StatusSkipped {
+		t.Errorf("step b should be skipped (guard false); got %v", got)
+	}
+	// c depends on b for sequencing only (no @b.* input) — it must run.
+	got = findStatus(events, "c")
+	if len(got) == 0 || got[len(got)-1] != step.StatusSucceeded {
+		t.Errorf("step c should succeed (sequencing-only dep on guard-skipped b); got %v", got)
+	}
+	// Run finishes not-failed.
+	last := events[len(events)-1]
+	rf, ok := last.(RunFinished)
+	if !ok || rf.Failed {
+		t.Errorf("want RunFinished{Failed:false}, got %v", last)
+	}
+}
+
+// TestScheduler_WhenGuard_DataDepCascades verifies that a step which references
+// a guard-skipped step's output (@ref input) is cascade-skipped — it can never
+// resolve its inputs when the producer didn't run.
+func TestScheduler_WhenGuard_DataDepCascades(t *testing.T) {
+	const toml = `
+[workflow]
+name = "guard-cascade"
+version = "0.1"
+
+[[step]]
+id = "a"
+type = "command"
+run = "echo a"
+output_type = { enum = ["yes", "no"] }
+
+[[step]]
+id = "b"
+type = "agent"
+skill = "echo-b"
+depends_on = ["a"]
+when = "a == 'yes'"
+[step.schema]
+result = "text"
+
+[[step]]
+id = "c"
+type = "command"
+run = "echo c"
+depends_on = ["b"]
+inputs = ["@b.result"]
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &verdictExec{
+		testExec: testExec{outcomes: map[string]testOutcome{
+			"a": {delay: delay},
+		}},
+		verdicts: map[string]string{"a": "no"},
+	}
+	mgr := NewManager(exec, "")
+	_, ch := mgr.Subscribe()
+
+	_, err = mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	events := collectEvents(t, ch, 5*time.Second)
+
+	// Both b and c must be skipped: b by guard, c by cascade (needs @b.result).
 	for _, id := range []string{"b", "c"} {
 		got := findStatus(events, id)
 		if len(got) == 0 || got[len(got)-1] != step.StatusSkipped {
-			t.Errorf("step %q should be skipped via cascade; got %v", id, got)
+			t.Errorf("step %q should be skipped; got %v", id, got)
 		}
 	}
 	// Run finishes not-failed.
