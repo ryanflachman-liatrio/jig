@@ -13,7 +13,7 @@ Write to `docs/specs/{spec_name}/{spec_name}-compliance.md`.
 
 | Gate | Condition | Effect |
 |------|-----------|--------|
-| WCAG | `wcag_result == "fail"` | compliance_status = "fail" |
+| WCAG | `@check_accessibility` output contains "WCAG CHECK: FAIL" | compliance_status = "fail" |
 | OWASP | `owasp_result == "fail"` | compliance_status = "fail" |
 | PCI | `pci_result == "fail"` | compliance_status = "fail" |
 | Privacy | `privacy_result == "fail"` | compliance_status = "fail" |

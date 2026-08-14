@@ -16,9 +16,9 @@ Write to `docs/specs/{spec_name}/{spec_name}-validation.md`.
 | A | Any CRITICAL or HIGH issue | overall_status = "fail" |
 | B | `gate_b_result == "fail"` (Unknown or Failed FRs) | overall_status = "fail" |
 | C | `@verify_proof_files` output contains "GATE C: FAIL" | overall_status = "fail" |
-| D1 | `gate_d1_triggered == true` | overall_status = "fail" |
-| E | `gate_e_result == "fail"` | overall_status = "fail" |
-| F | Any credential pattern found in proof artifacts | overall_status = "fail" (auto-CRITICAL) |
+| D1 | `@check_scope_integrity.gate_d1_triggered == true` | overall_status = "fail" |
+| E | `@check_standards_compliance.gate_e_result == "fail"` | overall_status = "fail" |
+| F | `@check_credentials` output contains "GATE F: FAIL" | overall_status = "fail" (auto-CRITICAL) |
 | G | `@analyze_performance` output contains any `blocking` finding | overall_status = "fail" |
 | H | `@check_breaking_changes` output contains "BREAKING CHANGES DETECTED" | overall_status = "fail" |
 
@@ -44,8 +44,17 @@ If ALL gates pass: `overall_status = "pass"`.
 
 ### Repository Standards
 
-| Standard Area | Status | Evidence & Compliance Notes |
+| Standard | Status | Evidence |
 | --- | --- | --- |
+
+(Populate from @check_standards_compliance.findings)
+
+### Git Traceability
+
+| Area | Status | Evidence |
+| --- | --- | --- |
+
+(Populate from @check_git_traceability.findings)
 
 ### Proof Artifacts
 
