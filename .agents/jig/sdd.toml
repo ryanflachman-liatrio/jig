@@ -1,0 +1,775 @@
+# =============================================================================
+# SDD — unified end-to-end workflow (sdd.toml)
+#
+# Combines all four SDD phases (Spec, Tasks, Implement, Validate) plus a new
+# Phase 5 (Compliance fan-out) into one 36-step DAG.
+#
+# Key adaptations from the standalone phase files:
+#
+#   1. User inputs collected ONCE at context_assess (spec_name, request).
+#      Every downstream step that previously asked for spec_name receives it
+#      from @context_assess.spec_name instead. The only remaining user input
+#      after Phase 1 is checkpoint_mode on find_next_task (an operational
+#      preference, not spec identity).
+#
+#   2. Phase transitions use `when` guards:
+#      - analyze_spec (Phase 2 start): when = "spec_review == 'approve'"
+#      - find_next_task (Phase 3 start): when = "audit_review == 'approve'"
+#      - discover_artifacts (Phase 4 start): when = "final_review == 'approve'"
+#      - compliance_scope (Phase 5 start): when = "validation_review == 'approve'"
+#
+#   3. verify_audit is dropped — the audit happens in Phase 2 and audit_review
+#      gates Phase 3 entry naturally.
+#
+#   4. run_tests and run_lint gain explicit `when` guards
+#      (when = "find_next_task.progress == 'continue'") and add find_next_task
+#      to their depends_on. This prevents them firing on the final 'done' iteration.
+#
+# Step origin map:
+#   mkdir_spec              → sdd-spec.toml  (Phase 1, Step 1)
+#   context_assess          → sdd-spec.toml  (Phase 1, Step 2a) — now sole user-input collector
+#   tech_research           → sdd-spec.toml  (Phase 1, Step 2b)
+#   scope_assess            → sdd-spec.toml  (Phase 1, Step 3)
+#   scope_gate              → sdd-spec.toml  (Phase 1, Step 4 gate)
+#   clarify                 → sdd-spec.toml  (Phase 1, Step 5 block_on loop)
+#   write_spec              → sdd-spec.toml  (Phase 1, Step 6)
+#   spec_review             → sdd-spec.toml  (Phase 1, Step 7 review)
+#   analyze_spec            → sdd-tasks.toml (Phase 2, Step 1) — guarded by spec_review
+#   gen_parent_tasks        → sdd-tasks.toml (Phase 2, Step 2)
+#   parent_tasks_review     → sdd-tasks.toml (Phase 2, Step 3)
+#   gen_subtasks            → sdd-tasks.toml (Phase 2, Step 4)
+#   planning_audit          → sdd-tasks.toml (Phase 2, Step 5)
+#   audit_review            → sdd-tasks.toml (Phase 2, Step 6)
+#   find_next_task          → sdd-implement.toml (Phase 3, Step 2) — guarded by audit_review
+#   implement_code          → sdd-implement.toml (Phase 3, Step 3)
+#   run_tests               → sdd-implement.toml (Phase 3, Step 4a) — + when guard added
+#   run_lint                → sdd-implement.toml (Phase 3, Step 4b) — + when guard added
+#   create_proofs           → sdd-implement.toml (Phase 3, Step 5)
+#   commit_task             → sdd-implement.toml (Phase 3, Step 6)
+#   task_checkpoint         → sdd-implement.toml (Phase 3, Step 7)
+#   final_review            → sdd-implement.toml (Phase 3, Step 8)
+#   discover_artifacts      → sdd-validate.toml (Phase 4, Step 1) — guarded by final_review
+#   build_coverage_matrix   → sdd-validate.toml (Phase 4, Step 2a)
+#   check_repo_compliance   → sdd-validate.toml (Phase 4, Step 2b)
+#   verify_proof_files      → sdd-validate.toml (Phase 4, Step 2c)
+#   assemble_report         → sdd-validate.toml (Phase 4, Step 3)
+#   validation_review       → sdd-validate.toml (Phase 4, Step 4)
+#   compliance_scope        → NEW Phase 5 — guarded by validation_review
+#   check_accessibility     → NEW Phase 5 — parallel, conditional on includes_ui
+#   check_owasp_security    → NEW Phase 5 — parallel, always runs after validation_review
+#   check_pci_compliance    → NEW Phase 5 — parallel, conditional on includes_payments
+#   check_data_privacy      → NEW Phase 5 — parallel, conditional on includes_sensitive_data
+#   run_dep_audit           → NEW Phase 5 — parallel command
+#   assemble_compliance_report → NEW Phase 5 — synthesises all compliance findings
+#   compliance_review       → NEW Phase 5 — human gate with flag→loop
+#
+# Validate with:  go run ./cmd/jig validate .agents/jig/sdd.toml
+# =============================================================================
+
+[workflow]
+name        = "sdd"
+version     = "1"
+description = "SDD end-to-end — idea to validated, compliance-gated implementation in one graph."
+
+[defaults]
+model           = "claude-opus-4-8"
+effort          = "high"
+permission_mode = "acceptEdits"
+max_parallel    = 5
+
+# ════════════════════════════════════════════════════════════════════════
+# PHASE 1 — SPEC  (mkdir_spec → context_assess → … → spec_review)
+# ════════════════════════════════════════════════════════════════════════
+
+# ─── 1. Create the spec directory (deterministic; sdd-1 Step 1) ───────────────
+[[step]]
+id   = "mkdir_spec"
+type = "command"
+run  = "mkdir -p docs/specs"
+
+# ─── 2a. Context assessment (sdd-1 Step 2a) ───────────────────────────────────
+# Single user-input collection point for the entire workflow. spec_name and
+# request are gathered here and propagated via @context_assess.* to all
+# downstream steps — no other step asks the user for spec identity.
+[[step]]
+id              = "context_assess"
+type            = "agent"
+depends_on      = ["mkdir_spec"]
+skill           = "../skills/sdd-context-assess"
+output_template = "templates/context-assess.md"
+inputs          = [
+  { from = "user", label = "Describe the feature to spec (paste any reference material):", as = "request" },
+  { from = "user", label = "What should this spec be called? (kebab-case, e.g. user-authentication):", as = "spec_name" },
+]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "ground the spec in the real codebase and surface technologies for research"
+
+  [step.schema]
+  spec_name      = "text"           # echoed from user input — passed to all downstream steps
+  technologies   = { list = "text" } # frameworks/services for tech_research to look up
+  repo_standards = { list = "text" }
+
+# ─── 2b. Latest-standards research (sdd-1 Step 2b) ───────────────────────────
+# Web-searches current best practices for each technology context_assess surfaced.
+[[step]]
+id            = "tech_research"
+type          = "agent"
+depends_on    = ["context_assess"]
+skill         = "../skills/sdd-tech-research"
+inputs        = ["@context_assess.summary", "@context_assess.technologies"]
+allowed_tools = ["WebSearch", "WebFetch"]
+isolation     = "none"
+
+  [step.schema]
+  research_notes = { list = { technology = "text", source = "text", recency = "text", practice = "text", tension = "text" } }
+
+# ─── 3. Scope assessment (sdd-1 Step 3) ───────────────────────────────────────
+# Receives both codebase and research summaries so tech complexity informs sizing.
+[[step]]
+id            = "scope_assess"
+type          = "agent"
+depends_on    = ["context_assess", "tech_research"]
+skill         = "../skills/sdd-scope-assess"
+inputs        = ["@context_assess.summary", "@tech_research.summary"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.schema]
+  sizing    = { enum = ["too_large", "too_small", "just_right"] }
+  rationale = "text"
+
+# ─── 4. Scope gate — fires ONLY when sizing is off (sdd-1 "ALWAYS pause") ─────
+# just_right skips this node and flows straight on. Otherwise a human decides
+# whether to proceed or narrow; "narrow" loops back to re-assess with feedback.
+[[step]]
+id           = "scope_gate"
+type         = "review"
+depends_on   = ["scope_assess"]
+when         = "scope_assess.sizing != 'just_right'"
+review       = "@scope_assess.summary"
+output_type  = { enum = ["proceed", "narrow"] }
+max_messages = 5
+
+  [step.loop]
+  when           = "scope_gate == 'narrow'"
+  goto           = "scope_assess"
+  max_iterations = 3
+  feedback       = "@scope_gate"
+
+# ─── 5. Clarification gate + question rounds (sdd-1 Step 4) ───────────────────
+# block_on parks the step whenever the agent declares itself insufficient; the
+# TUI opens a compose box, the human answers, and the agent resumes the SAME
+# session and re-runs the sufficiency check. Bounded by the engine's 20-round cap.
+#
+# depends_on includes scope_gate for sequencing — prevents racing with the scope
+# loop when sizing is off. When scope_gate is guard-skipped (just_right), the
+# engine treats it as transparent.
+[[step]]
+id            = "clarify"
+type          = "agent"
+depends_on    = ["context_assess", "tech_research", "scope_assess", "scope_gate"]
+skill         = "../skills/sdd-clarify"
+inputs        = ["@context_assess.summary", "@tech_research.summary", "@scope_assess.summary", "@context_assess.spec_name"]
+allowed_tools = ["Read", "Grep", "Glob", "Write", "Bash"]
+block_on      = "clarify.sufficiency == 'insufficient'"
+isolation     = "none"
+
+  [step.schema]
+  sufficiency = { enum = ["sufficient", "insufficient"] }
+  questions   = { list = { topic = "text", options = { list = "text" }, recommended = "text" } }
+
+# ─── 6. Generate the spec (sdd-1 Step 5) ──────────────────────────────────────
+# Reachable only once clarify is sufficient. The agent writes to the correct path
+# using spec_name from context_assess; reports the path and full content so
+# spec_review can render it. A deterministic validate gate enforces structure.
+[[step]]
+id            = "write_spec"
+type          = "agent"
+depends_on    = ["context_assess", "tech_research", "clarify"]
+skill         = "../skills/sdd-write-spec"
+inputs        = ["@context_assess.summary", "@tech_research.summary", "@clarify.summary", "@context_assess.spec_name"]
+allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit", "Bash"]
+isolation     = "none"
+
+  [step.schema]
+  spec_path    = "text"   # canonical path written (e.g. docs/specs/foo/foo.md)
+  spec_content = "text"   # full spec markdown — rendered by spec_review
+
+  [step.validate]
+  command = "find docs/specs -name '*.md' -not -name 'questions.md' | xargs grep -l '## Demoable Units of Work' | xargs grep -l '## Non-Goals' | grep -q ."
+
+# ─── 7. Review & refine until satisfied (sdd-1 Step 6) ────────────────────────
+# The human reviews the rendered spec, may send follow-up messages, and either
+# approves or sends it back. "revise" loops to write_spec with the feedback.
+# 'approve' is the gate that unlocks Phase 2 (analyze_spec).
+[[step]]
+id           = "spec_review"
+type         = "review"
+depends_on   = ["write_spec"]
+review       = "@write_spec.spec_content"
+output_type  = { enum = ["approve", "revise"] }
+max_messages = 10
+
+  [step.loop]
+  when           = "spec_review == 'revise'"
+  goto           = "write_spec"
+  max_iterations = 5
+  feedback       = "@spec_review"
+
+# ════════════════════════════════════════════════════════════════════════
+# PHASE 2 — TASKS  (analyze_spec → … → audit_review)
+# ════════════════════════════════════════════════════════════════════════
+
+# ─── 8. Analyze the spec and discover repo standards ──────────────────────────
+# Phase 2 entry gate: only runs when spec_review approved the spec.
+# spec_name flows from @context_assess.spec_name — no second user prompt.
+# context_assess in depends_on provides the @ref source; spec_review provides
+# the phase-transition guard.
+[[step]]
+id            = "analyze_spec"
+type          = "agent"
+depends_on    = ["spec_review", "context_assess", "write_spec"]
+when          = "spec_review == 'approve'"
+skill         = "../skills/sdd-analyze-spec"
+inputs        = ["@context_assess.spec_name", "@write_spec.spec_path"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "read the spec and surface structured analysis + repo standards for task generation"
+
+  [step.schema]
+  spec_name          = "text"
+  spec_path          = "text"
+  analysis_notes     = "text"
+  standards_evidence = { list = { source = "text", status = "text", standards = { list = "text" } } }
+
+# ─── 9. Generate parent tasks ─────────────────────────────────────────────────
+# Creates the task file with parent tasks only. On a revise loop, receives the
+# review feedback and revises the parent tasks.
+[[step]]
+id            = "gen_parent_tasks"
+type          = "agent"
+depends_on    = ["analyze_spec"]
+skill         = "../skills/sdd-parent-tasks"
+inputs        = ["@analyze_spec.spec_name", "@analyze_spec.spec_path", "@analyze_spec.analysis_notes", "@analyze_spec.standards_evidence"]
+allowed_tools = ["Read", "Grep", "Glob", "Write"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "generate 4-6 demoable parent tasks with proof artifacts and write the task file"
+
+  [step.schema]
+  task_path    = "text"
+  task_summary = "text"
+
+# ─── 10. Human reviews parent tasks ──────────────────────────────────────────
+# The "Stop and wait for explicit confirmation" gate from sdd-2 Step 2.
+# 'revise' loops back to gen_parent_tasks with feedback; 'approve' unblocks
+# sub-task generation.
+[[step]]
+id           = "parent_tasks_review"
+type         = "review"
+depends_on   = ["gen_parent_tasks"]
+review       = "@gen_parent_tasks.task_summary"
+output_type  = { enum = ["approve", "revise"] }
+max_messages = 5
+
+  [step.loop]
+  when           = "parent_tasks_review == 'revise'"
+  goto           = "gen_parent_tasks"
+  max_iterations = 3
+  feedback       = "@parent_tasks_review"
+
+# ─── 11. Generate sub-tasks and relevant-files table ─────────────────────────
+# Only runs after explicit parent-tasks approval.
+[[step]]
+id            = "gen_subtasks"
+type          = "agent"
+depends_on    = ["analyze_spec", "gen_parent_tasks", "parent_tasks_review"]
+when          = "parent_tasks_review == 'approve'"
+skill         = "../skills/sdd-subtasks"
+inputs        = ["@analyze_spec.spec_path", "@analyze_spec.spec_name", "@gen_parent_tasks.task_path"]
+allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "expand each parent task into actionable sub-tasks and add a relevant-files table"
+
+  [step.schema]
+  task_path = "text"
+
+# ─── 12. Planning audit gate ──────────────────────────────────────────────────
+# Runs all REQUIRED audit gates and writes the audit report. On a remediate loop,
+# applies the human-approved fixes to the task file and re-audits.
+[[step]]
+id            = "planning_audit"
+type          = "agent"
+depends_on    = ["analyze_spec", "gen_subtasks"]
+skill         = "../skills/sdd-audit"
+inputs        = ["@analyze_spec.spec_path", "@analyze_spec.spec_name", "@gen_subtasks.task_path", "@analyze_spec.standards_evidence"]
+allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "evaluate all REQUIRED planning audit gates and write the audit report; on a loop run, apply remediation then re-audit"
+
+  [step.schema]
+  audit_path       = "text"
+  gate_status      = { enum = ["pass", "fail"] }
+  findings_summary = "text"
+
+# ─── 13. Human reviews audit findings ────────────────────────────────────────
+# 'remediate' loops back to planning_audit with feedback; the planning_audit
+# agent applies edits and re-audits. 'approve' gates Phase 3 entry.
+[[step]]
+id           = "audit_review"
+type         = "review"
+depends_on   = ["planning_audit"]
+review       = "@planning_audit.findings_summary"
+output_type  = { enum = ["approve", "remediate"] }
+max_messages = 10
+
+  [step.loop]
+  when           = "audit_review == 'remediate'"
+  goto           = "planning_audit"
+  max_iterations = 3
+  feedback       = "@audit_review"
+
+# ════════════════════════════════════════════════════════════════════════
+# PHASE 3 — IMPLEMENT  (find_next_task → … → final_review)
+# ════════════════════════════════════════════════════════════════════════
+
+# ─── 14. Identify the next incomplete parent task ─────────────────────────────
+# Phase 3 entry gate: only runs when audit_review approved the plan.
+# spec_name flows from @context_assess.spec_name. The only remaining user input
+# is checkpoint_mode — an operational preference, not spec identity.
+# audit_review in depends_on provides the phase-transition guard;
+# context_assess provides the @ref source.
+[[step]]
+id            = "find_next_task"
+type          = "agent"
+depends_on    = ["audit_review", "context_assess"]
+when          = "audit_review == 'approve'"
+skill         = "../skills/sdd-find-next-task"
+inputs        = [
+  "@context_assess.spec_name",
+  { from = "user", label = "Checkpoint mode (task | batch — default: task):", as = "checkpoint_mode" },
+]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "read the task file and identify the next incomplete parent task, or confirm all tasks are done"
+
+  [step.schema]
+  progress           = { enum = ["continue", "done"] }
+  task_title         = "text"
+  task_path          = "text"
+  spec_name          = "text"
+  parent_task_num    = "text"
+  completion_summary = "text"
+
+# ─── 15. Implement all sub-tasks for the current parent task ──────────────────
+# Marks each sub-task [ ] → [~] → [x] as it goes. Does NOT create the proof
+# artifact and does NOT run git commit.
+[[step]]
+id            = "implement_code"
+type          = "agent"
+depends_on    = ["find_next_task"]
+when          = "find_next_task.progress == 'continue'"
+skill         = "../skills/sdd-implement-code"
+inputs        = ["@find_next_task.task_path", "@find_next_task.spec_name", "@find_next_task.task_title", "@find_next_task.parent_task_num"]
+allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit", "Bash"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "implement every sub-task for the identified parent task, marking each complete in the task file"
+
+# ─── 16a. Run test suite ──────────────────────────────────────────────────────
+# Parallel with run_lint. The when guard prevents this from running on the final
+# 'done' iteration (find_next_task added to depends_on for that guard).
+# on_failure = "continue" lets the cycle complete so proofs capture failing output.
+[[step]]
+id         = "run_tests"
+type       = "command"
+depends_on = ["implement_code", "find_next_task"]
+when       = "find_next_task.progress == 'continue'"
+on_failure = "continue"
+output     = ".jig/test-output.txt"
+script     = ".agents/jig/scripts/run-tests.sh"
+
+# ─── 16b. Run lint and format checks ─────────────────────────────────────────
+# Parallel with run_tests. The when guard prevents this from running on the
+# final 'done' iteration (find_next_task added to depends_on for that guard).
+[[step]]
+id         = "run_lint"
+type       = "command"
+depends_on = ["implement_code", "find_next_task"]
+when       = "find_next_task.progress == 'continue'"
+on_failure = "continue"
+output     = ".jig/lint-output.txt"
+script     = ".agents/jig/scripts/run-lint.sh"
+
+# ─── 17. Create proof artifact ────────────────────────────────────────────────
+# Runs after both test and lint results are available. Writes the reviewer-first
+# proof markdown file for the parent task.
+[[step]]
+id            = "create_proofs"
+type          = "agent"
+depends_on    = ["run_tests", "run_lint", "find_next_task"]
+when          = "find_next_task.progress == 'continue'"
+skill         = "../skills/sdd-create-proofs"
+inputs        = ["@find_next_task.task_path", "@find_next_task.spec_name", "@find_next_task.parent_task_num", "@find_next_task.task_title", "@run_tests", "@run_lint"]
+allowed_tools = ["Read", "Write", "Bash"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "write the reviewer-first proof artifact file incorporating test and lint results"
+
+  [step.schema]
+  proof_path = "text"
+
+# ─── 18. Stage and commit the parent task ────────────────────────────────────
+# Reads the commit message written by implement_code and commits everything:
+# implementation files, updated task file, and the new proof artifact.
+[[step]]
+id         = "commit_task"
+type       = "command"
+depends_on = ["create_proofs", "find_next_task"]
+when       = "find_next_task.progress == 'continue'"
+script     = ".agents/jig/scripts/commit-task.sh"
+
+# ─── 19. Per-task human checkpoint ────────────────────────────────────────────
+# The loop back-edge drives the full implementation cycle: when
+# find_next_task.progress == 'continue', the engine goes back to find_next_task
+# to pick up the next parent task. When progress == 'done', this step is
+# guard-skipped and final_review runs.
+[[step]]
+id           = "task_checkpoint"
+type         = "review"
+depends_on   = ["commit_task", "find_next_task"]
+when         = "find_next_task.progress == 'continue'"
+review       = "@create_proofs.proof_path"
+output_type  = { enum = ["continue", "redo"] }
+max_messages = 5
+
+  [step.loop]
+  when           = "find_next_task.progress == 'continue'"
+  goto           = "find_next_task"
+  max_iterations = 15
+  feedback       = "@task_checkpoint"
+
+# ─── 20. Final sign-off ───────────────────────────────────────────────────────
+# Renders the completion summary from the last find_next_task run ('done').
+# 'flag_issues' loops back to find_next_task for a targeted fix pass;
+# 'approve' is the gate that unlocks Phase 4 (discover_artifacts).
+[[step]]
+id           = "final_review"
+type         = "review"
+depends_on   = ["task_checkpoint", "find_next_task"]
+review       = "@find_next_task.completion_summary"
+output_type  = { enum = ["approve", "flag_issues"] }
+max_messages = 10
+
+  [step.loop]
+  when           = "final_review == 'flag_issues'"
+  goto           = "find_next_task"
+  max_iterations = 3
+  feedback       = "@final_review"
+
+# ════════════════════════════════════════════════════════════════════════
+# PHASE 4 — VALIDATE  (discover_artifacts → … → validation_review)
+# ════════════════════════════════════════════════════════════════════════
+
+# ─── 21. Discover all SDD artifacts ──────────────────────────────────────────
+# Phase 4 entry gate: only runs when final_review approved the implementation.
+# spec_name flows from @context_assess.spec_name — no second user prompt.
+# final_review provides the phase-transition guard; context_assess provides
+# the @ref source.
+[[step]]
+id            = "discover_artifacts"
+type          = "agent"
+depends_on    = ["final_review", "context_assess"]
+when          = "final_review == 'approve'"
+skill         = "../skills/sdd-discover-artifacts"
+inputs        = ["@context_assess.spec_name"]
+allowed_tools = ["Read", "Grep", "Glob", "Bash"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "locate all SDD artifacts and collect git history for the parallel analysis steps"
+
+  [step.schema]
+  spec_path            = "text"
+  task_path            = "text"
+  audit_path           = "text"
+  proofs_dir           = "text"
+  spec_name            = "text"
+  git_log              = "text"
+  requirements         = { list = "text" }
+  proof_artifact_paths = { list = "text" }
+  changed_files        = { list = "text" }
+
+# ─── 22a. Build functional requirement coverage matrix (parallel) ─────────────
+# For each functional requirement in the spec, locates the corresponding proof
+# artifact(s) and records Verified/Failed/Unknown. Runs in parallel with
+# check_repo_compliance and verify_proof_files.
+[[step]]
+id            = "build_coverage_matrix"
+type          = "agent"
+depends_on    = ["discover_artifacts"]
+skill         = "../skills/sdd-build-coverage-matrix"
+inputs        = ["@discover_artifacts.spec_path", "@discover_artifacts.task_path", "@discover_artifacts.requirements", "@discover_artifacts.proof_artifact_paths"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "map every functional requirement to its proof artifact evidence and record Verified/Failed/Unknown"
+
+  [step.schema]
+  coverage_matrix   = { list = { requirement = "text", result = { enum = ["verified", "failed", "unknown"] }, evidence = "text" } }
+  fr_verified_count = "number"
+  fr_total          = "number"
+  gate_b_result     = { enum = ["pass", "fail"] }
+
+# ─── 22b. Check repository compliance and git traceability (parallel) ─────────
+# Verifies that the implementation follows identified repo standards and that
+# git commits map cleanly to requirements and tasks.
+[[step]]
+id            = "check_repo_compliance"
+type          = "agent"
+depends_on    = ["discover_artifacts"]
+skill         = "../skills/sdd-check-repo-compliance"
+inputs        = ["@discover_artifacts.spec_path", "@discover_artifacts.task_path", "@discover_artifacts.git_log", "@discover_artifacts.changed_files", "@discover_artifacts.spec_name"]
+allowed_tools = ["Read", "Grep", "Glob", "Bash"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "verify repository standards compliance, git traceability, and detect out-of-scope core file changes"
+
+  [step.schema]
+  compliance_findings  = { list = { area = "text", result = { enum = ["verified", "failed", "unknown"] }, evidence = "text" } }
+  gate_d1_triggered    = "bool"
+  gate_e_result        = { enum = ["pass", "fail"] }
+
+# ─── 22c. Verify proof files exist on disk (parallel, deterministic) ──────────
+# Deterministic gate: confirms proof artifact files are present under docs/specs.
+# A missing file is an immediate GATE C failure regardless of the coverage matrix.
+[[step]]
+id         = "verify_proof_files"
+type       = "command"
+depends_on = ["discover_artifacts"]
+on_failure = "continue"
+output     = ".jig/proof-check-output.txt"
+script     = ".agents/jig/scripts/verify-proof-files.sh"
+
+# ─── 23. Assemble the final validation report ─────────────────────────────────
+# Synthesises the coverage matrix, compliance findings, and proof file check
+# into a single gated validation report. On a 'flag' loop run, re-examines the
+# flagged findings using the human's feedback and updates the report accordingly.
+[[step]]
+id            = "assemble_report"
+type          = "agent"
+depends_on    = ["build_coverage_matrix", "check_repo_compliance", "verify_proof_files", "discover_artifacts"]
+skill         = "../skills/sdd-assemble-report"
+inputs        = [
+  "@discover_artifacts.spec_path",
+  "@discover_artifacts.task_path",
+  "@discover_artifacts.spec_name",
+  "@discover_artifacts.git_log",
+  "@build_coverage_matrix.coverage_matrix",
+  "@build_coverage_matrix.gate_b_result",
+  "@check_repo_compliance.compliance_findings",
+  "@check_repo_compliance.gate_d1_triggered",
+  "@check_repo_compliance.gate_e_result",
+  "@verify_proof_files",
+]
+allowed_tools = ["Read", "Grep", "Glob", "Write"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "synthesise all analysis findings into the gated validation report; apply gate logic and write to disk"
+
+  [step.schema]
+  report_path    = "text"
+  overall_status = { enum = ["pass", "fail"] }
+  report_content = "text"
+
+# ─── 24. Human reviews the validation report ──────────────────────────────────
+# 'flag' loops back to assemble_report with reviewer notes so specific findings
+# can be re-examined and the report updated. 'approve' is the gate that unlocks
+# Phase 5 (compliance_scope).
+[[step]]
+id           = "validation_review"
+type         = "review"
+depends_on   = ["assemble_report"]
+review       = "@assemble_report.report_content"
+output_type  = { enum = ["approve", "flag"] }
+max_messages = 10
+
+  [step.loop]
+  when           = "validation_review == 'flag'"
+  goto           = "assemble_report"
+  max_iterations = 3
+  feedback       = "@validation_review"
+
+# ════════════════════════════════════════════════════════════════════════
+# PHASE 5 — COMPLIANCE  (compliance_scope → fan-out → compliance_review)
+# ════════════════════════════════════════════════════════════════════════
+
+# ─── 25. Determine which compliance frameworks apply ──────────────────────────
+# Phase 5 entry gate: only runs when validation_review approved the report.
+# Reads the spec and changed files to determine which compliance domains are
+# relevant. The enum fields (includes_ui, includes_payments, includes_sensitive_data)
+# gate the conditional parallel checks downstream.
+[[step]]
+id            = "compliance_scope"
+type          = "agent"
+depends_on    = ["validation_review", "discover_artifacts", "assemble_report"]
+when          = "validation_review == 'approve'"
+skill         = "../skills/sdd-compliance-scope"
+inputs        = ["@discover_artifacts.spec_path", "@discover_artifacts.changed_files", "@assemble_report.report_path"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.schema]
+  includes_ui             = { enum = ["yes", "no"] }
+  includes_payments       = { enum = ["yes", "no"] }
+  includes_sensitive_data = { enum = ["yes", "no"] }
+  applicable_frameworks   = { list = "text" }
+
+# ─── 26. Accessibility check (parallel, conditional on includes_ui) ───────────
+# Only runs when compliance_scope determined the change touches UI surfaces.
+# compliance_scope and discover_artifacts are both in depends_on: the former
+# provides the conditional guard, the latter provides the @ref inputs.
+[[step]]
+id            = "check_accessibility"
+type          = "agent"
+depends_on    = ["compliance_scope", "discover_artifacts"]
+when          = "compliance_scope.includes_ui == 'yes'"
+skill         = "../skills/sdd-check-accessibility"
+inputs        = ["@discover_artifacts.spec_path", "@discover_artifacts.changed_files", "@discover_artifacts.proofs_dir"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.schema]
+  findings    = { list = { criterion = "text", result = { enum = ["pass", "fail", "na"] }, evidence = "text" } }
+  wcag_result = { enum = ["pass", "fail", "na"] }
+
+# ─── 27. OWASP security check (parallel, always runs after validation_review) ─
+# Unconditionally runs for every validated change — security is always in scope.
+# validation_review in depends_on provides the phase-transition guard;
+# discover_artifacts and compliance_scope provide @ref inputs and sequencing.
+[[step]]
+id            = "check_owasp_security"
+type          = "agent"
+depends_on    = ["compliance_scope", "discover_artifacts", "validation_review"]
+when          = "validation_review == 'approve'"
+skill         = "../skills/sdd-check-owasp"
+inputs        = ["@discover_artifacts.spec_path", "@discover_artifacts.changed_files", "@discover_artifacts.proofs_dir", "@discover_artifacts.git_log"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.schema]
+  findings     = { list = { vulnerability = "text", result = { enum = ["pass", "fail", "na"] }, evidence = "text" } }
+  owasp_result = { enum = ["pass", "fail"] }
+
+# ─── 28. PCI compliance check (parallel, conditional on includes_payments) ────
+# Only runs when compliance_scope determined the change touches payment flows.
+[[step]]
+id            = "check_pci_compliance"
+type          = "agent"
+depends_on    = ["compliance_scope", "discover_artifacts"]
+when          = "compliance_scope.includes_payments == 'yes'"
+skill         = "../skills/sdd-check-pci"
+inputs        = ["@discover_artifacts.spec_path", "@discover_artifacts.changed_files", "@discover_artifacts.proofs_dir"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.schema]
+  findings   = { list = { requirement = "text", result = { enum = ["pass", "fail", "na"] }, evidence = "text" } }
+  pci_result = { enum = ["pass", "fail", "na"] }
+
+# ─── 29. Data privacy check (parallel, conditional on includes_sensitive_data) ─
+# Only runs when compliance_scope determined the change handles sensitive data.
+[[step]]
+id            = "check_data_privacy"
+type          = "agent"
+depends_on    = ["compliance_scope", "discover_artifacts"]
+when          = "compliance_scope.includes_sensitive_data == 'yes'"
+skill         = "../skills/sdd-check-data-privacy"
+inputs        = ["@discover_artifacts.spec_path", "@discover_artifacts.changed_files", "@discover_artifacts.proofs_dir"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.schema]
+  findings       = { list = { principle = "text", result = { enum = ["pass", "fail", "na"] }, evidence = "text" } }
+  privacy_result = { enum = ["pass", "fail", "na"] }
+
+# ─── 30. Dependency audit (parallel command, always runs) ─────────────────────
+# Scans third-party dependencies for known vulnerabilities. on_failure = "continue"
+# lets the compliance report capture audit output even when issues are found.
+# validation_review in depends_on provides the phase-transition guard;
+# compliance_scope provides sequencing within Phase 5.
+[[step]]
+id         = "run_dep_audit"
+type       = "command"
+depends_on = ["compliance_scope", "validation_review"]
+when       = "validation_review == 'approve'"
+on_failure = "continue"
+output     = ".jig/dep-audit.txt"
+script     = ".agents/jig/scripts/dep-audit.sh"
+
+# ─── 31. Assemble compliance report ───────────────────────────────────────────
+# Synthesises all parallel compliance findings into a single report. Conditional
+# checks (accessibility, PCI, privacy) may be guard-skipped; the engine treats
+# skipped steps as transparent so this step always runs once all applicable
+# checks complete. validation_review is in depends_on to correctly sequence the
+# phase-transition guard propagation.
+[[step]]
+id            = "assemble_compliance_report"
+type          = "agent"
+depends_on    = ["check_accessibility", "check_owasp_security", "check_pci_compliance", "check_data_privacy", "run_dep_audit", "compliance_scope", "discover_artifacts", "validation_review"]
+when          = "validation_review == 'approve'"
+skill         = "../skills/sdd-assemble-compliance"
+inputs        = [
+  "@discover_artifacts.spec_path",
+  "@compliance_scope.applicable_frameworks",
+  "@check_accessibility.findings",
+  "@check_accessibility.wcag_result",
+  "@check_owasp_security.findings",
+  "@check_owasp_security.owasp_result",
+  "@check_pci_compliance.findings",
+  "@check_pci_compliance.pci_result",
+  "@check_data_privacy.findings",
+  "@check_data_privacy.privacy_result",
+  "@run_dep_audit",
+]
+allowed_tools = ["Read", "Grep", "Glob", "Write"]
+isolation     = "none"
+
+  [step.schema]
+  report_path        = "text"
+  compliance_status  = { enum = ["pass", "fail", "na"] }
+  report_content     = "text"
+
+# ─── 32. Human reviews compliance report ──────────────────────────────────────
+# 'flag' loops back to assemble_compliance_report so specific findings can be
+# re-examined and the report updated. 'approve' concludes the workflow.
+[[step]]
+id           = "compliance_review"
+type         = "review"
+depends_on   = ["assemble_compliance_report"]
+review       = "@assemble_compliance_report.report_content"
+output_type  = { enum = ["approve", "flag"] }
+max_messages = 10
+
+  [step.loop]
+  when           = "compliance_review == 'flag'"
+  goto           = "assemble_compliance_report"
+  max_iterations = 3
+  feedback       = "@compliance_review"
