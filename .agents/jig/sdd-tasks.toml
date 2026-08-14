@@ -5,19 +5,19 @@
 #   spec analysis → parent task generation → human gate (approve/revise loop)
 #   → sub-task generation → planning audit → human audit gate (approve/remediate loop)
 #
-# The two hardest parts of sdd-2 map onto first-class jig constructs:
-#   - "Stop and wait for confirmation after parent tasks" → a review gate with a
-#     bounded revise loop, so the human can steer the breakdown before sub-tasks.
-#   - "Do not continue while REQUIRED gates fail" → a review gate with a bounded
-#     remediate loop; the planning_audit agent applies fixes and re-audits in place.
-#
 # Step mapping to sdd-2:
-#   analyze_spec      → Step 1 (internal): spec analysis + standards discovery
-#   gen_parent_tasks  → Step 2: parent task generation (writes task file)
-#   parent_tasks_review → confirmation gate before sub-tasks
-#   gen_subtasks      → Step 3: sub-task expansion + relevant-files table
-#   planning_audit    → Step 4: audit gate (writes audit file; applies remediation on loop)
-#   audit_review      → audit approval / remediation loop trigger
+#   analyze_spec_requirements → Step 1a: extract FRs, Demoable Units, Non-Goals [Haiku, parallel]
+#   analyze_repo_standards    → Step 1b: discover repo standards from config files [Haiku, parallel]
+#   synthesize_spec_analysis  → Step 1c: merge into unified analysis_notes [Haiku]
+#   gen_parent_tasks          → Step 2: parent task generation [Opus]
+#   parent_tasks_review       → confirmation gate before sub-tasks
+#   gen_subtasks              → Step 3: sub-task expansion + relevant-files table [Opus]
+#   audit_traceability        → Step 4a: Gate 1 — FR→test artifact mapping [Haiku, parallel]
+#   audit_proof_quality       → Step 4b: Gate 2 — proof artifact verifiability [Haiku, parallel]
+#   audit_standards_consistency → Step 4c: Gate 3 — repo standards consistency [Haiku, parallel]
+#   audit_open_questions      → Step 4d: Gate 4 + Flags — open questions and risks [Haiku, parallel]
+#   synthesize_audit          → Step 4e: merge audit findings, write report [Haiku]
+#   audit_review              → audit approval / remediation loop trigger
 #
 # Validate with:  go run ./cmd/jig validate .agents/jig/sdd-tasks.toml
 # =============================================================================
@@ -31,16 +31,17 @@ description = "SDD Phase 2 — translate a complete spec into an audited task li
 model           = "claude-opus-4-8"
 effort          = "high"
 permission_mode = "acceptEdits"
-max_parallel    = 1
+max_parallel    = 4
 
-# ─── 1. Analyze the spec and discover repo standards ─────────────────────────
-# Read-only: reads the spec file + AGENTS.md, README.md, CONTRIBUTING.md etc.
-# Surfaces the structured analysis and standards evidence that all downstream
-# steps depend on.
+# ─── 1a. Extract requirements from the spec (parallel) ───────────────────────
+# Collects spec_name from the user, then reads the spec file to extract
+# functional requirements, demoable units, non-goals, and technical considerations.
+# Runs in parallel with analyze_repo_standards (which needs no user input).
 [[step]]
-id            = "analyze_spec"
+id            = "analyze_spec_requirements"
 type          = "agent"
-skill         = "../skills/sdd-analyze-spec"
+model         = "claude-haiku-4-5-20251001"
+skill         = "../skills/sdd-analyze-spec-requirements"
 inputs        = [
   { from = "user", label = "Spec name (kebab-case — same name used in sdd-spec, e.g. user-authentication):", as = "spec_name" },
 ]
@@ -48,7 +49,52 @@ allowed_tools = ["Read", "Grep", "Glob"]
 isolation     = "none"
 
   [step.context]
-  purpose = "read the spec and surface structured analysis + repo standards for task generation"
+  purpose = "extract functional requirements, demoable units, non-goals, and technical considerations from the spec"
+
+  [step.schema]
+  spec_name          = "text"
+  spec_path          = "text"
+  requirements_notes = "text"
+
+# ─── 1b. Discover repo standards (parallel) ──────────────────────────────────
+# Starts immediately alongside analyze_spec_requirements (no user input needed).
+# Reads AGENTS.md, README, CONTRIBUTING, CI configs, and lint policy files.
+[[step]]
+id            = "analyze_repo_standards"
+type          = "agent"
+model         = "claude-haiku-4-5-20251001"
+skill         = "../skills/sdd-analyze-repo-standards"
+inputs        = []
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "discover repository standards from AGENTS.md, README, CONTRIBUTING, CI configs, and lint/format policy files"
+
+  [step.schema]
+  standards_evidence = { list = { source = "text", status = "text", standards = { list = "text" } } }
+
+# ─── 1c. Synthesize spec analysis ─────────────────────────────────────────────
+# Merges spec requirements and repo standards into unified analysis_notes.
+# Surfaces tensions between spec proposals and repo conventions.
+# Downstream steps receive the same interface as the old analyze_spec step.
+[[step]]
+id            = "synthesize_spec_analysis"
+type          = "agent"
+model         = "claude-haiku-4-5-20251001"
+depends_on    = ["analyze_spec_requirements", "analyze_repo_standards"]
+skill         = "../skills/sdd-synthesize-spec-analysis"
+inputs        = [
+  "@analyze_spec_requirements.spec_name",
+  "@analyze_spec_requirements.spec_path",
+  "@analyze_spec_requirements.requirements_notes",
+  "@analyze_repo_standards.standards_evidence",
+]
+allowed_tools = []
+isolation     = "none"
+
+  [step.context]
+  purpose = "merge spec requirements and repo standards into unified analysis_notes; surface tensions"
 
   [step.schema]
   spec_name          = "text"
@@ -57,15 +103,12 @@ isolation     = "none"
   standards_evidence = { list = { source = "text", status = "text", standards = { list = "text" } } }
 
 # ─── 2. Generate parent tasks ─────────────────────────────────────────────────
-# Creates the task file with parent tasks only (sub-tasks are TBD until the
-# human confirms). The engine awaits the human gate before proceeding.
-# On a revise loop, receives the review feedback and revises the parent tasks.
 [[step]]
 id            = "gen_parent_tasks"
 type          = "agent"
-depends_on    = ["analyze_spec"]
+depends_on    = ["synthesize_spec_analysis"]
 skill         = "../skills/sdd-parent-tasks"
-inputs        = ["@analyze_spec.spec_name", "@analyze_spec.spec_path", "@analyze_spec.analysis_notes", "@analyze_spec.standards_evidence"]
+inputs        = ["@synthesize_spec_analysis.spec_name", "@synthesize_spec_analysis.spec_path", "@synthesize_spec_analysis.analysis_notes", "@synthesize_spec_analysis.standards_evidence"]
 allowed_tools = ["Read", "Grep", "Glob", "Write"]
 isolation     = "none"
 
@@ -77,9 +120,6 @@ isolation     = "none"
   task_summary = "text"
 
 # ─── 3. Human reviews parent tasks ────────────────────────────────────────────
-# The "Stop and wait for explicit confirmation" gate from sdd-2 Step 2.
-# 'revise' loops back to gen_parent_tasks with the reviewer's feedback;
-# 'approve' unblocks sub-task generation.
 [[step]]
 id           = "parent_tasks_review"
 type         = "review"
@@ -95,15 +135,13 @@ max_messages = 5
   feedback       = "@parent_tasks_review"
 
 # ─── 4. Generate sub-tasks and relevant-files table ───────────────────────────
-# Only runs after explicit approval. Expands each parent task's TBD section
-# and prepends the Relevant Files table.
 [[step]]
 id            = "gen_subtasks"
 type          = "agent"
-depends_on    = ["analyze_spec", "gen_parent_tasks", "parent_tasks_review"]
+depends_on    = ["synthesize_spec_analysis", "gen_parent_tasks", "parent_tasks_review"]
 when          = "parent_tasks_review == 'approve'"
 skill         = "../skills/sdd-subtasks"
-inputs        = ["@analyze_spec.spec_path", "@analyze_spec.spec_name", "@gen_parent_tasks.task_path"]
+inputs        = ["@synthesize_spec_analysis.spec_path", "@synthesize_spec_analysis.spec_name", "@gen_parent_tasks.task_path"]
 allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit"]
 isolation     = "none"
 
@@ -113,22 +151,104 @@ isolation     = "none"
   [step.schema]
   task_path = "text"
 
-# ─── 5. Planning audit gate ────────────────────────────────────────────────────
-# Runs all REQUIRED audit gates and writes the audit report. On a remediate
-# loop, applies the human-approved fixes to the task file and re-audits.
-# The engine blocks progression on 'fail' until the human triggers remediation
-# or approves the audit through the gate below.
+# ─── 5a–5d. Parallel audit gate evaluation ────────────────────────────────────
+# Four focused agents evaluate independent gates simultaneously. None writes
+# files — synthesize_audit (5e) is the sole writer and handles remediation.
+
 [[step]]
-id            = "planning_audit"
+id            = "audit_traceability"
 type          = "agent"
-depends_on    = ["analyze_spec", "gen_subtasks"]
-skill         = "../skills/sdd-audit"
-inputs        = ["@analyze_spec.spec_path", "@analyze_spec.spec_name", "@gen_subtasks.task_path", "@analyze_spec.standards_evidence"]
-allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit"]
+model         = "claude-haiku-4-5-20251001"
+depends_on    = ["synthesize_spec_analysis", "gen_subtasks"]
+skill         = "../skills/sdd-audit-traceability"
+inputs        = ["@synthesize_spec_analysis.spec_path", "@synthesize_spec_analysis.spec_name", "@gen_subtasks.task_path"]
+allowed_tools = ["Read", "Grep", "Glob"]
 isolation     = "none"
 
   [step.context]
-  purpose = "evaluate all REQUIRED planning audit gates and write the audit report; on a loop run, apply remediation then re-audit"
+  purpose = "Gate 1: verify every functional requirement maps to at least one planned test artifact"
+
+  [step.schema]
+  gate_result = { enum = ["pass", "fail"] }
+  findings    = { list = { requirement = "text", result = { enum = ["mapped", "unmapped"] }, evidence = "text" } }
+
+[[step]]
+id            = "audit_proof_quality"
+type          = "agent"
+model         = "claude-haiku-4-5-20251001"
+depends_on    = ["synthesize_spec_analysis", "gen_subtasks"]
+skill         = "../skills/sdd-audit-proof-quality"
+inputs        = ["@synthesize_spec_analysis.spec_path", "@gen_subtasks.task_path"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "Gate 2: verify every proof artifact is observable, reproducible, and cites a concrete evidence reference"
+
+  [step.schema]
+  gate_result = { enum = ["pass", "fail"] }
+  findings    = { list = { artifact = "text", result = { enum = ["verifiable", "vague"] }, evidence = "text" } }
+
+[[step]]
+id            = "audit_standards_consistency"
+type          = "agent"
+model         = "claude-haiku-4-5-20251001"
+depends_on    = ["synthesize_spec_analysis", "gen_subtasks"]
+skill         = "../skills/sdd-audit-standards-consistency"
+inputs        = ["@synthesize_spec_analysis.spec_path", "@synthesize_spec_analysis.spec_name", "@gen_subtasks.task_path", "@synthesize_spec_analysis.standards_evidence"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "Gate 3: verify the task file respects all identified repository standards"
+
+  [step.schema]
+  gate_result = { enum = ["pass", "fail"] }
+  findings    = { list = { standard = "text", result = { enum = ["consistent", "inconsistent", "unknown"] }, evidence = "text" } }
+
+[[step]]
+id            = "audit_open_questions"
+type          = "agent"
+model         = "claude-haiku-4-5-20251001"
+depends_on    = ["synthesize_spec_analysis", "gen_subtasks"]
+skill         = "../skills/sdd-audit-open-questions"
+inputs        = ["@synthesize_spec_analysis.spec_path", "@gen_subtasks.task_path"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "Gate 4 + Flags 5/6: check for unresolved ambiguity, regression-risk blind spots, and non-goal leakage"
+
+  [step.schema]
+  gate_result = { enum = ["pass", "fail"] }
+  flags       = { list = { flag = "text", risk = "text", recommendation = "text" } }
+
+# ─── 5e. Synthesize audit findings ────────────────────────────────────────────
+# Merges the four gate results into the audit report and writes it to disk.
+# On a remediate loop: applies approved task file edits and re-checks failing gates.
+[[step]]
+id            = "synthesize_audit"
+type          = "agent"
+model         = "claude-haiku-4-5-20251001"
+depends_on    = ["audit_traceability", "audit_proof_quality", "audit_standards_consistency", "audit_open_questions", "synthesize_spec_analysis", "gen_subtasks"]
+skill         = "../skills/sdd-synthesize-audit"
+inputs        = [
+  "@audit_traceability.gate_result",
+  "@audit_traceability.findings",
+  "@audit_proof_quality.gate_result",
+  "@audit_proof_quality.findings",
+  "@audit_standards_consistency.gate_result",
+  "@audit_standards_consistency.findings",
+  "@audit_open_questions.gate_result",
+  "@audit_open_questions.flags",
+  "@synthesize_spec_analysis.spec_name",
+  "@gen_subtasks.task_path",
+]
+allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit", "Bash"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "merge all audit gate findings into the audit report; apply approved task file remediation on loop runs"
 
   [step.schema]
   audit_path       = "text"
@@ -136,19 +256,19 @@ isolation     = "none"
   findings_summary = "text"
 
 # ─── 6. Human reviews audit findings ──────────────────────────────────────────
-# Renders the audit report. 'remediate' loops back to planning_audit with the
-# human's feedback; the planning_audit agent applies edits and re-audits.
-# 'approve' signals the workflow is ready for Phase 3 (sdd-implement).
+# 'remediate' loops back to synthesize_audit which applies task file edits
+# and re-checks failing gates. 'approve' signals the workflow is ready for
+# Phase 3 (sdd-implement).
 [[step]]
 id           = "audit_review"
 type         = "review"
-depends_on   = ["planning_audit"]
-review       = "@planning_audit.findings_summary"
+depends_on   = ["synthesize_audit"]
+review       = "@synthesize_audit.findings_summary"
 output_type  = { enum = ["approve", "remediate"] }
 max_messages = 10
 
   [step.loop]
   when           = "audit_review == 'remediate'"
-  goto           = "planning_audit"
+  goto           = "synthesize_audit"
   max_iterations = 3
   feedback       = "@audit_review"

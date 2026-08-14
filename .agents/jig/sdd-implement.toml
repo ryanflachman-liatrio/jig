@@ -55,6 +55,7 @@ run  = "find docs/specs -name '*audit*.md' | xargs grep -l 'Overall Status: PASS
 [[step]]
 id            = "find_next_task"
 type          = "agent"
+model         = "claude-haiku-4-5-20251001"
 depends_on    = ["verify_audit"]
 skill         = "../skills/sdd-find-next-task"
 inputs        = [
@@ -123,6 +124,7 @@ script     = ".agents/jig/scripts/run-lint.sh"
 [[step]]
 id            = "create_proofs"
 type          = "agent"
+model         = "claude-haiku-4-5-20251001"
 depends_on    = ["run_tests", "run_lint", "find_next_task"]
 when          = "find_next_task.progress == 'continue'"
 skill         = "../skills/sdd-create-proofs"

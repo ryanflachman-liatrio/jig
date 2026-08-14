@@ -33,7 +33,7 @@ description = "SDD Phase 4 — validate implementation against spec requirements
 model           = "claude-opus-4-8"
 effort          = "high"
 permission_mode = "acceptEdits"
-max_parallel    = 3
+max_parallel    = 5
 
 # ─── 1. Discover all SDD artifacts ───────────────────────────────────────────
 # Locates spec, task list, audit, and proof directory. Runs git log to surface
@@ -43,6 +43,7 @@ max_parallel    = 3
 [[step]]
 id            = "discover_artifacts"
 type          = "agent"
+model         = "claude-haiku-4-5-20251001"
 skill         = "../skills/sdd-discover-artifacts"
 inputs        = [
   { from = "user", label = "Spec name (kebab-case, e.g. user-authentication):", as = "spec_name" },
@@ -71,6 +72,7 @@ isolation     = "none"
 [[step]]
 id            = "build_coverage_matrix"
 type          = "agent"
+model         = "claude-haiku-4-5-20251001"
 depends_on    = ["discover_artifacts"]
 skill         = "../skills/sdd-build-coverage-matrix"
 inputs        = ["@discover_artifacts.spec_path", "@discover_artifacts.task_path", "@discover_artifacts.requirements", "@discover_artifacts.proof_artifact_paths"]
@@ -86,26 +88,68 @@ isolation     = "none"
   fr_total          = "number"
   gate_b_result     = { enum = ["pass", "fail"] }
 
-# ─── 2b. Check repository compliance and git traceability (parallel) ──────────
-# Verifies that the implementation follows identified repository standards and
-# that git commits map cleanly to requirements and tasks.
-# Runs in parallel with build_coverage_matrix and verify_proof_files.
+# ─── 2b–2e. Repo compliance fan-out (parallel) ────────────────────────────────
+# Four independent checks each own exactly one gate/concern. Findings flow
+# directly into assemble_report (no intermediate synthesizer needed here).
+
 [[step]]
-id            = "check_repo_compliance"
+id            = "check_standards_compliance"
 type          = "agent"
+model         = "claude-haiku-4-5-20251001"
 depends_on    = ["discover_artifacts"]
-skill         = "../skills/sdd-check-repo-compliance"
-inputs        = ["@discover_artifacts.spec_path", "@discover_artifacts.task_path", "@discover_artifacts.git_log", "@discover_artifacts.changed_files", "@discover_artifacts.spec_name"]
-allowed_tools = ["Read", "Grep", "Glob", "Bash"]
+skill         = "../skills/sdd-check-standards-compliance"
+inputs        = ["@discover_artifacts.spec_path", "@discover_artifacts.task_path", "@discover_artifacts.changed_files", "@discover_artifacts.spec_name"]
+allowed_tools = ["Read", "Grep", "Glob"]
 isolation     = "none"
 
   [step.context]
-  purpose = "verify repository standards compliance, git traceability, and detect out-of-scope core file changes"
+  purpose = "Gate E: verify changed files follow repo naming, organization, and test pattern standards"
 
   [step.schema]
-  compliance_findings  = { list = { area = "text", result = { enum = ["verified", "failed", "unknown"] }, evidence = "text" } }
-  gate_d1_triggered    = "bool"
-  gate_e_result        = { enum = ["pass", "fail"] }
+  findings      = { list = { standard = "text", result = { enum = ["verified", "failed", "unknown"] }, evidence = "text" } }
+  gate_e_result = { enum = ["pass", "fail"] }
+
+[[step]]
+id            = "check_git_traceability"
+type          = "agent"
+model         = "claude-haiku-4-5-20251001"
+depends_on    = ["discover_artifacts"]
+skill         = "../skills/sdd-check-git-traceability"
+inputs        = ["@discover_artifacts.git_log", "@discover_artifacts.task_path", "@discover_artifacts.spec_path"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "R4: verify git commits reference specific tasks or requirements and tell a coherent implementation story"
+
+  [step.schema]
+  findings            = { list = { area = "text", result = { enum = ["verified", "failed", "unknown"] }, evidence = "text" } }
+  traceability_result = { enum = ["pass", "fail"] }
+
+[[step]]
+id            = "check_scope_integrity"
+type          = "agent"
+model         = "claude-haiku-4-5-20251001"
+depends_on    = ["discover_artifacts"]
+skill         = "../skills/sdd-check-scope-integrity"
+inputs        = ["@discover_artifacts.changed_files", "@discover_artifacts.task_path", "@discover_artifacts.spec_path"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "Gate D1: detect core source file changes not mapped to any task in the task file"
+
+  [step.schema]
+  findings          = { list = { file = "text", status = { enum = ["mapped", "unmapped", "supporting"] }, evidence = "text" } }
+  gate_d1_triggered = "bool"
+
+[[step]]
+id         = "check_credentials"
+type       = "command"
+depends_on = ["discover_artifacts"]
+on_failure = "continue"
+output     = ".jig/credentials-check.txt"
+script     = ".agents/jig/scripts/check-credentials.sh"
 
 # ─── 2c. Verify proof files exist on disk (parallel, deterministic) ───────────
 # Deterministic gate: confirms that proof artifact files are present under
@@ -127,7 +171,8 @@ script     = ".agents/jig/scripts/verify-proof-files.sh"
 [[step]]
 id            = "assemble_report"
 type          = "agent"
-depends_on    = ["build_coverage_matrix", "check_repo_compliance", "verify_proof_files", "discover_artifacts"]
+model         = "claude-haiku-4-5-20251001"
+depends_on    = ["build_coverage_matrix", "check_standards_compliance", "check_git_traceability", "check_scope_integrity", "check_credentials", "verify_proof_files", "discover_artifacts"]
 skill         = "../skills/sdd-assemble-report"
 inputs        = [
   "@discover_artifacts.spec_path",
@@ -136,9 +181,13 @@ inputs        = [
   "@discover_artifacts.git_log",
   "@build_coverage_matrix.coverage_matrix",
   "@build_coverage_matrix.gate_b_result",
-  "@check_repo_compliance.compliance_findings",
-  "@check_repo_compliance.gate_d1_triggered",
-  "@check_repo_compliance.gate_e_result",
+  "@check_standards_compliance.findings",
+  "@check_standards_compliance.gate_e_result",
+  "@check_git_traceability.findings",
+  "@check_git_traceability.traceability_result",
+  "@check_scope_integrity.findings",
+  "@check_scope_integrity.gate_d1_triggered",
+  "@check_credentials",
   "@verify_proof_files",
 ]
 allowed_tools = ["Read", "Grep", "Glob", "Write"]
