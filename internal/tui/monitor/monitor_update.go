@@ -383,16 +383,25 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 	case keybind.Matches(msg, m.keys.Toggle):
-		// Toggle the block under the cursor.
 		if n := len(m.chatBlocks); n > 0 && m.chatBlockCursor < n {
-			k := m.chatBlocks[m.chatBlockCursor]
-			m.chatExpand[k] = !m.chatExpand[k]
+			item := m.chatBlocks[m.chatBlockCursor]
+			saved := item
+			if item.isGroup {
+				m.chatGroupExpand[item.key] = !m.chatGroupExpand[item.key]
+			} else {
+				m.chatExpand[item.key] = !m.chatExpand[item.key]
+			}
+			m.rebuildActiveState(saved)
 			m.refreshPanels()
 		}
 		return m, nil
 	case keybind.Matches(msg, m.keys.ExpandAll):
-		// Expand/collapse everything in view at once.
+		saved := chatItem{}
+		if len(m.chatBlocks) > 0 {
+			saved = m.chatBlocks[m.chatBlockCursor]
+		}
 		m.chatExpandAll = !m.chatExpandAll
+		m.rebuildActiveState(saved)
 		m.refreshPanels()
 		return m, nil
 	}

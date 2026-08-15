@@ -149,14 +149,23 @@ type Model struct {
 	chatEntries []transcript.Entry
 	chatElided  int
 
-	// Collapse/expand: chatBlocks flattens the collapsible blocks (thinking,
-	// tool_use, tool_result) of chatEntries in render order; chatBlockCursor
-	// selects one for toggling; chatExpand records per-block overrides and
-	// chatExpandAll a global "expand everything in view" toggle.
-	chatBlocks      []blockKey
-	chatBlockCursor int
-	chatExpand      map[blockKey]bool
-	chatExpandAll   bool
+	// Collapse/expand navigation. chatGroupHeaders is the canonical list of
+	// collapsible navigation items (one entry per toolGroup or standalone thinking
+	// block), stable until the next loadChat call. chatBlocks is the active
+	// navigation list derived from chatGroupHeaders: when a group is expanded its
+	// individual block items are inserted immediately after the group header.
+	// chatRenderPlan is the pre-computed sequence of render items consumed by
+	// chatBody; rebuilt by rebuildActiveState whenever expansion state changes.
+	// chatBlockCursor selects the active item in chatBlocks.
+	// chatExpand / chatGroupExpand record per-block and per-group expansion
+	// overrides; chatExpandAll is a global read-only override.
+	chatGroupHeaders []chatItem
+	chatBlocks       []chatItem
+	chatRenderPlan   []renderItem
+	chatBlockCursor  int
+	chatExpand       map[blockKey]bool
+	chatGroupExpand  map[blockKey]bool
+	chatExpandAll    bool
 
 	// renderer renders text blocks as markdown; chatRendered caches the output
 	// keyed by block (glamour re-parses whole documents, so re-rendering on every
@@ -312,6 +321,59 @@ type blockKey struct {
 	block int
 }
 
+// chatItem is one entry in the canonical navigation list (chatGroupHeaders) and
+// the active navigation list (chatBlocks).
+// isGroup=false: a standalone collapsible block (thinking, or a block outside
+// any group). isGroup=true: a tool call group header; group points to its
+// toolGroup payload. key is always the blockKey of the item's first block (used
+// as the groupKey for chatGroupExpand).
+type chatItem struct {
+	isGroup bool
+	key     blockKey
+	group   *toolGroup
+}
+
+// toolGroup is the payload for a group-header chatItem.
+type toolGroup struct {
+	blocks []blockKey  // all tool_use / tool_result blockKeys in the group, in order
+	tools  []toolLabel // one entry per tool_use block (for the summary line)
+	count  int         // len(tools) — the N in "N tool calls"
+}
+
+// toolLabel is one entry in the group summary line.
+type toolLabel struct {
+	name string // blk.Name from the transcript block
+	arg  string // primaryArg(name, input) — already truncated to 40 runes
+}
+
+// renderKind discriminates the five variants of renderItem.
+type renderKind int
+
+const (
+	renderEntrySep    renderKind = iota // iteration/retry/re-run separator line
+	renderEntryHeader                   // "#N role" header line
+	renderText                          // prose text block (assistant markdown or system verbatim)
+	renderGroupHeader                   // tool call group collapsed/expanded header
+	renderBlock                         // individual collapsible block (thinking or inner tool block)
+)
+
+// renderItem is one element of the pre-computed render plan (chatRenderPlan).
+// kind determines which fields are populated.
+type renderItem struct {
+	kind renderKind
+
+	// renderEntrySep: sep is the separator string (e.g., "── iteration 2 ──").
+	sep string
+
+	// renderEntryHeader: key.seq is the entry seq; role is the entry role.
+	// renderText, renderBlock: key identifies the block; blk is a pointer into chatEntries.
+	// renderGroupHeader: key is the groupKey (first block); group points to the toolGroup.
+	key   blockKey
+	blk   *transcript.Block
+	role  transcript.Role
+	group *toolGroup
+}
+
 type monitorStep struct {
 	id      string
 	status  step.Status
@@ -326,17 +388,18 @@ type monitorStep struct {
 // New creates a fresh monitor model for the given runID.
 func New(runID string) Model {
 	return Model{
-		RunID:          runID,
-		keys:           defaultMonitorKeys(),
-		index:          make(map[string]int),
-		stepOutput:     make(map[string]*strings.Builder),
-		msgCount:       make(map[string]int),
-		chatExpand:     make(map[blockKey]bool),
-		chatRendered:   make(map[blockKey]string),
-		reviews:        make(map[string]engine.ReviewRequest),
-		chatAutoScroll: true,
-		expanded:       make(map[string]bool),
-		stepFiles:      make(map[string][]outputFile),
+		RunID:           runID,
+		keys:            defaultMonitorKeys(),
+		index:           make(map[string]int),
+		stepOutput:      make(map[string]*strings.Builder),
+		msgCount:        make(map[string]int),
+		chatExpand:      make(map[blockKey]bool),
+		chatGroupExpand: make(map[blockKey]bool),
+		chatRendered:    make(map[blockKey]string),
+		reviews:         make(map[string]engine.ReviewRequest),
+		chatAutoScroll:  true,
+		expanded:        make(map[string]bool),
+		stepFiles:       make(map[string][]outputFile),
 	}
 }
 
@@ -365,6 +428,9 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 	}
 	if m.chatExpand == nil {
 		m.chatExpand = make(map[blockKey]bool)
+	}
+	if m.chatGroupExpand == nil {
+		m.chatGroupExpand = make(map[blockKey]bool)
 	}
 	if m.chatRendered == nil {
 		m.chatRendered = make(map[blockKey]string)
