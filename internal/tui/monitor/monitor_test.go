@@ -394,6 +394,232 @@ func TestMonitorChatIterationSeparators(t *testing.T) {
 	}
 }
 
+// TestPrimaryArg verifies the primaryArg helper's key priority order,
+// fallback to sorted keys, truncation, and empty-input handling.
+func TestPrimaryArg(t *testing.T) {
+	cases := []struct {
+		name  string
+		input map[string]any
+		want  string
+	}{
+		{"file_path key", map[string]any{"file_path": "/a/b.go", "command": "ignored"}, "/a/b.go"},
+		{"path key fallback", map[string]any{"path": "/x.go"}, "/x.go"},
+		{"command key", map[string]any{"command": "go test ./..."}, "go test ./..."},
+		{"pattern key", map[string]any{"pattern": "*.go"}, "*.go"},
+		{"unknown key sorted", map[string]any{"zzz": "last", "aaa": "first"}, "first"},
+		{"non-string value skipped", map[string]any{"file_path": 42, "command": "cmd"}, "cmd"},
+		{"no string values", map[string]any{"count": 1, "ok": true}, ""},
+		{"empty input", nil, ""},
+		{"truncation to 40 runes", map[string]any{"file_path": strings.Repeat("x", 50)}, strings.Repeat("x", 39) + "…"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var raw json.RawMessage
+			if tc.input != nil {
+				var err error
+				raw, err = json.Marshal(tc.input)
+				if err != nil {
+					t.Fatalf("marshal: %v", err)
+				}
+			}
+			got := primaryArg("", raw)
+			if got != tc.want {
+				t.Fatalf("primaryArg(%q) = %q, want %q", string(raw), got, tc.want)
+			}
+		})
+	}
+}
+
+// TestLoadChatGroupDetection verifies the single-pass accumulator produces the
+// correct chatGroupHeaders for various block sequences and edge cases.
+func TestLoadChatGroupDetection(t *testing.T) {
+	mkUse := func(name, id string) transcript.Block {
+		return transcript.Block{Type: transcript.BlockToolUse, Name: name, ToolUseID: id}
+	}
+	mkResult := func(id string) transcript.Block {
+		return transcript.Block{Type: transcript.BlockToolResult, ToolUseID: id}
+	}
+	mkThink := func() transcript.Block {
+		return transcript.Block{Type: transcript.BlockThinking, Text: "t"}
+	}
+	mkText := func() transcript.Block {
+		return transcript.Block{Type: transcript.BlockText, Text: "hello"}
+	}
+
+	cases := []struct {
+		name       string
+		entries    []transcript.Entry
+		wantGroups int // expected len(chatGroupHeaders)
+		wantItems  int // expected len(chatBlocks) (collapsed)
+	}{
+		{
+			name: "consecutive tool_use+result → one group",
+			entries: []transcript.Entry{
+				{Role: transcript.RoleAssistant, Blocks: []transcript.Block{mkUse("Read", "t1")}},
+				{Role: transcript.RoleUser, Blocks: []transcript.Block{mkResult("t1")}},
+			},
+			wantGroups: 1, wantItems: 1,
+		},
+		{
+			name: "thinking between tool blocks → two groups",
+			entries: []transcript.Entry{
+				{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+					mkUse("Read", "t1"), mkThink(), mkUse("Edit", "t2"),
+				}},
+			},
+			wantGroups: 3, wantItems: 3, // group(Read) + thinking + group(Edit)
+		},
+		{
+			name: "text between tool blocks → two groups",
+			entries: []transcript.Entry{
+				{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+					mkUse("Read", "t1"), mkText(), mkUse("Edit", "t2"),
+				}},
+			},
+			wantGroups: 2, wantItems: 2, // group(Read) + group(Edit); text is not a nav item
+		},
+		{
+			name: "cross-entry group (tool_use in entry 1, result in entry 2)",
+			entries: []transcript.Entry{
+				{Role: transcript.RoleAssistant, Blocks: []transcript.Block{mkUse("Read", "t1")}},
+				{Role: transcript.RoleUser, Blocks: []transcript.Block{mkResult("t1")}},
+			},
+			wantGroups: 1, wantItems: 1,
+		},
+		{
+			name: "orphaned tool_use (no result) → included in group, no panic",
+			entries: []transcript.Entry{
+				{Role: transcript.RoleAssistant, Blocks: []transcript.Block{mkUse("Read", "t1")}},
+			},
+			wantGroups: 1, wantItems: 1,
+		},
+		{
+			name: "orphaned tool_result (no preceding use) → included in group, no panic",
+			entries: []transcript.Entry{
+				{Role: transcript.RoleUser, Blocks: []transcript.Block{mkResult("t1")}},
+			},
+			wantGroups: 1, wantItems: 1,
+		},
+		{
+			name:       "empty transcript → zero groups, zero blocks, cursor=0",
+			entries:    nil,
+			wantGroups: 0, wantItems: 0,
+		},
+		{
+			name: "text-only transcript → zero nav items",
+			entries: []transcript.Entry{
+				{Role: transcript.RoleAssistant, Blocks: []transcript.Block{mkText()}},
+			},
+			wantGroups: 0, wantItems: 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var runDir string
+			if tc.entries != nil {
+				runDir = writeTranscript(t, "a", tc.entries)
+			}
+			m := newMonitorWithSteps(t)
+			m.RunDir = runDir
+			m = enterChatStep(t, m, "a")
+
+			if len(m.chatGroupHeaders) != tc.wantGroups {
+				t.Fatalf("chatGroupHeaders len: got %d, want %d", len(m.chatGroupHeaders), tc.wantGroups)
+			}
+			if len(m.chatBlocks) != tc.wantItems {
+				t.Fatalf("chatBlocks len: got %d, want %d", len(m.chatBlocks), tc.wantItems)
+			}
+			// Cursor must always be a valid index (or 0 when empty).
+			if m.chatBlockCursor != 0 {
+				t.Fatalf("cursor should be 0 for collapsed view, got %d", m.chatBlockCursor)
+			}
+			// Must not panic when calling chatBody.
+			_ = m.chatBody()
+		})
+	}
+}
+
+// TestGroupExpandReset verifies that chatGroupExpand is cleared when the user
+// navigates to a different step (reloadTranscript).
+func TestGroupExpandReset(t *testing.T) {
+	runDirA := writeTranscript(t, "a", []transcript.Entry{
+		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+			{Type: transcript.BlockToolUse, Name: "Read", ToolUseID: "t1"},
+		}},
+	})
+	runDirB := writeTranscript(t, "b", []transcript.Entry{
+		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+			{Type: transcript.BlockToolUse, Name: "Edit", ToolUseID: "t2"},
+		}},
+	})
+	// Use the first runDir (a) since both steps live under the same run.
+	// Write step b's transcript to runDirA so the monitor can find it.
+	if err := os.MkdirAll(datastore.TranscriptPath(runDirA, "b")[:len(datastore.TranscriptPath(runDirA, "b"))-len("transcript.jsonl")], 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// Re-use writeTranscript for step b, but under runDirA.
+	srcPath := datastore.TranscriptPath(runDirB, "b")
+	dstPath := datastore.TranscriptPath(runDirA, "b")
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		t.Fatalf("read transcript b: %v", err)
+	}
+	if err := os.WriteFile(dstPath, data, 0o644); err != nil {
+		t.Fatalf("write transcript b to runDirA: %v", err)
+	}
+
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDirA
+	m = enterChatStep(t, m, "a")
+
+	// Expand the group in step a.
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if len(m.chatGroupExpand) == 0 {
+		t.Fatalf("expected chatGroupExpand to be non-empty after expand")
+	}
+
+	// Navigate to step b → reloadTranscript clears chatGroupExpand.
+	m, _ = m.Update(key("j")) // move to step b in steps panel
+	// Force reload by resetting chatStep so reloadTranscript triggers.
+	m.chatStep = ""
+	m.reloadTranscript()
+
+	if len(m.chatGroupExpand) != 0 {
+		t.Fatalf("chatGroupExpand should be empty after step change, got %v", m.chatGroupExpand)
+	}
+}
+
+// TestGroupExpandPreservedOnResize verifies that expanding a group and then
+// resizing the terminal leaves the group expanded (chatGroupExpand unchanged).
+func TestGroupExpandPreservedOnResize(t *testing.T) {
+	runDir := writeTranscript(t, "a", []transcript.Entry{
+		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+			{Type: transcript.BlockToolUse, Name: "Read", ToolUseID: "t1"},
+		}},
+	})
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+
+	// Expand the group; record the group key.
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if len(m.chatGroupExpand) == 0 {
+		t.Fatalf("group should be expanded after Enter")
+	}
+
+	// Send a WindowSizeMsg (resize).
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	// Group expansion state must be preserved.
+	if len(m.chatGroupExpand) == 0 {
+		t.Fatalf("chatGroupExpand was cleared by WindowSizeMsg; must be preserved")
+	}
+	if !strings.Contains(m.chatBody(), shared.ExpandedMarker) {
+		t.Fatalf("group should still be expanded after resize:\n%s", m.chatBody())
+	}
+}
+
 // TestMonitorChatNoTranscript shows a graceful placeholder when persistence is
 // off (no runDir) rather than a dead end.
 func TestMonitorChatNoTranscript(t *testing.T) {

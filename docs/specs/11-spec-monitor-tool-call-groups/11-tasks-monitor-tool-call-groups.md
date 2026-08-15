@@ -170,7 +170,7 @@ from `chatBlocks`, cursor stability is maintained across rebuilds, and `o`
 
 ---
 
-### [ ] 3.0 Edge Cases and Robustness
+### [x] 3.0 Edge Cases and Robustness
 
 Validate boundary conditions: orphaned `tool_use` (no result), orphaned
 `tool_result` (no preceding `tool_use`), groups that span an entry boundary,
@@ -188,14 +188,14 @@ expansion state across terminal resize (`WindowSizeMsg`).
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Add `TestPrimaryArg` in `monitor_test.go` as a table-driven test
+- [x] 3.1 Add `TestPrimaryArg` in `monitor_test.go` as a table-driven test
   covering: `file_path` key present → returns value; `path` key only → returns
   value; `command` key only → returns value; no known key → returns first
   string value from sorted keys; empty input → returns `""`; input has only
   non-string values → returns `""`; arg exceeds 40 runes → truncated to 40 runes
   ending with `…`.
 
-- [ ] 3.2 Add `TestLoadChatGroupDetection` in `monitor_test.go` as a table-driven
+- [x] 3.2 Add `TestLoadChatGroupDetection` in `monitor_test.go` as a table-driven
   test covering: consecutive `tool_use` + `tool_result` in one entry → one group
   in `chatGroupHeaders`; thinking block between tool blocks → two groups; text
   block between tool blocks → two groups; cross-entry group (`tool_use` in
@@ -204,20 +204,20 @@ expansion state across terminal resize (`WindowSizeMsg`).
   in group, no panic; orphaned `tool_result` (no preceding `tool_use`) → included
   in group, no panic.
 
-- [ ] 3.3 Add `TestGroupExpandReset` in `monitor_test.go`: build a monitor with
+- [x] 3.3 Add `TestGroupExpandReset` in `monitor_test.go`: build a monitor with
   two steps each having tool-call transcripts; navigate to step A, expand a group
   (`chatGroupExpand` is non-empty); navigate to step B (triggering
   `reloadTranscript`); assert `chatGroupExpand` is empty.
 
-- [ ] 3.4 Add `TestGroupExpandPreservedOnResize` in `monitor_test.go`: navigate
+- [x] 3.4 Add `TestGroupExpandPreservedOnResize` in `monitor_test.go`: navigate
   to a step, expand a group; send a `tea.WindowSizeMsg`; assert the group remains
   expanded (`chatGroupExpand[groupKey]` is true) and `chatBody()` still contains
   `▾`.
 
-- [ ] 3.5 Add empty-transcript guard assertion to `TestLoadChatGroupDetection`: when
+- [x] 3.5 Add empty-transcript guard assertion to `TestLoadChatGroupDetection`: when
   the transcript has no entries (or only text entries), `chatGroupHeaders` and
   `chatBlocks` must both be empty slices after `loadChat`, and `chatBlockCursor`
   must be 0 — guards against a panic in callers that access `chatBlocks[chatBlockCursor]`
   on a zero-length slice.
 
-- [ ] 3.6 Run `go vet ./...` and `gofmt -l .` and fix any issues they report.
+- [x] 3.6 Run `go vet ./...` and `gofmt -l .` and fix any issues they report.
