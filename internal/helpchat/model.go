@@ -76,6 +76,7 @@ func New(run *engine.Run, runDir string, snap engine.RunSnapshot) Model {
 		dispatchCh: make(chan tea.Msg, 64),
 		focus:      focusInput,
 		snap:       snap,
+		ta:         shared.NewInputTextarea("Ask about this run…", 80, 3),
 	}
 }
 
@@ -85,6 +86,7 @@ func NewUnavailable() Model {
 	m := Model{
 		dispatchCh: make(chan tea.Msg, 1),
 		focus:      focusInput,
+		ta:         shared.NewInputTextarea("Ask about this run…", 80, 3),
 	}
 	m.turns = []helpTurn{{
 		assistant: "Help agent unavailable for completed runs. The help agent requires a live run to read step state.",
@@ -120,11 +122,41 @@ func (m Model) Init() tea.Cmd {
 	return connectCmd(m.ctx, m.run, m.runDir, m.snap, m.dispatch, m.gateReq, m.gateAns)
 }
 
+// SizeMsg carries the modal's outer dimensions so Update can (re-)initialise
+// the viewport, textarea, and glamour renderer without View() writing state.
+type SizeMsg struct{ W, H int }
+
 // Update processes messages for the help chat model.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
+	case SizeMsg:
+		innerW := msg.W - 4
+		innerH := msg.H - 4
+		histH := innerH * 80 / 100
+		if histH < 1 {
+			histH = 1
+		}
+		inputH := innerH - histH
+		if inputH < 2 {
+			inputH = 2
+		}
+		if m.vpW != innerW || m.vpH != histH {
+			m.vp = viewport.New(viewport.WithWidth(innerW), viewport.WithHeight(histH))
+			old := m.ta.Value()
+			m.ta = shared.NewInputTextarea("Ask about this run…", innerW, inputH)
+			if old != "" {
+				m.ta.SetValue(old)
+			}
+			m.vpW = innerW
+			m.vpH = histH
+			m.buildRenderer(innerW)
+			m.updateViewport()
+		}
+		return m, nil
+
+
 	case ConnectedMsg:
 		// Disconnect the old client on subsequent-turn reconnects.
 		if m.client != nil && msg.client != m.client {
@@ -239,38 +271,16 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-// View renders the help chat modal content at the given dimensions.
-// The caller (monitor_view.go) composites this string over the monitor base
-// using the lipgloss compositor.
+// View renders the help chat modal content.
+// Sizing is handled entirely in Update via SizeMsg — View is a pure render.
 func (m Model) View(width, height int, _ bool) string {
-	if width == 0 || height == 0 {
+	if m.vpW == 0 {
 		return ""
-	}
-
-	innerW := width - 4 // account for border + padding
-	innerH := height - 4
-
-	histH := innerH * 80 / 100
-	if histH < 1 {
-		histH = 1
-	}
-	inputH := innerH - histH
-	if inputH < 2 {
-		inputH = 2
-	}
-
-	if m.vpW != innerW || m.vpH != histH {
-		m.vp = viewport.New(viewport.WithWidth(innerW), viewport.WithHeight(histH))
-		m.ta = shared.NewInputTextarea("Ask about this run…", innerW, inputH)
-		m.vpW = innerW
-		m.vpH = histH
-		m.buildRenderer(innerW)
-		m.updateViewport()
 	}
 
 	histStr := m.vp.View()
 	taStr := m.ta.View()
-	hint := shared.Theme.Chat.Hint.Render("ctrl+h or esc · close  ·  tab · switch focus")
+	hint := shared.Theme.Chat.Hint.Render(`ctrl+\ or esc · close  ·  tab · switch focus`)
 	inner := strings.Join([]string{histStr, taStr, hint}, "\n")
 
 	return shared.Theme.Help.Box.

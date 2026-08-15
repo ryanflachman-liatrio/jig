@@ -13,6 +13,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.resize()
+		if m.helpReady {
+			var hCmd tea.Cmd
+			m.helpModel, hCmd = m.helpModel.Update(helpchat.SizeMsg{W: m.helpBoxW(), H: m.helpBoxH()})
+			return m, hCmd
+		}
 		return m, nil
 
 	case helpchat.ConnectedMsg, helpchat.ConnectErrMsg,
@@ -95,7 +100,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
-		// ctrl+h toggles the help agent modal from any focus region.
+		// ctrl+\ toggles the help agent modal from any focus region.
 		if keybind.Matches(msg, m.keys.ToggleHelp) {
 			return m.toggleHelpChat()
 		}
@@ -408,6 +413,24 @@ func (m *Model) refreshPanels() {
 	m.chatVP.SetContent(m.chatBody())
 }
 
+// helpBoxW/H return the outer modal dimensions, mirroring helpOverlay in
+// monitor_view.go. Kept in sync by hand — update both if the ratio changes.
+func (m Model) helpBoxW() int {
+	w := m.width * 60 / 100
+	if w < 40 {
+		w = 40
+	}
+	return w
+}
+
+func (m Model) helpBoxH() int {
+	h := m.height * 80 / 100
+	if h < 10 {
+		h = 10
+	}
+	return h
+}
+
 // toggleHelpChat opens or closes the help agent modal.
 // On first open it initialises helpModel and fires connectCmd; subsequent
 // open/close cycles just flip helpOpen, preserving conversation history.
@@ -418,7 +441,10 @@ func (m Model) toggleHelpChat() (Model, tea.Cmd) {
 	}
 	m.helpOpen = true
 	if m.helpReady {
-		return m, nil // already connected; preserve conversation state
+		// Already initialised — send size so the modal is sized for current window.
+		var hCmd tea.Cmd
+		m.helpModel, hCmd = m.helpModel.Update(helpchat.SizeMsg{W: m.helpBoxW(), H: m.helpBoxH()})
+		return m, hCmd
 	}
 
 	// First open: create rendezvous channels, build helpModel, fire Init.
@@ -427,11 +453,13 @@ func (m Model) toggleHelpChat() (Model, tea.Cmd) {
 	m.helpGateReq = gateReq
 	m.helpGateAns = gateAns
 
+	sizeCmd := func() tea.Msg { return helpchat.SizeMsg{W: m.helpBoxW(), H: m.helpBoxH()} }
+
 	if m.run == nil {
 		// Journal-replayed run — pre-populate unavailable message, skip SDK connect.
 		m.helpModel = helpchat.NewUnavailable()
 		m.helpReady = true
-		return m, nil
+		return m, sizeCmd
 	}
 
 	snap := m.run.Snapshot()
@@ -445,6 +473,7 @@ func (m Model) toggleHelpChat() (Model, tea.Cmd) {
 	if initCmd != nil {
 		cmds = append(cmds, initCmd)
 	}
+	cmds = append(cmds, sizeCmd)
 	cmds = append(cmds, helpchat.WaitForDispatchCmd(m.helpModel.DispatchCh()))
 	cmds = append(cmds, waitForGateReqCmd(gateReq))
 	return m, tea.Batch(cmds...)

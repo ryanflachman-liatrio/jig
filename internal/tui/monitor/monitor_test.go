@@ -2029,8 +2029,8 @@ func TestMonitorFrameStepGating(t *testing.T) {
 	}
 }
 
-// TestToggleHelp_OpenClose verifies that ctrl+h opens the help modal, a second
-// ctrl+h closes it, and esc also closes it while open.
+// TestToggleHelp_OpenClose verifies that ctrl+\ opens the help modal, a second
+// ctrl+\ closes it, and esc also closes it while open.
 func TestToggleHelp_OpenClose(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
@@ -2038,26 +2038,26 @@ func TestToggleHelp_OpenClose(t *testing.T) {
 		t.Fatal("help modal should start closed")
 	}
 
-	// First ctrl+h: opens the modal (run == nil → NewUnavailable path, no SDK connect).
-	ctrlH := tea.KeyPressMsg{Code: 'h', Mod: tea.ModCtrl}
-	m, _ = m.Update(ctrlH)
+	// First ctrl+\: opens the modal (run == nil → NewUnavailable path, no SDK connect).
+	ctrlBackslash := tea.KeyPressMsg{Code: '\\', Mod: tea.ModCtrl}
+	m, _ = m.Update(ctrlBackslash)
 	if !m.helpOpen {
-		t.Fatal("first ctrl+h did not open the help modal")
+		t.Fatal("first ctrl+\\ did not open the help modal")
 	}
 	if !m.helpReady {
 		t.Fatal("helpReady should be true after first open (unavailable path)")
 	}
 
-	// Second ctrl+h: closes.
-	m, _ = m.Update(ctrlH)
+	// Second ctrl+\: closes.
+	m, _ = m.Update(ctrlBackslash)
 	if m.helpOpen {
-		t.Fatal("second ctrl+h did not close the help modal")
+		t.Fatal("second ctrl+\\ did not close the help modal")
 	}
 
-	// Third ctrl+h to reopen, then esc to close.
-	m, _ = m.Update(ctrlH)
+	// Third ctrl+\ to reopen, then esc to close.
+	m, _ = m.Update(ctrlBackslash)
 	if !m.helpOpen {
-		t.Fatal("third ctrl+h did not reopen the help modal")
+		t.Fatal("third ctrl+\\ did not reopen the help modal")
 	}
 	m, _ = m.Update(key("esc"))
 	if m.helpOpen {
