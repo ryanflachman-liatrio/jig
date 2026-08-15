@@ -77,7 +77,9 @@ func enterChatStep(t *testing.T, m Model, id string) Model {
 }
 
 // TestMonitorChatRendersBlocks renders a transcript with every block kind and
-// asserts each surfaces with its label in modeChat.
+// asserts each surfaces correctly in modeChat. Tool calls are now grouped: the
+// collapsed group header shows a summary line; individual block labels are only
+// visible inside an expanded group.
 func TestMonitorChatRendersBlocks(t *testing.T) {
 	runDir := writeTranscript(t, "a", []transcript.Entry{
 		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
@@ -95,16 +97,27 @@ func TestMonitorChatRendersBlocks(t *testing.T) {
 	m.RunDir = runDir
 	m = enterChatStep(t, m, "a")
 
+	// Collapsed view: thinking label, text content, and group summary are present;
+	// individual tool block labels are hidden inside the collapsed group.
 	body := m.chatBody()
-	for _, want := range []string{shared.IconThinking + " reasoning", shared.IconToolCall + " Read", shared.IconToolResult + " result", "Reading the file"} {
+	for _, want := range []string{shared.IconThinking + " reasoning", "Reading the file", "1 tool call: Read"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("chat body missing %q:\n%s", want, body)
 		}
 	}
+
+	// Expanded view (o): individual block labels become visible.
+	m, _ = m.Update(key("o"))
+	expanded := m.chatBody()
+	for _, want := range []string{shared.IconToolCall + " Read", shared.IconToolResult + " result", "file contents"} {
+		if !strings.Contains(expanded, want) {
+			t.Fatalf("expanded chat body missing %q:\n%s", want, expanded)
+		}
+	}
 }
 
-// TestMonitorChatCollapseExpand checks a long tool_result collapses to 80 chars
-// with a hint and reveals its full content once expanded (via o).
+// TestMonitorChatCollapseExpand checks a long tool_result is hidden behind a
+// collapsed group by default and reveals its full content once expanded (via o).
 func TestMonitorChatCollapseExpand(t *testing.T) {
 	// 90 'a's then a marker past the 80-char collapse boundary.
 	content := strings.Repeat("a", 90) + "MARKER"
@@ -118,23 +131,25 @@ func TestMonitorChatCollapseExpand(t *testing.T) {
 	m.RunDir = runDir
 	m = enterChatStep(t, m, "a")
 
+	// Default view: group is collapsed — content not visible, group header shown.
 	collapsed := m.chatBody()
 	if strings.Contains(collapsed, "MARKER") {
-		t.Fatalf("collapsed body leaked content past 80 chars:\n%s", collapsed)
+		t.Fatalf("collapsed body leaked content past group boundary:\n%s", collapsed)
 	}
-	if !strings.Contains(collapsed, "[96 chars]") {
-		t.Fatalf("collapsed body missing char-count hint:\n%s", collapsed)
+	if !strings.Contains(collapsed, shared.CollapsedMarker) {
+		t.Fatalf("collapsed body missing collapsed group marker:\n%s", collapsed)
 	}
 
-	m, _ = m.Update(key("o")) // expand all
+	m, _ = m.Update(key("o")) // expand all — group and inner block both expand
 	expanded := m.chatBody()
 	if !strings.Contains(expanded, "MARKER") {
 		t.Fatalf("expanded body did not reveal full content:\n%s", expanded)
 	}
 }
 
-// TestMonitorChatBlockCursorToggle checks tab moves the block cursor and enter
-// toggles just the selected block.
+// TestMonitorChatBlockCursorToggle checks that enter expands a group, n moves
+// the cursor into the expanded group, and enter on the inner block reveals its
+// full content; a second enter collapses the inner block again.
 func TestMonitorChatBlockCursorToggle(t *testing.T) {
 	long := strings.Repeat("z", 100) + "END"
 	runDir := writeTranscript(t, "a", []transcript.Entry{
@@ -147,16 +162,34 @@ func TestMonitorChatBlockCursorToggle(t *testing.T) {
 	m.RunDir = runDir
 	m = enterChatStep(t, m, "a")
 
-	if strings.Contains(m.chatBody(), "END") {
-		t.Fatalf("block should start collapsed")
+	// Initially: one group header in chatBlocks; content not visible.
+	if len(m.chatBlocks) != 1 || !m.chatBlocks[0].isGroup {
+		t.Fatalf("expected single group header, got chatBlocks: %v", m.chatBlocks)
 	}
-	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // toggle block under cursor
+	if strings.Contains(m.chatBody(), "END") {
+		t.Fatalf("content should be hidden behind collapsed group")
+	}
+
+	// Enter on group header → group expands; inner block is still collapsed.
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if len(m.chatBlocks) != 2 {
+		t.Fatalf("after group expand expected 2 chatBlocks, got %d", len(m.chatBlocks))
+	}
+	if strings.Contains(m.chatBody(), "END") {
+		t.Fatalf("inner block should still be collapsed after group expand")
+	}
+
+	// n → cursor moves to inner block; enter → inner block expands.
+	m, _ = m.Update(key("n"))
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !strings.Contains(m.chatBody(), "END") {
-		t.Fatalf("enter did not expand the cursored block:\n%s", m.chatBody())
+		t.Fatalf("enter on inner block did not reveal full content:\n%s", m.chatBody())
 	}
-	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}) // toggle back
+
+	// Enter again → inner block collapses.
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if strings.Contains(m.chatBody(), "END") {
-		t.Fatalf("second enter did not collapse the block")
+		t.Fatalf("second enter did not collapse the inner block")
 	}
 }
 
