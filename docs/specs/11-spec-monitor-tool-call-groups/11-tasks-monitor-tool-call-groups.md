@@ -111,7 +111,7 @@ individual `tool_use`/`tool_result` rows — no expand interaction yet.
 
 ---
 
-### [ ] 2.0 Expand/Collapse Group with Individual Block Navigation
+### [x] 2.0 Expand/Collapse Group with Individual Block Navigation
 
 Wire up the keyboard handlers so `space`/`enter` on a group header toggles it
 expanded/collapsed, individual blocks within expanded groups are added to / removed
@@ -131,36 +131,36 @@ from `chatBlocks`, cursor stability is maintained across rebuilds, and `o`
 
 #### 2.0 Tasks
 
-- [ ] 2.1 In `monitor_update.go`, update the `Toggle` handler in
+- [x] 2.1 In `monitor_update.go`, update the `Toggle` handler in
   `updateTranscript`: save the current item as `saved := m.chatBlocks[cursor]`;
   if `saved.isGroup`, toggle `m.chatGroupExpand[saved.key]`; otherwise toggle
   `m.chatExpand[saved.key]`; call `m.rebuildActiveState(saved)` then
   `m.refreshPanels()`.
 
-- [ ] 2.2 In `monitor_update.go`, update the `ExpandAll` handler: capture `saved`
+- [x] 2.2 In `monitor_update.go`, update the `ExpandAll` handler: capture `saved`
   from `chatBlocks` before toggling, call `m.rebuildActiveState(saved)` after
   flipping `m.chatExpandAll`, then `m.refreshPanels()`.
 
-- [ ] 2.3 Add `TestGroupNavigation` in `monitor_test.go`: write a transcript with
+- [x] 2.3 Add `TestGroupNavigation` in `monitor_test.go`: write a transcript with
   one group (two tool calls) followed by a thinking block; expand the group so
   `chatBlocks` = [group header, block0, block1, thinking]; press `n` four times
   from the group header and assert cursor visits block0 → block1 → thinking →
   wraps back to group header — demonstrates that after the last inner block `n`
   moves naturally to the next outer item and wraps correctly.
 
-- [ ] 2.4 Add `TestGroupToggle` in `monitor_test.go`: write a transcript with
+- [x] 2.4 Add `TestGroupToggle` in `monitor_test.go`: write a transcript with
   three consecutive `tool_use`/`tool_result` blocks; enter the step; assert
   `chatBlocks` has one item (group header); press `space`; assert `chatBlocks`
   grows to four items (header + three individual blocks); assert `chatBody()`
   contains `▾`; press `space` again; assert `chatBlocks` is back to one item and
   `chatBody()` contains `▸`.
 
-- [ ] 2.5 Add `TestGroupCursorStability` in `monitor_test.go`: expand a group,
+- [x] 2.5 Add `TestGroupCursorStability` in `monitor_test.go`: expand a group,
   navigate `n` to the second inner block, press `space` on the group header (via
   navigating back with `N`), assert `chatBlockCursor` lands on the group header
   index (0), not a stale inner-block index.
 
-- [ ] 2.6 Add `TestGroupExpandAll` in `monitor_test.go`: two consecutive tool calls
+- [x] 2.6 Add `TestGroupExpandAll` in `monitor_test.go`: two consecutive tool calls
   (with distinct content) followed by a thinking block; press `o`; assert
   `chatBody()` contains `▾` for the group header and `▾` for the thinking block;
   also assert that the full content of each inner tool block is rendered (i.e.,

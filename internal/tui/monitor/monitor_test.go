@@ -193,6 +193,186 @@ func TestMonitorChatBlockCursorToggle(t *testing.T) {
 	}
 }
 
+// TestGroupToggle checks that enter on a group header expands it (chatBlocks
+// grows) and enter again collapses it (chatBlocks shrinks back).
+func TestGroupToggle(t *testing.T) {
+	runDir := writeTranscript(t, "a", []transcript.Entry{
+		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+			{Type: transcript.BlockToolUse, Name: "Read", ToolUseID: "t1",
+				Input: rawJSON(t, map[string]string{"file_path": "main.go"})},
+			{Type: transcript.BlockToolUse, Name: "Edit", ToolUseID: "t2",
+				Input: rawJSON(t, map[string]string{"file_path": "monitor.go"})},
+			{Type: transcript.BlockToolUse, Name: "Bash", ToolUseID: "t3",
+				Input: rawJSON(t, map[string]string{"command": "go test ./..."})},
+		}},
+	})
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+
+	// Start: one group header (3 tool calls).
+	if len(m.chatBlocks) != 1 || !m.chatBlocks[0].isGroup {
+		t.Fatalf("expected 1 group header, got chatBlocks len=%d", len(m.chatBlocks))
+	}
+	if !strings.Contains(m.chatBody(), "3 tool calls") {
+		t.Fatalf("collapsed body missing tool call count:\n%s", m.chatBody())
+	}
+
+	// Enter → group expands: header + 3 individual blocks.
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if len(m.chatBlocks) != 4 {
+		t.Fatalf("after expand expected 4 chatBlocks, got %d", len(m.chatBlocks))
+	}
+	if !strings.Contains(m.chatBody(), shared.ExpandedMarker) {
+		t.Fatalf("expanded body missing expanded marker:\n%s", m.chatBody())
+	}
+
+	// Enter again on group header → group collapses.
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if len(m.chatBlocks) != 1 {
+		t.Fatalf("after collapse expected 1 chatBlock, got %d", len(m.chatBlocks))
+	}
+	if !strings.Contains(m.chatBody(), shared.CollapsedMarker) {
+		t.Fatalf("collapsed body missing collapsed marker:\n%s", m.chatBody())
+	}
+}
+
+// TestGroupCursorStability checks that when a group is collapsed while the
+// cursor is on the group header, the cursor stays at 0 (group header index).
+func TestGroupCursorStability(t *testing.T) {
+	runDir := writeTranscript(t, "a", []transcript.Entry{
+		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+			{Type: transcript.BlockToolUse, Name: "Read", ToolUseID: "t1"},
+			{Type: transcript.BlockToolUse, Name: "Edit", ToolUseID: "t2"},
+		}},
+	})
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+
+	// Expand group → chatBlocks = [header, b0, b1]; cursor stays on header.
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if m.chatBlockCursor != 0 {
+		t.Fatalf("after expand cursor should be 0, got %d", m.chatBlockCursor)
+	}
+
+	// Navigate into the group to inner block b1 (index 2).
+	m, _ = m.Update(key("n"))
+	m, _ = m.Update(key("n"))
+	if m.chatBlockCursor != 2 {
+		t.Fatalf("expected cursor=2 (second inner block), got %d", m.chatBlockCursor)
+	}
+
+	// Navigate back to group header with N.
+	m, _ = m.Update(key("N"))
+	m, _ = m.Update(key("N"))
+	if m.chatBlockCursor != 0 {
+		t.Fatalf("expected cursor=0 (group header), got %d", m.chatBlockCursor)
+	}
+
+	// Collapse group from header; cursor remains at 0.
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if len(m.chatBlocks) != 1 {
+		t.Fatalf("after collapse expected 1 chatBlock, got %d", len(m.chatBlocks))
+	}
+	if m.chatBlockCursor != 0 {
+		t.Fatalf("after collapse cursor should be 0, got %d", m.chatBlockCursor)
+	}
+}
+
+// TestGroupNavigation checks that n/N traverse group headers and inner blocks in
+// the correct order, and that after the last block in an expanded group n moves
+// to the next outer item naturally.
+func TestGroupNavigation(t *testing.T) {
+	// Transcript: 2 tool_use → group, then a thinking block.
+	// chatBlocks when group expanded: [header(0), b0(1), b1(2), thinking(3)].
+	runDir := writeTranscript(t, "a", []transcript.Entry{
+		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+			{Type: transcript.BlockToolUse, Name: "Read", ToolUseID: "t1"},
+			{Type: transcript.BlockToolUse, Name: "Edit", ToolUseID: "t2"},
+			{Type: transcript.BlockThinking, Text: "reasoning"},
+		}},
+	})
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+
+	// Expand group.
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if len(m.chatBlocks) != 4 {
+		t.Fatalf("expected 4 chatBlocks after expand, got %d: %v", len(m.chatBlocks), m.chatBlocks)
+	}
+
+	// n from header (0) → b0 (1) → b1 (2) → thinking (3) → wraps to header (0).
+	positions := []int{}
+	for i := 0; i < 4; i++ {
+		m, _ = m.Update(key("n"))
+		positions = append(positions, m.chatBlockCursor)
+	}
+	want := []int{1, 2, 3, 0}
+	for i, got := range positions {
+		if got != want[i] {
+			t.Fatalf("n press %d: want cursor=%d, got %d", i+1, want[i], got)
+		}
+	}
+}
+
+// TestGroupExpandAll checks that o expands all groups AND all inner blocks
+// (full content rendered), and o again collapses everything.
+func TestGroupExpandAll(t *testing.T) {
+	readInput := rawJSON(t, map[string]string{"file_path": "UNIQUE_READ_PATH"})
+	editInput := rawJSON(t, map[string]string{"file_path": "UNIQUE_EDIT_PATH"})
+	// Thinking content is padded past the 80-rune collapse boundary so
+	// "THINKING_CONTENT" is only visible when the block is expanded.
+	thinkingText := strings.Repeat("x", 90) + "THINKING_CONTENT"
+	runDir := writeTranscript(t, "a", []transcript.Entry{
+		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+			{Type: transcript.BlockToolUse, Name: "Read", ToolUseID: "t1", Input: readInput},
+			{Type: transcript.BlockToolUse, Name: "Edit", ToolUseID: "t2", Input: editInput},
+			{Type: transcript.BlockThinking, Text: thinkingText},
+		}},
+	})
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+
+	// Default: collapsed group header and collapsed thinking.
+	body := m.chatBody()
+	if !strings.Contains(body, shared.CollapsedMarker) {
+		t.Fatalf("default body should show collapsed markers:\n%s", body)
+	}
+
+	// Press o → chatExpandAll=true: group expands, thinking expands, inner blocks expand.
+	m, _ = m.Update(key("o"))
+	expanded := m.chatBody()
+
+	// Group header should show ▾.
+	if !strings.Contains(expanded, shared.ExpandedMarker) {
+		t.Fatalf("expanded body missing expanded marker for group:\n%s", expanded)
+	}
+	// Inner block content should be visible (proves blocks inside group are expanded).
+	if !strings.Contains(expanded, "UNIQUE_READ_PATH") {
+		t.Fatalf("expanded body missing inner block content UNIQUE_READ_PATH:\n%s", expanded)
+	}
+	if !strings.Contains(expanded, "UNIQUE_EDIT_PATH") {
+		t.Fatalf("expanded body missing inner block content UNIQUE_EDIT_PATH:\n%s", expanded)
+	}
+	// Thinking block content should be visible.
+	if !strings.Contains(expanded, "THINKING_CONTENT") {
+		t.Fatalf("expanded body missing thinking content:\n%s", expanded)
+	}
+
+	// Press o again → chatExpandAll=false: all collapse.
+	m, _ = m.Update(key("o"))
+	collapsed := m.chatBody()
+	if strings.Contains(collapsed, "UNIQUE_READ_PATH") {
+		t.Fatalf("collapsed body should not show inner block content:\n%s", collapsed)
+	}
+	if strings.Contains(collapsed, "THINKING_CONTENT") {
+		t.Fatalf("collapsed body should not show thinking content:\n%s", collapsed)
+	}
+}
+
 // TestMonitorChatIterationSeparators checks a loop iteration boundary renders a
 // separator between entries.
 func TestMonitorChatIterationSeparators(t *testing.T) {
