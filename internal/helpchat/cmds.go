@@ -3,6 +3,7 @@ package helpchat
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	claudecode "github.com/severity1/claude-agent-sdk-go"
@@ -32,6 +33,7 @@ func connectCmd(
 			claudecode.WithMaxTurns(200),
 			claudecode.WithModel(helpModelID),
 			claudecode.WithIncludePartialMessages(true),
+			buildCanUseTool(ctx, dispatch),
 		)
 		if err := client.Connect(ctx); err != nil {
 			return ConnectErrMsg{err: fmt.Errorf("help agent connect: %w", err)}
@@ -64,6 +66,7 @@ func queryCmd(
 			claudecode.WithMaxTurns(200),
 			claudecode.WithModel(helpModelID),
 			claudecode.WithIncludePartialMessages(true),
+			buildCanUseTool(ctx, dispatch),
 		}
 		if sessionID != "" {
 			opts = append(opts,
@@ -163,4 +166,32 @@ func resultErrText(m *claudecode.ResultMessage) string {
 		return m.Errors[0]
 	}
 	return "unknown agent error"
+}
+
+// buildCanUseTool returns a WithCanUseTool option that intercepts tool permission
+// requests. Tools registered under the jig-help in-process MCP server are
+// pre-approved (they are trusted Go functions with no shell side-effects).
+// All other tools are surfaced to the operator via the chat modal gate.
+func buildCanUseTool(ctx context.Context, dispatch DispatchFunc) claudecode.Option {
+	return claudecode.WithCanUseTool(func(
+		_ context.Context,
+		toolName string,
+		input map[string]any,
+		_ claudecode.ToolPermissionContext,
+	) (claudecode.PermissionResult, error) {
+		if strings.HasPrefix(toolName, "mcp__jig-help__") {
+			return claudecode.NewPermissionResultAllow(), nil
+		}
+		ansC := make(chan bool, 1)
+		dispatch(PermRequestMsg{ToolName: toolName, Input: input, AnsC: ansC})
+		select {
+		case allow := <-ansC:
+			if allow {
+				return claudecode.NewPermissionResultAllow(), nil
+			}
+			return claudecode.NewPermissionResultDeny("denied by operator"), nil
+		case <-ctx.Done():
+			return claudecode.NewPermissionResultDeny("context cancelled"), nil
+		}
+	})
 }

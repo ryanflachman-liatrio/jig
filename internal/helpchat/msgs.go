@@ -31,3 +31,22 @@ type DispatchedMsg struct{ Inner tea.Msg }
 // for the final-merge rendezvous gate. The tool handler is blocked on gateAns
 // while the monitor waits for the operator's response.
 type FinalMergeGateMsg struct{}
+
+// PermRequestMsg is dispatched by the WithCanUseTool callback when the SDK
+// subprocess wants to call a non-jig-help tool and needs the operator's
+// allow/deny decision. AnsC receives true (allow) or false (deny).
+type PermRequestMsg struct {
+	ToolName string
+	Input    map[string]any
+	AnsC     chan<- bool
+}
+
+// QuestionRequestMsg is dispatched by the ask_user MCP tool handler when the
+// agent wants to present a structured question to the operator.
+// Options is nil for a free-text answer; non-nil for a numbered choice list.
+// AnsC receives the operator's answer (selected option text or typed text).
+type QuestionRequestMsg struct {
+	Question string
+	Options  []string
+	AnsC     chan<- string
+}

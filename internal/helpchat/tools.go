@@ -44,6 +44,7 @@ func BuildMcpServer(
 		buildResumeStep(run, dispatch),
 		buildResolveReview(run, dispatch, gateReq, gateAns),
 		buildSendMessageToStep(run, dispatch),
+		buildAskUser(dispatch),
 	)
 }
 
@@ -341,6 +342,52 @@ func buildSendMessageToStep(run *engine.Run, dispatch DispatchFunc) *claudecode.
 			}
 			dispatch(ReviewMessage{StepID: stepID, Text: text})
 			return okResult(fmt.Sprintf("message enqueued for step %q", stepID)), nil
+		},
+	)
+}
+
+func buildAskUser(dispatch DispatchFunc) *claudecode.McpTool {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"question": map[string]any{
+				"type":        "string",
+				"description": "The question to present to the operator.",
+			},
+			"options": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "Optional list of choices. Omit for a free-text answer.",
+			},
+		},
+		"required": []any{"question"},
+	}
+	return claudecode.NewTool(
+		"ask_user",
+		"Present a question to the operator and wait for their answer. "+
+			"Provide options[] for a multiple-choice prompt; omit for free-text.",
+		schema,
+		func(ctx context.Context, args map[string]any) (*claudecode.McpToolResult, error) {
+			question, _ := args["question"].(string)
+			if question == "" {
+				return errResult("question is required"), nil
+			}
+			var options []string
+			if raw, ok := args["options"].([]any); ok {
+				for _, v := range raw {
+					if s, ok := v.(string); ok {
+						options = append(options, s)
+					}
+				}
+			}
+			ansC := make(chan string, 1)
+			dispatch(QuestionRequestMsg{Question: question, Options: options, AnsC: ansC})
+			select {
+			case answer := <-ansC:
+				return okResult(answer), nil
+			case <-ctx.Done():
+				return errResult("operator did not respond (context cancelled)"), nil
+			}
 		},
 	)
 }

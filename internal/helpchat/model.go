@@ -23,6 +23,25 @@ const (
 	focusHistory
 )
 
+type gateKind int
+
+const (
+	gateKindPerm     gateKind = iota // WithCanUseTool fired for an external tool
+	gateKindQuestion                 // ask_user tool called by agent
+)
+
+type pendingGateEntry struct {
+	kind     gateKind
+	toolName string         // gateKindPerm: tool being requested
+	input    map[string]any // gateKindPerm: tool input parameters
+	permAnsC chan<- bool     // gateKindPerm: send true=allow, false=deny
+	question string         // gateKindQuestion: question text
+	options  []string       // gateKindQuestion: nil → free-text, non-nil → choice list
+	qAnsC    chan<- string   // gateKindQuestion: send selected/typed answer
+	selected int            // gateKindQuestion option-list cursor
+	textBuf  string         // gateKindQuestion free-text accumulator
+}
+
 type helpTurn struct {
 	user      string
 	assistant string
@@ -48,6 +67,10 @@ type Model struct {
 
 	// fire-and-forget: MCP tool handlers write here; waitForDispatchCmd drains.
 	dispatchCh chan tea.Msg
+
+	// pendingGate is set when the agent needs operator input (tool permission or
+	// structured question). Nil when no interaction is pending.
+	pendingGate *pendingGateEntry
 
 	// conversation
 	turns   []helpTurn
@@ -223,7 +246,28 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// Bubble up to monitor — the monitor re-arms waitForGateReqCmd.
 		cmds = append(cmds, func() tea.Msg { return FinalMergeGateMsg{} })
 
+	case PermRequestMsg:
+		m.pendingGate = &pendingGateEntry{
+			kind:     gateKindPerm,
+			toolName: msg.ToolName,
+			input:    msg.Input,
+			permAnsC: msg.AnsC,
+		}
+		m.updateViewport()
+
+	case QuestionRequestMsg:
+		m.pendingGate = &pendingGateEntry{
+			kind:     gateKindQuestion,
+			question: msg.Question,
+			options:  msg.Options,
+			qAnsC:    msg.AnsC,
+		}
+		m.updateViewport()
+
 	case tea.KeyPressMsg:
+		if m.pendingGate != nil {
+			return m.updateGate(msg)
+		}
 		switch {
 		case keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("tab"))):
 			if m.focus == focusInput {
@@ -279,24 +323,111 @@ func (m Model) View(width, height int, _ bool) string {
 	}
 
 	histStr := m.vp.View()
-	taStr := m.ta.View()
-	hint := shared.Theme.Chat.Hint.Render(`ctrl+\ or esc · close  ·  tab · switch focus`)
-	inner := strings.Join([]string{histStr, taStr, hint}, "\n")
+	var bottomStr string
+	if m.pendingGate != nil {
+		bottomStr = m.renderGate(width - 4)
+	} else {
+		bottomStr = m.ta.View()
+	}
+	hint := m.gateHint()
+	inner := strings.Join([]string{histStr, bottomStr, hint}, "\n")
 
 	return shared.Theme.Help.Box.
 		Width(width - 2).
 		Render("Help Agent\n\n" + inner)
 }
 
-// CapturesText returns true when the textarea has focus, telling the monitor
-// to route all text key presses to this model.
+func (m Model) gateHint() string {
+	if g := m.pendingGate; g != nil {
+		switch g.kind {
+		case gateKindPerm:
+			return shared.Theme.Chat.Hint.Render("[y] allow  ·  [n] deny  ·  esc deny")
+		case gateKindQuestion:
+			if len(g.options) > 0 {
+				return shared.Theme.Chat.Hint.Render("↑↓ navigate  ·  enter confirm  ·  esc cancel")
+			}
+			return shared.Theme.Chat.Hint.Render("enter send  ·  esc cancel")
+		}
+	}
+	return shared.Theme.Chat.Hint.Render(`ctrl+\ or esc · close  ·  tab · switch focus`)
+}
+
+// CapturesText returns true when this model should receive all key presses —
+// either the textarea has focus or a gate is awaiting operator input.
 func (m Model) CapturesText() bool {
-	return m.focus == focusInput
+	return m.pendingGate != nil || m.focus == focusInput
 }
 
 // DispatchCh exposes the dispatch channel for the monitor to arm
 // waitForDispatchCmd after initial connection.
 func (m Model) DispatchCh() <-chan tea.Msg { return m.dispatchCh }
+
+// updateGate handles all key presses while a pendingGate is active.
+// For perm gates: y/Y allows, n/N/esc denies.
+// For question gates with options: ↑/k moves up, ↓/j moves down, enter confirms, esc cancels.
+// For question gates with free text: printable chars accumulate, backspace deletes, enter submits, esc cancels.
+func (m Model) updateGate(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	g := m.pendingGate
+	switch g.kind {
+
+	case gateKindPerm:
+		switch {
+		case keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("y", "Y"))):
+			g.permAnsC <- true
+			m.pendingGate = nil
+		case keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("n", "N", "esc"))):
+			g.permAnsC <- false
+			m.pendingGate = nil
+		}
+
+	case gateKindQuestion:
+		if len(g.options) > 0 {
+			newG := *g
+			switch {
+			case keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("up", "k"))):
+				if newG.selected > 0 {
+					newG.selected--
+				}
+				m.pendingGate = &newG
+			case keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("down", "j"))):
+				if newG.selected < len(newG.options)-1 {
+					newG.selected++
+				}
+				m.pendingGate = &newG
+			case keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("enter"))):
+				g.qAnsC <- g.options[g.selected]
+				m.pendingGate = nil
+			case keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("esc"))):
+				g.qAnsC <- ""
+				m.pendingGate = nil
+			}
+		} else {
+			newG := *g
+			switch {
+			case keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("enter"))):
+				if newG.textBuf != "" {
+					g.qAnsC <- newG.textBuf
+					m.pendingGate = nil
+				}
+			case keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("backspace"))):
+				if len(newG.textBuf) > 0 {
+					newG.textBuf = newG.textBuf[:len(newG.textBuf)-1]
+				}
+				m.pendingGate = &newG
+			case keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("esc"))):
+				g.qAnsC <- ""
+				m.pendingGate = nil
+			default:
+				if msg.Text != "" {
+					newG.textBuf += msg.Text
+					m.pendingGate = &newG
+				}
+			}
+		}
+	}
+	m.updateViewport()
+	return m, nil
+}
 
 // ── internal helpers ──────────────────────────────────────────────────────────
 

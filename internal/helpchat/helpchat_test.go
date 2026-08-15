@@ -33,7 +33,7 @@ func TestBuildSystemPrompt(t *testing.T) {
 	}
 }
 
-// TestMcpServerToolSchemas verifies that all 10 expected tools are registered
+// TestMcpServerToolSchemas verifies that all 11 expected tools are registered
 // with the correct names.
 func TestMcpServerToolSchemas(t *testing.T) {
 	wantTools := []string{
@@ -47,6 +47,7 @@ func TestMcpServerToolSchemas(t *testing.T) {
 		"resume_step",
 		"resolve_review",
 		"send_message_to_step",
+		"ask_user",
 	}
 
 	// Build the server with nil run and no-op dispatch; we only inspect the
