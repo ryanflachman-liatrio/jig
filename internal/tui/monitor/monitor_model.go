@@ -246,12 +246,12 @@ type Model struct {
 	// Help agent modal (ctrl+h). helpOpen/helpReady are the open/connected flags;
 	// helpModel is preserved across open/close cycles for the run's lifetime.
 	// helpGateReq/helpGateAns are the rendezvous channels for the final-merge gate.
-	helpOpen     bool
-	helpReady    bool
-	helpModel    helpchat.Model
-	run          *engine.Run
-	helpGateReq  chan struct{} // bidirectional: tools write, waitForGateReqCmd reads
-	helpGateAns  chan bool
+	helpOpen    bool
+	helpReady   bool
+	helpModel   helpchat.Model
+	run         *engine.Run
+	helpGateReq chan struct{} // bidirectional: tools write, waitForGateReqCmd reads
+	helpGateAns chan bool
 
 	// stepsInnerW / transcriptInnerW are the two panels' inner content widths,
 	// computed in resize() from the width split (Resolved Decision 11). narrow

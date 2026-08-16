@@ -115,3 +115,53 @@ failure-retries under `on_failure = "retry"`) and **`Iteration`** (loop passes).
 when a step is manually reset so its transcript shows a legible boundary; unlike
 `Attempt`, it gates no budget.
 _Avoid_: Attempt, retry, version, epoch.
+
+## Harness abstraction
+
+The vocabulary of `internal/harness`, the seam between `AgentExecutor` and the
+agent process it drives. Introduced by the ACP↔Claude harness work (spec 12).
+
+**Harness**:
+The jig-owned Go type implementing the `Harness` interface (`ClaudeHarness`,
+`AcpHarness`) — the code that translates a `SessionSpec` into one specific
+transport's lifecycle and normalizes its output into jig's transcript model.
+_Avoid_: Backend (reserve for the vendor/model being driven), adapter, driver.
+
+**Backend**:
+The vendor, CLI, or model a Harness talks to (Claude, Cursor, Gemini) — the
+*target*, not the jig code that talks to it. One Harness could in principle
+target more than one backend (an ACP Harness could drive Cursor as well as
+Claude via the same transport).
+_Avoid_: Harness (a backend is who you're talking to; a Harness is the code
+that talks).
+
+**Session**:
+One jig-level value returned by `Harness.Open`, live for exactly one
+`AgentExecutor.Execute` call. Mid-turn interaction (an `AskUserQuestion`
+answer, a queued tool result) is sent to the *same* live Session via `Send`.
+Resuming a stopped step does not reach back into a prior Session object —
+`AgentExecutor` calls `Open` again with `SessionSpec.Resume` set to the prior
+conversation ID, and the Harness/backend continues that conversation under a
+new Session value, exactly as today's SDK path opens a new client with
+`WithResume`.
+_Avoid_: Conversation (reserve for the backend-side concept a Resume ID
+points at), connection.
+
+**Capability** / **`CapabilitySet`**:
+A named, boolean feature a Harness advertises **before** `Open` is called
+(`CapPermissionCallback`, `CapInProcessMCP`, `CapSessionResume`,
+`CapStructuredOutput`, `CapPartialStreaming`) — queried explicitly, never
+inferred by runtime type assertion after the fact. `AgentExecutor` fails
+closed (rejects the step) when a step needs a capability the active Harness
+does not advertise, rather than silently degrading.
+_Avoid_: Feature flag, trait.
+
+**`PermissionFn`**:
+The jig-owned callback type a Harness invokes synchronously before a tool
+executes, when `CapPermissionCallback` is advertised and `SessionSpec.Permission`
+is set. `AgentExecutor` constructs it by closing over the step's
+[[spec-10-agent-security-monitoring|`sentinel.Guard`]] — `internal/harness`
+itself never imports `sentinel`, mirroring how `engine` never imports
+`runner`.
+_Avoid_: Guard (reserve for the concrete `sentinel.Guard` firewall type),
+callback (too generic once `PermissionFn` is named).

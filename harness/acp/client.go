@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sync"
 
@@ -34,6 +33,12 @@ type Event struct {
 // in-memory log and delegating permission decisions to Decide.
 type Client struct {
 	Decide Decider
+
+	// OnUpdate, if set, is invoked synchronously with each Event as it is
+	// captured — before SessionUpdate returns — so a caller can stream events
+	// in real time instead of waiting for Events() after the turn ends (see
+	// Conn.Prompt in conn.go, which streams into internal/harness/acp.go).
+	OnUpdate func(Event)
 
 	mu       sync.Mutex
 	events   []Event
@@ -122,6 +127,9 @@ func (c *Client) SessionUpdate(_ context.Context, params acpsdk.SessionNotificat
 	c.mu.Lock()
 	c.events = append(c.events, ev)
 	c.mu.Unlock()
+	if c.OnUpdate != nil {
+		c.OnUpdate(ev)
+	}
 	return nil
 }
 
@@ -190,60 +198,33 @@ type Result struct {
 // Run spawns `npx -y @zed-industries/claude-code-acp@latest`, drives
 // Initialize -> NewSession -> Prompt for a single turn, and returns the
 // captured event stream. It fails fast (rather than hanging) if npx or the
-// adapter package is unavailable.
+// adapter package is unavailable. It is a thin, single-shot wrapper over
+// Connect/NewSession/Prompt (conn.go) — callers that need to stream events as
+// they arrive (rather than in one batch after the turn ends) use those
+// directly.
 func Run(ctx context.Context, cwd, prompt string, decide Decider) (*Result, error) {
-	npxPath, err := exec.LookPath("npx")
+	conn, err := Connect(ctx, decide, nil)
 	if err != nil {
-		return nil, fmt.Errorf("npx not found on PATH: %w", err)
+		return nil, err
+	}
+	defer func() { _ = conn.Close() }()
+
+	sessionID, err := conn.NewSession(ctx, cwd)
+	if err != nil {
+		return nil, err
 	}
 
-	cmd := exec.CommandContext(ctx, npxPath, "-y", "@zed-industries/claude-code-acp@latest")
-	cmd.Stderr = os.Stderr
-	stdin, err := cmd.StdinPipe()
+	stopReason, err := conn.Prompt(ctx, sessionID, prompt)
 	if err != nil {
-		return nil, fmt.Errorf("stdin pipe: %w", err)
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, fmt.Errorf("stdout pipe: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("start claude-code-acp: %w", err)
-	}
-	defer func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-	}()
-
-	client := &Client{Decide: decide}
-	conn := acpsdk.NewClientSideConnection(client, stdin, stdout)
-
-	initResp, err := conn.Initialize(ctx, acpsdk.InitializeRequest{
-		ProtocolVersion: acpsdk.ProtocolVersionNumber,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("initialize: %w", err)
-	}
-
-	newSess, err := conn.NewSession(ctx, acpsdk.NewSessionRequest{Cwd: cwd, McpServers: []acpsdk.McpServer{}})
-	if err != nil {
-		return nil, fmt.Errorf("new session: %w", err)
-	}
-
-	promptResp, err := conn.Prompt(ctx, acpsdk.PromptRequest{
-		SessionId: newSess.SessionId,
-		Prompt:    []acpsdk.ContentBlock{acpsdk.TextBlock(prompt)},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("prompt: %w", err)
+		return nil, err
 	}
 
 	return &Result{
-		InitProtocolVersion: int(initResp.ProtocolVersion),
-		SessionID:           string(newSess.SessionId),
-		Events:              client.Events(),
-		PermissionRequests:  client.PermissionRequests(),
-		StopReason:          promptResp.StopReason,
+		InitProtocolVersion: conn.ProtocolVersion,
+		SessionID:           sessionID,
+		Events:              conn.client.Events(),
+		PermissionRequests:  conn.PermissionRequests(),
+		StopReason:          stopReason,
 	}, nil
 }
 

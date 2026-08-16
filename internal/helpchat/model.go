@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	tea "charm.land/bubbletea/v2"
 	keybind "charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 	claudecode "github.com/severity1/claude-agent-sdk-go"
 
@@ -19,7 +19,7 @@ import (
 type helpFocus int
 
 const (
-	focusInput   helpFocus = iota
+	focusInput helpFocus = iota
 	focusHistory
 )
 
@@ -34,10 +34,10 @@ type pendingGateEntry struct {
 	kind     gateKind
 	toolName string         // gateKindPerm: tool being requested
 	input    map[string]any // gateKindPerm: tool input parameters
-	permAnsC chan<- bool     // gateKindPerm: send true=allow, false=deny
+	permAnsC chan<- bool    // gateKindPerm: send true=allow, false=deny
 	question string         // gateKindQuestion: question text
 	options  []string       // gateKindQuestion: nil → free-text, non-nil → choice list
-	qAnsC    chan<- string   // gateKindQuestion: send selected/typed answer
+	qAnsC    chan<- string  // gateKindQuestion: send selected/typed answer
 	selected int            // gateKindQuestion option-list cursor
 	textBuf  string         // gateKindQuestion free-text accumulator
 }
@@ -80,11 +80,11 @@ type Model struct {
 	connected bool
 
 	// focus / layout
-	focus  helpFocus
-	vpW    int // last rendered viewport width (for rebuild detection)
-	vpH    int // last rendered viewport height
-	vp     viewport.Model
-	ta     textarea.Model
+	focus helpFocus
+	vpW   int // last rendered viewport width (for rebuild detection)
+	vpH   int // last rendered viewport height
+	vp    viewport.Model
+	ta    textarea.Model
 
 	renderer *glamour.TermRenderer
 	snap     engine.RunSnapshot
@@ -178,7 +178,6 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.updateViewport()
 		}
 		return m, nil
-
 
 	case ConnectedMsg:
 		// Disconnect the old client on subsequent-turn reconnects.

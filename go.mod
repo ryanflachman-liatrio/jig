@@ -1,6 +1,6 @@
 module jig
 
-go 1.25.8
+go 1.25.12
 
 replace jig/harness/acp => ./harness/acp
 
@@ -10,9 +10,11 @@ require (
 	charm.land/glamour/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.5
 	github.com/BurntSushi/toml v1.6.0
-	github.com/charmbracelet/x/ansi v0.11.7
+	github.com/coder/acp-go-sdk v0.13.5
 	github.com/severity1/claude-agent-sdk-go v0.6.22
 )
+
+require github.com/charmbracelet/x/ansi v0.11.7 // indirect
 
 require (
 	github.com/alecthomas/chroma/v2 v2.20.0 // indirect
@@ -41,4 +43,5 @@ require (
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.30.0 // indirect
+	jig/harness/acp v0.0.0
 )

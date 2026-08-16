@@ -10,9 +10,8 @@ import (
 	"testing"
 	"time"
 
-	claudecode "github.com/severity1/claude-agent-sdk-go"
-
 	"jig/internal/engine"
+	"jig/internal/harness"
 	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/transcript"
@@ -41,41 +40,37 @@ func (r *captureReporter) Finding(sf engine.SecurityFinding) {
 	r.findings = append(r.findings, sf)
 }
 
-// scriptChan turns a fixed message list into the closed channel captureStream
-// consumes — mimicking a completed SDK stream with no live connection.
-func scriptChan(msgs ...claudecode.Message) <-chan claudecode.Message {
-	ch := make(chan claudecode.Message, len(msgs))
-	for _, m := range msgs {
-		ch <- m
+// scriptChan turns a fixed event list into the closed channel captureStream
+// consumes — mimicking a completed harness event stream with no live backend.
+func scriptChan(evts ...harness.Event) <-chan harness.Event {
+	ch := make(chan harness.Event, len(evts))
+	for _, e := range evts {
+		ch <- e
 	}
 	close(ch)
 	return ch
 }
 
-func boolPtr(b bool) *bool    { return &b }
-func strPtr(s string) *string { return &s }
+func floatPtr(f float64) *float64 { return &f }
 
 // TestCaptureStream_RichCapture drives captureStream with a scripted assistant
-// turn (thinking + text + tool_use), a tool_result user message, and a success
+// turn (thinking + text + tool_use), a tool_result user turn, and a success
 // result, then asserts the transcript holds the expected ordered entries with
 // correct block types and tool_use_id correlation.
 func TestCaptureStream_RichCapture(t *testing.T) {
 	dir := t.TempDir()
 	tPath := filepath.Join(dir, "transcript.jsonl")
 
-	assistant := &claudecode.AssistantMessage{
-		Content: []claudecode.ContentBlock{
-			&claudecode.ThinkingBlock{Thinking: "let me think"},
-			&claudecode.TextBlock{Text: "Reading the file."},
-			&claudecode.ToolUseBlock{ToolUseID: "toolu_1", Name: "Read", Input: map[string]any{"file_path": "main.go"}},
-		},
+	inputJSON, _ := json.Marshal(map[string]any{"file_path": "main.go"})
+	events := []harness.Event{
+		{Type: harness.EventThinking, Text: "let me think"},
+		{Type: harness.EventText, Text: "Reading the file."},
+		{Type: harness.EventToolUse, ToolUseID: "toolu_1", Name: "Read", Input: inputJSON},
+		{Type: harness.EventAssistantEnd},
+		{Type: harness.EventToolResult, ToolUseID: "toolu_1", Content: "package main", IsError: false},
+		{Type: harness.EventUserEnd},
+		{Type: harness.EventResult},
 	}
-	user := &claudecode.UserMessage{
-		Content: []claudecode.ContentBlock{
-			&claudecode.ToolResultBlock{ToolUseID: "toolu_1", Content: "package main", IsError: boolPtr(false)},
-		},
-	}
-	result := &claudecode.ResultMessage{IsError: false}
 
 	rep := &captureReporter{}
 	req := engine.StepRequest{
@@ -85,7 +80,7 @@ func TestCaptureStream_RichCapture(t *testing.T) {
 		Attempt:        1,
 	}
 
-	res, err := captureStream(scriptChan(assistant, user, result), req, rep, time.Now(), "")
+	res, err := captureStream(scriptChan(events...), req, rep, time.Now(), "")
 	if err != nil {
 		t.Fatalf("captureStream: %v", err)
 	}
@@ -160,15 +155,15 @@ func TestCaptureStream_StructuredToolResultTruncated(t *testing.T) {
 	tPath := filepath.Join(dir, "transcript.jsonl")
 
 	big := strings.Repeat("x", transcript.DefaultMaxBlockBytes+100)
-	user := &claudecode.UserMessage{
-		Content: []claudecode.ContentBlock{
-			&claudecode.ToolResultBlock{ToolUseID: "t1", Content: big, IsError: boolPtr(true)},
-			&claudecode.ToolResultBlock{ToolUseID: "t2", Content: map[string]any{"ok": true}},
-		},
+	events := []harness.Event{
+		{Type: harness.EventToolResult, ToolUseID: "t1", Content: big, IsError: true},
+		{Type: harness.EventToolResult, ToolUseID: "t2", Content: `{"ok":true}`},
+		{Type: harness.EventUserEnd},
+		{Type: harness.EventResult},
 	}
 	req := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: tPath}
 
-	if _, err := captureStream(scriptChan(user, &claudecode.ResultMessage{}), req, &captureReporter{}, time.Now(), ""); err != nil {
+	if _, err := captureStream(scriptChan(events...), req, &captureReporter{}, time.Now(), ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -201,24 +196,24 @@ func TestCaptureStream_Artifact(t *testing.T) {
 	tPath := filepath.Join(dir, "transcript.jsonl")
 	proseText := "# Done\nthe prose answer"
 
-	assistant := &claudecode.AssistantMessage{Content: []claudecode.ContentBlock{
-		&claudecode.TextBlock{Text: proseText},
-	}}
-	result := &claudecode.ResultMessage{
-		StructuredOutput: map[string]any{
-			"summary":     "did the thing",
-			"status":      "succeeded",
-			"confidence":  "high",
-			"issues":      []any{},
-			"assumptions": []any{},
-		},
+	structured, _ := json.Marshal(map[string]any{
+		"summary":     "did the thing",
+		"status":      "succeeded",
+		"confidence":  "high",
+		"issues":      []any{},
+		"assumptions": []any{},
+	})
+	events := []harness.Event{
+		{Type: harness.EventText, Text: proseText},
+		{Type: harness.EventAssistantEnd},
+		{Type: harness.EventResult, Structured: structured},
 	}
 	req := engine.StepRequest{
 		Step:           &workflow.Step{Output: explicitOut},
 		TranscriptPath: tPath,
 	}
 
-	res, err := captureStream(scriptChan(assistant, result), req, &captureReporter{}, time.Now(), "")
+	res, err := captureStream(scriptChan(events...), req, &captureReporter{}, time.Now(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,13 +261,15 @@ func TestCaptureStream_Artifact(t *testing.T) {
 // file is written and no liveness Message signals fire (persistence off path).
 func TestCaptureStream_NoTranscript(t *testing.T) {
 	dir := t.TempDir()
-	assistant := &claudecode.AssistantMessage{Content: []claudecode.ContentBlock{
-		&claudecode.TextBlock{Text: "hi"},
-	}}
+	events := []harness.Event{
+		{Type: harness.EventText, Text: "hi"},
+		{Type: harness.EventAssistantEnd},
+		{Type: harness.EventResult},
+	}
 	rep := &captureReporter{}
 	req := engine.StepRequest{Step: &workflow.Step{}} // TranscriptPath == ""
 
-	if _, err := captureStream(scriptChan(assistant, &claudecode.ResultMessage{}), req, rep, time.Now(), ""); err != nil {
+	if _, err := captureStream(scriptChan(events...), req, rep, time.Now(), ""); err != nil {
 		t.Fatal(err)
 	}
 	if len(rep.messages) != 0 {
@@ -283,10 +280,10 @@ func TestCaptureStream_NoTranscript(t *testing.T) {
 	}
 }
 
-// TestBuildOptions verifies each of a step's model/tool/permission fields is
-// translated into the matching SDK option — the fix for the fields being
-// parsed and validated but never reaching the SDK client.
-func TestBuildOptions(t *testing.T) {
+// TestBuildSessionSpec verifies each of a step's model/tool/permission fields
+// is translated into the matching SessionSpec field — the fix for the fields
+// being parsed and validated but never reaching the backend.
+func TestBuildSessionSpec(t *testing.T) {
 	st := &workflow.Step{
 		Model:             "claude-opus-4-8",
 		FallbackModel:     "claude-sonnet-4-6",
@@ -298,73 +295,70 @@ func TestBuildOptions(t *testing.T) {
 		AllowedTools:      []string{"Read", "Grep"},
 		DisallowedTools:   []string{"Bash"},
 	}
-	opts, err := buildOptions(st)
+	allCaps := harness.NewCapabilitySet(harness.CapPermissionCallback, harness.CapInProcessMCP, harness.CapSessionResume, harness.CapStructuredOutput, harness.CapPartialStreaming)
+	spec, err := buildSessionSpec(st, allCaps)
 	if err != nil {
-		t.Fatalf("buildOptions: %v", err)
+		t.Fatalf("buildSessionSpec: %v", err)
 	}
-	var got claudecode.Options
-	for _, o := range opts {
-		o(&got)
+	if spec.Model != "claude-opus-4-8" {
+		t.Errorf("Model = %v, want claude-opus-4-8", spec.Model)
 	}
-	if got.Model == nil || *got.Model != "claude-opus-4-8" {
-		t.Errorf("Model = %v, want claude-opus-4-8", got.Model)
+	if spec.FallbackModel != "claude-sonnet-4-6" {
+		t.Errorf("FallbackModel = %v, want claude-sonnet-4-6", spec.FallbackModel)
 	}
-	if got.FallbackModel == nil || *got.FallbackModel != "claude-sonnet-4-6" {
-		t.Errorf("FallbackModel = %v, want claude-sonnet-4-6", got.FallbackModel)
+	if spec.Effort != "high" {
+		t.Errorf("Effort = %v, want high", spec.Effort)
 	}
-	if got.Effort == nil || *got.Effort != "high" {
-		t.Errorf("Effort = %v, want high", got.Effort)
+	if spec.MaxTurns != 20 {
+		t.Errorf("MaxTurns = %d, want 20", spec.MaxTurns)
 	}
-	if got.MaxTurns != 20 {
-		t.Errorf("MaxTurns = %d, want 20", got.MaxTurns)
+	if spec.MaxThinkingTokens != 8000 {
+		t.Errorf("MaxThinkingTokens = %d, want 8000", spec.MaxThinkingTokens)
 	}
-	if got.MaxThinkingTokens != 8000 {
-		t.Errorf("MaxThinkingTokens = %d, want 8000", got.MaxThinkingTokens)
+	if spec.MaxBudgetUSD != 5.0 {
+		t.Errorf("MaxBudgetUSD = %v, want 5.0", spec.MaxBudgetUSD)
 	}
-	if got.MaxBudgetUSD == nil || *got.MaxBudgetUSD != 5.0 {
-		t.Errorf("MaxBudgetUSD = %v, want 5.0", got.MaxBudgetUSD)
+	if spec.PermissionMode != "acceptEdits" {
+		t.Errorf("PermissionMode = %v, want acceptEdits", spec.PermissionMode)
 	}
-	if got.PermissionMode == nil || *got.PermissionMode != claudecode.PermissionMode("acceptEdits") {
-		t.Errorf("PermissionMode = %v, want acceptEdits", got.PermissionMode)
+	if !reflect.DeepEqual(spec.AllowedTools, []string{"Read", "Grep"}) {
+		t.Errorf("AllowedTools = %v, want [Read Grep]", spec.AllowedTools)
 	}
-	if !reflect.DeepEqual(got.AllowedTools, []string{"Read", "Grep"}) {
-		t.Errorf("AllowedTools = %v, want [Read Grep]", got.AllowedTools)
+	if !reflect.DeepEqual(spec.DisallowedTools, []string{"Bash"}) {
+		t.Errorf("DisallowedTools = %v, want [Bash]", spec.DisallowedTools)
 	}
-	if !reflect.DeepEqual(got.DisallowedTools, []string{"Bash"}) {
-		t.Errorf("DisallowedTools = %v, want [Bash]", got.DisallowedTools)
+	if !spec.Partial {
+		t.Errorf("Partial = false, want true (unconditional partial streaming)")
 	}
 }
 
-// TestBuildOptions_Empty verifies a zero-value step leaves every optional SDK
-// field unset so the SDK's own defaults apply, but always sets OutputFormat
-// to enforce the base schema.
-func TestBuildOptions_Empty(t *testing.T) {
-	opts, err := buildOptions(&workflow.Step{})
+// TestBuildSessionSpec_Empty verifies a zero-value step leaves every optional
+// field unset so the harness's own defaults apply, but always sets Schema to
+// enforce the base schema.
+func TestBuildSessionSpec_Empty(t *testing.T) {
+	allCaps := harness.NewCapabilitySet(harness.CapPermissionCallback, harness.CapInProcessMCP, harness.CapSessionResume, harness.CapStructuredOutput, harness.CapPartialStreaming)
+	spec, err := buildSessionSpec(&workflow.Step{}, allCaps)
 	if err != nil {
-		t.Fatalf("buildOptions: %v", err)
+		t.Fatalf("buildSessionSpec: %v", err)
 	}
-	var got claudecode.Options
-	for _, o := range opts {
-		o(&got)
+	if spec.Model != "" || spec.FallbackModel != "" || spec.Effort != "" ||
+		spec.PermissionMode != "" || spec.MaxBudgetUSD != 0 {
+		t.Errorf("zero-value step should leave optional fields unset: %+v", spec)
 	}
-	if got.Model != nil || got.FallbackModel != nil || got.Effort != nil ||
-		got.PermissionMode != nil || got.MaxBudgetUSD != nil {
-		t.Errorf("zero-value step should leave optional fields unset: %+v", got)
+	if spec.MaxTurns != 0 || spec.MaxThinkingTokens != 0 {
+		t.Errorf("zero-value step should leave numeric fields at 0: %+v", spec)
 	}
-	if got.MaxTurns != 0 || got.MaxThinkingTokens != 0 {
-		t.Errorf("zero-value step should leave numeric fields at 0: %+v", got)
+	if len(spec.AllowedTools) != 0 || len(spec.DisallowedTools) != 0 {
+		t.Errorf("zero-value step should leave tool lists empty: %+v", spec)
 	}
-	if len(got.AllowedTools) != 0 || len(got.DisallowedTools) != 0 {
-		t.Errorf("zero-value step should leave tool lists empty: %+v", got)
-	}
-	// Base schema is always enforced — OutputFormat must be set even with no
+	// Base schema is always enforced — Schema must be set even with no
 	// declared [step.schema].
-	if got.OutputFormat == nil || got.OutputFormat.Type != "json_schema" {
-		t.Errorf("OutputFormat = %v, want json_schema (base schema always applied)", got.OutputFormat)
+	if spec.Schema == nil {
+		t.Fatalf("Schema = nil, want base schema always applied")
 	}
-	props, ok := got.OutputFormat.Schema["properties"].(map[string]any)
+	props, ok := spec.Schema["properties"].(map[string]any)
 	if !ok {
-		t.Fatalf("base schema properties missing: %v", got.OutputFormat.Schema)
+		t.Fatalf("base schema properties missing: %v", spec.Schema)
 	}
 	for _, base := range []string{"summary", "status", "confidence", "issues", "assumptions"} {
 		if _, ok := props[base]; !ok {
@@ -373,29 +367,26 @@ func TestBuildOptions_Empty(t *testing.T) {
 	}
 }
 
-// TestBuildOptions_Schema verifies a step.schema is merged with the base schema
-// and translated into a WithJSONSchema option. Both base and declared fields
-// must appear in the compiled JSON Schema.
-func TestBuildOptions_Schema(t *testing.T) {
+// TestBuildSessionSpec_Schema verifies a step.schema is merged with the base
+// schema and translated into SessionSpec.Schema. Both base and declared
+// fields must appear in the compiled JSON Schema.
+func TestBuildSessionSpec_Schema(t *testing.T) {
 	st := &workflow.Step{
 		Schema: &workflow.Schema{Fields: []*workflow.Field{
 			{Name: "passed", Type: workflow.FieldBool},
 		}},
 	}
-	opts, err := buildOptions(st)
+	allCaps := harness.NewCapabilitySet(harness.CapPermissionCallback, harness.CapInProcessMCP, harness.CapSessionResume, harness.CapStructuredOutput, harness.CapPartialStreaming)
+	spec, err := buildSessionSpec(st, allCaps)
 	if err != nil {
-		t.Fatalf("buildOptions: %v", err)
+		t.Fatalf("buildSessionSpec: %v", err)
 	}
-	var got claudecode.Options
-	for _, o := range opts {
-		o(&got)
+	if spec.Schema == nil {
+		t.Fatalf("Schema = nil, want json schema")
 	}
-	if got.OutputFormat == nil || got.OutputFormat.Type != "json_schema" {
-		t.Fatalf("OutputFormat = %v, want json_schema", got.OutputFormat)
-	}
-	props, ok := got.OutputFormat.Schema["properties"].(map[string]any)
+	props, ok := spec.Schema["properties"].(map[string]any)
 	if !ok {
-		t.Fatalf("schema properties missing or wrong type: %v", got.OutputFormat.Schema)
+		t.Fatalf("schema properties missing or wrong type: %v", spec.Schema)
 	}
 	// Declared field must be present.
 	if _, ok := props["passed"]; !ok {
@@ -409,17 +400,15 @@ func TestBuildOptions_Schema(t *testing.T) {
 	}
 }
 
-// TestCaptureStream_StructuredOutput verifies a ResultMessage's StructuredOutput
-// is captured into step.Result.Structured — the field block_on/when/loop.when
-// guards read to evaluate schema-field conditions.
+// TestCaptureStream_StructuredOutput verifies a result event's Structured
+// payload is captured into step.Result.Structured — the field block_on/when/
+// loop.when guards read to evaluate schema-field conditions.
 func TestCaptureStream_StructuredOutput(t *testing.T) {
 	dir := t.TempDir()
 	req := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: filepath.Join(dir, "transcript.jsonl")}
 
-	result := &claudecode.ResultMessage{
-		StructuredOutput: map[string]any{"needs_input": true, "question": "which threat model?"},
-	}
-	res, err := captureStream(scriptChan(result), req, &captureReporter{}, time.Now(), "")
+	structured, _ := json.Marshal(map[string]any{"needs_input": true, "question": "which threat model?"})
+	res, err := captureStream(scriptChan(harness.Event{Type: harness.EventResult, Structured: structured}), req, &captureReporter{}, time.Now(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -438,19 +427,21 @@ func TestCaptureStream_StructuredOutput(t *testing.T) {
 	}
 }
 
-// TestCaptureStream_AssistantError verifies an AssistantMessage.Error is
-// surfaced as a system transcript entry rather than silently dropped.
+// TestCaptureStream_AssistantError verifies an EventSystemText fired after an
+// assistant turn is surfaced as a system transcript entry rather than silently
+// dropped.
 func TestCaptureStream_AssistantError(t *testing.T) {
 	dir := t.TempDir()
 	tPath := filepath.Join(dir, "transcript.jsonl")
 	req := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: tPath}
 
-	rateLimited := claudecode.AssistantMessageErrorRateLimit
-	assistant := &claudecode.AssistantMessage{
-		Content: []claudecode.ContentBlock{&claudecode.TextBlock{Text: "hold on"}},
-		Error:   &rateLimited,
+	events := []harness.Event{
+		{Type: harness.EventText, Text: "hold on"},
+		{Type: harness.EventAssistantEnd},
+		{Type: harness.EventSystemText, Text: "assistant error: rate_limit"},
+		{Type: harness.EventResult},
 	}
-	if _, err := captureStream(scriptChan(assistant, &claudecode.ResultMessage{}), req, &captureReporter{}, time.Now(), ""); err != nil {
+	if _, err := captureStream(scriptChan(events...), req, &captureReporter{}, time.Now(), ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -468,14 +459,15 @@ func TestCaptureStream_AssistantError(t *testing.T) {
 	}
 }
 
-// TestCaptureStream_Subtype verifies ResultMessage.Subtype lands on step.Result
-// for both the success and failure paths, and that policy-limit subtypes produce
-// descriptive human-readable error messages.
+// TestCaptureStream_Subtype verifies EventResult.Subtype lands on step.Result
+// for both the success and failure paths, and that policy-limit subtypes
+// produce descriptive human-readable error messages (computed upstream by the
+// harness, e.g. claude.go's subtypeErrText, and passed through via ErrText).
 func TestCaptureStream_Subtype(t *testing.T) {
 	dir := t.TempDir()
 	req := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: filepath.Join(dir, "success.jsonl")}
 
-	ok := &claudecode.ResultMessage{Subtype: "success"}
+	ok := harness.Event{Type: harness.EventResult, Subtype: "success"}
 	res, err := captureStream(scriptChan(ok), req, &captureReporter{}, time.Now(), "")
 	if err != nil {
 		t.Fatal(err)
@@ -484,9 +476,15 @@ func TestCaptureStream_Subtype(t *testing.T) {
 		t.Errorf("success Subtype = %q, want success", res.Subtype)
 	}
 
-	// error_max_turns: descriptive prefix + SDK Errors appended.
+	// error_max_turns: descriptive prefix + harness-computed detail, passed
+	// straight through via ErrText.
 	req2 := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: filepath.Join(dir, "fail.jsonl")}
-	failed := &claudecode.ResultMessage{IsError: true, Subtype: "error_max_turns", Errors: []string{"hit turn limit"}}
+	failed := harness.Event{
+		Type:    harness.EventResult,
+		IsError: true,
+		Subtype: "error_max_turns",
+		ErrText: "agent reached the maximum turn limit: hit turn limit",
+	}
 	res2, err := captureStream(scriptChan(failed), req2, &captureReporter{}, time.Now(), "")
 	if err != nil {
 		t.Fatal(err)
@@ -498,12 +496,17 @@ func TestCaptureStream_Subtype(t *testing.T) {
 		t.Errorf("failure Err = %q, want descriptive turn-limit message", res2.Err)
 	}
 	if !strings.Contains(res2.Err, "hit turn limit") {
-		t.Errorf("failure Err = %q, want it to include the SDK Errors detail", res2.Err)
+		t.Errorf("failure Err = %q, want it to include the harness Errors detail", res2.Err)
 	}
 
-	// error_max_budget_usd: descriptive prefix, no SDK detail.
+	// error_max_budget_usd: descriptive prefix, no additional detail.
 	req3 := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: filepath.Join(dir, "budget.jsonl")}
-	budget := &claudecode.ResultMessage{IsError: true, Subtype: "error_max_budget_usd"}
+	budget := harness.Event{
+		Type:    harness.EventResult,
+		IsError: true,
+		Subtype: "error_max_budget_usd",
+		ErrText: "agent exceeded the maximum USD budget",
+	}
 	res3, err := captureStream(scriptChan(budget), req3, &captureReporter{}, time.Now(), "")
 	if err != nil {
 		t.Fatal(err)
@@ -516,15 +519,15 @@ func TestCaptureStream_Subtype(t *testing.T) {
 	}
 }
 
-// TestCaptureStream_ErrorResult verifies an error ResultMessage yields a failed
+// TestCaptureStream_ErrorResult verifies an error result event yields a failed
 // Result and records a result entry.
 func TestCaptureStream_ErrorResult(t *testing.T) {
 	dir := t.TempDir()
 	tPath := filepath.Join(dir, "transcript.jsonl")
 	req := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: tPath}
 
-	errMsg := &claudecode.ResultMessage{IsError: true, Result: strPtr("boom")}
-	res, err := captureStream(scriptChan(errMsg), req, &captureReporter{}, time.Now(), "")
+	errEvt := harness.Event{Type: harness.EventResult, IsError: true, ErrText: "boom"}
+	res, err := captureStream(scriptChan(errEvt), req, &captureReporter{}, time.Now(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -541,19 +544,16 @@ func TestCaptureStream_ErrorResult(t *testing.T) {
 	}
 }
 
-// TestSessionIDCapturedAtStart proves the spec-07 B2 fix: the SDK session id is
-// captured from an early stream event (or the init SystemMessage) and survives a
-// mid-turn stop. Here the stream carries a StreamEvent with a session id and then
-// closes *before* any ResultMessage — exactly what a cancelled worker sees. The
-// returned Result must still carry the session id so the engine can resume.
+// TestSessionIDCapturedAtStart proves the spec-07 B2 fix: the backend session
+// id is captured from an early EventSessionID and survives a mid-turn stop.
+// Here the stream carries an EventSessionID and then closes *before* any
+// EventResult — exactly what a cancelled worker sees. The returned Result must
+// still carry the session id so the engine can resume.
 func TestSessionIDCapturedAtStart(t *testing.T) {
-	streamEvt := &claudecode.StreamEvent{
-		SessionID: "sess-early",
-		Event:     map[string]any{"type": "message_start"},
-	}
-	// No ResultMessage: the channel closes after the stream event, mimicking a
-	// context cancellation cutting the turn short.
-	res, err := captureStream(scriptChan(streamEvt), engine.StepRequest{Step: &workflow.Step{}}, &captureReporter{}, time.Now(), "")
+	sessEvt := harness.Event{Type: harness.EventSessionID, SessionID: "sess-early"}
+	// No EventResult: the channel closes after the session id event, mimicking
+	// a context cancellation cutting the turn short.
+	res, err := captureStream(scriptChan(sessEvt), engine.StepRequest{Step: &workflow.Step{}}, &captureReporter{}, time.Now(), "")
 	if err != nil {
 		t.Fatalf("captureStream: %v", err)
 	}
@@ -565,11 +565,12 @@ func TestSessionIDCapturedAtStart(t *testing.T) {
 	}
 }
 
-// TestSessionIDCapturedFromSystemMessage verifies the init SystemMessage is also
-// honored as an early session-id source.
+// TestSessionIDCapturedFromSystemMessage verifies an early EventSessionID
+// (e.g. from the backend's init message) is also honored as a session-id
+// source.
 func TestSessionIDCapturedFromSystemMessage(t *testing.T) {
-	sys := &claudecode.SystemMessage{Subtype: "init", Data: map[string]any{"session_id": "sess-sys"}}
-	res, err := captureStream(scriptChan(sys), engine.StepRequest{Step: &workflow.Step{}}, &captureReporter{}, time.Now(), "")
+	sessEvt := harness.Event{Type: harness.EventSessionID, SessionID: "sess-sys"}
+	res, err := captureStream(scriptChan(sessEvt), engine.StepRequest{Step: &workflow.Step{}}, &captureReporter{}, time.Now(), "")
 	if err != nil {
 		t.Fatalf("captureStream: %v", err)
 	}
@@ -588,16 +589,24 @@ func TestCaptureStream_ResumeAppends(t *testing.T) {
 	req := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: tPath}
 
 	// First turn.
-	turnOne := &claudecode.AssistantMessage{Content: []claudecode.ContentBlock{&claudecode.TextBlock{Text: "turn one"}}}
-	if _, err := captureStream(scriptChan(turnOne, &claudecode.ResultMessage{}), req, &captureReporter{}, time.Now(), ""); err != nil {
+	turnOne := []harness.Event{
+		{Type: harness.EventText, Text: "turn one"},
+		{Type: harness.EventAssistantEnd},
+		{Type: harness.EventResult},
+	}
+	if _, err := captureStream(scriptChan(turnOne...), req, &captureReporter{}, time.Now(), ""); err != nil {
 		t.Fatal(err)
 	}
 	r, _ := transcript.Open(tPath)
 	firstCount := len(mustWindow(t, r))
 
 	// Resumed turn: the human message that triggered the resume plus a new answer.
-	turnTwo := &claudecode.AssistantMessage{Content: []claudecode.ContentBlock{&claudecode.TextBlock{Text: "turn two"}}}
-	if _, err := captureStream(scriptChan(turnTwo, &claudecode.ResultMessage{}), req, &captureReporter{}, time.Now(), "continue please"); err != nil {
+	turnTwo := []harness.Event{
+		{Type: harness.EventText, Text: "turn two"},
+		{Type: harness.EventAssistantEnd},
+		{Type: harness.EventResult},
+	}
+	if _, err := captureStream(scriptChan(turnTwo...), req, &captureReporter{}, time.Now(), "continue please"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -634,52 +643,6 @@ func mustWindow(t *testing.T, r *transcript.Reader) []transcript.Entry {
 		t.Fatal(err)
 	}
 	return entries
-}
-
-// TestRewriteAskUserQuestion verifies that "AskUserQuestion" is rewritten to
-// the MCP-qualified name and other tool names pass through unchanged.
-func TestRewriteAskUserQuestion(t *testing.T) {
-	cases := []struct {
-		in   []string
-		want []string
-	}{
-		{[]string{"Read", "Grep"}, []string{"Read", "Grep"}},
-		{[]string{"AskUserQuestion"}, []string{"mcp__jig__AskUserQuestion"}},
-		{[]string{"Read", "AskUserQuestion", "Bash"}, []string{"Read", "mcp__jig__AskUserQuestion", "Bash"}},
-		{[]string{"AskUserQuestion", "AskUserQuestion"}, []string{"mcp__jig__AskUserQuestion", "mcp__jig__AskUserQuestion"}},
-	}
-	for _, tc := range cases {
-		got := rewriteAskUserQuestion(tc.in)
-		if strings.Join(got, ",") != strings.Join(tc.want, ",") {
-			t.Errorf("rewriteAskUserQuestion(%v) = %v, want %v", tc.in, got, tc.want)
-		}
-		// Must not mutate the input slice.
-		for _, t2 := range tc.in {
-			if t2 == "mcp__jig__AskUserQuestion" {
-				t.Errorf("input slice was mutated")
-			}
-		}
-	}
-}
-
-// TestBuildOptions_AskUserQuestion verifies that "AskUserQuestion" in AllowedTools
-// is rewritten to "mcp__jig__AskUserQuestion" in the SDK options.
-func TestBuildOptions_AskUserQuestion(t *testing.T) {
-	st := &workflow.Step{
-		AllowedTools: []string{"Read", "AskUserQuestion", "Grep"},
-	}
-	opts, err := buildOptions(st)
-	if err != nil {
-		t.Fatalf("buildOptions: %v", err)
-	}
-	var got claudecode.Options
-	for _, o := range opts {
-		o(&got)
-	}
-	want := []string{"Read", "mcp__jig__AskUserQuestion", "Grep"}
-	if strings.Join(got.AllowedTools, ",") != strings.Join(want, ",") {
-		t.Errorf("AllowedTools = %v, want %v", got.AllowedTools, want)
-	}
 }
 
 // TestBuildAgentPromptEmptyContext is the regression lock: with an empty
@@ -732,12 +695,10 @@ func TestBuildAgentPromptPrependsContext(t *testing.T) {
 	}
 }
 
-func floatPtr(f float64) *float64 { return &f }
-
 // TestBlockedAndRedacted proves the transcript-redaction and finding-production
-// paths when the Tier-1 guard is active. The test uses a scripted SDK channel
-// (no live Claude Code CLI required) carrying an AssistantMessage whose
-// ToolUseBlock input contains a fake AWS key.
+// paths when the Tier-1 guard is active. The test drives a scripted harness
+// event stream (no live Claude Code CLI required) carrying two tool_use events
+// in one assistant turn, one whose input contains a fake AWS key.
 //
 // The test asserts:
 //   - The transcript.jsonl entry has the key redacted (no raw AKIAIOSFODNN7EXAMPLE).
@@ -751,25 +712,22 @@ func TestBlockedAndRedacted(t *testing.T) {
 
 	const fakeKey = "AKIAIOSFODNN7EXAMPLE"
 
-	// AssistantMessage: two tool_use blocks — one with a secret, one clean.
-	secretInput := map[string]any{
+	// Two tool_use events in one assistant turn — one with a secret, one clean.
+	secretInputJSON, _ := json.Marshal(map[string]any{
 		"file_path": "config.txt",
 		"content":   "aws_access_key_id = " + fakeKey,
-	}
-	cleanInput := map[string]any{
+	})
+	cleanInputJSON, _ := json.Marshal(map[string]any{
 		"file_path": "main.go",
 		"content":   "package main\n",
-	}
-	secretInputJSON, _ := json.Marshal(secretInput)
-	cleanInputJSON, _ := json.Marshal(cleanInput)
+	})
 
-	assistant := &claudecode.AssistantMessage{
-		Content: []claudecode.ContentBlock{
-			&claudecode.ToolUseBlock{ToolUseID: "tu1", Name: "Write", Input: secretInput},
-			&claudecode.ToolUseBlock{ToolUseID: "tu2", Name: "Write", Input: cleanInput},
-		},
+	events := []harness.Event{
+		{Type: harness.EventToolUse, ToolUseID: "tu1", Name: "Write", Input: secretInputJSON},
+		{Type: harness.EventToolUse, ToolUseID: "tu2", Name: "Write", Input: cleanInputJSON},
+		{Type: harness.EventAssistantEnd},
+		{Type: harness.EventResult},
 	}
-	result := &claudecode.ResultMessage{IsError: false}
 
 	rep := &captureReporter{}
 	guard := sentinel.NewGuard(nil) // nil allowlist = outbound rule disabled
@@ -782,7 +740,7 @@ func TestBlockedAndRedacted(t *testing.T) {
 		Iteration:      1,
 	}
 
-	res, err := captureStream(scriptChan(assistant, result), req, rep, time.Now(), "")
+	res, err := captureStream(scriptChan(events...), req, rep, time.Now(), "")
 	if err != nil {
 		t.Fatalf("captureStream: %v", err)
 	}
@@ -809,15 +767,12 @@ func TestBlockedAndRedacted(t *testing.T) {
 	if !strings.Contains(b0, "aws-key") {
 		t.Errorf("transcript block 0 missing redaction marker 'aws-key': %s", b0)
 	}
-	// Original clean input confirms the unredacted block is unchanged.
-	_ = string(secretInputJSON)
 
 	// Block 1: clean Write — input must be byte-identical to the original JSON.
 	b1 := string(blocks[1].Input)
 	if !strings.Contains(b1, "main.go") || strings.Contains(b1, "aws-key") {
 		t.Errorf("transcript block 1 (clean) was unexpectedly modified: %s", b1)
 	}
-	_ = string(cleanInputJSON)
 
 	// --- Reporter assertions ---
 	if len(rep.findings) != 1 {
@@ -851,13 +806,13 @@ func TestBlockedAndRedacted(t *testing.T) {
 }
 
 // TestCostCapture verifies that captureStream populates TotalCostUSD from the
-// SDK ResultMessage. A result without cost yields a nil pointer (not $0.00).
+// harness result event. A result without cost yields a nil pointer (not $0.00).
 func TestCostCapture(t *testing.T) {
 	dir := t.TempDir()
 
-	// Success path: ResultMessage carries cost.
+	// Success path: result event carries cost.
 	cost := 0.0034
-	ok := &claudecode.ResultMessage{TotalCostUSD: floatPtr(cost)}
+	ok := harness.Event{Type: harness.EventResult, TotalCostUSD: floatPtr(cost)}
 	req := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: filepath.Join(dir, "t1.jsonl")}
 	res, err := captureStream(scriptChan(ok), req, &captureReporter{}, time.Now(), "")
 	if err != nil {
@@ -870,8 +825,8 @@ func TestCostCapture(t *testing.T) {
 		t.Errorf("TotalCostUSD = %v, want %v", *res.TotalCostUSD, cost)
 	}
 
-	// Success path: ResultMessage without cost yields nil pointer (not 0.0).
-	noCost := &claudecode.ResultMessage{}
+	// Success path: result event without cost yields nil pointer (not 0.0).
+	noCost := harness.Event{Type: harness.EventResult}
 	req2 := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: filepath.Join(dir, "t2.jsonl")}
 	res2, err := captureStream(scriptChan(noCost), req2, &captureReporter{}, time.Now(), "")
 	if err != nil {
@@ -881,14 +836,218 @@ func TestCostCapture(t *testing.T) {
 		t.Errorf("TotalCostUSD = %v, want nil for unreported cost", res2.TotalCostUSD)
 	}
 
-	// Error path: cost is preserved even on error ResultMessage.
-	errMsg := &claudecode.ResultMessage{IsError: true, TotalCostUSD: floatPtr(0.0012)}
+	// Error path: cost is preserved even on error result event.
+	errEvt := harness.Event{Type: harness.EventResult, IsError: true, TotalCostUSD: floatPtr(0.0012)}
 	req3 := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: filepath.Join(dir, "t3.jsonl")}
-	res3, err := captureStream(scriptChan(errMsg), req3, &captureReporter{}, time.Now(), "")
+	res3, err := captureStream(scriptChan(errEvt), req3, &captureReporter{}, time.Now(), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res3.TotalCostUSD == nil || *res3.TotalCostUSD != 0.0012 {
 		t.Errorf("error-path TotalCostUSD = %v, want 0.0012", res3.TotalCostUSD)
+	}
+}
+
+// TestBuildSessionSpec_CapabilityGated verifies Schema and Partial — set
+// unconditionally for every step regardless of user intent — are only
+// forwarded to the SessionSpec when the active harness advertises the
+// matching capability, rather than always being set and left for Open to
+// reject (spec 12 task 5.4).
+func TestBuildSessionSpec_CapabilityGated(t *testing.T) {
+	st := &workflow.Step{}
+
+	full := harness.NewCapabilitySet(harness.CapStructuredOutput, harness.CapPartialStreaming)
+	spec, err := buildSessionSpec(st, full)
+	if err != nil {
+		t.Fatalf("buildSessionSpec: %v", err)
+	}
+	if spec.Schema == nil {
+		t.Errorf("Schema = nil, want base schema when CapStructuredOutput is advertised")
+	}
+	if !spec.Partial {
+		t.Errorf("Partial = false, want true when CapPartialStreaming is advertised")
+	}
+
+	none := harness.NewCapabilitySet()
+	spec2, err := buildSessionSpec(st, none)
+	if err != nil {
+		t.Fatalf("buildSessionSpec: %v", err)
+	}
+	if spec2.Schema != nil {
+		t.Errorf("Schema = %v, want nil when CapStructuredOutput is not advertised", spec2.Schema)
+	}
+	if spec2.Partial {
+		t.Errorf("Partial = true, want false when CapPartialStreaming is not advertised")
+	}
+}
+
+// TestExecute_GuardSemantics is the spec 12 task 5.5 table test: it drives
+// AgentExecutor.Execute against harnesses with varying capability sets and
+// asserts the guard callback fires, is fail-closed rejected, or is bypassed
+// as expected — without any live backend.
+func TestExecute_GuardSemantics(t *testing.T) {
+	guard := sentinel.NewGuard(nil)
+
+	t.Run("guarded step + capable harness fires the callback", func(t *testing.T) {
+		sess := harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}})
+		h := &harness.FakeHarness{
+			NameVal: "claude",
+			Caps:    harness.NewCapabilitySet(harness.CapPermissionCallback),
+			Sess:    sess,
+		}
+		e := NewAgentExecutor(h)
+		req := engine.StepRequest{Step: &workflow.Step{}, Guard: guard}
+		res, err := e.Execute(context.Background(), req, &captureReporter{})
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		if res.Status != step.StatusSucceeded {
+			t.Fatalf("status = %q, want succeeded: %s", res.Status, res.Err)
+		}
+		if h.OpenSpec.Permission == nil {
+			t.Error("SessionSpec.Permission not set, want the guard callback wired")
+		}
+	})
+
+	t.Run("guarded step + harness lacking CapPermissionCallback fails closed", func(t *testing.T) {
+		h := &harness.FakeHarness{NameVal: "acp-nopermcap", Caps: harness.NewCapabilitySet()}
+		e := NewAgentExecutor(h)
+		req := engine.StepRequest{Step: &workflow.Step{}, Guard: guard}
+		res, err := e.Execute(context.Background(), req, &captureReporter{})
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		if res.Status != step.StatusFailed {
+			t.Fatalf("status = %q, want failed", res.Status)
+		}
+		if !strings.Contains(res.Err, "CapPermissionCallback") {
+			t.Errorf("Err = %q, want it to name CapPermissionCallback", res.Err)
+		}
+		if !strings.Contains(res.Err, "acp-nopermcap") {
+			t.Errorf("Err = %q, want it to name the harness", res.Err)
+		}
+	})
+
+	t.Run("acceptEdits step still wires the guard callback unchanged", func(t *testing.T) {
+		sess := harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}})
+		h := &harness.FakeHarness{
+			NameVal: "claude",
+			Caps:    harness.NewCapabilitySet(harness.CapPermissionCallback),
+			Sess:    sess,
+		}
+		e := NewAgentExecutor(h)
+		req := engine.StepRequest{Step: &workflow.Step{PermissionMode: "acceptEdits"}, Guard: guard}
+		res, err := e.Execute(context.Background(), req, &captureReporter{})
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		if res.Status != step.StatusSucceeded {
+			t.Fatalf("status = %q, want succeeded: %s", res.Status, res.Err)
+		}
+		if h.OpenSpec.PermissionMode != "acceptEdits" {
+			t.Errorf("PermissionMode = %q, want acceptEdits passed through unchanged", h.OpenSpec.PermissionMode)
+		}
+		if h.OpenSpec.Permission == nil {
+			t.Error("SessionSpec.Permission not set, want the guard callback still wired under acceptEdits")
+		}
+	})
+
+	t.Run("guarded step + AcpHarness real permission round-trip fires", func(t *testing.T) {
+		var decided bool
+		h := &harness.FakeHarness{
+			NameVal: "acp",
+			Caps:    harness.NewCapabilitySet(harness.CapPermissionCallback),
+			Sess:    harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}}),
+		}
+		e := NewAgentExecutor(h)
+		req := engine.StepRequest{Step: &workflow.Step{}, Guard: guard}
+		if _, err := e.Execute(context.Background(), req, &captureReporter{}); err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		// Drive the wired callback directly, standing in for AcpHarness invoking
+		// it mid-turn during the real session/request_permission round-trip
+		// (Unit 4's acpSession.run) — proves the same PermissionFn wiring that
+		// ClaudeHarness uses also reaches AcpHarness's Open call unmodified.
+		if h.OpenSpec.Permission == nil {
+			t.Fatal("SessionSpec.Permission not set")
+		}
+		dec := h.OpenSpec.Permission("Read", map[string]any{"file_path": "x"})
+		decided = true
+		if !decided || !dec.Allow {
+			t.Errorf("decision = %+v, want Allow=true for a harmless Read", dec)
+		}
+	})
+}
+
+// TestExecute_DeclaredSchemaRequiresStructuredOutput verifies a step that
+// explicitly declares [step.schema] fails closed against a harness lacking
+// CapStructuredOutput, while a step with no declared schema (only the
+// always-applied base schema) is left to buildSessionSpec's silent omission
+// instead (spec 12 task 5.2/5.4).
+func TestExecute_DeclaredSchemaRequiresStructuredOutput(t *testing.T) {
+	h := &harness.FakeHarness{NameVal: "acp", Caps: harness.NewCapabilitySet()}
+	e := NewAgentExecutor(h)
+	st := &workflow.Step{Schema: &workflow.Schema{Fields: []*workflow.Field{{Name: "passed", Type: workflow.FieldBool}}}}
+	req := engine.StepRequest{Step: st}
+
+	res, err := e.Execute(context.Background(), req, &captureReporter{})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.Status != step.StatusFailed {
+		t.Fatalf("status = %q, want failed", res.Status)
+	}
+	if !strings.Contains(res.Err, "CapStructuredOutput") {
+		t.Errorf("Err = %q, want it to name CapStructuredOutput", res.Err)
+	}
+
+	// No declared schema: the base schema is silently omitted, not rejected.
+	h2 := &harness.FakeHarness{
+		NameVal: "acp",
+		Caps:    harness.NewCapabilitySet(),
+		Sess:    harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}}),
+	}
+	e2 := NewAgentExecutor(h2)
+	req2 := engine.StepRequest{Step: &workflow.Step{}}
+	res2, err := e2.Execute(context.Background(), req2, &captureReporter{})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res2.Status != step.StatusSucceeded {
+		t.Fatalf("status = %q, want succeeded (no explicit schema opt-in): %s", res2.Status, res2.Err)
+	}
+	if h2.OpenSpec.Schema != nil {
+		t.Errorf("OpenSpec.Schema = %v, want nil (silently omitted)", h2.OpenSpec.Schema)
+	}
+}
+
+// TestExecute_BlockOnRequiresSessionResume is the spec 12 task 5.6 fail-fast
+// test: a step declaring block_on run against a harness lacking
+// CapSessionResume is rejected at the first Open() call, before any partial
+// execution — asserted here by confirming Open is never even reached (the
+// FakeHarness's OpenSpec stays zero-valued and its session's events channel is
+// never touched).
+func TestExecute_BlockOnRequiresSessionResume(t *testing.T) {
+	sess := harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}})
+	h := &harness.FakeHarness{NameVal: "acp", Caps: harness.NewCapabilitySet(), Sess: sess}
+	e := NewAgentExecutor(h)
+	req := engine.StepRequest{Step: &workflow.Step{BlockOn: "output.needs_input == true"}}
+
+	res, err := e.Execute(context.Background(), req, &captureReporter{})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.Status != step.StatusFailed {
+		t.Fatalf("status = %q, want failed", res.Status)
+	}
+	if !strings.Contains(res.Err, "block_on") || !strings.Contains(res.Err, "CapSessionResume") {
+		t.Errorf("Err = %q, want it to name block_on and CapSessionResume", res.Err)
+	}
+	// No partial execution: Open was never called, so OpenSpec is still zero.
+	if h.OpenSpec.Prompt != "" {
+		t.Errorf("OpenSpec.Prompt = %q, want empty — Open should not have been called", h.OpenSpec.Prompt)
+	}
+	if sess.Closed {
+		t.Error("session Close called, want the session to never have been opened")
 	}
 }
