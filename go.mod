@@ -2,6 +2,8 @@ module jig
 
 go 1.25.8
 
+replace jig/harness/acp => ./harness/acp
+
 require (
 	charm.land/bubbles/v2 v2.1.1
 	charm.land/bubbletea/v2 v2.0.8

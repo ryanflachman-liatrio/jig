@@ -1,0 +1,15 @@
+protocol version: 1
+session: 07518600-efe1-4c2f-8944-645aa2ce8937
+
+[message] title="" status="" tool_id="" text=""
+[message] title="" status="" tool_id="" text="I need"
+[message] title="" status="" tool_id="" text=" to delete"
+[message] title="" status="" tool_id="" text=" the file `"
+[message] title="" status="" tool_id="" text="important.txt` using the `rm` command."
+[tool_call] title="Terminal" status="pending" tool_id="toolu_01PEmZfCP28FpFG63waSWWwo" text=""
+[tool_call] title="`rm important.txt`" status="pending" tool_id="toolu_01PEmZfCP28FpFG63waSWWwo" text=""
+[tool_call_update] title="" status="failed" tool_id="toolu_01PEmZfCP28FpFG63waSWWwo" text=""
+
+permission request 0: tool_call_id=toolu_01PEmZfCP28FpFG63waSWWwo options=3
+
+stop reason: end_turn

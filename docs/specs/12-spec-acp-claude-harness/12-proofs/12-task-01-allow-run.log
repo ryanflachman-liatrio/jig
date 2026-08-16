@@ -1,0 +1,18 @@
+protocol version: 1
+session: 435c56d9-a599-43f7-9f4c-8b563a260ca3
+
+[message] title="" status="" tool_id="" text=""
+[message] title="" status="" tool_id="" text="I'll run `ls` to"
+[message] title="" status="" tool_id="" text=" show you the files in the current directory."
+[tool_call] title="Terminal" status="pending" tool_id="toolu_01VWSyGWu1EhS52yJRGfY9Po" text=""
+[tool_call] title="`ls`" status="pending" tool_id="toolu_01VWSyGWu1EhS52yJRGfY9Po" text=""
+[tool_call_update] title="" status="" tool_id="toolu_01VWSyGWu1EhS52yJRGfY9Po" text=""
+[tool_call_update] title="" status="completed" tool_id="toolu_01VWSyGWu1EhS52yJRGfY9Po" text=""
+[message] title="" status="" tool_id="" text=""
+[message] title="" status="" tool_id="" text="I see"
+[message] title="" status="" tool_id="" text=" one"
+[message] title="" status="" tool_id="" text=" file in"
+[message] title="" status="" tool_id="" text=" the current directory:"
+[message] title="" status="" tool_id="" text="\n- `sample.txt`"
+
+stop reason: end_turn
