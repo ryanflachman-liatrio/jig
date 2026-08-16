@@ -825,7 +825,7 @@ func (s *scheduler) run(ctx context.Context) {
 
 		// 1. Dispatch every ready step, respecting max_parallel.
 		for s.inFlight < maxPar {
-			st, ok := s.nextReady()
+			st, ok := s.nextReady(ctx)
 			if !ok {
 				break
 			}
@@ -867,7 +867,7 @@ func (s *scheduler) run(ctx context.Context) {
 // skipped with a cascade; review steps are handled inline and also not returned
 // (they park on human input via dispatchReview). Both cases continue scanning
 // for the next dispatchable step.
-func (s *scheduler) nextReady() (*workflow.Step, bool) {
+func (s *scheduler) nextReady(ctx context.Context) (*workflow.Step, bool) {
 	for i := range s.wf.Steps {
 		st := &s.wf.Steps[i]
 		state := s.states[st.ID]
@@ -900,9 +900,11 @@ func (s *scheduler) nextReady() (*workflow.Step, bool) {
 		}
 
 		// Review steps never go to a worker: park them on human input and keep
-		// scanning for other runnable steps this iteration.
+		// scanning for other runnable steps this iteration. Routed through the
+		// same strategy-based dispatch() as agent/command steps (see
+		// strategies.go) rather than calling dispatchReview directly.
 		if st.Type == workflow.StepReview {
-			s.dispatchReview(st)
+			s.dispatch(ctx, st)
 			continue
 		}
 
@@ -1140,7 +1142,19 @@ func (s *scheduler) stepBranchName(stepID string) string {
 
 // dispatch launches a worker goroutine for one step. The worker sends a
 // stepDoneMsg to the inbox when it finishes; only the scheduler reads state.
+// dispatch looks up st's dispatch strategy by step type and invokes it — the
+// Strategy pattern's single dispatch site (see strategies.go), replacing what
+// was an inline branch per step type.
 func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
+	if strat, ok := stepDispatchStrategies[st.Type]; ok {
+		strat.dispatch(s, ctx, st)
+	}
+}
+
+// dispatchWorker starts an agent or command step's worker goroutine. It is
+// the shared implementation behind agentDispatchStrategy and
+// commandDispatchStrategy in strategies.go.
+func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	// Create a git worktree for mutating steps (first dispatch only; retries and
 	// loop re-dispatches reuse the existing worktree so edits accumulate on the
 	// same branch).
@@ -1418,38 +1432,13 @@ func (s *scheduler) applyFailurePolicy(stepID string, wfStep *workflow.Step) {
 		policy = wfStep.OnFailure
 	}
 
-	state := s.states[stepID]
-	from := state.Status
+	from := s.states[stepID].Status
 
-	switch policy {
-	case workflow.FailRetry:
-		maxRetries := 1
-		if wfStep != nil && wfStep.MaxRetries > 0 {
-			maxRetries = wfStep.MaxRetries
-		}
-		if state.Attempt < maxRetries {
-			state.Attempt++
-			// Reset to pending so the main scheduler loop picks it up again and
-			// calls dispatch(), which will increment inFlight.  handle() already
-			// decremented inFlight at its top, so the count stays correct.
-			s.transition(stepID, from, step.StatusPending)
-			return
-		}
-		// Exhausted automatic retries — hand off to the human recovery gate rather
-		// than tearing down the run.
-		s.enterRecovery(stepID)
-
-	case workflow.FailContinue:
-		// Mark failed but don't cancel; dependents with depsReady() will treat
-		// this step as a "satisfied" node and proceed.
-		s.transition(stepID, from, step.StatusFailed)
-
-	default: // FailAbort or unrecognised
-		// Pause for a human recovery decision (retry / resume / abort) instead of
-		// the old hair-trigger s.cancel(): the run and any in-flight sibling steps
-		// stay alive. Choosing RecoverAbort at the gate performs the real teardown.
-		s.enterRecovery(stepID)
+	strat, ok := failurePolicyStrategies[policy]
+	if !ok {
+		strat = abortFailureStrategy{} // unrecognised policy — same fallback as before
 	}
+	strat.apply(s, stepID, wfStep, from)
 }
 
 // enterRecovery parks a failed step in step.StatusAwaitingRecovery and emits a

@@ -66,7 +66,7 @@
 - [x] 1.6 Replace the body of `scheduler.handle()` (or its call site in `scheduler.run()`) so it invokes `msg.(command).execute(s)` (or equivalent single dispatch line) instead of the type-switch; delete the now-empty `handle()` type-switch once every message type has an `execute()` method.
 - [x] 1.7 Run `gofmt -l -w internal/engine/` and `go vet ./internal/engine/...`, then `go test ./internal/engine/... -race`; fix any compile errors or behavior regressions before proceeding.
 
-### [ ] 2.0 Strategy Pattern for Step Dispatch and Failure Policy
+### [x] 2.0 Strategy Pattern for Step Dispatch and Failure Policy
 
 #### 2.0 Proof Artifact(s)
 
@@ -75,12 +75,12 @@
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Create `internal/engine/strategies.go`; define a `stepDispatchStrategy` interface capturing what each per-type branch in `scheduler.dispatch()` (engine.go:1143-1291) currently does, documented as the Strategy pattern.
-- [ ] 2.2 Extract the agent-step branch of `dispatch()` into an `agentDispatchStrategy` implementation; extract the command-step branch into a `commandDispatchStrategy`; extract the review-step branch into a `reviewDispatchStrategy` (review dispatch already partly lives in `dispatchReview`, engine.go:2324 — wrap/call it from the strategy, don't duplicate).
-- [ ] 2.3 Build a `map[workflow.StepType]stepDispatchStrategy` (package-level var or scheduler field) and update `dispatch()` to look up and invoke the strategy for `wfStep.Type`, replacing the inline branch.
-- [ ] 2.4 Define a `failurePolicyStrategy` interface capturing what `applyFailurePolicy()` (engine.go:1613-1659) does per `workflow.OnFailure` value (including the default-to-`FailAbort` case).
-- [ ] 2.5 Extract each policy's behavior into its own `failurePolicyStrategy` implementation and build a `map[workflow.FailurePolicy]failurePolicyStrategy`; update `applyFailurePolicy()` to look up and invoke the strategy instead of branching inline.
-- [ ] 2.6 Run `gofmt -l -w internal/engine/` and `go vet ./internal/engine/...`, then `go test ./internal/engine/... -race` (with particular attention to `worktree_test.go` and `recovery_test.go`, which exercise dispatch and failure-policy paths); fix regressions before proceeding.
+- [x] 2.1 Create `internal/engine/strategies.go`; define a `stepDispatchStrategy` interface capturing what each per-type branch in `scheduler.dispatch()` (engine.go:1143-1291) currently does, documented as the Strategy pattern.
+- [x] 2.2 Extract the agent-step branch of `dispatch()` into an `agentDispatchStrategy` implementation; extract the command-step branch into a `commandDispatchStrategy`; extract the review-step branch into a `reviewDispatchStrategy` (review dispatch already partly lives in `dispatchReview`, engine.go:2324 — wrap/call it from the strategy, don't duplicate).
+- [x] 2.3 Build a `map[workflow.StepType]stepDispatchStrategy` (package-level var or scheduler field) and update `dispatch()` to look up and invoke the strategy for `wfStep.Type`, replacing the inline branch.
+- [x] 2.4 Define a `failurePolicyStrategy` interface capturing what `applyFailurePolicy()` (engine.go:1613-1659) does per `workflow.OnFailure` value (including the default-to-`FailAbort` case).
+- [x] 2.5 Extract each policy's behavior into its own `failurePolicyStrategy` implementation and build a `map[workflow.FailurePolicy]failurePolicyStrategy`; update `applyFailurePolicy()` to look up and invoke the strategy instead of branching inline.
+- [x] 2.6 Run `gofmt -l -w internal/engine/` and `go vet ./internal/engine/...`, then `go test ./internal/engine/... -race` (with particular attention to `worktree_test.go` and `recovery_test.go`, which exercise dispatch and failure-policy paths); fix regressions before proceeding.
 
 ### [ ] 3.0 Formalize Chain of Responsibility, Observer, and Memento
 
