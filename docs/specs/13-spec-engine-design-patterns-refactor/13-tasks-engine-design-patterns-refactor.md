@@ -97,7 +97,7 @@
 - [x] 3.4 Verify no field, method signature, or channel semantics changed by diffing `git diff internal/engine/` and confirming only comments were added/edited in this task.
 - [x] 3.5 Run `gofmt -l -w internal/engine/` and `go vet ./internal/engine/...`, then `go test ./internal/engine/... -race`; fix any regressions before proceeding.
 
-### [ ] 4.0 Full 23-Pattern Design Audit Document
+### [x] 4.0 Full 23-Pattern Design Audit Document
 
 #### 4.0 Proof Artifact(s)
 
@@ -105,11 +105,11 @@
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Create `docs/specs/13-spec-engine-design-patterns-refactor/PATTERN-AUDIT.md` with three sections (Creational, Structural, Behavioral) and a row/entry for each of the 23 named GoF patterns.
-- [ ] 4.2 Fill in the 5 Creational patterns (Abstract Factory, Builder, Factory Method, Prototype, Singleton): mark `buildRequest()` (engine.go:1362) as Applied/Builder if it fits the Builder contract; mark `NewManager`/`newScheduler` as Applied/Factory Method; mark Abstract Factory, Prototype, and Singleton as Not Applicable with a one-paragraph reason each (e.g. Singleton conflicts with `Manager`'s per-process, testable-instance design; Prototype has no clone-heavy object in this package).
-- [ ] 4.3 Fill in the 7 Structural patterns (Adapter, Bridge, Composite, Decorator, Facade, Flyweight, Proxy): mark `Executor`/`Reporter` (executor.go) as Applied/Bridge; mark `Manager` as Applied/Facade; assess `closureOf`/`bodyUnion`/`loopBody` (engine.go:2526-2716, recursive step-graph traversal) for a Composite fit and mark accordingly; mark Adapter, Decorator, Flyweight, Proxy as Applied or Not Applicable based on actual code, with reasoning for any Not Applicable entry.
-- [ ] 4.4 Fill in the 11 Behavioral patterns (Chain of Responsibility, Command, Interpreter, Iterator, Mediator, Memento, Observer, State, Strategy, Template Method, Visitor): mark Chain of Responsibility, Command, Memento, Observer, Strategy as Applied, referencing Tasks 1.0-3.0; assess `evalGuard()`/`workflow.Condition` (engine.go:2108-2165) for an Interpreter fit; assess `nextReady()`/`anyPendingRunnable()`/`anyFailed()` for an Iterator fit; assess `scheduler` itself (coordinating steps/loops/workers without them referencing each other) for a Mediator fit; assess `step.Status`/`transition()` for a State fit, noting that a formal State-object hierarchy would add object bloat the current enum+guard-function approach avoids (per `CLAUDE.md`); mark Template Method and Visitor as Applied or Not Applicable based on actual code.
-- [ ] 4.5 Cross-check the completed document lists exactly 23 patterns with no duplicates or omissions, and that every "Applied" entry names a real file/type/line that exists in the codebase (re-verify against `git diff` from Tasks 1.0-3.0, not from memory).
+- [x] 4.1 Create `docs/specs/13-spec-engine-design-patterns-refactor/PATTERN-AUDIT.md` with three sections (Creational, Structural, Behavioral) and a row/entry for each of the 23 named GoF patterns.
+- [x] 4.2 Fill in the 5 Creational patterns (Abstract Factory, Builder, Factory Method, Prototype, Singleton): mark `buildRequest()` (engine.go:1362) as Applied/Builder if it fits the Builder contract; mark `NewManager`/`newScheduler` as Applied/Factory Method; mark Abstract Factory, Prototype, and Singleton as Not Applicable with a one-paragraph reason each (e.g. Singleton conflicts with `Manager`'s per-process, testable-instance design; Prototype has no clone-heavy object in this package).
+- [x] 4.3 Fill in the 7 Structural patterns (Adapter, Bridge, Composite, Decorator, Facade, Flyweight, Proxy): mark `Executor`/`Reporter` (executor.go) as Applied/Bridge; mark `Manager` as Applied/Facade; assess `closureOf`/`bodyUnion`/`loopBody` (engine.go:2526-2716, recursive step-graph traversal) for a Composite fit and mark accordingly; mark Adapter, Decorator, Flyweight, Proxy as Applied or Not Applicable based on actual code, with reasoning for any Not Applicable entry.
+- [x] 4.4 Fill in the 11 Behavioral patterns (Chain of Responsibility, Command, Interpreter, Iterator, Mediator, Memento, Observer, State, Strategy, Template Method, Visitor): mark Chain of Responsibility, Command, Memento, Observer, Strategy as Applied, referencing Tasks 1.0-3.0; assess `evalGuard()`/`workflow.Condition` (engine.go:2108-2165) for an Interpreter fit; assess `nextReady()`/`anyPendingRunnable()`/`anyFailed()` for an Iterator fit; assess `scheduler` itself (coordinating steps/loops/workers without them referencing each other) for a Mediator fit; assess `step.Status`/`transition()` for a State fit, noting that a formal State-object hierarchy would add object bloat the current enum+guard-function approach avoids (per `CLAUDE.md`); mark Template Method and Visitor as Applied or Not Applicable based on actual code.
+- [x] 4.5 Cross-check the completed document lists exactly 23 patterns with no duplicates or omissions, and that every "Applied" entry names a real file/type/line that exists in the codebase (re-verify against `git diff` from Tasks 1.0-3.0, not from memory).
 
 ### [ ] 5.0 Full-Repository Regression Verification
 
