@@ -22,14 +22,14 @@ func TestSessionUpdate_CapturesEachEventKind(t *testing.T) {
 			notif: acpsdk.SessionNotification{Update: acpsdk.SessionUpdate{
 				AgentMessageChunk: &acpsdk.SessionUpdateAgentMessageChunk{Content: textBlock("hello")},
 			}},
-			want: Event{Kind: "message", Text: "hello"},
+			want: Event{Kind: EventMessage, Text: "hello"},
 		},
 		{
 			name: "agent thought chunk",
 			notif: acpsdk.SessionNotification{Update: acpsdk.SessionUpdate{
 				AgentThoughtChunk: &acpsdk.SessionUpdateAgentThoughtChunk{Content: textBlock("thinking...")},
 			}},
-			want: Event{Kind: "thought", Text: "thinking..."},
+			want: Event{Kind: EventThought, Text: "thinking..."},
 		},
 		{
 			name: "tool call",
@@ -40,7 +40,7 @@ func TestSessionUpdate_CapturesEachEventKind(t *testing.T) {
 					Status:     acpsdk.ToolCallStatusPending,
 				},
 			}},
-			want: Event{Kind: "tool_call", ToolID: "call_1", Title: "Read file.go", Status: "pending"},
+			want: Event{Kind: EventToolCall, ToolID: "call_1", Title: "Read file.go", Status: "pending"},
 		},
 		{
 			name: "tool call update",
@@ -50,7 +50,7 @@ func TestSessionUpdate_CapturesEachEventKind(t *testing.T) {
 					Status:     statusPtr(acpsdk.ToolCallStatusCompleted),
 				},
 			}},
-			want: Event{Kind: "tool_call_update", ToolID: "call_1", Status: "completed"},
+			want: Event{Kind: EventToolCallUpdate, ToolID: "call_1", Status: "completed"},
 		},
 	}
 

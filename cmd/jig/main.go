@@ -13,6 +13,7 @@ import (
 
 	"jig/internal/datastore"
 	"jig/internal/engine"
+	"jig/internal/harness"
 	"jig/internal/runner"
 	"jig/internal/sentinel"
 	"jig/internal/tui"
@@ -20,6 +21,15 @@ import (
 )
 
 func main() {
+	// Resolved before any subcommand dispatch (including validate, which never
+	// runs an agent step) so a bad JIG_HARNESS value always fails fast with a
+	// clear error instead of surfacing later as a confusing runtime failure.
+	h, err := harness.FromEnv()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
 	// Subcommands run and exit before the TUI takes over the terminal.
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
@@ -38,7 +48,7 @@ func main() {
 	// the mux falls back to FakeExecutor if somehow dispatched).
 	mux := runner.NewMux()
 	mux.Register(workflow.StepCommand, runner.NewCommandExecutor(""))
-	mux.Register(workflow.StepAgent, runner.NewAgentExecutor())
+	mux.Register(workflow.StepAgent, runner.NewAgentExecutor(h))
 	mux.Register(workflow.StepReview, runner.NewFakeExecutor(nil, runner.FakeOutcome{}))
 	mgr := engine.NewManager(mux, ".jig")
 

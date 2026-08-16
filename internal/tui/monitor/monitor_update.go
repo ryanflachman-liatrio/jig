@@ -36,7 +36,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// The tool handler is blocked waiting for gateAns. Show a gate entry so the
 		// operator can confirm. Re-arm the gate listener for subsequent gate calls.
 		m.inputQueue = append(m.inputQueue, pendingInputEntry{
-			kind:       inputKindHelpFinalMerge,
+			kind: inputKindHelpFinalMerge,
 		})
 		m.refreshPanels()
 		return m, waitForGateReqCmd(m.helpGateReq)

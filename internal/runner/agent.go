@@ -10,22 +10,26 @@ import (
 	"strings"
 	"time"
 
-	claudecode "github.com/severity1/claude-agent-sdk-go"
-
 	"jig/internal/engine"
+	"jig/internal/harness"
 	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/transcript"
 	"jig/internal/workflow"
 )
 
-// AgentExecutor runs agent steps via the Claude Agent SDK.
-// Each Execute call opens a fresh connection so runs are independent and the
-// executor itself holds no mutable state.
-type AgentExecutor struct{}
+// AgentExecutor runs agent steps via a harness.Harness backend. Each Execute
+// call opens a fresh session so runs are independent and the executor itself
+// holds no mutable state.
+type AgentExecutor struct {
+	harness harness.Harness
+}
 
-// NewAgentExecutor returns an AgentExecutor ready to use.
-func NewAgentExecutor() *AgentExecutor { return &AgentExecutor{} }
+// NewAgentExecutor returns an AgentExecutor backed by h (see harness.FromEnv
+// for JIG_HARNESS-based selection).
+func NewAgentExecutor(h harness.Harness) *AgentExecutor {
+	return &AgentExecutor{harness: h}
+}
 
 // Execute runs one agent step. It:
 //  1. Builds the prompt from the step's skill/agent-file body and inputs.
@@ -37,161 +41,132 @@ func NewAgentExecutor() *AgentExecutor { return &AgentExecutor{} }
 //  4. Returns a Result that summarises the outcome.
 func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep engine.Reporter) (*step.Result, error) {
 	start := time.Now()
+	caps := e.harness.Capabilities()
 
-	opts, err := buildOptions(req.Step)
+	// block_on parks this step and resumes it later through a fresh Open call
+	// with SessionSpec.Resume set. Reject now, at the step's first Open, rather
+	// than letting it run to the pause point and only then discovering the
+	// active harness can never honor the resume that block_on depends on.
+	if req.Step.BlockOn != "" && !caps.Has(harness.CapSessionResume) {
+		return failResult(fmt.Sprintf("step declares block_on but harness %q does not support session resume (CapSessionResume)", e.harness.Name()), start), nil
+	}
+
+	// A step that explicitly declares [step.schema] has opted into structured
+	// output and must fail closed if unsupported. The base schema every step
+	// is merged with regardless of declaration is not a user request, so
+	// buildSessionSpec omits it silently instead (see its doc comment).
+	if req.Step.Schema != nil && !caps.Has(harness.CapStructuredOutput) {
+		return failResult(fmt.Sprintf("step declares a schema but harness %q does not support structured output (CapStructuredOutput)", e.harness.Name()), start), nil
+	}
+
+	spec, err := buildSessionSpec(req.Step, caps)
 	if err != nil {
 		return failResult(fmt.Sprintf("build options: %v", err), start), nil
 	}
-	// If the step enables AskUserQuestion, register the in-process MCP server
-	// so the CLI recognises mcp__jig__AskUserQuestion (rewritten in buildOptions).
-	if containsStr(req.Step.AllowedTools, "AskUserQuestion") {
-		opts = append(opts, claudecode.WithSdkMcpServer("jig", buildAskUserQuestionServer(ctx, rep)))
+
+	spec.Prompt = buildAgentPrompt(req)
+	if req.ResumeSessionID != "" {
+		if !caps.Has(harness.CapSessionResume) {
+			return failResult(fmt.Sprintf("resume requested but harness %q does not support session resume (CapSessionResume)", e.harness.Name()), start), nil
+		}
+		spec.Prompt = req.Message
+		spec.Resume = req.ResumeSessionID
 	}
 	if req.Worktree != "" {
-		opts = append(opts, claudecode.WithCwd(req.Worktree))
+		spec.Cwd = req.Worktree
 	}
-	if req.ResumeSessionID != "" {
-		opts = append(opts,
-			claudecode.WithResume(req.ResumeSessionID),
-			claudecode.WithContinueConversation(true),
-		)
+	// If the step enables AskUserQuestion, register the in-process MCP server
+	// so the CLI recognises mcp__jig__AskUserQuestion (rewritten by the harness).
+	if containsStr(req.Step.AllowedTools, "AskUserQuestion") {
+		if !caps.Has(harness.CapInProcessMCP) {
+			return failResult(fmt.Sprintf("step uses AskUserQuestion but harness %q does not support in-process MCP tools (CapInProcessMCP)", e.harness.Name()), start), nil
+		}
+		spec.MCPServers = append(spec.MCPServers, buildAskUserQuestionServer(ctx, rep))
 	}
-
-	// When a Tier-1 guard is active, force PermissionModeDefault so the SDK
-	// invokes the WithCanUseTool callback. acceptEdits auto-approves writes
-	// without calling the callback (confirmed by SDK source — see seam probe).
 	if req.Guard != nil {
-		opts = append(opts, claudecode.WithPermissionMode(claudecode.PermissionModeDefault))
+		if !caps.Has(harness.CapPermissionCallback) {
+			return failResult(fmt.Sprintf("step is guarded but harness %q does not support permission callbacks (CapPermissionCallback)", e.harness.Name()), start), nil
+		}
 		guard := req.Guard
-		opts = append(opts, claudecode.WithCanUseTool(func(
-			_ context.Context,
-			toolName string,
-			input map[string]any,
-			_ claudecode.ToolPermissionContext,
-		) (claudecode.PermissionResult, error) {
+		spec.Permission = func(toolName string, input map[string]any) harness.Decision {
+			// Findings and the SecurityFinding event are produced by captureStream
+			// when it processes the buffered assistant blocks. The callback only
+			// needs to return the decision so the backend feeds it back to the agent.
 			dec := guard.Check(toolName, input)
-			if dec.Allow {
-				return claudecode.NewPermissionResultAllow(), nil
-			}
-			// Deny/escalate: findings and SecurityFinding event are produced by
-			// captureStream when it processes the AssistantMessage. The callback
-			// only needs to return the denial so the SDK feeds it back to the agent.
-			return claudecode.NewPermissionResultDeny(dec.Reason), nil
-		}))
+			return harness.Decision{Allow: dec.Allow, Reason: dec.Reason}
+		}
 	}
 
-	client := claudecode.NewClient(opts...)
-	if err := client.Connect(ctx); err != nil {
-		return failResult(fmt.Sprintf("agent connect: %v", err), start), nil
+	sess, err := e.harness.Open(ctx, spec)
+	if err != nil {
+		return failResult(fmt.Sprintf("agent open: %v", err), start), nil
 	}
-	defer func() { _ = client.Disconnect() }()
-
-	msgChan := client.ReceiveMessages(ctx)
-
-	// sendCh carries tool-result messages injected mid-session (e.g. AskUserQuestion
-	// answers). QueryStream starts a goroutine that reads from sendCh and forwards
-	// each message to the SDK transport; closing sendCh signals end-of-stream.
-	sendCh := make(chan claudecode.StreamMessage, 4)
-	if err := client.QueryStream(ctx, sendCh); err != nil {
-		close(sendCh)
-		return failResult(fmt.Sprintf("agent query stream: %v", err), start), nil
-	}
-	defer close(sendCh)
-
-	query := buildAgentPrompt(req)
-	if req.ResumeSessionID != "" {
-		query = req.Message
-	}
-	if err := client.Query(ctx, query); err != nil {
-		return failResult(fmt.Sprintf("agent query: %v", err), start), nil
-	}
+	defer func() { _ = sess.Close() }()
 
 	initialMsg := ""
 	if req.ResumeSessionID != "" {
 		initialMsg = req.Message
 	}
-	return captureStream(msgChan, req, rep, start, initialMsg)
+	return captureStream(sess.Messages(), req, rep, start, initialMsg)
 }
 
-// buildOptions translates a step's already-defaulted model/tool/permission
+// buildSessionSpec translates a step's already-defaulted model/tool/permission
 // fields (resolved from [defaults] by workflow.applyDefaults before this ever
-// runs) into SDK options. Zero-value fields are simply omitted so the SDK's
-// own defaults apply.
-func buildOptions(st *workflow.Step) ([]claudecode.Option, error) {
-	opts := []claudecode.Option{
-		claudecode.WithIncludePartialMessages(true),
+// runs) into a harness.SessionSpec. Zero-value fields are simply omitted so
+// the harness's own defaults apply. Prompt/Cwd/Resume/Permission/MCPServers
+// are filled in separately by Execute, which has the request-scoped context
+// this function does not.
+//
+// Partial and Schema are capability-gated: every agent step wants them (base
+// schema enforcement, live-typing deltas) regardless of what the user
+// declared, but neither is a hard requirement a step depends on, so a harness
+// that lacks the capability simply doesn't receive the field — unlike Guard/
+// AskUserQuestion/Resume in Execute, which the user explicitly opted into and
+// which fail closed instead of silently degrading.
+func buildSessionSpec(st *workflow.Step, caps harness.CapabilitySet) (harness.SessionSpec, error) {
+	spec := harness.SessionSpec{
+		Partial:           caps.Has(harness.CapPartialStreaming),
+		Model:             st.Model,
+		FallbackModel:     st.FallbackModel,
+		Effort:            string(st.Effort),
+		MaxTurns:          st.MaxTurns,
+		MaxThinkingTokens: st.MaxThinkingTokens,
+		MaxBudgetUSD:      st.MaxBudgetUSD,
+		PermissionMode:    st.PermissionMode,
+		AllowedTools:      st.AllowedTools,
+		DisallowedTools:   st.DisallowedTools,
 	}
-	if st.Model != "" {
-		opts = append(opts, claudecode.WithModel(st.Model))
+
+	if !caps.Has(harness.CapStructuredOutput) {
+		return spec, nil
 	}
-	if st.FallbackModel != "" {
-		opts = append(opts, claudecode.WithFallbackModel(st.FallbackModel))
-	}
-	if st.Effort != "" {
-		opts = append(opts, claudecode.WithEffort(claudecode.EffortLevel(st.Effort)))
-	}
-	if st.MaxTurns > 0 {
-		opts = append(opts, claudecode.WithMaxTurns(st.MaxTurns))
-	}
-	if st.MaxThinkingTokens > 0 {
-		opts = append(opts, claudecode.WithMaxThinkingTokens(st.MaxThinkingTokens))
-	}
-	if st.MaxBudgetUSD > 0 {
-		opts = append(opts, claudecode.WithMaxBudgetUSD(st.MaxBudgetUSD))
-	}
-	if st.PermissionMode != "" {
-		opts = append(opts, claudecode.WithPermissionMode(claudecode.PermissionMode(st.PermissionMode)))
-	}
-	if len(st.AllowedTools) > 0 {
-		// AskUserQuestion is not a Claude Code built-in; it is implemented as an
-		// in-process MCP tool. Rewrite it to the MCP-qualified name so the CLI
-		// recognises it. The server is registered separately in Execute.
-		opts = append(opts, claudecode.WithAllowedTools(rewriteAskUserQuestion(st.AllowedTools)...))
-	}
-	if len(st.DisallowedTools) > 0 {
-		opts = append(opts, claudecode.WithDisallowedTools(st.DisallowedTools...))
-	}
+
 	// Every agent step is constrained by the merged schema (base + declared).
 	// The base schema guarantees a minimum set of fields regardless of whether
 	// the step declares a [step.schema].
 	merged := workflow.MergedSchema(st.Schema)
 	raw, err := merged.JSONSchema()
 	if err != nil {
-		return nil, fmt.Errorf("schema: %w", err)
+		return harness.SessionSpec{}, fmt.Errorf("schema: %w", err)
 	}
 	var m map[string]any
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, fmt.Errorf("schema: %w", err)
+		return harness.SessionSpec{}, fmt.Errorf("schema: %w", err)
 	}
-	opts = append(opts, claudecode.WithJSONSchema(m))
-	return opts, nil
-}
-
-// rewriteAskUserQuestion replaces every "AskUserQuestion" entry in tools with
-// "mcp__jig__AskUserQuestion". The Claude Code CLI does not expose AskUserQuestion
-// as a built-in; jig registers it as an in-process MCP server so the CLI uses
-// the MCP-qualified name in its allowed-tools list.
-func rewriteAskUserQuestion(tools []string) []string {
-	out := make([]string, len(tools))
-	copy(out, tools)
-	for i, t := range out {
-		if t == "AskUserQuestion" {
-			out[i] = "mcp__jig__AskUserQuestion"
-		}
-	}
-	return out
+	spec.Schema = m
+	return spec, nil
 }
 
 // buildAskUserQuestionServer creates an in-process MCP server named "jig" that
 // exposes one tool: AskUserQuestion. When the agent calls the tool the handler
 // blocks on rep.Question, which pauses the step and surfaces the question in the
-// TUI. The SDK injects the answer back into the conversation as a tool result,
-// so no manual sendCh injection is needed.
+// TUI. The harness feeds the returned ToolResult back into the conversation, so
+// no manual send-channel injection is needed.
 //
 // stepCtx is the executing step's context; it is threaded into rep.Question so a
 // Stop/cancel of the step unblocks a pending AskUserQuestion instead of hanging
 // the handler goroutine forever.
-func buildAskUserQuestionServer(stepCtx context.Context, rep engine.Reporter) *claudecode.McpSdkServerConfig {
+func buildAskUserQuestionServer(stepCtx context.Context, rep engine.Reporter) harness.MCPServer {
 	schema := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -221,43 +196,33 @@ func buildAskUserQuestionServer(stepCtx context.Context, rep engine.Reporter) *c
 		},
 		"required": []any{"questions"},
 	}
-	tool := claudecode.NewTool(
-		"AskUserQuestion",
-		"Ask the user one or more questions and wait for their answer before continuing.",
-		schema,
-		func(_ context.Context, args map[string]any) (*claudecode.McpToolResult, error) {
+	tool := harness.Tool{
+		Name:        "AskUserQuestion",
+		Description: "Ask the user one or more questions and wait for their answer before continuing.",
+		InputSchema: schema,
+		Handler: func(_ context.Context, args map[string]any) (harness.ToolResult, error) {
 			questions, err := parseAskUserQuestions(args)
 			if err != nil {
-				return &claudecode.McpToolResult{
-					IsError: true,
-					Content: []claudecode.McpContent{{Type: "text", Text: err.Error()}},
-				}, nil
+				return harness.ToolResult{IsError: true, Content: err.Error()}, nil
 			}
 			answer := rep.Question(stepCtx, "ask-user-question", questions)
-			return &claudecode.McpToolResult{
-				Content: []claudecode.McpContent{{Type: "text", Text: answer}},
-			}, nil
+			return harness.ToolResult{Content: answer}, nil
 		},
-	)
-	return claudecode.CreateSDKMcpServer("jig", "1.0.0", tool)
+	}
+	return harness.MCPServer{Name: "jig", Version: "1.0.0", Tools: []harness.Tool{tool}}
 }
 
-// captureStream consumes the SDK message stream, appending each message to the
+// captureStream consumes the harness event stream, appending each turn to the
 // per-step transcript and emitting Phase 2 liveness signals, and returns the
 // step Result. It is split out of Execute so tests can drive it with a scripted
-// channel — no live SDK connection required (see agent_test.go).
-//
-// send, when non-nil, is a channel for injecting tool-result messages back into
-// the running agent session (used for AskUserQuestion interception). Pass nil
-// when no mid-session injection is needed (e.g. in tests that don't exercise
-// that path).
+// channel — no live backend connection required (see agent_test.go).
 //
 // The transcript file is the durable source of truth; rep.Output deltas are an
 // ephemeral preview of the not-yet-finalized assistant bubble and are never
 // persisted. When req.TranscriptPath is empty (persistence off) no transcript
 // is written and no rep.Message signals are emitted.
 func captureStream(
-	msgChan <-chan claudecode.Message,
+	events <-chan harness.Event,
 	req engine.StepRequest,
 	rep engine.Reporter,
 	start time.Time,
@@ -309,12 +274,12 @@ func captureStream(
 		appendEntry(transcript.RoleUser, []transcript.Block{{Type: transcript.BlockText, Text: initialUserMsg}})
 	}
 
-	// Capture the SDK session id as early as it is surfaced (spec 07 B2). With
-	// partial messages enabled every StreamEvent carries session_id, and the init
-	// SystemMessage carries it too — both arrive well before the terminal
-	// ResultMessage. Recording it here means a step stopped mid-turn still returns
-	// a resumable session id (see the connection-closed path below), where the old
-	// capture-on-ResultMessage-only left a cancelled step with SessionID == "".
+	// Capture the backend session id as early as it is surfaced (spec 07 B2).
+	// With partial streaming on, an EventSessionID may fire well before the
+	// terminal EventResult. Recording it here means a step stopped mid-turn
+	// still returns a resumable session id (see the connection-closed path
+	// below), where capturing only on EventResult would leave a cancelled step
+	// with SessionID == "".
 	sessionID := ""
 	noteSession := func(id string) {
 		if id != "" && sessionID == "" {
@@ -322,29 +287,45 @@ func captureStream(
 		}
 	}
 
-	// lastAssistantText is the concatenated text from the most recent
-	// AssistantMessage. The engine writes this to raw_result.md on success —
-	// no agent Write tool required; the engine owns all non-code file writes.
+	// lastAssistantText is the concatenated text from the most recent flushed
+	// assistant turn. The engine writes this to raw_result.md on success — no
+	// agent Write tool required; the engine owns all non-code file writes.
 	var lastAssistantText string
 
-	for msg := range msgChan {
-		switch m := msg.(type) {
-		case *claudecode.SystemMessage:
-			// The init system message carries session_id in its preserved Data.
-			if id, ok := m.Data["session_id"].(string); ok {
-				noteSession(id)
-			}
-		case *claudecode.AssistantMessage:
-			blocks := guardBlocks(m, req, rep, fw)
+	// buf accumulates Text/Thinking/ToolUse/ToolResult blocks between flush
+	// boundaries (EventAssistantEnd/EventUserEnd), mirroring the "one Entry per
+	// SDK message" grouping the pre-harness capture path produced.
+	var buf []transcript.Block
+
+	for ev := range events {
+		switch ev.Type {
+		case harness.EventSessionID:
+			noteSession(ev.SessionID)
+		case harness.EventText:
+			buf = append(buf, transcript.Block{Type: transcript.BlockText, Text: ev.Text})
+		case harness.EventThinking:
+			// Thinking may be empty or redacted; capture whatever is present.
+			buf = append(buf, transcript.Block{Type: transcript.BlockThinking, Text: ev.Text})
+		case harness.EventToolUse:
+			buf = append(buf, transcript.Block{
+				Type:      transcript.BlockToolUse,
+				ToolUseID: ev.ToolUseID,
+				Name:      ev.Name,
+				Input:     ev.Input,
+			})
+		case harness.EventToolResult:
+			buf = append(buf, transcript.Block{
+				Type:      transcript.BlockToolResult,
+				ToolUseID: ev.ToolUseID,
+				Content:   ev.Content,
+				IsError:   ev.IsError,
+			})
+		case harness.EventAssistantEnd:
+			blocks := guardBlocks(buf, req, rep, fw)
+			buf = nil
 			appendEntry(transcript.RoleAssistant, blocks)
-			if m.HasError() {
-				appendEntry(transcript.RoleSystem, []transcript.Block{{
-					Type: transcript.BlockText,
-					Text: fmt.Sprintf("assistant error: %s", m.GetError()),
-				}})
-			}
-			// Track the last substantive text turn. Tool-call-only messages
-			// yield no text blocks and leave lastAssistantText unchanged.
+			// Track the last substantive text turn. Tool-call-only turns yield no
+			// text blocks and leave lastAssistantText unchanged.
 			var sb strings.Builder
 			for _, b := range blocks {
 				if b.Type == transcript.BlockText {
@@ -354,47 +335,43 @@ func captureStream(
 			if t := sb.String(); t != "" {
 				lastAssistantText = t
 			}
-		case *claudecode.UserMessage:
-			appendEntry(transcript.RoleUser, toolResultBlocks(m))
-		case *claudecode.StreamEvent:
-			// Every stream event carries the session id — the earliest reliable
-			// source when partial messages are enabled.
-			noteSession(m.SessionID)
-			// Live-typing tail only; the finalized AssistantMessage above is
+		case harness.EventUserEnd:
+			blocks := buf
+			buf = nil
+			appendEntry(transcript.RoleUser, blocks)
+		case harness.EventSystemText:
+			appendEntry(transcript.RoleSystem, []transcript.Block{{Type: transcript.BlockText, Text: ev.Text}})
+		case harness.EventTextDelta:
+			// Live-typing tail only; the finalized EventText above is
 			// authoritative and is what lands in the transcript.
-			if delta, ok := agentTextDelta(m); ok {
-				rep.Output(delta)
-			}
-		case *claudecode.ResultMessage:
-			if m.IsError {
-				errStr := subtypeErrText(m)
-				appendEntry(transcript.RoleResult, []transcript.Block{{Type: transcript.BlockText, Text: errStr}})
-				res := failResult(errStr, start)
-				res.Subtype = m.Subtype
-				res.TotalCostUSD = m.TotalCostUSD
-				res.Usage = m.Usage
+			rep.Output(ev.Text)
+		case harness.EventResult:
+			if ev.IsError {
+				appendEntry(transcript.RoleResult, []transcript.Block{{Type: transcript.BlockText, Text: ev.ErrText}})
+				res := failResult(ev.ErrText, start)
+				res.Subtype = ev.Subtype
+				res.TotalCostUSD = ev.TotalCostUSD
+				res.Usage = ev.Usage
 				// Retain the session id even on failure so the engine can offer a
 				// recovery that resumes this exact conversation (feeding the error
 				// back in) rather than starting over blind.
-				res.SessionID = m.SessionID
+				res.SessionID = ev.SessionID
 				return res, nil
 			}
 			result := &step.Result{
 				Status:       step.StatusSucceeded,
 				Duration:     time.Since(start),
-				SessionID:    m.SessionID,
-				Subtype:      m.Subtype,
-				TotalCostUSD: m.TotalCostUSD,
-				Usage:        m.Usage,
+				SessionID:    ev.SessionID,
+				Subtype:      ev.Subtype,
+				TotalCostUSD: ev.TotalCostUSD,
+				Usage:        ev.Usage,
 			}
 
-			// Marshal the structured output envelope. Structured output carries
-			// only brief metadata fields; large prose lives in raw_result.md,
-			// written by the engine from the agent's text response below.
-			if m.StructuredOutput != nil {
-				if raw, err := json.Marshal(m.StructuredOutput); err == nil {
-					result.Structured = raw
-				}
+			// Structured output carries only brief metadata fields; large prose
+			// lives in raw_result.md, written by the engine from the agent's text
+			// response below.
+			if ev.Structured != nil {
+				result.Structured = ev.Structured
 			}
 
 			// Auto-capture to the canonical step directory whenever persistence
@@ -430,59 +407,24 @@ func captureStream(
 		}
 	}
 
-	// msgChan closed before ResultMessage — the connection dropped or the step's
+	// events closed before EventResult — the connection dropped or the step's
 	// context was cancelled (a deliberate stop, spec 07 B1). Carry the
 	// early-captured session id on the result so the engine can resume this
-	// conversation; without partial messages the SDK may not have surfaced one,
-	// in which case SessionID stays "" and resume degrades to a fresh restart.
+	// conversation; without an early EventSessionID the backend may not have
+	// surfaced one, in which case SessionID stays "" and resume degrades to a
+	// fresh restart.
 	res := failResult("agent connection closed unexpectedly", start)
 	res.SessionID = sessionID
 	return res, nil
 }
 
-// assistantBlocks maps an assistant message's content blocks to transcript
-// blocks (thinking, text, tool_use) in their original order, and returns the
-// concatenated text for artifact derivation. Unknown block types are skipped so
-// an SDK addition never breaks capture.
-func assistantBlocks(m *claudecode.AssistantMessage) ([]transcript.Block, string) {
-	var blocks []transcript.Block
-	var text strings.Builder
-	for _, cb := range m.Content {
-		switch b := cb.(type) {
-		case *claudecode.TextBlock:
-			blocks = append(blocks, transcript.Block{Type: transcript.BlockText, Text: b.Text})
-			text.WriteString(b.Text)
-		case *claudecode.ThinkingBlock:
-			// Thinking may be empty or redacted; capture whatever is present.
-			blocks = append(blocks, transcript.Block{Type: transcript.BlockThinking, Text: b.Thinking})
-		case *claudecode.ToolUseBlock:
-			// Input is the tool arguments; store the raw JSON. A marshal failure
-			// is non-fatal — we still record the call name and correlation ID.
-			var input json.RawMessage
-			if raw, err := json.Marshal(b.Input); err == nil {
-				input = raw
-			}
-			blocks = append(blocks, transcript.Block{
-				Type:      transcript.BlockToolUse,
-				ToolUseID: b.ToolUseID,
-				Name:      b.Name,
-				Input:     input,
-			})
-		}
-	}
-	return blocks, text.String()
-}
-
-// guardBlocks calls assistantBlocks then, when the guard is active, scans
-// every tool_use block's input for policy violations. For each violation it
-// produces a Finding (written to fw and emitted as a SecurityFinding ctrl
-// event), and redacts the block's Input so that no raw secret lands in
-// transcript.jsonl.
+// guardBlocks scans every tool_use block's input for policy violations when
+// the guard is active. For each violation it produces a Finding (written to fw
+// and emitted as a SecurityFinding ctrl event), and redacts the block's Input
+// so that no raw secret lands in transcript.jsonl.
 //
-// When req.Guard is nil the function is a thin wrapper around assistantBlocks
-// and the result is byte-identical to the pre-guard path.
-func guardBlocks(m *claudecode.AssistantMessage, req engine.StepRequest, rep engine.Reporter, fw *sentinel.Writer) []transcript.Block {
-	blocks, _ := assistantBlocks(m)
+// When req.Guard is nil blocks is returned unchanged.
+func guardBlocks(blocks []transcript.Block, req engine.StepRequest, rep engine.Reporter, fw *sentinel.Writer) []transcript.Block {
 	if req.Guard == nil {
 		return blocks
 	}
@@ -534,47 +476,6 @@ func guardBlocks(m *claudecode.AssistantMessage, req engine.StepRequest, rep eng
 		}
 	}
 	return blocks
-}
-
-// toolResultBlocks extracts tool_result blocks from a user message. Messages
-// that are plain prompt text (Content is a string, e.g. the initial query
-// echo) yield none, correlating results to calls by ToolUseID.
-func toolResultBlocks(m *claudecode.UserMessage) []transcript.Block {
-	blocks, ok := m.Content.([]claudecode.ContentBlock)
-	if !ok {
-		return nil
-	}
-	var out []transcript.Block
-	for _, cb := range blocks {
-		tr, ok := cb.(*claudecode.ToolResultBlock)
-		if !ok {
-			continue
-		}
-		out = append(out, transcript.Block{
-			Type:      transcript.BlockToolResult,
-			ToolUseID: tr.ToolUseID,
-			Content:   toolResultContent(tr.Content),
-			IsError:   tr.IsError != nil && *tr.IsError,
-		})
-	}
-	return out
-}
-
-// toolResultContent renders a tool_result's content as a string: a string
-// passes through; structured content is JSON-encoded (the transcript schema
-// stores content as a string).
-func toolResultContent(c any) string {
-	switch v := c.(type) {
-	case string:
-		return v
-	case nil:
-		return ""
-	default:
-		if b, err := json.Marshal(v); err == nil {
-			return string(b)
-		}
-		return fmt.Sprintf("%v", v)
-	}
 }
 
 // buildAgentPrompt constructs the prompt sent to Claude. It concatenates:
@@ -673,61 +574,6 @@ func failResult(msg string, start time.Time) *step.Result {
 	}
 }
 
-// subtypeErrText returns a descriptive error message for a failed ResultMessage.
-// Policy-limit subtypes (error_max_turns, error_max_budget_usd) get a clear
-// human-readable prefix so operators can distinguish them from API failures at
-// a glance. All other subtypes fall through to resultErrorText.
-func subtypeErrText(m *claudecode.ResultMessage) string {
-	var prefix string
-	switch m.Subtype {
-	case "error_max_turns":
-		prefix = "agent reached the maximum turn limit"
-	case "error_max_budget_usd":
-		prefix = "agent exceeded the maximum USD budget"
-	default:
-		return resultErrorText(m)
-	}
-	// Append any additional detail the SDK provided so context is not lost.
-	var parts []string
-	if m.Result != nil && *m.Result != "" {
-		parts = append(parts, *m.Result)
-	}
-	parts = append(parts, m.Errors...)
-	if len(parts) == 0 {
-		return prefix
-	}
-	return prefix + ": " + strings.Join(parts, "; ")
-}
-
-// resultErrorText builds the failure message for an errored ResultMessage,
-// combining the summary Result string with the more granular Errors list when
-// present. Falls back to a generic message if the SDK supplied neither.
-func resultErrorText(m *claudecode.ResultMessage) string {
-	var parts []string
-	if m.Result != nil && *m.Result != "" {
-		parts = append(parts, *m.Result)
-	}
-	parts = append(parts, m.Errors...)
-	if len(parts) == 0 {
-		return "unknown agent error"
-	}
-	return strings.Join(parts, "; ")
-}
-
-// agentTextDelta extracts the text from a content_block_delta StreamEvent,
-// returning ("", false) for non-text deltas (thinking, input_json, etc.).
-func agentTextDelta(ev *claudecode.StreamEvent) (string, bool) {
-	if ev.Event["type"] != claudecode.StreamEventTypeContentBlockDelta {
-		return "", false
-	}
-	delta, ok := ev.Event["delta"].(map[string]any)
-	if !ok || delta["type"] != "text_delta" {
-		return "", false
-	}
-	text, ok := delta["text"].(string)
-	return text, ok
-}
-
 // parseAskUserQuestions extracts the structured question payload from an
 // AskUserQuestion tool call input map. Returns an error if the payload is
 // malformed or missing.
@@ -777,7 +623,6 @@ func containsStr(ss []string, s string) bool {
 	}
 	return false
 }
-
 
 // Ensure AgentExecutor satisfies engine.Executor at compile time.
 var _ engine.Executor = (*AgentExecutor)(nil)
