@@ -5,7 +5,14 @@ import (
 	"jig/internal/workflow"
 )
 
-// postExecDecision is the signal returned by a post-execution handler.
+// postExecDecision is the Chain of Responsibility pattern's contract between
+// links in scheduler.postExecChain (built in newScheduler, engine.go): each
+// handler either passes the message to the next link (decisionContinue) or
+// short-circuits the chain with a final verdict (decisionFailed,
+// decisionNeedsInput). A handler that short-circuits is responsible for
+// performing whatever state transition that verdict implies — the chain
+// runner in (stepDoneMsg).execute (commands.go) only decides whether to keep
+// walking or stop.
 type postExecDecision uint8
 
 const (
@@ -14,9 +21,10 @@ const (
 	decisionNeedsInput                         // step paused for human input (handler handled transition)
 )
 
-// postExecHandler is one stage of the post-execution pipeline.
-// The first non-decisionContinue result stops the chain.
-// All state mutation (transitions, events) is performed by the handler itself.
+// postExecHandler is one link in the Chain of Responsibility: a stage of the
+// post-execution pipeline. The first non-decisionContinue result stops the
+// chain. All state mutation (transitions, events) is performed by the
+// handler itself, not by the chain runner.
 type postExecHandler func(s *scheduler, m stepDoneMsg, wfStep *workflow.Step) postExecDecision
 
 // phCaptureWorktreeDiff snapshots the worktree diff after every execution

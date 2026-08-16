@@ -93,7 +93,13 @@ func (m *Manager) PersistedRuns() ([]string, error) {
 	return datastore.ListRunIDs(m.root)
 }
 
-// RunSnapshot is a point-in-time summary of a run, safe to read from any goroutine.
+// RunSnapshot is the Memento pattern's memento: an opaque, point-in-time
+// summary of a run's state, safe to read from any goroutine because it is a
+// plain value copy, not a reference into the scheduler's live state.
+// scheduler (via its snapshot() method below) is the originator that knows
+// how to capture and restore this state; Manager.Snapshot()/Run.Snapshot()
+// and replay.go are the caretakers that request, store, and hand back
+// mementos without inspecting or mutating their contents.
 type RunSnapshot struct {
 	ID           string
 	Workflow     string
@@ -237,7 +243,12 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	return run, nil
 }
 
-// Subscribe returns two channels for this subscriber.
+// Subscribe implements the Observer pattern: Manager is the subject, each
+// sub registered here is an observer, and Event is the notification. A
+// subscriber never polls scheduler state — it is pushed events as they
+// happen via fanOutLive/fanOutCtrl below.
+//
+// It returns two channels for this subscriber.
 //
 // live carries high-volume liveness signals (StepOutput, StepToolCall,
 // StepMessage). These are drop-on-full: a missed event only means the UI is
@@ -713,7 +724,11 @@ type scheduler struct {
 	// rather than through the normal failure path.
 	stopping map[string]bool
 
-	postExecChain []postExecHandler // post-execution handler chain
+	// postExecChain is the Chain of Responsibility built once in newScheduler
+	// below and walked by (stepDoneMsg).execute (commands.go) after every
+	// successful step execution. See postExecDecision/postExecHandler in
+	// handlers.go for the link contract.
+	postExecChain []postExecHandler
 
 	onDone func(RunSnapshot) // called once before the scheduler goroutine exits
 }
@@ -2639,6 +2654,11 @@ func (s *scheduler) emit(e Event) {
 	}
 }
 
+// snapshot is the Memento pattern's originator method: only scheduler (which
+// owns all of a run's mutable state) knows how to capture that state into a
+// RunSnapshot memento. Callers (Manager, replay.go) never reach into
+// scheduler fields directly — they call snapshot()/the exported Snapshot
+// wrappers and treat the result as opaque.
 func (s *scheduler) snapshot() RunSnapshot {
 	states := make([]step.State, len(s.wf.Steps))
 	allDone := true
@@ -2668,9 +2688,11 @@ func (s *scheduler) snapshot() RunSnapshot {
 	}
 }
 
-// fanOutLive sends e to each subscriber's live channel, dropping for slow consumers.
-// Live events (StepOutput, StepToolCall, StepMessage) are liveness signals only;
-// the durable content lives in the per-step transcript on disk.
+// fanOutLive is the Observer pattern's notify step for the live channel (see
+// Subscribe): it pushes e to every registered observer's live channel,
+// dropping for slow consumers. Live events (StepOutput, StepToolCall,
+// StepMessage) are liveness signals only; the durable content lives in the
+// per-step transcript on disk.
 func fanOutLive(subs []sub, e Event) {
 	for _, s := range subs {
 		select {
@@ -2680,9 +2702,11 @@ func fanOutLive(subs []sub, e Event) {
 	}
 }
 
-// fanOutCtrl sends e to each subscriber's ctrl channel, dropping for slow consumers.
-// Ctrl events are critical (RunFinished, ReviewRequest, etc.) but the ctrl channel
-// is sized for worst-case workflow volume, so drops should not occur in practice.
+// fanOutCtrl is the Observer pattern's notify step for the ctrl channel (see
+// Subscribe): it pushes e to every registered observer's ctrl channel,
+// dropping for slow consumers. Ctrl events are critical (RunFinished,
+// ReviewRequest, etc.) but the ctrl channel is sized for worst-case workflow
+// volume, so drops should not occur in practice.
 func fanOutCtrl(subs []sub, e Event) {
 	for _, s := range subs {
 		select {

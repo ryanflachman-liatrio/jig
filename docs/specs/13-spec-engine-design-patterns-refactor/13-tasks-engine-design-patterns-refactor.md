@@ -82,7 +82,7 @@
 - [x] 2.5 Extract each policy's behavior into its own `failurePolicyStrategy` implementation and build a `map[workflow.FailurePolicy]failurePolicyStrategy`; update `applyFailurePolicy()` to look up and invoke the strategy instead of branching inline.
 - [x] 2.6 Run `gofmt -l -w internal/engine/` and `go vet ./internal/engine/...`, then `go test ./internal/engine/... -race` (with particular attention to `worktree_test.go` and `recovery_test.go`, which exercise dispatch and failure-policy paths); fix regressions before proceeding.
 
-### [ ] 3.0 Formalize Chain of Responsibility, Observer, and Memento
+### [x] 3.0 Formalize Chain of Responsibility, Observer, and Memento
 
 #### 3.0 Proof Artifact(s)
 
@@ -91,11 +91,11 @@
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Add a doc comment above the `postExecChain` type/field and its `decisionContinue`/`decisionFailed`/`decisionNeedsInput` decision type naming this the Chain of Responsibility pattern, and describing the "continue to next handler vs. short-circuit" contract each handler must honor — no behavior change to the handlers or their invocation order in the (now-relocated) `stepDoneMsg` command.
-- [ ] 3.2 Add a doc comment above `(m *Manager) Subscribe()` and `fanOutLive`/`fanOutCtrl` (engine.go:2883-2902) naming this the Observer pattern, documenting the `live`/`ctrl` channel contract (what each channel is for, delivery semantics) so a future subscriber implementer doesn't have to reverse-engineer it.
-- [ ] 3.3 Add a doc comment above `RunSnapshot` and `scheduler.snapshot()` naming this the Memento pattern, clarifying that `RunSnapshot` is the memento (opaque captured state), `scheduler` is the originator, and `Manager`/`replay.go` are the caretakers that store/restore it — cross-reference `replay.go`'s usage in the comment.
-- [ ] 3.4 Verify no field, method signature, or channel semantics changed by diffing `git diff internal/engine/` and confirming only comments were added/edited in this task.
-- [ ] 3.5 Run `gofmt -l -w internal/engine/` and `go vet ./internal/engine/...`, then `go test ./internal/engine/... -race`; fix any regressions before proceeding.
+- [x] 3.1 Add a doc comment above the `postExecChain` type/field and its `decisionContinue`/`decisionFailed`/`decisionNeedsInput` decision type naming this the Chain of Responsibility pattern, and describing the "continue to next handler vs. short-circuit" contract each handler must honor — no behavior change to the handlers or their invocation order in the (now-relocated) `stepDoneMsg` command.
+- [x] 3.2 Add a doc comment above `(m *Manager) Subscribe()` and `fanOutLive`/`fanOutCtrl` (engine.go:2883-2902) naming this the Observer pattern, documenting the `live`/`ctrl` channel contract (what each channel is for, delivery semantics) so a future subscriber implementer doesn't have to reverse-engineer it.
+- [x] 3.3 Add a doc comment above `RunSnapshot` and `scheduler.snapshot()` naming this the Memento pattern, clarifying that `RunSnapshot` is the memento (opaque captured state), `scheduler` is the originator, and `Manager`/`replay.go` are the caretakers that store/restore it — cross-reference `replay.go`'s usage in the comment.
+- [x] 3.4 Verify no field, method signature, or channel semantics changed by diffing `git diff internal/engine/` and confirming only comments were added/edited in this task.
+- [x] 3.5 Run `gofmt -l -w internal/engine/` and `go vet ./internal/engine/...`, then `go test ./internal/engine/... -race`; fix any regressions before proceeding.
 
 ### [ ] 4.0 Full 23-Pattern Design Audit Document
 
