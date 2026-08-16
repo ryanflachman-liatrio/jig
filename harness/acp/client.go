@@ -19,10 +19,22 @@ import (
 // depends on this being a real decision, not an always-allow stub.
 type Decider func(toolCall acpsdk.ToolCallUpdate) bool
 
+// EventKind identifies which session/update variant an Event captured.
+type EventKind string
+
+const (
+	EventMessage        EventKind = "message"
+	EventThought        EventKind = "thought"
+	EventToolCall       EventKind = "tool_call"
+	EventToolCallUpdate EventKind = "tool_call_update"
+	EventPlan           EventKind = "plan"
+	EventUserMessage    EventKind = "user_message"
+)
+
 // Event is one captured entry from the session/update notification stream,
 // recorded in the order it was received.
 type Event struct {
-	Kind   string // "message", "thought", "tool_call", "tool_call_update", "plan", "user_message"
+	Kind   EventKind
 	Text   string
 	ToolID string
 	Title  string
@@ -102,13 +114,13 @@ func (c *Client) SessionUpdate(_ context.Context, params acpsdk.SessionNotificat
 	var ev Event
 	switch {
 	case u.AgentMessageChunk != nil:
-		ev = Event{Kind: "message", Text: textOf(u.AgentMessageChunk.Content)}
+		ev = Event{Kind: EventMessage, Text: textOf(u.AgentMessageChunk.Content)}
 	case u.AgentThoughtChunk != nil:
-		ev = Event{Kind: "thought", Text: textOf(u.AgentThoughtChunk.Content)}
+		ev = Event{Kind: EventThought, Text: textOf(u.AgentThoughtChunk.Content)}
 	case u.UserMessageChunk != nil:
-		ev = Event{Kind: "user_message", Text: textOf(u.UserMessageChunk.Content)}
+		ev = Event{Kind: EventUserMessage, Text: textOf(u.UserMessageChunk.Content)}
 	case u.ToolCall != nil:
-		ev = Event{Kind: "tool_call", ToolID: string(u.ToolCall.ToolCallId), Title: u.ToolCall.Title, Status: string(u.ToolCall.Status)}
+		ev = Event{Kind: EventToolCall, ToolID: string(u.ToolCall.ToolCallId), Title: u.ToolCall.Title, Status: string(u.ToolCall.Status)}
 	case u.ToolCallUpdate != nil:
 		status := ""
 		if u.ToolCallUpdate.Status != nil {
@@ -118,9 +130,9 @@ func (c *Client) SessionUpdate(_ context.Context, params acpsdk.SessionNotificat
 		if u.ToolCallUpdate.Title != nil {
 			title = *u.ToolCallUpdate.Title
 		}
-		ev = Event{Kind: "tool_call_update", ToolID: string(u.ToolCallUpdate.ToolCallId), Title: title, Status: status}
+		ev = Event{Kind: EventToolCallUpdate, ToolID: string(u.ToolCallUpdate.ToolCallId), Title: title, Status: status}
 	case u.Plan != nil:
-		ev = Event{Kind: "plan"}
+		ev = Event{Kind: EventPlan}
 	default:
 		return nil
 	}

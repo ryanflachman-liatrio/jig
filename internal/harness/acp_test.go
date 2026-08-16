@@ -33,17 +33,17 @@ func TestTranslateEvent(t *testing.T) {
 	}{
 		{
 			name: "message chunk",
-			in:   acp.Event{Kind: "message", Text: "hello"},
+			in:   acp.Event{Kind: acp.EventMessage, Text: "hello"},
 			want: []Event{{Type: EventText, Text: "hello"}, {Type: EventAssistantEnd}},
 		},
 		{
 			name: "thought chunk",
-			in:   acp.Event{Kind: "thought", Text: "thinking..."},
+			in:   acp.Event{Kind: acp.EventThought, Text: "thinking..."},
 			want: []Event{{Type: EventThinking, Text: "thinking..."}, {Type: EventAssistantEnd}},
 		},
 		{
 			name: "tool call",
-			in:   acp.Event{Kind: "tool_call", ToolID: "call_1", Title: "Read file.go"},
+			in:   acp.Event{Kind: acp.EventToolCall, ToolID: "call_1", Title: "Read file.go"},
 			want: []Event{
 				{Type: EventToolUse, ToolUseID: "call_1", Name: "Read file.go"},
 				{Type: EventAssistantEnd},
@@ -51,7 +51,7 @@ func TestTranslateEvent(t *testing.T) {
 		},
 		{
 			name: "tool call update completed",
-			in:   acp.Event{Kind: "tool_call_update", ToolID: "call_1", Status: "completed"},
+			in:   acp.Event{Kind: acp.EventToolCallUpdate, ToolID: "call_1", Status: "completed"},
 			want: []Event{
 				{Type: EventToolResult, ToolUseID: "call_1", Content: "completed", IsError: false},
 				{Type: EventUserEnd},
@@ -59,7 +59,7 @@ func TestTranslateEvent(t *testing.T) {
 		},
 		{
 			name: "tool call update failed",
-			in:   acp.Event{Kind: "tool_call_update", ToolID: "call_1", Status: "failed"},
+			in:   acp.Event{Kind: acp.EventToolCallUpdate, ToolID: "call_1", Status: "failed"},
 			want: []Event{
 				{Type: EventToolResult, ToolUseID: "call_1", Content: "failed", IsError: true},
 				{Type: EventUserEnd},
@@ -67,7 +67,7 @@ func TestTranslateEvent(t *testing.T) {
 		},
 		{
 			name: "unknown kind ignored",
-			in:   acp.Event{Kind: "plan"},
+			in:   acp.Event{Kind: acp.EventPlan},
 			want: nil,
 		},
 	}

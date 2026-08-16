@@ -117,16 +117,16 @@ func (s *acpSession) run(ctx context.Context, sessionID, prompt string) {
 // require guessing turn boundaries the protocol does not expose.
 func translateEvent(ev acp.Event) []Event {
 	switch ev.Kind {
-	case "message":
+	case acp.EventMessage:
 		return []Event{{Type: EventText, Text: ev.Text}, {Type: EventAssistantEnd}}
-	case "thought":
+	case acp.EventThought:
 		return []Event{{Type: EventThinking, Text: ev.Text}, {Type: EventAssistantEnd}}
-	case "tool_call":
+	case acp.EventToolCall:
 		return []Event{
 			{Type: EventToolUse, ToolUseID: ev.ToolID, Name: ev.Title},
 			{Type: EventAssistantEnd},
 		}
-	case "tool_call_update":
+	case acp.EventToolCallUpdate:
 		return []Event{
 			{
 				Type:      EventToolResult,
