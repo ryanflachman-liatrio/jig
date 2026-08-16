@@ -111,7 +111,7 @@
 - [x] 4.4 Fill in the 11 Behavioral patterns (Chain of Responsibility, Command, Interpreter, Iterator, Mediator, Memento, Observer, State, Strategy, Template Method, Visitor): mark Chain of Responsibility, Command, Memento, Observer, Strategy as Applied, referencing Tasks 1.0-3.0; assess `evalGuard()`/`workflow.Condition` (engine.go:2108-2165) for an Interpreter fit; assess `nextReady()`/`anyPendingRunnable()`/`anyFailed()` for an Iterator fit; assess `scheduler` itself (coordinating steps/loops/workers without them referencing each other) for a Mediator fit; assess `step.Status`/`transition()` for a State fit, noting that a formal State-object hierarchy would add object bloat the current enum+guard-function approach avoids (per `CLAUDE.md`); mark Template Method and Visitor as Applied or Not Applicable based on actual code.
 - [x] 4.5 Cross-check the completed document lists exactly 23 patterns with no duplicates or omissions, and that every "Applied" entry names a real file/type/line that exists in the codebase (re-verify against `git diff` from Tasks 1.0-3.0, not from memory).
 
-### [ ] 5.0 Full-Repository Regression Verification
+### [x] 5.0 Full-Repository Regression Verification
 
 #### 5.0 Proof Artifact(s)
 
@@ -122,9 +122,9 @@
 
 #### 5.0 Tasks
 
-- [ ] 5.1 Grep `internal/runner/*.go` (`agent.go`, `command.go`, `mux.go`, `monitor.go`, `fake.go`) for references to any `engine`-package symbol renamed or restructured in Tasks 1.0-2.0, and update call sites accordingly.
-- [ ] 5.2 Grep `internal/tui/root.go`, `root_cmds.go`, `root_update.go` for references to any renamed `engine.Manager`/`engine.Run` symbols, and update call sites accordingly.
-- [ ] 5.3 Update any `internal/engine/*_test.go` references to renamed unexported/exported symbols so the suite compiles — without altering any test's assertions or expected behavior.
-- [ ] 5.4 Run `gofmt -l -w .` and `go vet ./...` across the full repository; resolve any findings.
-- [ ] 5.5 Run `go build ./cmd/jig` and confirm it succeeds.
-- [ ] 5.6 Run `go test ./... -race`; confirm the full suite passes with no assertion changes beyond symbol renames, and record the pass as the closing proof artifact for this feature.
+- [x] 5.1 Grep `internal/runner/*.go` (`agent.go`, `command.go`, `mux.go`, `monitor.go`, `fake.go`) for references to any `engine`-package symbol renamed or restructured in Tasks 1.0-2.0, and update call sites accordingly.
+- [x] 5.2 Grep `internal/tui/root.go`, `root_cmds.go`, `root_update.go` for references to any renamed `engine.Manager`/`engine.Run` symbols, and update call sites accordingly.
+- [x] 5.3 Update any `internal/engine/*_test.go` references to renamed unexported/exported symbols so the suite compiles — without altering any test's assertions or expected behavior.
+- [x] 5.4 Run `gofmt -l -w .` and `go vet ./...` across the full repository; resolve any findings.
+- [x] 5.5 Run `go build ./cmd/jig` and confirm it succeeds.
+- [x] 5.6 Run `go test ./... -race`; confirm the full suite passes with no assertion changes beyond symbol renames, and record the pass as the closing proof artifact for this feature.
