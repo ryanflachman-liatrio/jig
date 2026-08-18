@@ -1,6 +1,9 @@
 package harness
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestFor(t *testing.T) {
 	tests := []struct {
@@ -23,6 +26,9 @@ func TestFor(t *testing.T) {
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("For(%q, %q) error = nil, want an error", tt.backend, tt.transport)
+				}
+				if !strings.Contains(err.Error(), "claude") {
+					t.Errorf("error = %q, want it to list valid backend/transport names", err.Error())
 				}
 				return
 			}

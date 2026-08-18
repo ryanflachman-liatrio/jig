@@ -123,7 +123,7 @@ agent process it drives. Introduced by the ACP↔Claude harness work (spec 12).
 
 **Harness**:
 The jig-owned Go type implementing the `Harness` interface (`ClaudeHarness`,
-`AcpHarness`) — the code that translates a `SessionSpec` into one specific
+`AcpHarness`, `CursorHarness`) — the code that translates a `SessionSpec` into one specific
 transport's lifecycle and normalizes its output into jig's transcript model.
 _Avoid_: Backend (reserve for the vendor/model being driven), adapter, driver.
 
