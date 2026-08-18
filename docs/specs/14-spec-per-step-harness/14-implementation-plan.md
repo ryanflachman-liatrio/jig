@@ -1,9 +1,10 @@
-# Implementation Plan: Per-Step Harness Selection
+# Implementation Plan: Per-Step Backend Selection
 
 **Status:** Plan for review (no code yet)
-**Depends on:** Spec 12 (`12-spec-acp-claude-harness`) — which deliberately deferred
-TOML-level harness selection (non-goal §3)
-**Supersedes the env-only selection path** introduced by Spec 12's `JIG_HARNESS`
+**Depends on:** Spec 12 (`12-spec-acp-claude-harness`) — which deferred TOML-level
+selection (non-goal §3)
+**Breaks:** Spec 12’s `JIG_HARNESS` / `harness.FromEnv` process-wide selection
+(pre-v1; no compatibility shim — see [`AGENTS.md`](../../../AGENTS.md))
 
 ---
 
@@ -13,61 +14,62 @@ The Bubble Tea TUI never imports `internal/harness` and never reads `JIG_HARNESS
 That is intentional from Spec 12: the run monitor is transcript-only and
 backend-agnostic.
 
-| Screen / package | Role | Harness relevance |
+| Screen / package | Role | Backend relevance |
 |---|---|---|
-| `internal/tui/root.go` | Routes Selector → Detail → Runs → Monitor; owns `tea.View` | None. Constructs monitor with `engine.Manager` only. |
-| `internal/tui/selector` | Workflow file picker | None. |
-| `internal/tui/detail` | Workflow preview: step list + DAG chart | Shows type badge (`agent`/`command`/`review`) via `theme.Step.Types`. **Does not show which backend will run an agent step.** |
-| `internal/tui/chart` | DAG layout from `Step.DependsOn` | Type-colored nodes only; no harness annotation. |
-| `internal/tui/monitor` | Live run: step list + transcript + gates | Reads `transcript.jsonl` from disk. Already correct for mixed-harness runs — no change required for correctness. |
-| `internal/tui/chat` | Standalone streaming chat | Still on its own path; out of scope (same as Spec 12). |
-| `internal/tui/shared/styles.go` | Theme tokens | No harness style today. |
+| `internal/tui/root.go` | Routes Selector → Detail → Runs → Monitor | None |
+| `internal/tui/selector` | Workflow file picker | None |
+| `internal/tui/detail` | Workflow preview: step list + DAG chart | Type badge only; does not show backend/transport |
+| `internal/tui/chart` | DAG from `Step.DependsOn` | Type-colored nodes only |
+| `internal/tui/monitor` | Live run: transcript + gates | Reads `transcript.jsonl` — correct for mixed backends with no changes |
+| `internal/tui/chat` | Standalone chat | Out of scope |
+| `internal/tui/shared/styles.go` | Theme tokens | No backend style today |
 
-**Verdict:** Correctness of multi-harness runs does **not** require TUI changes.
-The only useful UI addition is optional operator clarity on the detail step list
-(and optionally the chart): show the resolved harness name on agent steps so a
-workflow that mixes `claude` and `acp` is inspectable before Run.
+**Verdict:** No TUI changes required for correctness. Optional: detail step markers
+showing resolved `backend`/`transport` for operator clarity before Run.
 
 ---
 
 ## Problem
 
-Today harness selection is process-wide:
+Today selection is process-wide via env:
 
 ```go
-// cmd/jig/main.go
+// cmd/jig/main.go — DELETE this pattern
 h, err := harness.FromEnv()          // JIG_HARNESS = ""|"claude"|"acp"
 mux.Register(workflow.StepAgent, runner.NewAgentExecutor(h))
 ```
 
-`AgentExecutor` holds a single `harness.Harness` for the whole process. Every
-agent step in every workflow shares that backend. Spec 12 explicitly deferred
-`harness` on `workflow.Step` / `Defaults`.
+`AgentExecutor` holds one `harness.Harness` for the whole process. Spec 12
+explicitly deferred TOML selection. Operators cannot mix backends (or Claude SDK
+vs ACP→Claude) within one workflow.
 
-**Desired behavior:** each agent step declares its own harness in the `.toml`,
-so one workflow can mix backends (e.g. `claude` for structured-output / resume
-steps, `acp` for a permission-sensitive spike step).
+Also: `JIG_HARNESS=acp` names a **transport**, which confuses authors who expect
+Cursor/Codex/Gemini. Vocabulary (from `CONTEXT.md` / `AGENTS.md`):
+
+- **Backend** = vendor (`claude`, later `cursor` / `codex` / `gemini`)
+- **Harness** = jig Go type (`ClaudeHarness`, `AcpHarness`)
+- **Transport** = how we reach the backend (`sdk` | `acp`)
+
+Today only **Claude** is implemented; ACP reaches Claude via Zed’s adapter, not
+Cursor.
 
 ---
 
-## Goal (one sentence)
+## Goal
 
-Add an optional `harness` field to `[defaults]` and `[[step]]` so each agent
-step resolves to a named harness at load time, and `AgentExecutor` selects that
-harness per `Execute` — without requiring TUI changes for correctness, and
-without silently degrading when a step needs a capability the chosen harness
-lacks.
+Add optional `backend` and `transport` fields on `[defaults]` and `[[step]]` so
+each agent step resolves its harness at load time; `AgentExecutor` selects per
+`Execute`. **Remove** `JIG_HARNESS` and `FromEnv` entirely — no env fallback.
 
 ---
 
 ## Non-goals
 
-- New harness backends (Cursor, Gemini, etc.)
+- Implementing Cursor / Codex / Gemini backends (schema may reserve names later;
+  do not accept them in validate until a harness exists)
 - Migrating Tier-2 `MonitorAdapter` or standalone `tui/chat` onto the harness seam
-- Load-time capability cross-checking (schema vs harness caps) — keep fail-closed
-  at `AgentExecutor.Execute` (already implemented)
-- Changing transcript format or monitor rendering of tool/text blocks
-- Making `harness` required on every agent step
+- Load-time capability cross-checks (keep execute-time fail-closed)
+- Env-based overrides or migration shims of any kind
 
 ---
 
@@ -75,17 +77,18 @@ lacks.
 
 | # | Topic | Decision |
 |---|---|---|
-| D1 | Where is harness declared? | `harness` string on `[defaults]` and `[[step]]`, same inheritance pattern as `model` / `effort` |
-| D2 | Allowed values | `"claude"` \| `"acp"` (match today's `FromEnv` names). Unknown → `jig validate` error |
-| D3 | Inheritance | step > `[defaults]` > `"claude"`. Resolved in `applyDefaults` so the executor reads a non-empty string |
-| D4 | Agent-only? | Like `model`: inherited onto every step type, ignored by command/review. Do **not** put it in `hasAgentOnlyFields` (those reject command/review). Tuning-style validation covers the enum |
-| D5 | `JIG_HARNESS` fate | **Deprecate as process-wide override.** TOML is source of truth. Keep `ByName` / thin `FromEnv` wrapper for tests and one-release migration: if env is set **and** neither defaults nor step set `harness`, use env as the unresolved default name. If TOML sets harness, env is ignored. Document removal in a follow-up |
-| D6 | `AgentExecutor` shape | Stop holding one `Harness`. Hold a name→Harness lookup (registry or `harness.ByName`). Each `Execute` resolves `req.Step.Harness` |
-| D7 | Factory API | Add `harness.ByName(name string) (Harness, error)`. Refactor `FromEnv` to `ByName(os.Getenv("JIG_HARNESS"))` |
-| D8 | `main` wiring | `NewAgentExecutor` no longer takes a single harness from `FromEnv` at startup. Either pass a registry built once, or call `ByName` inside Execute. Prefer registry injected at construction so tests can inject fakes by name |
-| D9 | Validate vs Execute | Unknown name → validate-time. Capability mismatch → execute-time fail-closed (existing gates unchanged) |
-| D10 | TUI | Optional: detail step list shows harness marker for agent steps when resolved harness ≠ default `"claude"`, or always show it. Monitor unchanged |
-| D11 | Package deps | `workflow` must **not** import `internal/harness` (would pull SDK into the schema package). Keep a string allowlist in `workflow` mirroring `ByName` |
+| D1 | Author-facing fields | `backend` + `transport` on `[defaults]` and `[[step]]`, same inheritance as `model` |
+| D2 | Allowed values (this slice) | `backend`: `"claude"` only. `transport`: `"sdk"` \| `"acp"`. Unknown → validate error |
+| D3 | Defaults | step → `[defaults]` → `backend="claude"`, `transport="sdk"` |
+| D4 | Mapping to harness | `(claude, sdk)` → `ClaudeHarness`; `(claude, acp)` → `AcpHarness` |
+| D5 | `JIG_HARNESS` / `FromEnv` | **Delete.** Remove `FromEnv`, its tests, and all `cmd/jig` callers. No shim, no warning, no “if env set” branch |
+| D6 | `AgentExecutor` | Lookup by resolved `(backend, transport)` (or a single factory key). Inject lookup for tests |
+| D7 | Factory API | `harness.For(backend, transport string) (Harness, error)` (or equivalent). Replace `FromEnv` |
+| D8 | Agent-only? | Like `model`: inherited on all step types, ignored by command/review; enum-checked in tuning-style validation |
+| D9 | Validate vs Execute | Unknown backend/transport → validate-time. Capability mismatch → execute-time fail-closed |
+| D10 | TUI | Optional detail markers; monitor unchanged |
+| D11 | Package deps | `workflow` must not import `internal/harness`. String allowlists in `workflow` |
+| D12 | Pre-v1 | Breaking change is intentional; update `AGENTS.md`, schema docs, CONTEXT, Spec 12 notes |
 
 ---
 
@@ -93,105 +96,78 @@ lacks.
 
 ```toml
 [defaults]
-harness = "claude"          # optional; default when omitted is "claude"
+backend   = "claude"   # optional; default "claude"
+transport = "sdk"      # optional; default "sdk"
 
 [[step]]
-id = "intake"
-type = "agent"
-harness = "claude"          # optional override
-skill = "intake"
-# …
+id        = "intake"
+type      = "agent"
+backend   = "claude"
+transport = "sdk"
+skill     = "intake"
 
 [[step]]
-id = "acp-spike"
-type = "agent"
-harness = "acp"             # different backend for this step only
-skill = "…"
-# note: block_on / schema / AskUserQuestion will fail closed on acp
-# (AcpHarness advertises CapPermissionCallback only)
+id        = "acp-spike"
+type      = "agent"
+backend   = "claude"
+transport = "acp"      # ACP→Claude; CapPermissionCallback only today
+skill     = "…"
 ```
-
-### Field reference (for `docs/workflow-schema.md`)
 
 | Field | Where | Type | Notes |
 |---|---|---|---|
-| `harness` | `[defaults]`, `[[step]]` | string | `claude` (default) or `acp`. Per-step overrides defaults. Ignored on command/review. |
+| `backend` | `[defaults]`, `[[step]]` | string | `claude` (only implemented value). Future: `cursor`, `codex`, `gemini` |
+| `transport` | `[defaults]`, `[[step]]` | string | `sdk` (default) or `acp`. Meaningful for Claude today |
 
 ---
 
 ## Code changes (ordered)
 
-### 1. `internal/harness` — named factory
+### 1. `internal/harness` — named factory; delete env
 
-- Add `ByName(name string) (Harness, error)` in `select.go` (or rename file).
-- Keep `FromEnv()` as a one-liner wrapper for backward-compatible tests / migration.
-- Tests in `select_test.go`: known names, empty → claude, unknown errors.
+- Add `For(backend, transport string) (Harness, error)`.
+- **Delete** `FromEnv` and `JIG_HARNESS` handling from `select.go` (rename file if useful).
+- Rewrite `select_test.go` for `For` only — no env tests.
 
 ### 2. `internal/workflow` — schema + defaults + validate
 
-- `Defaults.Harness string \`toml:"harness"\``
-- `Step.Harness string \`toml:"harness"\``
-- `applyDefaults`: if `s.Harness == ""` { use defaults; if still `""` { `"claude"` } }
-  - Migration hook (optional, D5): if still empty after defaults, read nothing from env
-    inside workflow — keep env handling in `cmd`/`runner` only so `workflow` stays pure.
-  - Cleaner: resolve only TOML; default `"claude"`. Env migration in `main` by
-    pre-filling `wf.Defaults.Harness` when empty before run (not in Load). Prefer
-    **pure TOML default** — document that `JIG_HARNESS` no longer selects the
-    process harness; operators set `[defaults] harness` instead.
-- `checkTuning` (or sibling): invalid harness enum → validation error listing allowed values.
-- Table-driven tests: valid inheritance, per-step override, unknown name, defaults-only.
-
-**Committed design for D5 (refine):** drop process-wide injection entirely.
-Unset field → `"claude"`. `JIG_HARNESS` remains parseable via `FromEnv` for
-ad-hoc tooling but `cmd/jig` stops calling it for executor construction.
-Update Spec 12 docs / CONTEXT.md accordingly. Fail-fast on unknown env can move
-to a warning or be removed from the validate path (today `main` calls `FromEnv`
-even for `jig validate` — that coupling goes away).
+- `Defaults.Backend`, `Defaults.Transport`, `Step.Backend`, `Step.Transport`.
+- `applyDefaults`: inherit then fill `"claude"` / `"sdk"`.
+- Validate enums; reject unknown pairs (e.g. `transport=acp` with a future
+  backend that doesn’t support it once those exist).
+- Table-driven tests: inheritance, per-step override, unknown values.
 
 ### 3. `internal/runner` — per-execute selection
 
 ```go
 type AgentExecutor struct {
-    // byName returns the harness for a resolved step.Harness name.
-    // Production: harness.ByName. Tests: map lookup wrapping FakeHarness.
-    byName func(name string) (harness.Harness, error)
+    forHarness func(backend, transport string) (harness.Harness, error)
 }
 
-func NewAgentExecutor(byName func(string) (harness.Harness, error)) *AgentExecutor
-
 func (e *AgentExecutor) Execute(...) {
-    h, err := e.byName(req.Step.Harness)
-    if err != nil { return failResult(...), nil }
-    caps := h.Capabilities()
-    // existing fail-closed gates, using h instead of e.harness
-    sess, err := h.Open(ctx, spec)
-    ...
+    h, err := e.forHarness(req.Step.Backend, req.Step.Transport)
+    // existing capability gates against h
 }
 ```
 
-- Compatibility helper for tests: `NewAgentExecutor(func(string) (harness.Harness, error) { return fixed, nil })` or `NewAgentExecutorFixed(h)`.
-- Update all `agent_test.go` construction sites.
+Update all `agent_test.go` sites.
 
 ### 4. `cmd/jig/main.go`
 
-- Remove startup `harness.FromEnv()` before subcommand dispatch (or keep only if we
-  still want env fail-fast — prefer remove so `validate` stays schema-only).
-- `mux.Register(workflow.StepAgent, runner.NewAgentExecutor(harness.ByName))`
+- Remove **all** `harness.FromEnv()` usage (including the pre-subcommand fail-fast).
+- `mux.Register(workflow.StepAgent, runner.NewAgentExecutor(harness.For))`
+- `jig validate` must not touch harness selection at all.
 
-### 5. Docs + examples
+### 5. Docs
 
-- `docs/workflow-schema.md` — document `harness` under defaults and agent step fields.
-- `CONTEXT.md` — note TOML selection replaces env as the operator-facing control.
-- Kitchen-sink example (when present) or a small `examples/` snippet showing mixed harnesses.
-- Short ADR or Spec 14 overview noting Spec 12 non-goal §3 is now in scope.
+- `AGENTS.md` — already states TOML-only / pre-v1 (keep in sync).
+- `docs/workflow-schema.md`, `CONTEXT.md`, Spec 12 “selection via env” notes → TOML.
+- Example TOML with mixed `transport` on Claude steps.
 
-### 6. TUI (optional, small)
+### 6. TUI (optional)
 
-- `internal/tui/detail/view.go` `stepMarkers` or a new badge: for `type=agent`, append
-  `harness <name>` when useful.
-- Style via existing `theme.Marker` — no new color tokens required.
-- One table-driven test on marker rendering if markers become harness-aware.
-- **Monitor: no change.**
+- Detail markers for `backend`/`transport` on agent steps.
+- Monitor: no change.
 
 ---
 
@@ -199,57 +175,44 @@ func (e *AgentExecutor) Execute(...) {
 
 | Layer | What |
 |---|---|
-| `internal/harness` | `ByName` / `FromEnv` matrix |
-| `internal/workflow` | decode + applyDefaults + validate valid/invalid; inheritance |
-| `internal/runner` | `Execute` with registry of two fakes: step A opens fake-claude, step B opens fake-acp; capability fail-closed still names the **selected** harness |
-| `cmd` / integration | `jig validate` accepts mixed-harness TOML; unknown harness fails validate; no longer requires valid `JIG_HARNESS` to validate |
-| TUI (if D10 done) | detail markers include harness |
-
-Commands (from CLAUDE.md):
+| `internal/harness` | `For` matrix; **no** `FromEnv` / env tests remain |
+| `internal/workflow` | decode, defaults, validate |
+| `internal/runner` | two fakes: sdk step vs acp step open different harnesses |
+| `cmd` | validate works with no harness env; unknown backend fails validate |
+| Grep | `JIG_HARNESS` and `FromEnv` gone from tree (except historical specs/proofs) |
 
 ```bash
 go test ./internal/harness ./internal/workflow ./internal/runner -count=1
 go test ./...
 gofmt -l -w .
 go vet ./...
-# when an example exists:
-go run ./cmd/jig validate <workflow-with-mixed-harness.toml>
 ```
 
 ---
 
 ## Risk
 
-**medium–high** — schema + runner + cmd wiring; TUI optional and small. Main risk is
-breaking existing operators who rely on `JIG_HARNESS=acp` without TOML changes:
-mitigate with clear docs and, if needed, a one-release shim that maps env →
-`Defaults.Harness` when the field is unset (call out in PR; default plan is
-TOML-only with `"claude"` default).
-
-Capability mismatch remains execute-time: an author can `validate` an `acp`
-step that declares `schema` / `block_on` / `AskUserQuestion` and only fail when
-the step runs. That matches today's env-selected behavior. A follow-up could
-add static capability tables keyed by harness name for validate-time checks.
+**medium** — schema + runner + cmd; intentional break of `JIG_HARNESS`. Mitigate by
+docs/`AGENTS.md` clarity, not by shims. Capability mismatches stay execute-time.
 
 ---
 
-## Task list (implementation order)
+## Task list
 
 | # | Title | Area | Est. (min) |
 |---|---|---|---|
-| 1 | Add `ByName`; keep `FromEnv` as wrapper; tests | `internal/harness` | 20 |
-| 2 | Add `Harness` to `Defaults`/`Step`; `applyDefaults`; validate enum; tests | `internal/workflow` | 45 |
-| 3 | Refactor `AgentExecutor` to per-step lookup; update tests | `internal/runner` | 45 |
-| 4 | Wire `main` to `ByName`; stop process-wide `FromEnv` for executors | `cmd/jig` | 15 |
-| 5 | Document field in `workflow-schema.md` + CONTEXT / Spec 14 note | `docs/` | 25 |
-| 6 | (Optional) Detail step markers for harness | `internal/tui/detail` | 20 |
-| 7 | Example TOML exercising mixed harness + `jig validate` | `examples/` | 15 |
+| 1 | Add `For`; delete `FromEnv` + env tests | `internal/harness` | 25 |
+| 2 | Add `Backend`/`Transport` fields; defaults; validate; tests | `internal/workflow` | 45 |
+| 3 | Per-step lookup in `AgentExecutor`; update tests | `internal/runner` | 45 |
+| 4 | Remove env wiring from `main` | `cmd/jig` | 15 |
+| 5 | Schema docs + CONTEXT; scrub live docs of `JIG_HARNESS` | `docs/`, `AGENTS.md` | 25 |
+| 6 | (Optional) Detail markers | `internal/tui/detail` | 20 |
+| 7 | Example TOML with mixed transport | `examples/` | 15 |
 
 ---
 
 ## Summary
 
-Replace process-wide `JIG_HARNESS` selection with a TOML `harness` field on
-`[defaults]` and `[[step]]` (default `claude`), and make `AgentExecutor` resolve
-the harness per step via `ByName`. The TUI is already correct for mixed backends;
-only an optional detail-list marker improves operator visibility.
+Delete process-wide `JIG_HARNESS` / `FromEnv`. Select agent backends in TOML via
+`backend` + `transport` (Claude + `sdk`/`acp` this slice). `AgentExecutor`
+resolves per step. Pre-v1: no compatibility shim. TUI unchanged for correctness.

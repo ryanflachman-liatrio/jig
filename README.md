@@ -83,4 +83,6 @@ that exercises every construct.
 - [`docs/workflow-schema.md`](docs/workflow-schema.md) — the full workflow spec (source of truth).
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how the code is laid out and why.
 - [`docs/TESTING.md`](docs/TESTING.md) — testing strategy and conventions.
-- [`CLAUDE.md`](CLAUDE.md) — orientation for AI coding assistants.
+- [`AGENTS.md`](AGENTS.md) — cross-tool orientation for AI coding assistants
+  (backend selection, pre-v1 policy).
+- [`CLAUDE.md`](CLAUDE.md) — Claude Code–oriented notes (imports / extends AGENTS.md).

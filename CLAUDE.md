@@ -2,6 +2,9 @@
 
 Guidance for Claude Code (and humans) working in this repository.
 
+Cross-tool baseline (backend selection, pre-v1 policy, package map): see
+[`AGENTS.md`](AGENTS.md). Prefer that file when the two disagree on shared rules.
+
 ## What jig is
 
 **jig** is a Go CLI/TUI that puts a **deterministic orchestration layer around
@@ -46,8 +49,11 @@ before assuming a feature is missing — this list drifts.
   steps to workers, drives loops and review gates, and emits events. Defines the
   `Executor` and `Reporter` interfaces that `runner` implements (dependency
   inversion keeps `engine` free of `os/exec` and SDK imports).
-- `internal/runner` — the concrete executors: `AgentExecutor` (Claude Agent SDK)
-  and `CommandExecutor` (shell). Both capture their output to the transcript.
+- `internal/harness` — `Harness` seam (`ClaudeHarness` SDK, `AcpHarness` ACP→Claude).
+  Selection is **TOML-only** (`backend` / `transport` per Spec 14) — never
+  `JIG_HARNESS` / `FromEnv` (pre-v1; delete, do not shim).
+- `internal/runner` — the concrete executors: `AgentExecutor` (via harness) and
+  `CommandExecutor` (shell). Both capture their output to the transcript.
 - `internal/transcript` — the per-step `transcript.jsonl` store (append writer +
   windowed reader): the durable record of an agent/command conversation.
 - `internal/datastore` — run/step persistence under `.jig/runs/<id>/` (path
@@ -189,11 +195,14 @@ component structs — the package singleton is always available.
 
 ```toml
 [workflow]        # name, version, description
-[defaults]        # model/effort/limits inherited by every step
+[defaults]        # model/effort/limits/backend/transport inherited by every step
 [[step]]          # one node: type = "agent" | "command" | "review"
   [step.schema]   # producer's structured-output contract
   [step.validate] # deterministic gate (exit code / schema / file checks)
   [step.loop]     # bounded back-edge (guaranteed to terminate)
 ```
+
+Agent backend is chosen in the TOML (`backend` / `transport`), not the
+environment — see [`AGENTS.md`](AGENTS.md).
 
 Full field reference: [`docs/workflow-schema.md`](docs/workflow-schema.md).

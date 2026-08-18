@@ -128,10 +128,13 @@ transport's lifecycle and normalizes its output into jig's transcript model.
 _Avoid_: Backend (reserve for the vendor/model being driven), adapter, driver.
 
 **Backend**:
-The vendor, CLI, or model a Harness talks to (Claude, Cursor, Gemini) — the
-*target*, not the jig code that talks to it. One Harness could in principle
-target more than one backend (an ACP Harness could drive Cursor as well as
-Claude via the same transport).
+The vendor, CLI, or model a Harness talks to (Claude today; Cursor, Codex,
+Gemini later) — the *target*, not the jig code that talks to it. Selected in
+the workflow TOML (`backend` / `transport` on `[defaults]` / `[[step]]`), never
+via `JIG_HARNESS`. One Harness could in principle target more than one backend
+(an ACP Harness could drive Cursor as well as Claude via the same transport).
+Today `AcpHarness` reaches **Claude** only (Zed’s `claude-code-acp` adapter),
+not Cursor.
 _Avoid_: Harness (a backend is who you're talking to; a Harness is the code
 that talks).
 
