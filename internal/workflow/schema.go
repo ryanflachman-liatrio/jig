@@ -77,6 +77,31 @@ func validPermissionMode(s string) bool {
 	return false
 }
 
+// Backend and transport name the agent vendor and how jig reaches it.
+// Selected in TOML only (never via env). Only Claude is implemented today.
+const (
+	BackendClaude = "claude"
+
+	TransportSDK = "sdk"
+	TransportACP = "acp"
+)
+
+func validBackend(s string) bool {
+	switch s {
+	case BackendClaude:
+		return true
+	}
+	return false
+}
+
+func validTransport(s string) bool {
+	switch s {
+	case TransportSDK, TransportACP:
+		return true
+	}
+	return false
+}
+
 // OutputKind is the shape of a step's typed verdict.
 type OutputKind string
 
@@ -199,6 +224,11 @@ type Defaults struct {
 	// inject_context overrides it.
 	InjectContext *bool `toml:"inject_context"`
 
+	// Backend / Transport select which agent vendor and wire protocol run
+	// agent steps. Per-step values override these; see Step.Backend.
+	Backend   string `toml:"backend"`
+	Transport string `toml:"transport"`
+
 	// Security is the workflow-wide security monitoring configuration. Security
 	// is on by default when this block is absent.
 	Security SecurityConfig `toml:"security"`
@@ -252,6 +282,12 @@ type Step struct {
 	MaxThinkingTokens int         `toml:"max_thinking_tokens"`
 	MaxBudgetUSD      float64     `toml:"max_budget_usd"`
 	PermissionMode    string      `toml:"permission_mode"`
+
+	// Backend is the agent vendor (claude today). Transport is how jig reaches
+	// it: "sdk" (Claude Agent SDK) or "acp" (ACP→Claude). Inherited from
+	// [defaults]; resolved to non-empty values by applyDefaults.
+	Backend   string `toml:"backend"`
+	Transport string `toml:"transport"`
 
 	// OutputTemplate is a path (relative to the workflow file) to a markdown
 	// template that structures the agent's text response. The engine reads it at

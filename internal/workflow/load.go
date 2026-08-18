@@ -119,6 +119,18 @@ func (wf *Workflow) applyDefaults() {
 		if s.PermissionMode == "" {
 			s.PermissionMode = wf.Defaults.PermissionMode
 		}
+		if s.Backend == "" {
+			s.Backend = wf.Defaults.Backend
+		}
+		if s.Backend == "" {
+			s.Backend = BackendClaude
+		}
+		if s.Transport == "" {
+			s.Transport = wf.Defaults.Transport
+		}
+		if s.Transport == "" {
+			s.Transport = TransportSDK
+		}
 
 		// inject_context resolves to a plain bool: an explicit per-step value
 		// wins, else the [defaults] value, else true. The raw *bool is left

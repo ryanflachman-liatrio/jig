@@ -95,6 +95,92 @@ func TestDecodeValid(t *testing.T) {
 	if fix := wf.Steps[wf.index["fix"]]; fix.Inputs[0].Ref != "triage" {
 		t.Errorf("fix input[0].Ref = %q, want triage", fix.Inputs[0].Ref)
 	}
+	// Backend/transport default to claude/sdk when unset.
+	for _, id := range []string{"triage", "fix"} {
+		s := wf.Steps[wf.index[id]]
+		if s.Backend != BackendClaude {
+			t.Errorf("%s Backend = %q, want %q", id, s.Backend, BackendClaude)
+		}
+		if s.Transport != TransportSDK {
+			t.Errorf("%s Transport = %q, want %q", id, s.Transport, TransportSDK)
+		}
+	}
+}
+
+func TestDecodeBackendTransport(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "skills/a", "SKILL.md"), "# skill\n")
+
+	t.Run("defaults inherit and per-step override", func(t *testing.T) {
+		toml := `
+[workflow]
+name = "x"
+version = "1"
+[defaults]
+backend = "claude"
+transport = "sdk"
+[[step]]
+id = "a"
+type = "agent"
+skill = "skills/a"
+allowed_tools = ["Read"]
+[[step]]
+id = "b"
+type = "agent"
+skill = "skills/a"
+depends_on = ["a"]
+transport = "acp"
+allowed_tools = ["Read"]
+`
+		wf, err := Decode(toml, dir)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		a := wf.Steps[wf.index["a"]]
+		if a.Backend != BackendClaude || a.Transport != TransportSDK {
+			t.Errorf("a = %s/%s, want claude/sdk", a.Backend, a.Transport)
+		}
+		b := wf.Steps[wf.index["b"]]
+		if b.Backend != BackendClaude || b.Transport != TransportACP {
+			t.Errorf("b = %s/%s, want claude/acp", b.Backend, b.Transport)
+		}
+	})
+
+	t.Run("unknown backend", func(t *testing.T) {
+		toml := `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "agent"
+skill = "skills/a"
+backend = "cursor"
+allowed_tools = ["Read"]
+`
+		_, err := Decode(toml, dir)
+		if err == nil || !strings.Contains(err.Error(), "invalid backend") {
+			t.Fatalf("error = %v, want invalid backend", err)
+		}
+	})
+
+	t.Run("unknown transport", func(t *testing.T) {
+		toml := `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "agent"
+skill = "skills/a"
+transport = "grpc"
+allowed_tools = ["Read"]
+`
+		_, err := Decode(toml, dir)
+		if err == nil || !strings.Contains(err.Error(), "invalid transport") {
+			t.Fatalf("error = %v, want invalid transport", err)
+		}
+	})
 }
 
 func TestDecodeInvalid(t *testing.T) {

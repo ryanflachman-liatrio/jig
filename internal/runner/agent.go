@@ -19,16 +19,23 @@ import (
 )
 
 // AgentExecutor runs agent steps via a harness.Harness backend. Each Execute
-// call opens a fresh session so runs are independent and the executor itself
-// holds no mutable state.
+// call resolves the step's backend/transport to a Harness and opens a fresh
+// session so runs are independent and the executor itself holds no mutable
+// session state.
 type AgentExecutor struct {
-	harness harness.Harness
+	forHarness func(backend, transport string) (harness.Harness, error)
 }
 
-// NewAgentExecutor returns an AgentExecutor backed by h (see harness.FromEnv
-// for JIG_HARNESS-based selection).
-func NewAgentExecutor(h harness.Harness) *AgentExecutor {
-	return &AgentExecutor{harness: h}
+// NewAgentExecutor returns an AgentExecutor that resolves harnesses via
+// forHarness (typically harness.For).
+func NewAgentExecutor(forHarness func(backend, transport string) (harness.Harness, error)) *AgentExecutor {
+	return &AgentExecutor{forHarness: forHarness}
+}
+
+// NewAgentExecutorFixed returns an AgentExecutor that always uses h, ignoring
+// the step's backend/transport. Intended for tests that inject a FakeHarness.
+func NewAgentExecutorFixed(h harness.Harness) *AgentExecutor {
+	return NewAgentExecutor(func(string, string) (harness.Harness, error) { return h, nil })
 }
 
 // Execute runs one agent step. It:
@@ -41,14 +48,18 @@ func NewAgentExecutor(h harness.Harness) *AgentExecutor {
 //  4. Returns a Result that summarises the outcome.
 func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep engine.Reporter) (*step.Result, error) {
 	start := time.Now()
-	caps := e.harness.Capabilities()
+	h, err := e.forHarness(req.Step.Backend, req.Step.Transport)
+	if err != nil {
+		return failResult(fmt.Sprintf("harness: %v", err), start), nil
+	}
+	caps := h.Capabilities()
 
 	// block_on parks this step and resumes it later through a fresh Open call
 	// with SessionSpec.Resume set. Reject now, at the step's first Open, rather
 	// than letting it run to the pause point and only then discovering the
 	// active harness can never honor the resume that block_on depends on.
 	if req.Step.BlockOn != "" && !caps.Has(harness.CapSessionResume) {
-		return failResult(fmt.Sprintf("step declares block_on but harness %q does not support session resume (CapSessionResume)", e.harness.Name()), start), nil
+		return failResult(fmt.Sprintf("step declares block_on but harness %q does not support session resume (CapSessionResume)", h.Name()), start), nil
 	}
 
 	// A step that explicitly declares [step.schema] has opted into structured
@@ -56,7 +67,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 	// is merged with regardless of declaration is not a user request, so
 	// buildSessionSpec omits it silently instead (see its doc comment).
 	if req.Step.Schema != nil && !caps.Has(harness.CapStructuredOutput) {
-		return failResult(fmt.Sprintf("step declares a schema but harness %q does not support structured output (CapStructuredOutput)", e.harness.Name()), start), nil
+		return failResult(fmt.Sprintf("step declares a schema but harness %q does not support structured output (CapStructuredOutput)", h.Name()), start), nil
 	}
 
 	spec, err := buildSessionSpec(req.Step, caps)
@@ -67,7 +78,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 	spec.Prompt = buildAgentPrompt(req)
 	if req.ResumeSessionID != "" {
 		if !caps.Has(harness.CapSessionResume) {
-			return failResult(fmt.Sprintf("resume requested but harness %q does not support session resume (CapSessionResume)", e.harness.Name()), start), nil
+			return failResult(fmt.Sprintf("resume requested but harness %q does not support session resume (CapSessionResume)", h.Name()), start), nil
 		}
 		spec.Prompt = req.Message
 		spec.Resume = req.ResumeSessionID
@@ -79,13 +90,13 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 	// so the CLI recognises mcp__jig__AskUserQuestion (rewritten by the harness).
 	if containsStr(req.Step.AllowedTools, "AskUserQuestion") {
 		if !caps.Has(harness.CapInProcessMCP) {
-			return failResult(fmt.Sprintf("step uses AskUserQuestion but harness %q does not support in-process MCP tools (CapInProcessMCP)", e.harness.Name()), start), nil
+			return failResult(fmt.Sprintf("step uses AskUserQuestion but harness %q does not support in-process MCP tools (CapInProcessMCP)", h.Name()), start), nil
 		}
 		spec.MCPServers = append(spec.MCPServers, buildAskUserQuestionServer(ctx, rep))
 	}
 	if req.Guard != nil {
 		if !caps.Has(harness.CapPermissionCallback) {
-			return failResult(fmt.Sprintf("step is guarded but harness %q does not support permission callbacks (CapPermissionCallback)", e.harness.Name()), start), nil
+			return failResult(fmt.Sprintf("step is guarded but harness %q does not support permission callbacks (CapPermissionCallback)", h.Name()), start), nil
 		}
 		guard := req.Guard
 		spec.Permission = func(toolName string, input map[string]any) harness.Decision {
@@ -97,7 +108,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 		}
 	}
 
-	sess, err := e.harness.Open(ctx, spec)
+	sess, err := h.Open(ctx, spec)
 	if err != nil {
 		return failResult(fmt.Sprintf("agent open: %v", err), start), nil
 	}

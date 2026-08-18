@@ -130,6 +130,16 @@ func (m Model) stepsView() string {
 // loop back-edge, its deterministic validation gate, and any run guard.
 func stepMarkers(s workflow.Step) []string {
 	var out []string
+	if s.Type == workflow.StepAgent {
+		// Resolved backend/transport (applyDefaults fills these before Load
+		// returns). Show when non-default so mixed-transport workflows are
+		// visible before Run.
+		if s.Transport != "" && s.Transport != workflow.TransportSDK {
+			out = append(out, fmt.Sprintf("%s/%s", s.Backend, s.Transport))
+		} else if s.Backend != "" && s.Backend != workflow.BackendClaude {
+			out = append(out, s.Backend)
+		}
+	}
 	if s.Loop != nil {
 		m := fmt.Sprintf("↺ loop→%s", s.Loop.Goto)
 		if s.Loop.MaxIterations > 0 {
