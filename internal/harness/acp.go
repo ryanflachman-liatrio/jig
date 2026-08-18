@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 
 	acpsdk "github.com/coder/acp-go-sdk"
@@ -32,7 +31,7 @@ func (*AcpHarness) Name() string { return "acp" }
 // Capabilities advertises what this harness actually implements:
 //   - CapPermissionCallback — real permission-decision round-trips.
 //   - CapUserQuestion — ACP form elicitation round-trips.
-//   - CapPartialStreaming — EventTextDelta emitted for each text chunk.
+//   - CapPartialStreaming — EventText emitted for each text chunk.
 //   - CapStructuredOutput — schema injected into the prompt; JSON extracted
 //     from the agent's response with an automatic retry loop on parse failure.
 //
@@ -50,9 +49,8 @@ func (h *AcpHarness) Open(ctx context.Context, spec SessionSpec) (Session, error
 		return nil, fmt.Errorf("acp: session resume not supported (CapSessionResume not advertised)")
 	}
 
-	events := make(chan Event, 16)
-	tr := &acpTranslator{out: events}
-	sess := &acpSession{events: events, tr: tr, schema: spec.Schema}
+	events := make(chan Event, 32)
+	sess := &acpSession{events: events, hasSchema: spec.Schema != nil, schema: spec.Schema}
 
 	var decide acp.Decider
 	if spec.Permission != nil {
@@ -66,7 +64,7 @@ func (h *AcpHarness) Open(ctx context.Context, spec SessionSpec) (Session, error
 		elicit = newACPElicitor(spec.Question)
 	}
 	conn, err := acp.Connect(ctx, decide, func(ev acp.Event) {
-		tr.handle(ev)
+		sess.onEvent(ev)
 	}, elicit)
 	if err != nil {
 		return nil, fmt.Errorf("acp: %w", err)
@@ -328,16 +326,44 @@ func encodeACPQuestionResponse(
 	return out, nil
 }
 
-// acpSession adapts an acp.Conn's single-turn Prompt call to harness.Session:
-// run streams translated events as they arrive and closes events with a
-// terminal EventResult once the turn completes. When schema is non-nil the run
-// loop injects the schema into the prompt and retries if the response does not
-// contain parseable JSON.
+// acpSession adapts an acp.Conn's single-turn Prompt call to harness.Session.
+// When hasSchema is true, run() injects the JSON schema into the prompt and
+// parses the accumulated assistant text as JSON, retrying up to
+// acpMaxStructuredAttempts times on parse failure.
+//
+// Event translation is stateful: text chunks accumulate until a natural
+// boundary (first new tool call or end of turn), at which point a single
+// EventAssistantEnd is emitted — mirroring how ClaudeHarness groups all blocks
+// in one AssistantMessage into one transcript entry. Tool calls are buffered by
+// ID and emitted once via EventToolUse (which carries the final title),
+// eliminating duplicate entries from the ACP adapter's streaming title updates.
+//
+// All fields written by onEvent and read by run() are safe from concurrent
+// access: the ACP SDK invokes onUpdate synchronously, and all callbacks
+// complete before Prompt returns — so run() reads these fields only after the
+// last callback has fired.
 type acpSession struct {
-	conn   *acp.Conn
-	events chan Event
-	tr     *acpTranslator
-	schema map[string]any // non-nil when CapStructuredOutput was requested
+	conn      *acp.Conn
+	events    chan Event
+	hasSchema bool
+	schema    map[string]any
+
+	// lastText accumulates EventMessage chunks for structured-output extraction.
+	// Reset when the first new tool call ID is seen so only the final text
+	// response (after all tool results) is captured.
+	lastText string
+
+	// pendingTools maps tool_id → most-recently-seen title. The ACP adapter
+	// streams tool call starts and title updates as separate EventToolCall
+	// events; we buffer them here and emit a single EventToolUse only when the
+	// corresponding EventToolCallUpdate (the result) arrives.
+	pendingTools map[string]string
+
+	// hasTextSinceFlush is true whenever text or thinking events have been
+	// emitted since the last EventAssistantEnd. Used to decide whether to flush
+	// before the first new tool call, and to flush any trailing text after
+	// Prompt returns.
+	hasTextSinceFlush bool
 }
 
 func (s *acpSession) Messages() <-chan Event { return s.events }
@@ -363,7 +389,7 @@ func (s *acpSession) run(ctx context.Context, sessionID, prompt string) {
 	if s.schema == nil {
 		// No structured output required: single turn, no extraction.
 		stopReason, err := s.conn.Prompt(ctx, sessionID, prompt)
-		s.tr.flushAll()
+		s.flushText()
 		if err != nil {
 			s.events <- Event{Type: EventResult, IsError: true, ErrText: err.Error(), SessionID: sessionID}
 			return
@@ -378,12 +404,9 @@ func (s *acpSession) run(ctx context.Context, sessionID, prompt string) {
 	// transcript) and call Prompt again with that message as the new turn.
 	//
 	// Intermediate content (thinking, tool calls, mid-turn prose) is handled
-	// transparently: acpTranslator flushes and resets textBuf at every state
-	// transition (thought→text, text→tool call). By the time Prompt returns,
-	// AccumulatedText() holds only the agent's *final* text segment — the one
-	// after its last tool call — which is exactly where the schema instruction
-	// directs it to place the JSON. All prior segments are already in the
-	// events channel (and thus in the transcript) from those earlier flushes.
+	// transparently: onEvent resets lastText at the first new tool call so only
+	// the final text response (after all tool results) is captured for JSON
+	// extraction.
 	currentPrompt := appendSchemaPrompt(prompt, s.schema)
 	var (
 		lastParseErr string
@@ -391,10 +414,12 @@ func (s *acpSession) run(ctx context.Context, sessionID, prompt string) {
 	)
 
 	for attempt := 0; attempt < acpMaxStructuredAttempts; attempt++ {
+		s.lastText = ""
 		stopReason, err := s.conn.Prompt(ctx, sessionID, currentPrompt)
-		// Capture the accumulated text before flushAll clears the buffer.
-		text := s.tr.AccumulatedText()
-		s.tr.flushAll()
+		// Capture accumulated text before flushing so extractJSONFromText sees
+		// the final assistant response.
+		text := s.lastText
+		s.flushText()
 
 		if err != nil {
 			s.events <- Event{Type: EventResult, IsError: true, ErrText: err.Error(), SessionID: sessionID}
@@ -503,89 +528,72 @@ func extractJSONFromText(text string) (json.RawMessage, error) {
 	return raw, nil
 }
 
-// acpTranslator accumulates streaming ACP text/thought chunks into jig harness
-// Events. ACP delivers message content as many small EventMessage/EventThought
-// notifications (streaming); this buffers them and emits a single EventText or
-// EventThinking entry per turn rather than one entry per chunk.
-//
-// Invariant: at most one of textBuf/thinkBuf is non-empty at a time. A
-// transition from text→thought or thought→text flushes the previous buffer
-// first. EventToolCall flushes both. flushAll flushes both at turn end.
-//
-// EventTextDelta is emitted for each raw EventMessage chunk so the TUI's
-// live-typing tail updates in real time even though the finalised EventText
-// entry only arrives at flush time.
-type acpTranslator struct {
-	out      chan<- Event
-	mu       sync.Mutex
-	textBuf  strings.Builder
-	thinkBuf strings.Builder
+// flushText emits EventAssistantEnd if any text or thinking has been emitted
+// since the last flush, grouping all preceding chunks into one transcript entry.
+func (s *acpSession) flushText() {
+	if s.hasTextSinceFlush {
+		s.events <- Event{Type: EventAssistantEnd}
+		s.hasTextSinceFlush = false
+	}
 }
 
-func (t *acpTranslator) handle(ev acp.Event) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+// onEvent translates one ACP event into harness events with stateful grouping:
+//
+//   - Text and thinking chunks (EventMessage, EventThought) are forwarded
+//     individually as EventText/EventThinking — no EventAssistantEnd per chunk.
+//   - The first new tool call ID flushes any preceding text (one AssistantEnd),
+//     then buffers the tool's title. Subsequent EventToolCall events for the
+//     same ID only update the buffered title — no extra flush, no extra entry.
+//   - EventToolCallUpdate (the tool result) emits the buffered EventToolUse
+//     with the final title, then AssistantEnd, then the result and UserEnd.
+//   - After Prompt returns, run() calls flushText() to close the final turn.
+//
+// This mirrors ClaudeHarness.pump, which groups all blocks within one SDK
+// AssistantMessage into a single transcript entry via a single AssistantEnd.
+func (s *acpSession) onEvent(ev acp.Event) {
 	switch ev.Kind {
 	case acp.EventMessage:
-		t.flushThinkLocked()
-		t.textBuf.WriteString(ev.Text)
-		t.out <- Event{Type: EventTextDelta, Text: ev.Text}
-	case acp.EventThought:
-		t.flushTextLocked()
-		t.thinkBuf.WriteString(ev.Text)
-	case acp.EventToolCall:
-		t.flushTextLocked()
-		t.flushThinkLocked()
-		t.out <- Event{Type: EventToolUse, ToolUseID: ev.ToolID, Name: ev.Title}
-		t.out <- Event{Type: EventAssistantEnd}
-	case acp.EventToolCallUpdate:
-		t.out <- Event{
-			Type:      EventToolResult,
-			ToolUseID: ev.ToolID,
-			Content:   ev.Status,
-			IsError:   ev.Status == "failed",
+		if s.hasSchema {
+			s.lastText += ev.Text
 		}
-		t.out <- Event{Type: EventUserEnd}
+		s.events <- Event{Type: EventText, Text: ev.Text}
+		s.hasTextSinceFlush = true
+
+	case acp.EventThought:
+		s.events <- Event{Type: EventThinking, Text: ev.Text}
+		s.hasTextSinceFlush = true
+
+	case acp.EventToolCall:
+		if s.pendingTools == nil {
+			s.pendingTools = make(map[string]string)
+		}
+		_, existed := s.pendingTools[ev.ToolID]
+		s.pendingTools[ev.ToolID] = ev.Title
+		if !existed {
+			// First time seeing this tool ID: flush any preceding text so it
+			// lands in its own assistant entry, separate from the tool calls.
+			s.flushText()
+			if s.hasSchema {
+				// Reset accumulator so only the final text response (after all
+				// tool results) is captured for JSON extraction.
+				s.lastText = ""
+			}
+		}
+		// Subsequent EventToolCall events for the same ID are title updates;
+		// they update pendingTools[id] and do nothing else. The EventToolUse
+		// is emitted once, when EventToolCallUpdate arrives with the result.
+
+	case acp.EventToolCallUpdate:
+		title := ""
+		if s.pendingTools != nil {
+			title = s.pendingTools[ev.ToolID]
+			delete(s.pendingTools, ev.ToolID)
+		}
+		s.events <- Event{Type: EventToolUse, ToolUseID: ev.ToolID, Name: title}
+		s.events <- Event{Type: EventAssistantEnd}
+		s.events <- Event{Type: EventToolResult, ToolUseID: ev.ToolID, Content: ev.Status, IsError: ev.Status == "failed"}
+		s.events <- Event{Type: EventUserEnd}
 	}
-}
-
-// AccumulatedText returns the full text buffered for the current turn without
-// clearing the buffer. Call this before flushAll to capture the response for
-// JSON extraction while still letting flushAll emit the canonical EventText
-// entry to the transcript.
-func (t *acpTranslator) AccumulatedText() string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	return t.textBuf.String()
-}
-
-// flushAll flushes any remaining buffered content at end-of-turn. Called once
-// from acpSession.run after conn.Prompt returns, at which point no further
-// handle calls will be made.
-func (t *acpTranslator) flushAll() {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	// Thoughts precede text in Claude's turn structure; flush in that order.
-	t.flushThinkLocked()
-	t.flushTextLocked()
-}
-
-func (t *acpTranslator) flushTextLocked() {
-	if t.textBuf.Len() == 0 {
-		return
-	}
-	t.out <- Event{Type: EventText, Text: t.textBuf.String()}
-	t.out <- Event{Type: EventAssistantEnd}
-	t.textBuf.Reset()
-}
-
-func (t *acpTranslator) flushThinkLocked() {
-	if t.thinkBuf.Len() == 0 {
-		return
-	}
-	t.out <- Event{Type: EventThinking, Text: t.thinkBuf.String()}
-	t.out <- Event{Type: EventAssistantEnd}
-	t.thinkBuf.Reset()
 }
 
 // toolCallName returns the human-readable tool name a permission decision is

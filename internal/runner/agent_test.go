@@ -1092,3 +1092,57 @@ func TestExecute_SelectsHarnessPerStep(t *testing.T) {
 		t.Error("acp session not closed — Open/Execute did not run against acp harness")
 	}
 }
+
+// TestExecute_AcpProfile verifies the fail-closed gate outcomes for the ACP
+// harness capability set, focusing on CapStructuredOutput (prompt-injection
+// structured output, new in this harness).
+func TestExecute_AcpProfile(t *testing.T) {
+	acpCaps := harness.NewCapabilitySet(harness.CapPermissionCallback, harness.CapStructuredOutput)
+
+	t.Run("schema step + acp caps → passes (CapStructuredOutput advertised)", func(t *testing.T) {
+		sess := harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}})
+		h := &harness.FakeHarness{NameVal: "acp", Caps: acpCaps, Sess: sess}
+		e := NewAgentExecutorFixed(h)
+		st := &workflow.Step{Schema: &workflow.Schema{Fields: []*workflow.Field{{Name: "ok", Type: workflow.FieldBool}}}}
+		req := engine.StepRequest{Step: st}
+		res, err := e.Execute(context.Background(), req, &captureReporter{})
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		if res.Status != step.StatusSucceeded {
+			t.Fatalf("status = %q, want succeeded (schema accepted via CapStructuredOutput): %s", res.Status, res.Err)
+		}
+	})
+
+	t.Run("AskUserQuestion + acp caps without CapUserQuestion → rejection", func(t *testing.T) {
+		h := &harness.FakeHarness{NameVal: "acp", Caps: acpCaps}
+		e := NewAgentExecutorFixed(h)
+		st := &workflow.Step{AllowedTools: []string{"AskUserQuestion"}}
+		req := engine.StepRequest{Step: st}
+		res, err := e.Execute(context.Background(), req, &captureReporter{})
+		if err != nil {
+			t.Fatalf("Execute: %v", err)
+		}
+		if res.Status != step.StatusFailed {
+			t.Fatalf("status = %q, want failed", res.Status)
+		}
+		if !strings.Contains(res.Err, "CapUserQuestion") {
+			t.Errorf("Err = %q, want it to name CapUserQuestion", res.Err)
+		}
+	})
+
+	t.Run("real NewAcpHarness() advertises expected capabilities", func(t *testing.T) {
+		h := harness.NewAcpHarness()
+		caps := h.Capabilities()
+		for _, want := range []harness.Capability{harness.CapPermissionCallback, harness.CapUserQuestion, harness.CapPartialStreaming, harness.CapStructuredOutput} {
+			if !caps.Has(want) {
+				t.Errorf("AcpHarness.Capabilities() missing %v", want)
+			}
+		}
+		for _, reject := range []harness.Capability{harness.CapSessionResume} {
+			if caps.Has(reject) {
+				t.Errorf("AcpHarness.Capabilities() unexpectedly has %v", reject)
+			}
+		}
+	})
+}

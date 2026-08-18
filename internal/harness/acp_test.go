@@ -139,139 +139,202 @@ func TestACPSingleQuestionUsesFormMessage(t *testing.T) {
 	}
 }
 
-// ── acpTranslator tests ──────────────────────────────────────────────────────
+// ── onEvent tests ────────────────────────────────────────────────────────────
 
-// newTestTranslator returns a translator wired to a buffered channel for
-// inspection, and the channel itself.
-func newTestTranslator() (*acpTranslator, <-chan Event) {
-	ch := make(chan Event, 64)
-	return &acpTranslator{out: ch}, ch
-}
-
-// drainTranslator collects all currently-buffered events without blocking.
-func drainTranslator(ch <-chan Event) []Event {
+// drainEvents drains all events from ch into a slice (non-blocking).
+func drainEvents(ch chan Event) []Event {
 	var out []Event
 	for {
 		select {
-		case ev, ok := <-ch:
+		case e, ok := <-ch:
 			if !ok {
 				return out
 			}
-			out = append(out, ev)
+			out = append(out, e)
 		default:
 			return out
 		}
 	}
 }
 
-func TestAcpTranslatorMessageChunks(t *testing.T) {
-	tr, ch := newTestTranslator()
-	tr.handle(acp.Event{Kind: acp.EventMessage, Text: "Hello"})
-	tr.handle(acp.Event{Kind: acp.EventMessage, Text: ", "})
-	tr.handle(acp.Event{Kind: acp.EventMessage, Text: "world"})
-	tr.flushAll()
-
-	got := drainTranslator(ch)
-	want := []Event{
-		{Type: EventTextDelta, Text: "Hello"},
-		{Type: EventTextDelta, Text: ", "},
-		{Type: EventTextDelta, Text: "world"},
-		{Type: EventText, Text: "Hello, world"},
-		{Type: EventAssistantEnd},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got  %+v\nwant %+v", got, want)
-	}
+// newTestSession returns an acpSession wired to a buffered channel for testing
+// onEvent without a live ACP connection.
+func newTestSession() *acpSession {
+	return &acpSession{events: make(chan Event, 64)}
 }
 
-func TestAcpTranslatorToolCallFlushesText(t *testing.T) {
-	tr, ch := newTestTranslator()
-	tr.handle(acp.Event{Kind: acp.EventMessage, Text: "Let me check."})
-	tr.handle(acp.Event{Kind: acp.EventToolCall, ToolID: "call_1", Title: "Read"})
+func TestOnEvent_TextChunksGrouped(t *testing.T) {
+	s := newTestSession()
+	s.onEvent(acp.Event{Kind: acp.EventMessage, Text: "Hello"})
+	s.onEvent(acp.Event{Kind: acp.EventMessage, Text: ", world"})
 
-	got := drainTranslator(ch)
-	want := []Event{
-		{Type: EventTextDelta, Text: "Let me check."},
-		{Type: EventText, Text: "Let me check."},
-		{Type: EventAssistantEnd},
-		{Type: EventToolUse, ToolUseID: "call_1", Name: "Read"},
-		{Type: EventAssistantEnd},
+	// No AssistantEnd yet — text chunks just accumulate.
+	got := drainEvents(s.events)
+	if len(got) != 2 {
+		t.Fatalf("want 2 EventText events, got %d: %+v", len(got), got)
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got  %+v\nwant %+v", got, want)
-	}
-}
-
-func TestAcpTranslatorToolCallUpdate(t *testing.T) {
-	tr, ch := newTestTranslator()
-	tr.handle(acp.Event{Kind: acp.EventToolCallUpdate, ToolID: "call_1", Status: "completed"})
-	tr.handle(acp.Event{Kind: acp.EventToolCallUpdate, ToolID: "call_2", Status: "failed"})
-
-	got := drainTranslator(ch)
-	want := []Event{
-		{Type: EventToolResult, ToolUseID: "call_1", Content: "completed", IsError: false},
-		{Type: EventUserEnd},
-		{Type: EventToolResult, ToolUseID: "call_2", Content: "failed", IsError: true},
-		{Type: EventUserEnd},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got  %+v\nwant %+v", got, want)
-	}
-}
-
-func TestAcpTranslatorThoughtChunks(t *testing.T) {
-	tr, ch := newTestTranslator()
-	tr.handle(acp.Event{Kind: acp.EventThought, Text: "Let me think"})
-	tr.handle(acp.Event{Kind: acp.EventThought, Text: " about this."})
-	// Switching to text flushes the accumulated thought.
-	tr.handle(acp.Event{Kind: acp.EventMessage, Text: "Answer"})
-	tr.flushAll()
-
-	got := drainTranslator(ch)
-	want := []Event{
-		{Type: EventThinking, Text: "Let me think about this."},
-		{Type: EventAssistantEnd},
-		{Type: EventTextDelta, Text: "Answer"},
-		{Type: EventText, Text: "Answer"},
-		{Type: EventAssistantEnd},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got  %+v\nwant %+v", got, want)
-	}
-}
-
-func TestAcpTranslatorUnknownEventIgnored(t *testing.T) {
-	tr, ch := newTestTranslator()
-	tr.handle(acp.Event{Kind: acp.EventPlan})
-	if got := drainTranslator(ch); len(got) != 0 {
-		t.Fatalf("expected no events for EventPlan, got %+v", got)
-	}
-}
-
-func TestAccumulatedText(t *testing.T) {
-	tr, ch := newTestTranslator()
-	tr.handle(acp.Event{Kind: acp.EventMessage, Text: "hello"})
-	tr.handle(acp.Event{Kind: acp.EventMessage, Text: " world"})
-
-	// AccumulatedText must return the full buffer without clearing it.
-	if got := tr.AccumulatedText(); got != "hello world" {
-		t.Fatalf("AccumulatedText() = %q, want %q", got, "hello world")
-	}
-
-	// Drain the two EventTextDelta events emitted by handle.
-	drainTranslator(ch)
-
-	// flushAll must still emit EventText (buffer was NOT cleared by AccumulatedText).
-	tr.flushAll()
-	evs := drainTranslator(ch)
-	found := false
-	for _, ev := range evs {
-		if ev.Type == EventText && ev.Text == "hello world" {
-			found = true
+	for _, e := range got {
+		if e.Type != EventText {
+			t.Errorf("unexpected event type %v, want EventText", e.Type)
 		}
 	}
-	if !found {
-		t.Errorf("EventText not emitted after AccumulatedText(); events: %+v", evs)
+	if !s.hasTextSinceFlush {
+		t.Error("hasTextSinceFlush should be true after text events")
+	}
+
+	// Explicit flush (as run() does after Prompt returns) closes the entry.
+	s.flushText()
+	flushed := drainEvents(s.events)
+	if len(flushed) != 1 || flushed[0].Type != EventAssistantEnd {
+		t.Errorf("flushText() = %+v, want [EventAssistantEnd]", flushed)
+	}
+	if s.hasTextSinceFlush {
+		t.Error("hasTextSinceFlush should be false after flush")
+	}
+}
+
+func TestOnEvent_ThinkingGrouped(t *testing.T) {
+	s := newTestSession()
+	s.onEvent(acp.Event{Kind: acp.EventThought, Text: "reasoning"})
+	got := drainEvents(s.events)
+	if len(got) != 1 || got[0].Type != EventThinking {
+		t.Fatalf("want [EventThinking], got %+v", got)
+	}
+	if !s.hasTextSinceFlush {
+		t.Error("hasTextSinceFlush should be true after thought")
+	}
+}
+
+func TestOnEvent_ToolCallFlushesText(t *testing.T) {
+	s := newTestSession()
+	// Text arrives before tool call.
+	s.onEvent(acp.Event{Kind: acp.EventMessage, Text: "I'll search."})
+	drainEvents(s.events) // consume text event
+
+	// First EventToolCall for a new ID flushes the preceding text.
+	s.onEvent(acp.Event{Kind: acp.EventToolCall, ToolID: "A", Title: "undefined"})
+	got := drainEvents(s.events)
+	if len(got) != 1 || got[0].Type != EventAssistantEnd {
+		t.Fatalf("first new tool call should flush text via EventAssistantEnd, got %+v", got)
+	}
+	if s.hasTextSinceFlush {
+		t.Error("hasTextSinceFlush should be false after flush")
+	}
+	// Title buffered.
+	if s.pendingTools["A"] != "undefined" {
+		t.Errorf("pendingTools[A] = %q, want %q", s.pendingTools["A"], "undefined")
+	}
+}
+
+func TestOnEvent_ToolCallTitleUpdates(t *testing.T) {
+	s := newTestSession()
+	s.onEvent(acp.Event{Kind: acp.EventToolCall, ToolID: "A", Title: "undefined"})
+	drainEvents(s.events) // consume any flush events (empty since no prior text)
+
+	// Second EventToolCall for same ID: only updates title, no extra flush.
+	s.onEvent(acp.Event{Kind: acp.EventToolCall, ToolID: "A", Title: "Go 1.25 release date"})
+	got := drainEvents(s.events)
+	if len(got) != 0 {
+		t.Fatalf("title update should emit nothing, got %+v", got)
+	}
+	if s.pendingTools["A"] != "Go 1.25 release date" {
+		t.Errorf("pendingTools[A] = %q after update", s.pendingTools["A"])
+	}
+}
+
+func TestOnEvent_ToolCallUpdateEmitsToolUseAndResult(t *testing.T) {
+	s := newTestSession()
+	s.onEvent(acp.Event{Kind: acp.EventToolCall, ToolID: "A", Title: "Go 1.25 release date"})
+	drainEvents(s.events) // consume any flush events
+
+	s.onEvent(acp.Event{Kind: acp.EventToolCallUpdate, ToolID: "A", Status: "completed"})
+	got := drainEvents(s.events)
+	// Expect: EventToolUse, EventAssistantEnd, EventToolResult, EventUserEnd.
+	want := []EventType{EventToolUse, EventAssistantEnd, EventToolResult, EventUserEnd}
+	if len(got) != len(want) {
+		t.Fatalf("want %d events, got %d: %+v", len(want), len(got), got)
+	}
+	for i, w := range want {
+		if got[i].Type != w {
+			t.Errorf("[%d] type = %v, want %v", i, got[i].Type, w)
+		}
+	}
+	if got[0].Name != "Go 1.25 release date" {
+		t.Errorf("EventToolUse.Name = %q, want %q", got[0].Name, "Go 1.25 release date")
+	}
+	if got[0].ToolUseID != "A" {
+		t.Errorf("EventToolUse.ToolUseID = %q, want A", got[0].ToolUseID)
+	}
+	if got[2].IsError {
+		t.Error("completed status should not be an error")
+	}
+	if _, ok := s.pendingTools["A"]; ok {
+		t.Error("tool A should be removed from pendingTools after update")
+	}
+}
+
+func TestOnEvent_ToolCallUpdateFailed(t *testing.T) {
+	s := newTestSession()
+	s.onEvent(acp.Event{Kind: acp.EventToolCall, ToolID: "B", Title: "some tool"})
+	drainEvents(s.events)
+
+	s.onEvent(acp.Event{Kind: acp.EventToolCallUpdate, ToolID: "B", Status: "failed"})
+	got := drainEvents(s.events)
+	// [EventToolUse, EventAssistantEnd, EventToolResult(isError=true), EventUserEnd]
+	if len(got) < 3 {
+		t.Fatalf("too few events: %+v", got)
+	}
+	if !got[2].IsError {
+		t.Error("failed status should set IsError=true")
+	}
+}
+
+func TestOnEvent_FullTurnSequence(t *testing.T) {
+	// Text chunks → tool call (with title streaming) → tool result → final text.
+	s := newTestSession()
+	var allEvents []Event
+	collect := func() { allEvents = append(allEvents, drainEvents(s.events)...) }
+
+	s.onEvent(acp.Event{Kind: acp.EventMessage, Text: "I'll search."})
+	collect()
+	s.onEvent(acp.Event{Kind: acp.EventMessage, Text: " Stand by."})
+	collect()
+	s.onEvent(acp.Event{Kind: acp.EventToolCall, ToolID: "A", Title: "undefined"})
+	collect()
+	s.onEvent(acp.Event{Kind: acp.EventToolCall, ToolID: "A", Title: "Web search"})
+	collect()
+	s.onEvent(acp.Event{Kind: acp.EventToolCallUpdate, ToolID: "A", Status: "completed"})
+	collect()
+	s.onEvent(acp.Event{Kind: acp.EventMessage, Text: "Found it."})
+	collect()
+	s.flushText() // simulates run() after Prompt returns
+	collect()
+
+	// Expected sequence:
+	// EventText("I'll search.")          — chunk 1
+	// EventText(" Stand by.")            — chunk 2
+	// EventAssistantEnd                  — flush before first tool call
+	// EventToolUse(A, "Web search")      — emitted on update
+	// EventAssistantEnd                  — end of tool-use entry
+	// EventToolResult(A, completed)
+	// EventUserEnd
+	// EventText("Found it.")             — final text
+	// EventAssistantEnd                  — flush after Prompt returns
+	wantTypes := []EventType{
+		EventText, EventText,
+		EventAssistantEnd,
+		EventToolUse, EventAssistantEnd,
+		EventToolResult, EventUserEnd,
+		EventText,
+		EventAssistantEnd,
+	}
+	if len(allEvents) != len(wantTypes) {
+		t.Fatalf("got %d events, want %d:\n%+v", len(allEvents), len(wantTypes), allEvents)
+	}
+	for i, wt := range wantTypes {
+		if allEvents[i].Type != wt {
+			t.Errorf("[%d] type=%v, want %v", i, allEvents[i].Type, wt)
+		}
 	}
 }
 
