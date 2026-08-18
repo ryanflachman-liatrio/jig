@@ -895,7 +895,7 @@ func TestExecute_GuardSemantics(t *testing.T) {
 			Caps:    harness.NewCapabilitySet(harness.CapPermissionCallback),
 			Sess:    sess,
 		}
-		e := NewAgentExecutor(h)
+		e := NewAgentExecutorFixed(h)
 		req := engine.StepRequest{Step: &workflow.Step{}, Guard: guard}
 		res, err := e.Execute(context.Background(), req, &captureReporter{})
 		if err != nil {
@@ -911,7 +911,7 @@ func TestExecute_GuardSemantics(t *testing.T) {
 
 	t.Run("guarded step + harness lacking CapPermissionCallback fails closed", func(t *testing.T) {
 		h := &harness.FakeHarness{NameVal: "acp-nopermcap", Caps: harness.NewCapabilitySet()}
-		e := NewAgentExecutor(h)
+		e := NewAgentExecutorFixed(h)
 		req := engine.StepRequest{Step: &workflow.Step{}, Guard: guard}
 		res, err := e.Execute(context.Background(), req, &captureReporter{})
 		if err != nil {
@@ -935,7 +935,7 @@ func TestExecute_GuardSemantics(t *testing.T) {
 			Caps:    harness.NewCapabilitySet(harness.CapPermissionCallback),
 			Sess:    sess,
 		}
-		e := NewAgentExecutor(h)
+		e := NewAgentExecutorFixed(h)
 		req := engine.StepRequest{Step: &workflow.Step{PermissionMode: "acceptEdits"}, Guard: guard}
 		res, err := e.Execute(context.Background(), req, &captureReporter{})
 		if err != nil {
@@ -959,7 +959,7 @@ func TestExecute_GuardSemantics(t *testing.T) {
 			Caps:    harness.NewCapabilitySet(harness.CapPermissionCallback),
 			Sess:    harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}}),
 		}
-		e := NewAgentExecutor(h)
+		e := NewAgentExecutorFixed(h)
 		req := engine.StepRequest{Step: &workflow.Step{}, Guard: guard}
 		if _, err := e.Execute(context.Background(), req, &captureReporter{}); err != nil {
 			t.Fatalf("Execute: %v", err)
@@ -986,7 +986,7 @@ func TestExecute_GuardSemantics(t *testing.T) {
 // instead (spec 12 task 5.2/5.4).
 func TestExecute_DeclaredSchemaRequiresStructuredOutput(t *testing.T) {
 	h := &harness.FakeHarness{NameVal: "acp", Caps: harness.NewCapabilitySet()}
-	e := NewAgentExecutor(h)
+	e := NewAgentExecutorFixed(h)
 	st := &workflow.Step{Schema: &workflow.Schema{Fields: []*workflow.Field{{Name: "passed", Type: workflow.FieldBool}}}}
 	req := engine.StepRequest{Step: st}
 
@@ -1007,7 +1007,7 @@ func TestExecute_DeclaredSchemaRequiresStructuredOutput(t *testing.T) {
 		Caps:    harness.NewCapabilitySet(),
 		Sess:    harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}}),
 	}
-	e2 := NewAgentExecutor(h2)
+	e2 := NewAgentExecutorFixed(h2)
 	req2 := engine.StepRequest{Step: &workflow.Step{}}
 	res2, err := e2.Execute(context.Background(), req2, &captureReporter{})
 	if err != nil {
@@ -1030,7 +1030,7 @@ func TestExecute_DeclaredSchemaRequiresStructuredOutput(t *testing.T) {
 func TestExecute_BlockOnRequiresSessionResume(t *testing.T) {
 	sess := harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}})
 	h := &harness.FakeHarness{NameVal: "acp", Caps: harness.NewCapabilitySet(), Sess: sess}
-	e := NewAgentExecutor(h)
+	e := NewAgentExecutorFixed(h)
 	req := engine.StepRequest{Step: &workflow.Step{BlockOn: "output.needs_input == true"}}
 
 	res, err := e.Execute(context.Background(), req, &captureReporter{})
@@ -1049,5 +1049,45 @@ func TestExecute_BlockOnRequiresSessionResume(t *testing.T) {
 	}
 	if sess.Closed {
 		t.Error("session Close called, want the session to never have been opened")
+	}
+}
+
+// TestExecute_SelectsHarnessPerStep proves AgentExecutor looks up the harness
+// from the step's Backend/Transport on each Execute, so one executor can drive
+// both SDK and ACP steps.
+func TestExecute_SelectsHarnessPerStep(t *testing.T) {
+	sdkSess := harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}})
+	acpSess := harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}})
+	sdkH := &harness.FakeHarness{NameVal: "claude", Caps: harness.NewCapabilitySet(), Sess: sdkSess}
+	acpH := &harness.FakeHarness{NameVal: "acp", Caps: harness.NewCapabilitySet(), Sess: acpSess}
+
+	var got []string
+	e := NewAgentExecutor(func(backend, transport string) (harness.Harness, error) {
+		got = append(got, backend+"/"+transport)
+		switch transport {
+		case "acp":
+			return acpH, nil
+		default:
+			return sdkH, nil
+		}
+	})
+
+	reqSDK := engine.StepRequest{Step: &workflow.Step{Backend: "claude", Transport: "sdk"}}
+	if _, err := e.Execute(context.Background(), reqSDK, &captureReporter{}); err != nil {
+		t.Fatalf("sdk Execute: %v", err)
+	}
+	reqACP := engine.StepRequest{Step: &workflow.Step{Backend: "claude", Transport: "acp"}}
+	if _, err := e.Execute(context.Background(), reqACP, &captureReporter{}); err != nil {
+		t.Fatalf("acp Execute: %v", err)
+	}
+
+	if len(got) != 2 || got[0] != "claude/sdk" || got[1] != "claude/acp" {
+		t.Errorf("lookups = %v, want [claude/sdk claude/acp]", got)
+	}
+	if !sdkSess.Closed {
+		t.Error("sdk session not closed — Open/Execute did not run against sdk harness")
+	}
+	if !acpSess.Closed {
+		t.Error("acp session not closed — Open/Execute did not run against acp harness")
 	}
 }

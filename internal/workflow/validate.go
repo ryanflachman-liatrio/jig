@@ -141,6 +141,12 @@ func (v *validator) checkTuning(s *Step) {
 	if s.MaxBudgetUSD < 0 {
 		v.errf("step %q max_budget_usd must be >= 0", s.ID)
 	}
+	if s.Backend != "" && !validBackend(s.Backend) {
+		v.errf("step %q has invalid backend %q (want %s)", s.ID, s.Backend, BackendClaude)
+	}
+	if s.Transport != "" && !validTransport(s.Transport) {
+		v.errf("step %q has invalid transport %q (want %s|%s)", s.ID, s.Transport, TransportSDK, TransportACP)
+	}
 }
 
 // hasAgentOnlyFields reports whether any explicitly-set, agent-only field is

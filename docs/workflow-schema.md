@@ -41,10 +41,15 @@ max_thinking_tokens = 8000
 max_budget_usd      = 5.0            # per-step cost ceiling
 cwd                 = "."
 permission_mode     = "acceptEdits"
+backend             = "claude"       # agent vendor (claude today)
+transport           = "sdk"          # sdk | acp (how jig reaches the backend)
 max_parallel        = 4
 artifacts_dir       = ".jig/artifacts"   # run artifacts live outside the working tree
 inject_context      = true               # engine-assembled step-context preamble on agent steps (default true)
 ```
+
+Backend selection is **TOML-only** (never an environment variable). See
+[Agent backend](#agent-backend-backend--transport).
 
 ---
 
@@ -102,6 +107,7 @@ Claude agent file** (exactly one of `skill` / `agent_file`).
 | `inject_context`       | bool     | Opt out of the engine-assembled step-context preamble (default `true`; overrides `[defaults]`). Agent-only. See "Step context". |
 | `[step.context]`       | table    | Author-supplied `purpose` / `notes` that *supplement* the preamble. See "Step context". |
 | `model` / `fallback_model` / `effort` / `max_turns` / `max_thinking_tokens` / `max_budget_usd` / `permission_mode` | | Override `[defaults]`. |
+| `backend` / `transport` | string   | Override `[defaults]`. See [Agent backend](#agent-backend-backend--transport). |
 
 **`SKILL.md` contract.** Agent Skills convention: YAML frontmatter (`name`,
 `description`) + instruction body. At runtime the engine builds the prompt from
@@ -115,6 +121,32 @@ just a bundled `(prompt, tools, model)` triple, so at load time jig folds its
 them unset** (explicit step fields win), and uses the body as the agent's system
 prompt. Everything else — `inputs`, schema, `validate`, `loop`, worktree
 isolation — behaves exactly as for a skill-driven step.
+
+### Agent backend (`backend` / `transport`)
+
+Each agent step names which **backend** (vendor) and **transport** (wire
+protocol) run it. Selection is TOML-only — there is no process-wide env var.
+
+| Field | Default | Values today | Notes |
+|---|---|---|---|
+| `backend` | `claude` | `claude` | Vendor. Cursor / Codex / Gemini are not implemented yet. |
+| `transport` | `sdk` | `sdk` \| `acp` | `sdk` = Claude Agent SDK; `acp` = ACP→Claude via Zed’s `claude-code-acp` adapter |
+
+Inheritance matches `model` / `effort`: step → `[defaults]` → engine default.
+Unknown values fail at `jig validate`. Capability mismatches (e.g. `transport =
+"acp"` with `[step.schema]`) fail closed at execute time.
+
+```toml
+[defaults]
+backend   = "claude"
+transport = "sdk"
+
+[[step]]
+id        = "acp-spike"
+type      = "agent"
+transport = "acp"      # ACP→Claude for this step only
+skill     = "skills/…"
+```
 
 ### Command step
 

@@ -1,0 +1,35 @@
+# Mixed Claude transports — SDK + ACP in one workflow
+#
+# Exercises Spec 14 backend/transport selection: default transport is the Claude
+# Agent SDK; one step opts into ACP→Claude via transport = "acp".
+#
+# Validate:  go run ./cmd/jig validate .agents/jig/mixed-transport.toml
+#
+# Note: the acp step cannot declare [step.schema], block_on, or AskUserQuestion —
+# AcpHarness only advertises CapPermissionCallback today.
+
+[workflow]
+name        = "mixed-transport"
+version     = "1"
+description = "Two independent Claude agent steps: one SDK, one ACP."
+
+[defaults]
+backend         = "claude"
+transport       = "sdk"
+permission_mode = "acceptEdits"
+max_parallel    = 2
+
+[[step]]
+id            = "sdk-read"
+type          = "agent"
+skill         = "../skills/intake"
+allowed_tools = ["Read", "Grep", "Glob"]
+inputs        = [{ path = "../../examples/conventions.md", inline = true }]
+
+[[step]]
+id            = "acp-read"
+type          = "agent"
+skill         = "../skills/intake"
+transport     = "acp"
+allowed_tools = ["Read", "Grep", "Glob"]
+inputs        = [{ path = "../../examples/conventions.md", inline = true }]

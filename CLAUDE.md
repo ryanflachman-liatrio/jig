@@ -50,8 +50,8 @@ before assuming a feature is missing — this list drifts.
   `Executor` and `Reporter` interfaces that `runner` implements (dependency
   inversion keeps `engine` free of `os/exec` and SDK imports).
 - `internal/harness` — `Harness` seam (`ClaudeHarness` SDK, `AcpHarness` ACP→Claude).
-  Selection is **TOML-only** (`backend` / `transport` per Spec 14) — never
-  `JIG_HARNESS` / `FromEnv` (pre-v1; delete, do not shim).
+  Selection is **TOML-only** via `backend` / `transport` and `harness.For` —
+  never `JIG_HARNESS` / `FromEnv`.
 - `internal/runner` — the concrete executors: `AgentExecutor` (via harness) and
   `CommandExecutor` (shell). Both capture their output to the transcript.
 - `internal/transcript` — the per-step `transcript.jsonl` store (append writer +

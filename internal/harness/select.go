@@ -1,21 +1,22 @@
 package harness
 
-import (
-	"fmt"
-	"os"
-)
+import "fmt"
 
-// FromEnv selects a Harness based on the JIG_HARNESS environment variable:
-// unset or "claude" (the default) returns ClaudeHarness; "acp" returns
-// AcpHarness; any other value fails fast with a clear error rather than
-// silently falling back to the default.
-func FromEnv() (Harness, error) {
-	switch v := os.Getenv("JIG_HARNESS"); v {
-	case "", "claude":
-		return NewClaudeHarness(), nil
-	case "acp":
-		return NewAcpHarness(), nil
+// For returns the Harness that drives (backend, transport). Today only Claude
+// is implemented: "sdk" → ClaudeHarness, "acp" → AcpHarness (ACP→Claude via
+// Zed's adapter). Unknown pairs fail fast rather than falling back.
+func For(backend, transport string) (Harness, error) {
+	switch backend {
+	case "claude", "":
+		switch transport {
+		case "sdk", "":
+			return NewClaudeHarness(), nil
+		case "acp":
+			return NewAcpHarness(), nil
+		default:
+			return nil, fmt.Errorf("unknown transport %q for backend %q (want %q or %q)", transport, backend, "sdk", "acp")
+		}
 	default:
-		return nil, fmt.Errorf("unknown harness %q (want %q or %q)", v, "claude", "acp")
+		return nil, fmt.Errorf("unknown backend %q (want %q)", backend, "claude")
 	}
 }

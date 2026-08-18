@@ -21,15 +21,6 @@ import (
 )
 
 func main() {
-	// Resolved before any subcommand dispatch (including validate, which never
-	// runs an agent step) so a bad JIG_HARNESS value always fails fast with a
-	// clear error instead of surfacing later as a confusing runtime failure.
-	h, err := harness.FromEnv()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-
 	// Subcommands run and exit before the TUI takes over the terminal.
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
@@ -43,12 +34,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// Route by step type. CommandExecutor and AgentExecutor run real work;
-	// review steps are handled inline by the scheduler (no executor needed, but
-	// the mux falls back to FakeExecutor if somehow dispatched).
+	// Route by step type. AgentExecutor resolves backend/transport per step
+	// via harness.For (TOML only — no process-wide env selection).
 	mux := runner.NewMux()
 	mux.Register(workflow.StepCommand, runner.NewCommandExecutor(""))
-	mux.Register(workflow.StepAgent, runner.NewAgentExecutor(h))
+	mux.Register(workflow.StepAgent, runner.NewAgentExecutor(harness.For))
 	mux.Register(workflow.StepReview, runner.NewFakeExecutor(nil, runner.FakeOutcome{}))
 	mgr := engine.NewManager(mux, ".jig")
 

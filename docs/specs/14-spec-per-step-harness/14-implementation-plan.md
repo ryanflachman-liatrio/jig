@@ -1,6 +1,6 @@
 # Implementation Plan: Per-Step Backend Selection
 
-**Status:** Plan for review (no code yet)
+**Status:** Implemented (Spec 14)
 **Depends on:** Spec 12 (`12-spec-acp-claude-harness`) — which deferred TOML-level
 selection (non-goal §3)
 **Breaks:** Spec 12’s `JIG_HARNESS` / `harness.FromEnv` process-wide selection

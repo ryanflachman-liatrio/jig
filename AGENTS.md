@@ -26,11 +26,11 @@ the same change and update docs/examples/tests to match.
 Agent backends are selected **in the workflow `.toml`**, never via
 environment variables.
 
-- **Do not use or reintroduce `JIG_HARNESS`.** Delete `harness.FromEnv` and any
-  process-wide single-harness injection in `cmd/jig`.
-- Operators set the backend on `[defaults]` and/or each `[[step]]` (see Spec 14
-  plan). Inheritance: step → `[defaults]` → `"claude"`.
-- `jig validate` must reject unknown backend names at load time.
+- **Do not use or reintroduce `JIG_HARNESS` / `harness.FromEnv`.** Selection is
+  `harness.For(backend, transport)` from each step's resolved fields.
+- Operators set `backend` / `transport` on `[defaults]` and/or each `[[step]]`.
+  Inheritance: step → `[defaults]` → `"claude"` / `"sdk"`.
+- `jig validate` rejects unknown backend/transport names at load time.
 
 ### Harness vs backend (do not conflate)
 
