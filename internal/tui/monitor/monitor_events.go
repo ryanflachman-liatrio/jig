@@ -36,6 +36,8 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 			return m, nil
 		}
 		m.steps[i].status = ev.To
+		m.steps[i].iteration = ev.Iteration
+		m.steps[i].attempt = ev.Attempt
 		if ev.To == step.StatusFailed {
 			m.steps[i].err = ev.Err
 			m.steps[i].subtype = ev.Subtype

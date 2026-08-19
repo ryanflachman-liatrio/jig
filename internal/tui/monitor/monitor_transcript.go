@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"charm.land/lipgloss/v2"
@@ -73,6 +74,14 @@ func (m *Model) reloadTranscript() {
 // the current expansion state. Safe to call while the writer appends: the reader
 // opens, reads to EOF, and closes.
 func (m *Model) loadChat() {
+	// Preserve the block cursor across same-step reloads (e.g. a new StepMessage
+	// arriving while the user is navigating). The saved key won't be found in a
+	// freshly-loaded different step, so cursor correctly resets to 0 on step changes.
+	var saved chatItem
+	if len(m.chatBlocks) > 0 && m.chatBlockCursor < len(m.chatBlocks) {
+		saved = m.chatBlocks[m.chatBlockCursor]
+	}
+
 	m.chatEntries = nil
 	m.chatGroupHeaders = nil
 	m.chatBlocks = nil
@@ -106,15 +115,18 @@ func (m *Model) loadChat() {
 	// a render-only item (text).
 	var pendingBlocks []blockKey
 	var pendingTools []toolLabel
+	pendingByID := make(map[string]int) // ToolUseID → index in pendingTools
+	pendingHasError := false
 
 	flush := func() {
 		if len(pendingBlocks) == 0 {
 			return
 		}
 		g := &toolGroup{
-			blocks: pendingBlocks,
-			tools:  pendingTools,
-			count:  len(pendingTools),
+			blocks:   pendingBlocks,
+			tools:    pendingTools,
+			count:    len(pendingTools),
+			hasError: pendingHasError,
 		}
 		m.chatGroupHeaders = append(m.chatGroupHeaders, chatItem{
 			isGroup: true,
@@ -123,6 +135,8 @@ func (m *Model) loadChat() {
 		})
 		pendingBlocks = nil
 		pendingTools = nil
+		pendingByID = make(map[string]int)
+		pendingHasError = false
 	}
 
 	for _, e := range entries {
@@ -132,10 +146,21 @@ func (m *Model) loadChat() {
 			case transcript.BlockToolUse, transcript.BlockToolResult:
 				pendingBlocks = append(pendingBlocks, bk)
 				if blk.Type == transcript.BlockToolUse {
+					idx := len(pendingTools)
+					pendingByID[blk.ToolUseID] = idx
 					pendingTools = append(pendingTools, toolLabel{
-						name: blk.Name,
-						arg:  primaryArg(blk.Name, blk.Input),
+						name:      blk.Name,
+						arg:       primaryArg(blk.Name, blk.Input),
+						toolUseID: blk.ToolUseID,
 					})
+				} else {
+					// tool_result: record error and pair result summary with its tool_use
+					if blk.IsError {
+						pendingHasError = true
+					}
+					if idx, ok := pendingByID[blk.ToolUseID]; ok {
+						pendingTools[idx].resultSummary = extractResultSummary(blk)
+					}
 				}
 			case transcript.BlockThinking:
 				flush()
@@ -149,7 +174,7 @@ func (m *Model) loadChat() {
 	}
 	flush()
 
-	m.rebuildActiveState(chatItem{})
+	m.rebuildActiveState(saved)
 }
 
 // rebuildActiveState builds chatBlocks (the active navigation list) and
@@ -236,6 +261,13 @@ func (m *Model) rebuildActiveState(saved chatItem) {
 		}
 		lastIter, lastAttempt, lastGen = e.Iteration, e.Attempt, e.Generation
 
+		// Parse the entry timestamp for the header. RFC3339 failures silently
+		// produce an empty string so the header still renders without a timestamp.
+		ts := ""
+		if t, err := time.Parse(time.RFC3339, e.Ts); err == nil {
+			ts = t.Local().Format("15:04:05")
+		}
+
 		// Suppress the entry header if every block is absorbed into a group
 		// (tool-role entries: the user entry that carries only tool_result blocks).
 		allAbsorbed := len(e.Blocks) > 0
@@ -250,11 +282,20 @@ func (m *Model) rebuildActiveState(saved chatItem) {
 				kind: renderEntryHeader,
 				key:  blockKey{seq: e.Seq},
 				role: e.Role,
+				ts:   ts,
 			})
 		}
 
 		// Emit block items. Groups are emitted once at their first block's
 		// position; all other group members are skipped here.
+		//
+		// renderedVisible tracks whether this entry produced any visible output
+		// (entry header, group header, or standalone block). Fully-absorbed
+		// entries that host no group header — e.g. the individual tool_use and
+		// tool_result entries ACP writes one-per-message — contribute nothing
+		// visible and must not emit a trailing separator, or N tool calls
+		// stack N blank lines between the group header and the next message.
+		renderedVisible := !allAbsorbed // entry header counts as visible output
 		for bi := range e.Blocks {
 			bk := blockKey{seq: e.Seq, block: bi}
 			eRef := entryBySeq[e.Seq]
@@ -263,6 +304,7 @@ func (m *Model) rebuildActiveState(saved chatItem) {
 			if groupItem, ok := groupByFirst[bk]; ok {
 				// First block of a group: emit the group header (and inner blocks
 				// if the group is expanded).
+				renderedVisible = true
 				expanded := m.chatGroupExpand[bk] || m.chatExpandAll
 				m.chatRenderPlan = append(m.chatRenderPlan, renderItem{
 					kind:  renderGroupHeader,
@@ -297,6 +339,7 @@ func (m *Model) rebuildActiveState(saved chatItem) {
 			}
 
 			// Standalone block (thinking or unsupported) or text.
+			renderedVisible = true
 			switch blk.Type {
 			case transcript.BlockText:
 				m.chatRenderPlan = append(m.chatRenderPlan, renderItem{
@@ -316,8 +359,10 @@ func (m *Model) rebuildActiveState(saved chatItem) {
 			}
 		}
 
-		// Trailing blank line after each entry's content.
-		m.chatRenderPlan = append(m.chatRenderPlan, renderItem{kind: renderEntrySep, sep: ""})
+		// Trailing blank line only when this entry rendered visible content.
+		if renderedVisible {
+			m.chatRenderPlan = append(m.chatRenderPlan, renderItem{kind: renderEntrySep, sep: ""})
+		}
 	}
 }
 
@@ -352,6 +397,63 @@ func primaryArg(_ string, input json.RawMessage) string {
 		}
 	}
 	return ""
+}
+
+// toolCategoryIcon returns a unicode glyph for a tool name based on its
+// functional category, enabling fast visual scanning of tool call groups.
+func toolCategoryIcon(name string) string {
+	lower := strings.ToLower(name)
+	for _, kw := range []string{"read", "write", "edit", "create", "view", "file", "notebook"} {
+		if strings.Contains(lower, kw) {
+			return "◈"
+		}
+	}
+	for _, kw := range []string{"search", "grep", "find", "glob"} {
+		if strings.Contains(lower, kw) {
+			return "⌕"
+		}
+	}
+	for _, kw := range []string{"bash", "execute", "shell", "run"} {
+		if strings.Contains(lower, kw) {
+			return "$"
+		}
+	}
+	for _, kw := range []string{"webfetch", "websearch", "fetch", "web"} {
+		if strings.Contains(lower, kw) {
+			return "↗"
+		}
+	}
+	for _, kw := range []string{"task", "todo", "agent"} {
+		if strings.Contains(lower, kw) {
+			return "⊙"
+		}
+	}
+	return shared.IconToolCall
+}
+
+// extractResultSummary returns a short human-readable summary of a tool_result
+// block for display in collapsed group headers. Error results return "error";
+// JSON results with an exit_code key return "exit N"; others return up to 30
+// runes of flattened content.
+func extractResultSummary(blk transcript.Block) string {
+	if blk.IsError {
+		return "error"
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(blk.Content), &m); err == nil {
+		if ec, ok := m["exit_code"]; ok {
+			return fmt.Sprintf("exit %v", ec)
+		}
+	}
+	flat := strings.Join(strings.Fields(blk.Content), " ")
+	runes := []rune(flat)
+	if len(runes) == 0 {
+		return "ok"
+	}
+	if len(runes) <= 30 {
+		return flat
+	}
+	return string(runes[:29]) + "…"
 }
 
 // truncateArg clips s to 40 runes, appending "…" when clipped.
@@ -396,8 +498,19 @@ func (m Model) chatBody() string {
 	}
 	s := m.steps[i]
 	indicator, _ := stepIndicator(s.status)
-	b.WriteString("  " + indicator + "  " +
-		statusStyle(s.status).Render(string(s.status)) + "\n\n")
+	header := indicator + "  " + shared.Theme.Title.Render(m.chatStep) + "  " +
+		statusStyle(s.status).Render(string(s.status))
+	var breadcrumbs []string
+	if s.iteration > 0 {
+		breadcrumbs = append(breadcrumbs, fmt.Sprintf("iter %d", s.iteration+1))
+	}
+	if s.attempt > 0 {
+		breadcrumbs = append(breadcrumbs, fmt.Sprintf("attempt %d", s.attempt))
+	}
+	if len(breadcrumbs) > 0 {
+		header += "  " + shared.Theme.Chat.Hint.Render(strings.Join(breadcrumbs, " • "))
+	}
+	b.WriteString("  " + header + "\n\n")
 
 	running := s.status == step.StatusRunning
 	hasTail := false
@@ -419,13 +532,17 @@ func (m Model) chatBody() string {
 		if m.RunDir == "" {
 			b.WriteString("  " + shared.Theme.Question.Render("transcript unavailable (persistence off)") + "\n")
 		} else if !running && !hasTail {
-			b.WriteString("  " + shared.Theme.Question.Render("no output yet") + "\n")
+			if s.err != "" {
+				b.WriteString("  " + shared.Theme.Error.Render(s.err) + "\n")
+			} else {
+				b.WriteString("  " + shared.Theme.Question.Render("no output yet") + "\n")
+			}
 		}
 	}
 
 	if m.chatElided > 0 {
-		b.WriteString("  " + shared.Theme.Chat.Hint.Render(
-			fmt.Sprintf("… %d earlier message(s) elided", m.chatElided)) + "\n\n")
+		sep := fmt.Sprintf("── %d earlier messages not shown ──", m.chatElided)
+		b.WriteString("\n  " + shared.Theme.Marker.Render(sep) + "\n\n")
 	}
 
 	// Dumb iterator over the pre-computed render plan.
@@ -438,8 +555,18 @@ func (m Model) chatBody() string {
 				b.WriteString("\n  " + shared.Theme.Marker.Render(item.sep) + "\n\n")
 			}
 		case renderEntryHeader:
-			b.WriteString("  " + shared.Theme.Chat.Hint.Render(
-				fmt.Sprintf("#%d %s", item.key.seq, item.role)) + "\n")
+			left := fmt.Sprintf("#%d %s", item.key.seq, item.role)
+			if item.ts != "" && m.transcriptInnerW > 0 {
+				totalW := m.transcriptInnerW - 2 // subtract leading "  "
+				pad := totalW - utf8.RuneCountInString(left) - utf8.RuneCountInString(item.ts)
+				if pad < 1 {
+					pad = 1
+				}
+				line := left + strings.Repeat(" ", pad) + item.ts
+				b.WriteString("  " + shared.Theme.Chat.Hint.Render(line) + "\n")
+			} else {
+				b.WriteString("  " + shared.Theme.Chat.Hint.Render(left) + "\n")
+			}
 		case renderText:
 			if item.blk != nil {
 				m.writeBlock(&b, item.key, *item.blk, item.role)
@@ -475,11 +602,12 @@ func (m Model) chatBody() string {
 
 // writeGroupHeader renders one tool call group header line:
 //
-//	▌ ▸/▾ N tool call(s): Name1(arg), Name2(arg), … (+K)
+//	▌ ▸/▾ ✓/✗ N tool call(s): Name1(arg), Name2(arg), … (+K)
 //
 // The bar is in shared.Theme.Chat.BarToolCall (charple accent, matching tool_use
-// blocks). The name list is formatted dynamically to fit m.transcriptInnerW so
-// the summary never overflows on resize.
+// blocks). A status glyph (✓ success / ✗ error) follows the collapse marker so
+// the outcome of a batch is visible without expanding. The name list is formatted
+// dynamically to fit m.transcriptInnerW so the summary never overflows on resize.
 func (m Model) writeGroupHeader(b *strings.Builder, item renderItem, expanded, cursored bool) {
 	bar := shared.Theme.Chat.BarToolCall
 	barGlyph := bar.Render(shared.BarThick)
@@ -493,46 +621,77 @@ func (m Model) writeGroupHeader(b *strings.Builder, item renderItem, expanded, c
 	if g.count == 1 {
 		noun = "tool call"
 	}
-	prefix := fmt.Sprintf("%s %d %s: ", marker, g.count, noun)
 
-	// Available runes for the name list after the fixed left margin ("  ▌ " = 4
-	// rune columns) and the prefix.
-	fixedLeft := 4 + utf8.RuneCountInString(prefix)
+	// Status glyph: styled separately so it retains its color even when cursored.
+	var styledStatus string
+	statusIcon := shared.IconSuccess
+	if g.hasError {
+		statusIcon = shared.IconError
+		styledStatus = shared.Theme.Error.Render(statusIcon)
+	} else {
+		styledStatus = shared.Theme.Valid.Render(statusIcon)
+	}
+
+	// Available runes for the name list. fixedLeft = "  ▌ " (4) + marker (1) +
+	// space (1) + status_icon (1) + space (1) + count + " " + noun + ": ".
+	innerPrefix := fmt.Sprintf("%d %s: ", g.count, noun)
+	fixedLeft := 4 + 1 + 1 + 1 + 1 + utf8.RuneCountInString(innerPrefix)
 	available := m.transcriptInnerW - fixedLeft
 	if available < 8 {
 		available = 8
 	}
 
 	nameList := formatNameList(g.tools, available)
-	label := prefix + nameList
 
 	if cursored {
-		b.WriteString("  " + barGlyph + " " + shared.Theme.Chat.BlockCursor.Render(label))
+		// Keep styledStatus outside BlockCursor so its error color is visible.
+		b.WriteString("  " + barGlyph + " " + marker + " " + styledStatus + " " +
+			shared.Theme.Chat.BlockCursor.Render(innerPrefix+nameList))
 	} else {
-		b.WriteString("  " + barGlyph + " " + shared.Theme.Chat.ToolCall.Render(label))
+		b.WriteString("  " + barGlyph + " " + shared.Theme.Chat.ToolCall.Render(marker) +
+			" " + styledStatus + " " + shared.Theme.Chat.ToolCall.Render(innerPrefix+nameList))
 	}
 	b.WriteString("\n")
 }
 
 // formatNameList renders the tool label list into a string that fits within
-// available runes. Entries that don't fit are replaced with ", … (+K)" where K
-// is the omitted count.
+// available runes. Each label includes a category icon prefix, the tool name,
+// optional primary arg, and optional result summary (→ result). Entries that
+// don't fit are replaced with ", … (+K)" where K is the omitted count.
 func formatNameList(tools []toolLabel, available int) string {
 	if len(tools) == 0 {
 		return ""
 	}
 	labels := make([]string, len(tools))
 	for i, tl := range tools {
+		icon := toolCategoryIcon(tl.name)
+		l := icon + " " + tl.name
 		if tl.arg != "" {
-			labels[i] = tl.name + "(" + tl.arg + ")"
-		} else {
-			labels[i] = tl.name
+			l += "(" + tl.arg + ")"
 		}
+		if tl.resultSummary != "" {
+			l += " → " + tl.resultSummary
+		}
+		labels[i] = l
 	}
 	full := strings.Join(labels, ", ")
 	if utf8.RuneCountInString(full) <= available {
 		return full
 	}
+	// If result summaries pushed us over, try without them.
+	labelsNoResult := make([]string, len(tools))
+	for i, tl := range tools {
+		icon := toolCategoryIcon(tl.name)
+		l := icon + " " + tl.name
+		if tl.arg != "" {
+			l += "(" + tl.arg + ")"
+		}
+		labelsNoResult[i] = l
+	}
+	if utf8.RuneCountInString(strings.Join(labelsNoResult, ", ")) <= available {
+		return strings.Join(labelsNoResult, ", ")
+	}
+	labels = labelsNoResult // truncation works on the no-result labels
 	// Find the maximum prefix that fits alongside a "… (+K)" suffix.
 	for n := len(labels) - 1; n >= 0; n-- {
 		omitted := len(labels) - n
@@ -565,7 +724,7 @@ func (m Model) writeBlock(b *strings.Builder, key blockKey, blk transcript.Block
 		m.writeCollapsible(b, key, shared.Theme.Chat.Thinking, shared.Theme.Chat.BarThinking, shared.IconThinking+" reasoning", blk.Text, "", false, blk.Truncated)
 	case transcript.BlockToolUse:
 		inp := expandView(string(blk.Input))
-		m.writeCollapsible(b, key, shared.Theme.Chat.ToolCall, shared.Theme.Chat.BarToolCall, shared.IconToolCall+" "+blk.Name, inp, fenceJSON(inp), false, false)
+		m.writeCollapsible(b, key, shared.Theme.Chat.ToolCall, shared.Theme.Chat.BarToolCall, toolCategoryIcon(blk.Name)+" "+blk.Name, inp, fenceJSON(inp), false, false)
 	case transcript.BlockToolResult:
 		res := expandView(blk.Content)
 		m.writeCollapsible(b, key, shared.Theme.Chat.ToolResult, shared.Theme.Chat.BarToolResult, shared.IconToolResult+" result", res, fenceJSON(res), blk.IsError, blk.Truncated)

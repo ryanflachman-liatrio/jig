@@ -335,15 +335,18 @@ type chatItem struct {
 
 // toolGroup is the payload for a group-header chatItem.
 type toolGroup struct {
-	blocks []blockKey  // all tool_use / tool_result blockKeys in the group, in order
-	tools  []toolLabel // one entry per tool_use block (for the summary line)
-	count  int         // len(tools) — the N in "N tool calls"
+	blocks   []blockKey  // all tool_use / tool_result blockKeys in the group, in order
+	tools    []toolLabel // one entry per tool_use block (for the summary line)
+	count    int         // len(tools) — the N in "N tool calls"
+	hasError bool        // true if any tool_result in the group has IsError=true
 }
 
 // toolLabel is one entry in the group summary line.
 type toolLabel struct {
-	name string // blk.Name from the transcript block
-	arg  string // primaryArg(name, input) — already truncated to 40 runes
+	name          string // blk.Name from the transcript block
+	arg           string // primaryArg(name, input) — already truncated to 40 runes
+	toolUseID     string // ToolUseID for pairing with the matching tool_result
+	resultSummary string // short result preview from the matched tool_result; "" if not yet available
 }
 
 // renderKind discriminates the five variants of renderItem.
@@ -366,23 +369,27 @@ type renderItem struct {
 	sep string
 
 	// renderEntryHeader: key.seq is the entry seq; role is the entry role.
+	// ts is the entry timestamp formatted as "HH:MM:SS"; "" if unavailable.
 	// renderText, renderBlock: key identifies the block; blk is a pointer into chatEntries.
 	// renderGroupHeader: key is the groupKey (first block); group points to the toolGroup.
 	key   blockKey
 	blk   *transcript.Block
 	role  transcript.Role
 	group *toolGroup
+	ts    string // "HH:MM:SS" for renderEntryHeader; "" if timestamp absent or unparseable
 }
 
 type monitorStep struct {
-	id      string
-	status  step.Status
-	start   time.Time
-	end     time.Time
-	err     string   // failure reason when status == StatusFailed
-	subtype string   // SDK result subtype for agent policy-limit failures
-	cost    *float64 // TotalCostUSD from step.Result; nil when not yet known
-	tokens  int      // total tokens processed; 0 when not yet known
+	id        string
+	status    step.Status
+	start     time.Time
+	end       time.Time
+	err       string   // failure reason when status == StatusFailed
+	subtype   string   // SDK result subtype for agent policy-limit failures
+	cost      *float64 // TotalCostUSD from step.Result; nil when not yet known
+	tokens    int      // total tokens processed; 0 when not yet known
+	iteration int      // current loop iteration (from StepStatus.Iteration)
+	attempt   int      // current retry attempt (from StepStatus.Attempt)
 }
 
 // New creates a fresh monitor model for the given runID.

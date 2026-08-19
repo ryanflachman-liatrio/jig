@@ -335,10 +335,11 @@ func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
-// updateTranscript handles keys when the Transcript panel holds focus: n/N move
-// the block cursor, enter/space toggle the cursored block, o toggles all, and
-// h/esc return focus to the Steps panel. Remaining keys
-// (j/k/ctrl+d/ctrl+u/pgup/pgdn) scroll the transcript viewport.
+// updateTranscript handles keys when the Transcript panel holds focus: j/k move
+// the block cursor between collapsible items (vim-style message navigation),
+// J/K scroll the transcript viewport one line at a time, enter/space toggle the
+// cursored block, o toggles all, and h/esc return focus to the Steps panel.
+// Arrow keys and ctrl+d/u/pgup/pgdn fall through to the viewport as before.
 func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	// G jumps to the bottom and re-enables auto-scroll (always processed first
 	// so shift+G never starts a gg chord).
@@ -404,8 +405,18 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.rebuildActiveState(saved)
 		m.refreshPanels()
 		return m, nil
+	case keybind.Matches(msg, m.keys.ScrollDown):
+		m.chatVP.ScrollDown(1)
+		m.chatAutoScroll = m.chatVP.AtBottom()
+		m.refreshPanels()
+		return m, nil
+	case keybind.Matches(msg, m.keys.ScrollUp):
+		m.chatVP.ScrollUp(1)
+		m.chatAutoScroll = m.chatVP.AtBottom()
+		m.refreshPanels()
+		return m, nil
 	}
-	// Other keys (j/k/ctrl+d/ctrl+u/pgup/pgdn) scroll the transcript viewport.
+	// Arrow keys and ctrl+d/u/pgup/pgdn fall through to the viewport.
 	var cmd tea.Cmd
 	m.chatVP, cmd = m.chatVP.Update(msg)
 	m.chatAutoScroll = m.chatVP.AtBottom()

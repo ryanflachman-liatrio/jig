@@ -30,10 +30,12 @@ type monitorKeys struct {
 	// Transcript panel
 	TransToSteps keybind.Binding // matched (esc/h → Steps)
 	TransLeave   keybind.Binding // matched (q → runs list)
-	Scroll       keybind.Binding // display-only ("j/k scroll")
-	NextBlock    keybind.Binding // matched (n)
-	PrevBlock    keybind.Binding // matched (N)
-	BlockNav     keybind.Binding // display-only ("n/N block")
+	Scroll       keybind.Binding // display-only ("J/K scroll")
+	ScrollDown   keybind.Binding // matched (J — scroll viewport one line down)
+	ScrollUp     keybind.Binding // matched (K — scroll viewport one line up)
+	NextBlock    keybind.Binding // matched (j — next collapsible block)
+	PrevBlock    keybind.Binding // matched (k — prev collapsible block)
+	BlockNav     keybind.Binding // display-only ("j/k block")
 	Toggle       keybind.Binding // matched (enter/space → expand)
 	ExpandAll    keybind.Binding // matched (o)
 	GotoTop      keybind.Binding // matched (gg chord — pendingGPrefix state in model)
@@ -94,10 +96,12 @@ func defaultMonitorKeys() monitorKeys {
 
 		TransToSteps: keybind.NewBinding(keybind.WithKeys("esc", "h"), keybind.WithHelp("esc", "steps")),
 		TransLeave:   keybind.NewBinding(keybind.WithKeys("q"), keybind.WithHelp("q", "runs list")),
-		Scroll:       keybind.NewBinding(keybind.WithKeys("j", "k"), keybind.WithHelp("j/k", "scroll")),
-		NextBlock:    keybind.NewBinding(keybind.WithKeys("n"), keybind.WithHelp("n", "next block")),
-		PrevBlock:    keybind.NewBinding(keybind.WithKeys("N"), keybind.WithHelp("N", "prev block")),
-		BlockNav:     keybind.NewBinding(keybind.WithKeys("n", "N"), keybind.WithHelp("n/N", "block")),
+		Scroll:       keybind.NewBinding(keybind.WithKeys("J", "K"), keybind.WithHelp("J/K", "scroll")),
+		ScrollDown:   keybind.NewBinding(keybind.WithKeys("J"), keybind.WithHelp("J", "scroll down")),
+		ScrollUp:     keybind.NewBinding(keybind.WithKeys("K"), keybind.WithHelp("K", "scroll up")),
+		NextBlock:    keybind.NewBinding(keybind.WithKeys("j"), keybind.WithHelp("j", "next block")),
+		PrevBlock:    keybind.NewBinding(keybind.WithKeys("k"), keybind.WithHelp("k", "prev block")),
+		BlockNav:     keybind.NewBinding(keybind.WithKeys("j", "k"), keybind.WithHelp("j/k", "block")),
 		Toggle:       keybind.NewBinding(keybind.WithKeys("enter", " "), keybind.WithHelp("enter", "expand")),
 		ExpandAll:    keybind.NewBinding(keybind.WithKeys("o"), keybind.WithHelp("o", "all")),
 		GotoTop:      keybind.NewBinding(keybind.WithKeys("g"), keybind.WithHelp("gg", "top")),

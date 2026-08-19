@@ -100,17 +100,20 @@ func TestMonitorChatRendersBlocks(t *testing.T) {
 
 	// Collapsed view: thinking label, text content, and group summary are present;
 	// individual tool block labels are hidden inside the collapsed group.
+	// The group header now shows "▸ ✓ 1 tool call: ◈ Read(…)" so we check for
+	// the count/noun and the tool name separately (a category icon sits between).
 	body := m.chatBody()
-	for _, want := range []string{shared.IconThinking + " reasoning", "Reading the file", "1 tool call: Read"} {
+	for _, want := range []string{shared.IconThinking + " reasoning", "Reading the file", "1 tool call", "Read"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("chat body missing %q:\n%s", want, body)
 		}
 	}
 
-	// Expanded view (o): individual block labels become visible.
+	// Expanded view (o): individual block labels become visible. The tool_use label
+	// now uses a category icon (◈ for file-ops) instead of the generic IconToolCall.
 	m, _ = m.Update(key("o"))
 	expanded := m.chatBody()
-	for _, want := range []string{shared.IconToolCall + " Read", shared.IconToolResult + " result", "file contents"} {
+	for _, want := range []string{"◈ Read", shared.IconToolResult + " result", "file contents"} {
 		if !strings.Contains(expanded, want) {
 			t.Fatalf("expanded chat body missing %q:\n%s", want, expanded)
 		}
@@ -180,8 +183,8 @@ func TestMonitorChatBlockCursorToggle(t *testing.T) {
 		t.Fatalf("inner block should still be collapsed after group expand")
 	}
 
-	// n → cursor moves to inner block; enter → inner block expands.
-	m, _ = m.Update(key("n"))
+	// j → cursor moves to inner block; enter → inner block expands.
+	m, _ = m.Update(key("j"))
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !strings.Contains(m.chatBody(), "END") {
 		t.Fatalf("enter on inner block did not reveal full content:\n%s", m.chatBody())
@@ -258,15 +261,15 @@ func TestGroupCursorStability(t *testing.T) {
 	}
 
 	// Navigate into the group to inner block b1 (index 2).
-	m, _ = m.Update(key("n"))
-	m, _ = m.Update(key("n"))
+	m, _ = m.Update(key("j"))
+	m, _ = m.Update(key("j"))
 	if m.chatBlockCursor != 2 {
 		t.Fatalf("expected cursor=2 (second inner block), got %d", m.chatBlockCursor)
 	}
 
-	// Navigate back to group header with N.
-	m, _ = m.Update(key("N"))
-	m, _ = m.Update(key("N"))
+	// Navigate back to group header with k.
+	m, _ = m.Update(key("k"))
+	m, _ = m.Update(key("k"))
 	if m.chatBlockCursor != 0 {
 		t.Fatalf("expected cursor=0 (group header), got %d", m.chatBlockCursor)
 	}
@@ -281,8 +284,8 @@ func TestGroupCursorStability(t *testing.T) {
 	}
 }
 
-// TestGroupNavigation checks that n/N traverse group headers and inner blocks in
-// the correct order, and that after the last block in an expanded group n moves
+// TestGroupNavigation checks that j/k traverse group headers and inner blocks in
+// the correct order, and that after the last block in an expanded group j moves
 // to the next outer item naturally.
 func TestGroupNavigation(t *testing.T) {
 	// Transcript: 2 tool_use → group, then a thinking block.
@@ -304,10 +307,10 @@ func TestGroupNavigation(t *testing.T) {
 		t.Fatalf("expected 4 chatBlocks after expand, got %d: %v", len(m.chatBlocks), m.chatBlocks)
 	}
 
-	// n from header (0) → b0 (1) → b1 (2) → thinking (3) → wraps to header (0).
+	// j from header (0) → b0 (1) → b1 (2) → thinking (3) → wraps to header (0).
 	positions := []int{}
 	for i := 0; i < 4; i++ {
-		m, _ = m.Update(key("n"))
+		m, _ = m.Update(key("j"))
 		positions = append(positions, m.chatBlockCursor)
 	}
 	want := []int{1, 2, 3, 0}
@@ -892,19 +895,26 @@ func TestMonitorEnterAndBack(t *testing.T) {
 	}
 }
 
-// TestMonitorChatScrolls confirms j/k with the Transcript focused are not
-// intercepted as cursor moves (they fall through to the viewport).
+// TestMonitorChatScrolls confirms j with the Transcript focused moves the block
+// cursor (not the step list cursor), and J scrolls the viewport without moving
+// the list cursor.
 func TestMonitorChatScrolls(t *testing.T) {
 	m := newMonitorWithSteps(t)
-	m, _ = m.Update(key("j")) // cursor → 1
+	m, _ = m.Update(key("j")) // step list: cursor → 1
 	m, _ = m.Update(key("enter"))
 	if m.focus != focusTranscript {
 		t.Fatalf("expected focusTranscript, got %v", m.focus)
 	}
 	before := m.cursor
+	// j in Transcript focus moves the block cursor, not the step list cursor.
 	m, _ = m.Update(key("j"))
 	if m.cursor != before {
 		t.Fatalf("j with Transcript focused moved the list cursor from %d to %d", before, m.cursor)
+	}
+	// J scrolls the viewport — also must not move the list cursor.
+	m, _ = m.Update(key("J"))
+	if m.cursor != before {
+		t.Fatalf("J with Transcript focused moved the list cursor from %d to %d", before, m.cursor)
 	}
 }
 
