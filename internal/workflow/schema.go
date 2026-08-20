@@ -78,9 +78,12 @@ func validPermissionMode(s string) bool {
 }
 
 // Backend and transport name the agent vendor and how jig reaches it.
-// Selected in TOML only (never via env). Only Claude is implemented today.
+// Selected in TOML only (never via env).
 const (
 	BackendClaude = "claude"
+	// BackendCursor routes to the Cursor IDE via ACP (transport = "acp" is
+	// implied and required; no SDK transport is available for this backend).
+	BackendCursor = "cursor"
 
 	TransportSDK = "sdk"
 	TransportACP = "acp"
@@ -88,7 +91,7 @@ const (
 
 func validBackend(s string) bool {
 	switch s {
-	case BackendClaude:
+	case BackendClaude, BackendCursor:
 		return true
 	}
 	return false

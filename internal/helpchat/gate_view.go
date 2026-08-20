@@ -2,7 +2,6 @@ package helpchat
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"jig/internal/tui/shared"
@@ -37,22 +36,5 @@ func (m Model) renderPermGate(g *pendingGateEntry, width int) string {
 }
 
 func (m Model) renderQuestionGate(g *pendingGateEntry, width int) string {
-	var b strings.Builder
-	b.WriteString(shared.Theme.Question.Render("Agent question") + "\n")
-	b.WriteString(g.question + "\n\n")
-	if len(g.options) > 0 {
-		for i, opt := range g.options {
-			if i == g.selected {
-				b.WriteString(shared.Theme.SelectedLine.Render("▶ "+opt) + "\n")
-			} else {
-				b.WriteString(shared.Theme.Chat.Hint.Render("  "+opt) + "\n")
-			}
-		}
-	} else {
-		b.WriteString(shared.Theme.Marker.Render("> ") + g.textBuf + "█\n")
-	}
-	return b.String()
+	return g.question.Resize(width, 8).View()
 }
-
-// unused width kept for future layout math (e.g. wrapping long option text).
-var _ = fmt.Sprintf

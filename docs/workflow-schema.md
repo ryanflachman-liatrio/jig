@@ -130,11 +130,19 @@ protocol) run it. Selection is TOML-only — there is no process-wide env var.
 | Field | Default | Values today | Notes |
 |---|---|---|---|
 | `backend` | `claude` | `claude` | Vendor. Cursor / Codex / Gemini are not implemented yet. |
-| `transport` | `sdk` | `sdk` \| `acp` | `sdk` = Claude Agent SDK; `acp` = ACP→Claude via Zed’s `claude-code-acp` adapter |
+| `transport` | `sdk` | `sdk` \| `acp` | `sdk` = Claude Agent SDK; `acp` = ACP→Claude via `@agentclientprotocol/claude-agent-acp@0.70.0` |
 
 Inheritance matches `model` / `effort`: step → `[defaults]` → engine default.
 Unknown values fail at `jig validate`. Capability mismatches (e.g. `transport =
 "acp"` with `[step.schema]`) fail closed at execute time.
+
+Interactive steps may enable `AskUserQuestion` with either transport. The ACP
+path advertises form elicitation only and supports text, single-select, and
+multi-select questions, including the Claude adapter's “Other” answer fields.
+ACP URL elicitation and other primitive form field types are intentionally not
+advertised; an agent that sends one receives a protocol error rather than a
+partially interpreted prompt. Permission requests remain a separate security
+decision and are never rendered as user questions.
 
 ```toml
 [defaults]

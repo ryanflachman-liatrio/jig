@@ -131,6 +131,71 @@ func TestRequestPermission_NoMatchingOption_Cancels(t *testing.T) {
 	}
 }
 
+func TestCreateElicitationDelegatesAndRecords(t *testing.T) {
+	req := acpsdk.UnstableCreateElicitationRequest{
+		Form: &acpsdk.UnstableCreateElicitationForm{
+			Mode:    "form",
+			Message: "Choose",
+			RequestedSchema: acpsdk.UnstableElicitationSchema{
+				Properties: map[string]any{"answer": map[string]any{"type": "string"}},
+			},
+		},
+	}
+	c := &Client{Elicit: func(
+		_ context.Context,
+		got acpsdk.UnstableCreateElicitationRequest,
+	) (acpsdk.UnstableCreateElicitationResponse, error) {
+		if got.Form == nil || got.Form.Message != "Choose" {
+			t.Fatalf("request = %+v", got)
+		}
+		resp := acpsdk.NewUnstableCreateElicitationResponseAccept()
+		resp.Accept.Content = map[string]any{"answer": "yes"}
+		return resp, nil
+	}}
+	resp, err := c.UnstableCreateElicitation(context.Background(), req)
+	if err != nil {
+		t.Fatalf("UnstableCreateElicitation() error = %v", err)
+	}
+	if resp.Accept == nil || resp.Accept.Content["answer"] != "yes" {
+		t.Fatalf("response = %+v", resp)
+	}
+	if got := c.ElicitationRequests(); len(got) != 1 {
+		t.Fatalf("recorded requests = %d, want 1", len(got))
+	}
+}
+
+func TestCreateElicitationWithoutHandlerCancels(t *testing.T) {
+	resp, err := (&Client{}).UnstableCreateElicitation(
+		context.Background(),
+		acpsdk.UnstableCreateElicitationRequest{Form: &acpsdk.UnstableCreateElicitationForm{}},
+	)
+	if err != nil {
+		t.Fatalf("UnstableCreateElicitation() error = %v", err)
+	}
+	if resp.Cancel == nil {
+		t.Fatalf("response = %+v, want cancel", resp)
+	}
+}
+
+func TestElicitationCapabilityIsConditional(t *testing.T) {
+	if got := clientCapabilities(nil); got.Elicitation != nil {
+		t.Fatalf("non-interactive capabilities advertise elicitation: %+v", got)
+	}
+	elicit := Elicitor(func(
+		context.Context,
+		acpsdk.UnstableCreateElicitationRequest,
+	) (acpsdk.UnstableCreateElicitationResponse, error) {
+		return acpsdk.NewUnstableCreateElicitationResponseCancel(), nil
+	})
+	got := clientCapabilities(elicit)
+	if got.Elicitation == nil || got.Elicitation.Form == nil {
+		t.Fatalf("interactive capabilities = %+v, want elicitation.form", got)
+	}
+	if got.Elicitation.Url != nil {
+		t.Fatalf("interactive capabilities unexpectedly advertise URL elicitation")
+	}
+}
+
 func TestRequestPermission_NilDecider_DeniesByDefault(t *testing.T) {
 	c := &Client{}
 	req := permissionRequest(

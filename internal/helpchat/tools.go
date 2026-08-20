@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 
 	tea "charm.land/bubbletea/v2"
 	claudecode "github.com/severity1/claude-agent-sdk-go"
 
 	"jig/internal/datastore"
 	"jig/internal/engine"
+	"jig/internal/interaction"
 	"jig/internal/transcript"
 )
 
@@ -346,6 +348,8 @@ func buildSendMessageToStep(run *engine.Run, dispatch DispatchFunc) *claudecode.
 	)
 }
 
+var helpQuestionSeq atomic.Uint64
+
 func buildAskUser(dispatch DispatchFunc) *claudecode.McpTool {
 	schema := map[string]any{
 		"type": "object",
@@ -380,11 +384,38 @@ func buildAskUser(dispatch DispatchFunc) *claudecode.McpTool {
 					}
 				}
 			}
-			ansC := make(chan string, 1)
-			dispatch(QuestionRequestMsg{Question: question, Options: options, AnsC: ansC})
+			field := interaction.QuestionField{
+				ID:     "answer",
+				Prompt: question,
+				Kind:   interaction.FieldText,
+			}
+			if len(options) > 0 {
+				field.Kind = interaction.FieldSingleSelect
+				field.AllowCustom = true
+				for _, option := range options {
+					field.Options = append(field.Options, interaction.QuestionOption{Value: option, Label: option})
+				}
+			}
+			req := interaction.QuestionRequest{
+				ID:      fmt.Sprintf("help-question-%d", helpQuestionSeq.Add(1)),
+				Message: question,
+				Fields:  []interaction.QuestionField{field},
+			}
+			ansC := make(chan interaction.QuestionResponse, 1)
+			dispatch(QuestionRequestMsg{Request: req, AnsC: ansC})
 			select {
-			case answer := <-ansC:
-				return okResult(answer), nil
+			case response := <-ansC:
+				switch response.Action {
+				case interaction.ActionCancel:
+					return errResult("operator cancelled the question"), nil
+				case interaction.ActionDecline:
+					return okResult("operator declined to answer"), nil
+				}
+				answer := response.Answers["answer"]
+				if answer.Custom != "" {
+					return okResult(answer.Custom), nil
+				}
+				return okResult(strings.Join(answer.Values, ", ")), nil
 			case <-ctx.Done():
 				return errResult("operator did not respond (context cancelled)"), nil
 			}

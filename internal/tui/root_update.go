@@ -85,7 +85,7 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case monitor.AgentQuestionResponseMsg:
 		if run, ok := m.handles[msg.RunID]; ok {
-			run.AnswerQuestion(msg.StepID, msg.ToolUseID, msg.Answer)
+			run.AnswerQuestion(msg.StepID, msg.Response)
 		}
 		return m, nil
 

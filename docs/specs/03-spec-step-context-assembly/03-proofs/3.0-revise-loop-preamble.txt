@@ -1,13 +1,11 @@
 ## Workflow context
 
 You are step `plan` in workflow `feature` (iteration 2 of 3).
-Purpose: turn research into an ordered, reviewable implementation plan
-Notes: cross-check every file path and type name before emitting a task
 
 Upstream (already complete):
-- `research_backend` (succeeded) — surface backend findings (engine, storage, schema) that shape the plan
+- `intake` (succeeded)
+- `research_backend` (succeeded)
 - `research_frontend` (succeeded)
-- `security_scan` (succeeded)
 These reach you as the inputs listed below; this section is orientation only.
 
 Downstream (what your output feeds):

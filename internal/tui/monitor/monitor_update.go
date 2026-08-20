@@ -218,6 +218,8 @@ func (m Model) textareaActive() bool {
 		return true
 	case inputKindReview, inputKindRecovery:
 		return entry.composing
+	case inputKindQuestion:
+		return entry.question.CapturesText()
 	}
 	return false
 }

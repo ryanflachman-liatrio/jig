@@ -1,6 +1,9 @@
 package engine
 
-import "jig/internal/step"
+import (
+	"jig/internal/interaction"
+	"jig/internal/step"
+)
 
 // Event is the sealed vocabulary of state transitions the engine emits.
 // Each type carries exactly its own fields; consumers type-switch.
@@ -176,22 +179,16 @@ type PromptRequest struct {
 // AgentQuestion is emitted when an in-flight agent step calls AskUserQuestion.
 // The step transitions to StatusNeedsInput and waits for Run.AnswerQuestion.
 type AgentQuestion struct {
+	RunID   string
+	StepID  string
+	Request interaction.QuestionRequest
+}
+
+type AgentQuestionResolved struct {
 	RunID     string
 	StepID    string
-	ToolUseID string
-	Questions []AgentQuestionItem
-}
-
-type AgentQuestionItem struct {
-	Header      string
-	Question    string
-	Options     []AgentQuestionOption
-	MultiSelect bool
-}
-
-type AgentQuestionOption struct {
-	Label       string
-	Description string
+	RequestID string
+	Action    interaction.ResponseAction
 }
 
 // StepsReset is emitted when an operator resets a run to an earlier step
@@ -239,5 +236,6 @@ func (IntegrationConflictRequest) isEvent() {}
 func (FinalMergeRequest) isEvent()          {}
 func (PromptRequest) isEvent()              {}
 func (AgentQuestion) isEvent()              {}
+func (AgentQuestionResolved) isEvent()      {}
 func (StepsReset) isEvent()                 {}
 func (SecurityFinding) isEvent()            {}

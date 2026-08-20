@@ -19,6 +19,8 @@ import (
 // depends on this being a real decision, not an always-allow stub.
 type Decider func(toolCall acpsdk.ToolCallUpdate) bool
 
+type Elicitor func(context.Context, acpsdk.UnstableCreateElicitationRequest) (acpsdk.UnstableCreateElicitationResponse, error)
+
 // EventKind identifies which session/update variant an Event captured.
 type EventKind string
 
@@ -45,6 +47,7 @@ type Event struct {
 // in-memory log and delegating permission decisions to Decide.
 type Client struct {
 	Decide Decider
+	Elicit Elicitor
 
 	// OnUpdate, if set, is invoked synchronously with each Event as it is
 	// captured — before SessionUpdate returns — so a caller can stream events
@@ -52,9 +55,10 @@ type Client struct {
 	// Conn.Prompt in conn.go, which streams into internal/harness/acp.go).
 	OnUpdate func(Event)
 
-	mu       sync.Mutex
-	events   []Event
-	requests []acpsdk.RequestPermissionRequest
+	mu           sync.Mutex
+	events       []Event
+	requests     []acpsdk.RequestPermissionRequest
+	elicitations []acpsdk.UnstableCreateElicitationRequest
 }
 
 var _ acpsdk.Client = (*Client)(nil)
@@ -75,6 +79,27 @@ func (c *Client) PermissionRequests() []acpsdk.RequestPermissionRequest {
 	out := make([]acpsdk.RequestPermissionRequest, len(c.requests))
 	copy(out, c.requests)
 	return out
+}
+
+func (c *Client) ElicitationRequests() []acpsdk.UnstableCreateElicitationRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	out := make([]acpsdk.UnstableCreateElicitationRequest, len(c.elicitations))
+	copy(out, c.elicitations)
+	return out
+}
+
+func (c *Client) UnstableCreateElicitation(
+	ctx context.Context,
+	params acpsdk.UnstableCreateElicitationRequest,
+) (acpsdk.UnstableCreateElicitationResponse, error) {
+	c.mu.Lock()
+	c.elicitations = append(c.elicitations, params)
+	c.mu.Unlock()
+	if c.Elicit == nil {
+		return acpsdk.NewUnstableCreateElicitationResponseCancel(), nil
+	}
+	return c.Elicit(ctx, params)
 }
 
 // RequestPermission implements acp.Client. It records the request, then asks
@@ -215,7 +240,7 @@ type Result struct {
 // they arrive (rather than in one batch after the turn ends) use those
 // directly.
 func Run(ctx context.Context, cwd, prompt string, decide Decider) (*Result, error) {
-	conn, err := Connect(ctx, decide, nil)
+	conn, err := Connect(ctx, decide, nil, nil)
 	if err != nil {
 		return nil, err
 	}

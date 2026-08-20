@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"jig/internal/engine"
+	"jig/internal/interaction"
 )
 
 // ShowRunsMsg asks the root to switch to the runs list.
@@ -45,10 +46,9 @@ type AgentInputMsg struct {
 // AgentQuestionResponseMsg is emitted by the monitor when the user answers an
 // AskUserQuestion call. The root delivers it via Run.AnswerQuestion.
 type AgentQuestionResponseMsg struct {
-	RunID     string
-	StepID    string
-	ToolUseID string
-	Answer    string
+	RunID    string
+	StepID   string
+	Response interaction.QuestionResponse
 }
 
 // RecoverResponseMsg is emitted by the monitor when the user picks a recovery

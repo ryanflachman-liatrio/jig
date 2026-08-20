@@ -59,6 +59,8 @@ func eventKind(e Event) string {
 		return "prompt_request"
 	case AgentQuestion:
 		return "agent_question"
+	case AgentQuestionResolved:
+		return "agent_question_resolved"
 	case SecurityFinding:
 		return "security_finding"
 	default:
@@ -150,6 +152,10 @@ var decoders = map[string]func([]byte) (Event, error){
 	},
 	"agent_question": func(b []byte) (Event, error) {
 		var e AgentQuestion
+		return e, json.Unmarshal(b, &e)
+	},
+	"agent_question_resolved": func(b []byte) (Event, error) {
+		var e AgentQuestionResolved
 		return e, json.Unmarshal(b, &e)
 	},
 	"security_finding": func(b []byte) (Event, error) {

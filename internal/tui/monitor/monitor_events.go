@@ -11,6 +11,7 @@ import (
 	"jig/internal/engine"
 	"jig/internal/sentinel"
 	"jig/internal/step"
+	questionpanel "jig/internal/tui/question"
 )
 
 func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
@@ -162,14 +163,23 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 			m.steps[idx].status = step.StatusNeedsInput
 		}
 		// Decision 6: no focus steal on arrival.
-		evCopy := ev
 		m.inputQueue = append(m.inputQueue, pendingInputEntry{
-			kind:             inputKindQuestion,
-			stepID:           ev.StepID,
-			toolUseID:        ev.ToolUseID,
-			question:         &evCopy,
-			questionSelected: make(map[int]bool),
+			kind:     inputKindQuestion,
+			stepID:   ev.StepID,
+			question: questionpanel.New(ev.Request).Resize(m.gateInnerWidth(), m.gateBodyHeight()-gateHeaderRows),
 		})
+
+	case engine.AgentQuestionResolved:
+		if ev.RunID != m.RunID {
+			return m, nil
+		}
+		for i := range m.inputQueue {
+			entry := &m.inputQueue[i]
+			if entry.kind == inputKindQuestion && entry.question.Request().ID == ev.RequestID {
+				m.removeEntryAt(i)
+				break
+			}
+		}
 
 	case engine.StepMessage:
 		if ev.RunID != m.RunID {

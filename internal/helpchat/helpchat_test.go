@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"jig/internal/engine"
+	"jig/internal/interaction"
 	"jig/internal/step"
 )
 
@@ -30,6 +31,37 @@ func TestBuildSystemPrompt(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("system prompt missing %q\nfull prompt:\n%s", want, got)
 		}
+	}
+}
+
+func TestQuestionPanelRoundTrip(t *testing.T) {
+	m := New(nil, "", engine.RunSnapshot{})
+	req := interaction.QuestionRequest{
+		ID: "help-q1",
+		Fields: []interaction.QuestionField{{
+			ID: "choice", Prompt: "Choose", Kind: interaction.FieldSingleSelect,
+			Options: []interaction.QuestionOption{
+				{Value: "a", Label: "Alpha"},
+				{Value: "b", Label: "Beta"},
+			},
+		}},
+	}
+	answers := make(chan interaction.QuestionResponse, 1)
+	m, _ = m.Update(QuestionRequestMsg{Request: req, AnsC: answers})
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	select {
+	case response := <-answers:
+		if response.RequestID != "help-q1" || response.Action != interaction.ActionAccept {
+			t.Fatalf("response = %+v", response)
+		}
+		if got := response.Answers["choice"].Values; len(got) != 1 || got[0] != "b" {
+			t.Fatalf("answer = %v, want [b]", got)
+		}
+	default:
+		t.Fatal("question panel did not send a response")
 	}
 }
 

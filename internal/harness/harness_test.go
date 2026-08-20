@@ -8,7 +8,7 @@ import (
 func TestCapabilitySetHas(t *testing.T) {
 	all := NewCapabilitySet(
 		CapPermissionCallback,
-		CapInProcessMCP,
+		CapUserQuestion,
 		CapSessionResume,
 		CapStructuredOutput,
 		CapPartialStreaming,
@@ -21,16 +21,16 @@ func TestCapabilitySetHas(t *testing.T) {
 		want bool
 	}{
 		{"empty set lacks permission callback", CapabilitySet(0), CapPermissionCallback, false},
-		{"empty set lacks in-process MCP", CapabilitySet(0), CapInProcessMCP, false},
+		{"empty set lacks user questions", CapabilitySet(0), CapUserQuestion, false},
 		{"empty set lacks session resume", CapabilitySet(0), CapSessionResume, false},
 		{"empty set lacks structured output", CapabilitySet(0), CapStructuredOutput, false},
 		{"empty set lacks partial streaming", CapabilitySet(0), CapPartialStreaming, false},
 		{"full set has permission callback", all, CapPermissionCallback, true},
-		{"full set has in-process MCP", all, CapInProcessMCP, true},
+		{"full set has user questions", all, CapUserQuestion, true},
 		{"full set has session resume", all, CapSessionResume, true},
 		{"full set has structured output", all, CapStructuredOutput, true},
 		{"full set has partial streaming", all, CapPartialStreaming, true},
-		{"single-capability set excludes others", NewCapabilitySet(CapPermissionCallback), CapInProcessMCP, false},
+		{"single-capability set excludes others", NewCapabilitySet(CapPermissionCallback), CapUserQuestion, false},
 	}
 
 	for _, tt := range tests {
@@ -51,7 +51,7 @@ func TestFakeHarnessRoundTrip(t *testing.T) {
 	sess := NewFakeSession(scripted)
 	h := &FakeHarness{
 		NameVal: "fake",
-		Caps:    NewCapabilitySet(CapPermissionCallback, CapInProcessMCP),
+		Caps:    NewCapabilitySet(CapPermissionCallback, CapUserQuestion),
 		Sess:    sess,
 	}
 

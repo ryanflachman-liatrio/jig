@@ -130,10 +130,11 @@ func (m Model) hintLabel() string {
 		case inputKindRequest:
 			return shared.HintString(m.keys.Submit, m.keys.Newline, entryNav, m.keys.GateBlur)
 		case inputKindQuestion:
-			if entry.questionIdx < len(entry.question.Questions) && entry.question.Questions[entry.questionIdx].MultiSelect {
-				return shared.HintString(m.keys.ToggleOpt, m.keys.QConfirm, m.keys.QuestionScroll, entryNav, m.keys.GateBlur)
+			hint := entry.question.Hint()
+			if len(m.inputQueue) > 1 {
+				hint += " · tab entry"
 			}
-			return shared.HintString(m.keys.Answer, m.keys.QuestionScroll, entryNav, m.keys.GateBlur)
+			return hint
 		case inputKindReview:
 			if entry.composing {
 				return shared.HintString(m.keys.Submit, m.keys.Newline, m.keys.GateBlur)

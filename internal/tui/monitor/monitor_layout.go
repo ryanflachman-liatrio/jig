@@ -88,6 +88,14 @@ func (m *Model) resize() {
 			((entry.kind == inputKindReview || entry.kind == inputKindRecovery) && entry.composing)) {
 		m.promptTextarea.SetWidth(m.gateInnerWidth())
 	}
+	for i := range m.inputQueue {
+		if m.inputQueue[i].kind == inputKindQuestion {
+			m.inputQueue[i].question = m.inputQueue[i].question.Resize(
+				m.gateInnerWidth(),
+				m.gateBodyHeight()-gateHeaderRows,
+			)
+		}
+	}
 	m.rebuildRenderer()
 	m.vp.SetContent(m.listBody())
 	m.chatVP.SetContent(m.chatBody())

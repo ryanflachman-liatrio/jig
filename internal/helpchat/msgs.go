@@ -3,6 +3,8 @@ package helpchat
 import (
 	tea "charm.land/bubbletea/v2"
 	claudecode "github.com/severity1/claude-agent-sdk-go"
+
+	"jig/internal/interaction"
 )
 
 // ConnectedMsg is returned by connectCmd when the SDK client is ready.
@@ -46,7 +48,6 @@ type PermRequestMsg struct {
 // Options is nil for a free-text answer; non-nil for a numbered choice list.
 // AnsC receives the operator's answer (selected option text or typed text).
 type QuestionRequestMsg struct {
-	Question string
-	Options  []string
-	AnsC     chan<- string
+	Request interaction.QuestionRequest
+	AnsC    chan<- interaction.QuestionResponse
 }

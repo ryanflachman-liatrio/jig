@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"jig/internal/interaction"
 	"jig/internal/step"
 )
 
@@ -196,7 +197,10 @@ var allEventInstances = []Event{
 	IntegrationConflictRequest{RunID: "r", StepID: "s", Paths: []string{"file.go"}},
 	FinalMergeRequest{RunID: "r", RunBranch: "b", Base: "main"},
 	PromptRequest{RunID: "r", StepID: "s", Label: "Enter value", As: "val"},
-	AgentQuestion{RunID: "r", StepID: "s", ToolUseID: "tu1", Questions: []AgentQuestionItem{{Question: "ok?"}}},
+	AgentQuestion{RunID: "r", StepID: "s", Request: interaction.QuestionRequest{
+		ID: "q1", Fields: []interaction.QuestionField{{ID: "ok", Prompt: "ok?", Kind: interaction.FieldText}},
+	}},
+	AgentQuestionResolved{RunID: "r", StepID: "s", RequestID: "q1", Action: interaction.ActionAccept},
 	StepsReset{RunID: "r", Target: "s", Closure: []string{"s"}, RewindTo: "abc"},
 	SecurityFinding{RunID: "r", StepID: "s", Tier: "guard", Monitor: "secret-leak", Severity: "high", Action: "blocked", Fingerprint: "fp"},
 }

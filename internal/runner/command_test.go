@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"jig/internal/engine"
+	"jig/internal/interaction"
 	"jig/internal/step"
 	"jig/internal/transcript"
 	"jig/internal/workflow"
@@ -23,8 +24,8 @@ type noopReporter struct {
 func (r *noopReporter) Output(delta string)          { r.deltas = append(r.deltas, delta) }
 func (r *noopReporter) ToolCall(tool, detail string) {}
 func (r *noopReporter) Message(seq, iteration int)   { r.message = true }
-func (r *noopReporter) Question(_ context.Context, _ string, _ []engine.AgentQuestionItem) string {
-	return ""
+func (r *noopReporter) Question(_ context.Context, req interaction.QuestionRequest) interaction.QuestionResponse {
+	return interaction.QuestionResponse{RequestID: req.ID, Action: interaction.ActionCancel}
 }
 func (r *noopReporter) Finding(_ engine.SecurityFinding) {}
 

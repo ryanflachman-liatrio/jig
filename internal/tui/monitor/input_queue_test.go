@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"jig/internal/engine"
+	"jig/internal/interaction"
 	"jig/internal/step"
 )
 
@@ -56,14 +57,10 @@ func TestInputQueueMixedKinds(t *testing.T) {
 		StepID:  "a",
 		Choices: []string{"approve"},
 	}})
-	m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{
-		RunID:     "run-1",
-		StepID:    "b",
-		ToolUseID: "tu1",
-		Questions: []engine.AgentQuestionItem{
-			{Question: "Q?", Options: []engine.AgentQuestionOption{{Label: "A"}}},
-		},
-	}})
+	m, _ = m.Update(EngineEventMsg{Event: questionEvent(
+		"run-1", "b", "tu1",
+		selectQuestion("q", "", "Q?", false, interaction.QuestionOption{Value: "A", Label: "A"}),
+	)})
 
 	if got := len(m.inputQueue); got != 2 {
 		t.Fatalf("expected 2 entries, got %d", got)
@@ -79,6 +76,22 @@ func TestInputQueueMixedKinds(t *testing.T) {
 	}
 	if m.inputQueue[1].stepID != "b" {
 		t.Fatalf("inputQueue[1].stepID = %q, want \"b\"", m.inputQueue[1].stepID)
+	}
+}
+
+func TestQuestionResolutionRemovesOnlyMatchingEntry(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	for _, id := range []string{"q1", "q2"} {
+		m, _ = m.Update(EngineEventMsg{Event: questionEvent(
+			"run-1", "a", id,
+			selectQuestion("answer", "", "Choose", false, interaction.QuestionOption{Value: "A", Label: "A"}),
+		)})
+	}
+	m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestionResolved{
+		RunID: "run-1", StepID: "a", RequestID: "q1", Action: interaction.ActionCancel,
+	}})
+	if len(m.inputQueue) != 1 || m.inputQueue[0].question.Request().ID != "q2" {
+		t.Fatalf("queue after resolution = %+v", m.inputQueue)
 	}
 }
 

@@ -2,9 +2,11 @@ package engine
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
+	"jig/internal/interaction"
 	"jig/internal/step"
 	"jig/internal/workflow"
 )
@@ -20,7 +22,92 @@ type questionExec struct {
 	preAskWait time.Duration     // sleep after aboutToAsk, before Question (widens the drop window)
 	emit       []SecurityFinding // findings emitted from a side goroutine while Question blocks
 	aboutToAsk chan struct{}
-	gotAnswer  chan string
+	gotAnswer  chan interaction.QuestionResponse
+}
+
+type concurrentQuestionExec struct {
+	seen chan interaction.QuestionResponse
+}
+
+func (e *concurrentQuestionExec) Execute(ctx context.Context, _ StepRequest, rep Reporter) (*step.Result, error) {
+	var wg sync.WaitGroup
+	for _, id := range []string{"q1", "q2"} {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			resp := rep.Question(ctx, interaction.QuestionRequest{
+				ID: id,
+				Fields: []interaction.QuestionField{{
+					ID: "answer", Prompt: id + "?", Kind: interaction.FieldText,
+				}},
+			})
+			e.seen <- resp
+		}(id)
+	}
+	wg.Wait()
+	return &step.Result{Status: step.StatusSucceeded}, nil
+}
+
+func TestConcurrentQuestionsRemainCorrelated(t *testing.T) {
+	const toml = `
+[workflow]
+name = "concurrent-questions"
+version = "1.0"
+[[step]]
+id = "ask"
+type = "command"
+run = "true"
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &concurrentQuestionExec{seen: make(chan interaction.QuestionResponse, 2)}
+	mgr := NewManager(exec, "")
+	_, ctrl := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requests := make(map[string]interaction.QuestionRequest)
+	for len(requests) < 2 {
+		select {
+		case ev := <-ctrl:
+			if q, ok := ev.(AgentQuestion); ok {
+				requests[q.Request.ID] = q.Request
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for concurrent question events")
+		}
+	}
+	run.AnswerQuestion("ask", interaction.QuestionResponse{
+		RequestID: "stale", Action: interaction.ActionDecline,
+	})
+	run.AnswerQuestion("ask", interaction.QuestionResponse{
+		RequestID: "q1",
+		Action:    interaction.ActionAccept,
+		Answers:   map[string]interaction.Answer{"answer": {Values: []string{"one"}}},
+	})
+	first := <-exec.seen
+	if first.RequestID != "q1" || first.Answers["answer"].Values[0] != "one" {
+		t.Fatalf("first response = %+v", first)
+	}
+	snap := run.Snapshot()
+	if len(snap.Steps) != 1 || snap.Steps[0].Status != step.StatusNeedsInput {
+		t.Fatalf("status after one response = %+v, want needs_input", snap.Steps)
+	}
+
+	run.AnswerQuestion("ask", interaction.QuestionResponse{
+		RequestID: "q2",
+		Action:    interaction.ActionAccept,
+		Answers:   map[string]interaction.Answer{"answer": {Values: []string{"two"}}},
+	})
+	second := <-exec.seen
+	if second.RequestID != "q2" || second.Answers["answer"].Values[0] != "two" {
+		t.Fatalf("second response = %+v", second)
+	}
+	drainUntilFinished(t, ctrl, 5*time.Second)
 }
 
 func (e *questionExec) Execute(ctx context.Context, req StepRequest, rep Reporter) (*step.Result, error) {
@@ -44,19 +131,18 @@ func (e *questionExec) Execute(ctx context.Context, req StepRequest, rep Reporte
 			}
 		}()
 	}
-	ans := rep.Question(ctx, "tool-1", []AgentQuestionItem{{Question: "proceed?"}})
+	ans := rep.Question(ctx, interaction.QuestionRequest{
+		ID: "question-1",
+		Fields: []interaction.QuestionField{{
+			ID: "proceed", Prompt: "proceed?", Kind: interaction.FieldText,
+		}},
+	})
 	e.gotAnswer <- ans
 	return &step.Result{Status: step.StatusSucceeded, Err: "unwound"}, nil
 }
 
-// TestAgentQuestionAnswerRace reproduces the data race on reporter.answerCh and
-// the resulting dropped-answer hang. Run with `go test -race`.
-//
-// The executor lazily creates answerCh on its own goroutine while the scheduler
-// reads that same field to deliver the human's answer. With no synchronization
-// ordering the write against the read, -race flags the field access; and when
-// the read observes a nil answerCh the answer is dropped, so Question never
-// returns and the agent step hangs forever.
+// TestAgentQuestionAnswerRace verifies the request is registered before its
+// event is emitted, so an immediate UI response cannot race channel setup.
 func TestAgentQuestionAnswerRace(t *testing.T) {
 	const toml = `
 [workflow]
@@ -76,7 +162,7 @@ run = "true"
 		stepID:     "ask",
 		preAskWait: 50 * time.Millisecond,
 		aboutToAsk: make(chan struct{}),
-		gotAnswer:  make(chan string, 1),
+		gotAnswer:  make(chan interaction.QuestionResponse, 1),
 	}
 	mgr := NewManager(exec, "")
 	_, ctrl := mgr.Subscribe()
@@ -85,16 +171,25 @@ run = "true"
 		t.Fatal(err)
 	}
 
-	// Answer as soon as the executor is about to ask — concurrently with the
-	// answerCh write, without first observing the AgentQuestion ctrl event (which
-	// would otherwise establish an accidental happens-before edge and mask the bug).
 	<-exec.aboutToAsk
-	run.AnswerQuestion("ask", "tool-1", "the answer")
+	for {
+		ev := <-ctrl
+		if q, ok := ev.(AgentQuestion); ok {
+			run.AnswerQuestion("ask", interaction.QuestionResponse{
+				RequestID: q.Request.ID,
+				Action:    interaction.ActionAccept,
+				Answers: map[string]interaction.Answer{
+					"proceed": {Values: []string{"the answer"}},
+				},
+			})
+			break
+		}
+	}
 
 	select {
 	case got := <-exec.gotAnswer:
-		if got != "the answer" {
-			t.Errorf("Question returned %q, want %q", got, "the answer")
+		if got.Answers["proceed"].Values[0] != "the answer" {
+			t.Errorf("Question returned %+v, want the answer", got)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Question never returned — answer was dropped (answerCh read as nil)")
@@ -137,7 +232,7 @@ func TestQuestionUnblockedByStop(t *testing.T) {
 	exec := &questionExec{
 		stepID:     "ask",
 		aboutToAsk: make(chan struct{}),
-		gotAnswer:  make(chan string, 1),
+		gotAnswer:  make(chan interaction.QuestionResponse, 1),
 	}
 	run, ctrl := startQuestionRun(t, exec)
 
@@ -145,8 +240,8 @@ func TestQuestionUnblockedByStop(t *testing.T) {
 
 	select {
 	case got := <-exec.gotAnswer:
-		if got != "" {
-			t.Errorf("Question returned %q, want \"\" on stop", got)
+		if got.Action != interaction.ActionCancel {
+			t.Errorf("Question returned %+v, want cancel on stop", got)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Question never returned after Stop — worker leaked")
@@ -165,7 +260,7 @@ func TestQuestionUnblockedByEscalation(t *testing.T) {
 	exec := &questionExec{
 		stepID:     "ask",
 		aboutToAsk: make(chan struct{}),
-		gotAnswer:  make(chan string, 1),
+		gotAnswer:  make(chan interaction.QuestionResponse, 1),
 		emit: []SecurityFinding{{
 			Tier: "monitor", Monitor: "secret-in-write",
 			Severity: "critical", Action: "escalated", Fingerprint: "fp-q-1",
@@ -177,8 +272,8 @@ func TestQuestionUnblockedByEscalation(t *testing.T) {
 	// unwind via ctx.Done.
 	select {
 	case got := <-exec.gotAnswer:
-		if got != "" {
-			t.Errorf("Question returned %q, want \"\" on escalation", got)
+		if got.Action != interaction.ActionCancel {
+			t.Errorf("Question returned %+v, want cancel on escalation", got)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Question never returned after escalation — worker leaked")

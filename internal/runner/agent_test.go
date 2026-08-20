@@ -12,6 +12,7 @@ import (
 
 	"jig/internal/engine"
 	"jig/internal/harness"
+	"jig/internal/interaction"
 	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/transcript"
@@ -33,8 +34,8 @@ func (r *captureReporter) ToolCall(tool, detail string) {}
 func (r *captureReporter) Message(seq, iteration int) {
 	r.messages = append(r.messages, captureMsg{seq, iteration})
 }
-func (r *captureReporter) Question(_ context.Context, _ string, _ []engine.AgentQuestionItem) string {
-	return ""
+func (r *captureReporter) Question(_ context.Context, req interaction.QuestionRequest) interaction.QuestionResponse {
+	return interaction.QuestionResponse{RequestID: req.ID, Action: interaction.ActionCancel}
 }
 func (r *captureReporter) Finding(sf engine.SecurityFinding) {
 	r.findings = append(r.findings, sf)
@@ -295,7 +296,7 @@ func TestBuildSessionSpec(t *testing.T) {
 		AllowedTools:      []string{"Read", "Grep"},
 		DisallowedTools:   []string{"Bash"},
 	}
-	allCaps := harness.NewCapabilitySet(harness.CapPermissionCallback, harness.CapInProcessMCP, harness.CapSessionResume, harness.CapStructuredOutput, harness.CapPartialStreaming)
+	allCaps := harness.NewCapabilitySet(harness.CapPermissionCallback, harness.CapUserQuestion, harness.CapSessionResume, harness.CapStructuredOutput, harness.CapPartialStreaming)
 	spec, err := buildSessionSpec(st, allCaps)
 	if err != nil {
 		t.Fatalf("buildSessionSpec: %v", err)
@@ -336,7 +337,7 @@ func TestBuildSessionSpec(t *testing.T) {
 // field unset so the harness's own defaults apply, but always sets Schema to
 // enforce the base schema.
 func TestBuildSessionSpec_Empty(t *testing.T) {
-	allCaps := harness.NewCapabilitySet(harness.CapPermissionCallback, harness.CapInProcessMCP, harness.CapSessionResume, harness.CapStructuredOutput, harness.CapPartialStreaming)
+	allCaps := harness.NewCapabilitySet(harness.CapPermissionCallback, harness.CapUserQuestion, harness.CapSessionResume, harness.CapStructuredOutput, harness.CapPartialStreaming)
 	spec, err := buildSessionSpec(&workflow.Step{}, allCaps)
 	if err != nil {
 		t.Fatalf("buildSessionSpec: %v", err)
@@ -376,7 +377,7 @@ func TestBuildSessionSpec_Schema(t *testing.T) {
 			{Name: "passed", Type: workflow.FieldBool},
 		}},
 	}
-	allCaps := harness.NewCapabilitySet(harness.CapPermissionCallback, harness.CapInProcessMCP, harness.CapSessionResume, harness.CapStructuredOutput, harness.CapPartialStreaming)
+	allCaps := harness.NewCapabilitySet(harness.CapPermissionCallback, harness.CapUserQuestion, harness.CapSessionResume, harness.CapStructuredOutput, harness.CapPartialStreaming)
 	spec, err := buildSessionSpec(st, allCaps)
 	if err != nil {
 		t.Fatalf("buildSessionSpec: %v", err)

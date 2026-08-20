@@ -279,23 +279,23 @@ const (
 	updatePreambleGoldenEnv = "UPDATE_PREAMBLE_GOLDEN"
 )
 
-// exampleScheduler decodes the real example (baseDir "../../examples", so it
+// exampleScheduler decodes the real example (baseDir "../../.agents/jig", so it
 // validates exactly like `jig validate`) and marks plan's three upstream deps
 // succeeded — the shared setup for the assembled-preamble golden tests.
 func exampleScheduler(t *testing.T) *scheduler {
 	t.Helper()
-	data, err := os.ReadFile("../../examples/feature.toml")
+	data, err := os.ReadFile("../../.agents/jig/feature.toml")
 	if err != nil {
 		t.Fatalf("read example: %v", err)
 	}
-	wf, err := workflow.Decode(string(data), "../../examples")
+	wf, err := workflow.Decode(string(data), "../../.agents/jig")
 	if err != nil {
 		t.Fatalf("decode example: %v", err)
 	}
 	_, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, "", "", "", func(RunSnapshot) {})
-	for _, id := range []string{"research_backend", "research_frontend", "security_scan"} {
+	for _, id := range []string{"intake", "research_backend", "research_frontend"} {
 		s.states[id].Status = step.StatusSucceeded
 	}
 	return s

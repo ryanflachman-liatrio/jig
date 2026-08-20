@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"jig/internal/datastore"
+	"jig/internal/interaction"
 	"jig/internal/manifest"
 	"jig/internal/sentinel"
 	"jig/internal/step"
@@ -368,8 +369,8 @@ func (r *Run) SendInput(stepID, text string) {
 }
 
 // AnswerQuestion delivers the user's response to an in-flight AskUserQuestion call.
-func (r *Run) AnswerQuestion(stepID, toolUseID, answer string) {
-	r.inbox <- agentQuestionAnswerMsg{stepID: stepID, toolUseID: toolUseID, answer: answer}
+func (r *Run) AnswerQuestion(stepID string, response interaction.QuestionResponse) {
+	r.inbox <- agentQuestionAnswerMsg{stepID: stepID, response: response}
 }
 
 // Recover delivers a human recovery decision for a step parked in
@@ -481,14 +482,20 @@ type agentInputMsg struct {
 	text   string
 }
 
-type agentQuestionNotifyMsg struct {
-	stepID string
+type agentQuestionRequestMsg struct {
+	stepID  string
+	request interaction.QuestionRequest
+	reply   chan<- interaction.QuestionResponse
 }
 
 type agentQuestionAnswerMsg struct {
+	stepID   string
+	response interaction.QuestionResponse
+}
+
+type agentQuestionAbandonMsg struct {
 	stepID    string
-	toolUseID string
-	answer    string
+	requestID string
 }
 
 // Recovery actions delivered via Run.Recover for a step parked in
@@ -545,21 +552,22 @@ type resetMsg struct {
 	stepID string
 }
 
-func (stepDoneMsg) isSchedMsg()            {}
-func (verdictMsg) isSchedMsg()             {}
-func (userInputMsg) isSchedMsg()           {}
-func (snapshotReqMsg) isSchedMsg()         {}
-func (closureReqMsg) isSchedMsg()          {}
-func (humanMessageMsg) isSchedMsg()        {}
-func (agentInputMsg) isSchedMsg()          {}
-func (agentQuestionNotifyMsg) isSchedMsg() {}
-func (agentQuestionAnswerMsg) isSchedMsg() {}
-func (recoverMsg) isSchedMsg()             {}
-func (resolveIntegrationMsg) isSchedMsg()  {}
-func (finalMergeMsg) isSchedMsg()          {}
-func (stopMsg) isSchedMsg()                {}
-func (resumeMsg) isSchedMsg()              {}
-func (resetMsg) isSchedMsg()               {}
+func (stepDoneMsg) isSchedMsg()             {}
+func (verdictMsg) isSchedMsg()              {}
+func (userInputMsg) isSchedMsg()            {}
+func (snapshotReqMsg) isSchedMsg()          {}
+func (closureReqMsg) isSchedMsg()           {}
+func (humanMessageMsg) isSchedMsg()         {}
+func (agentInputMsg) isSchedMsg()           {}
+func (agentQuestionRequestMsg) isSchedMsg() {}
+func (agentQuestionAnswerMsg) isSchedMsg()  {}
+func (agentQuestionAbandonMsg) isSchedMsg() {}
+func (recoverMsg) isSchedMsg()              {}
+func (resolveIntegrationMsg) isSchedMsg()   {}
+func (finalMergeMsg) isSchedMsg()           {}
+func (stopMsg) isSchedMsg()                 {}
+func (resumeMsg) isSchedMsg()               {}
+func (resetMsg) isSchedMsg()                {}
 
 // securityFindingMsg delivers a SecurityFinding to the scheduler inbox so the
 // scheduler can escalate critical findings to the recovery gate without
@@ -574,10 +582,10 @@ func (securityFindingMsg) isSchedMsg() {}
 // It is created per-dispatch and passed to the executor; the executor
 // may call it from its own goroutine, so fanOutLive must not touch scheduler state.
 type reporter struct {
-	subs     []sub
-	ev       func(Event)     // pre-bound to emit tags (runID, stepID)
-	inbox    chan<- schedMsg // scheduler inbox; used to deliver agentQuestionNotifyMsg
-	answerCh chan string     // nil until Question is called; receives the human's answer
+	subs   []sub
+	ev     func(Event)
+	stepID string
+	inbox  chan<- schedMsg
 }
 
 func (r *reporter) Output(delta string)          { r.ev(StepOutput{Delta: delta}) }
@@ -589,21 +597,31 @@ func (r *reporter) Message(seq, iteration int) {
 // Finding routes a SecurityFinding through the ctrl channel (must-not-drop).
 func (r *reporter) Finding(sf SecurityFinding) { r.ev(sf) }
 
-// Question delivers an AskUserQuestion from the running agent to the scheduler,
-// transitions the step to StatusNeedsInput, and blocks until the human answers
-// via Run.AnswerQuestion. Runs in the executor goroutine.
-func (r *reporter) Question(ctx context.Context, toolUseID string, questions []AgentQuestionItem) string {
-	// answerCh is created at dispatch (scheduler goroutine); this goroutine only
-	// reads it, so there is no cross-goroutine write to the field. Select on ctx so
-	// a Stop, a run cancel, or a security escalation (all of which cancel the step's
-	// context) unblocks this goroutine instead of parking it on answerCh forever.
-	r.ev(AgentQuestion{ToolUseID: toolUseID, Questions: questions})
-	select {
-	case a := <-r.answerCh:
-		return a
-	case <-ctx.Done():
-		return ""
+func (r *reporter) Question(ctx context.Context, req interaction.QuestionRequest) interaction.QuestionResponse {
+	if err := req.Validate(); err != nil {
+		return interaction.QuestionResponse{RequestID: req.ID, Action: interaction.ActionCancel}
 	}
+	reply := make(chan interaction.QuestionResponse, 1)
+	select {
+	case r.inbox <- agentQuestionRequestMsg{stepID: r.stepID, request: req, reply: reply}:
+	case <-ctx.Done():
+		return interaction.QuestionResponse{RequestID: req.ID, Action: interaction.ActionCancel}
+	}
+	select {
+	case response := <-reply:
+		return response
+	case <-ctx.Done():
+		select {
+		case r.inbox <- agentQuestionAbandonMsg{stepID: r.stepID, requestID: req.ID}:
+		default:
+		}
+		return interaction.QuestionResponse{RequestID: req.ID, Action: interaction.ActionCancel}
+	}
+}
+
+type pendingQuestion struct {
+	request interaction.QuestionRequest
+	reply   chan<- interaction.QuestionResponse
 }
 
 // ── scheduler ────────────────────────────────────────────────────────────────
@@ -706,9 +724,7 @@ type scheduler struct {
 	// cascadeSkip, and anyPendingRunnable.
 	skippedByGuard map[string]bool
 
-	// reporters holds the active reporter for each in-flight step so
-	// agentQuestionAnswerMsg can route the answer to the correct channel.
-	reporters map[string]*reporter
+	pendingQuestions map[string]map[string]pendingQuestion
 
 	// Per-step cancellation (spec 07 B1). Each dispatched worker gets its own
 	// child context derived from the run context, its CancelFunc stored here keyed
@@ -781,7 +797,7 @@ func newScheduler(
 		seenEscalations:     make(map[string]bool),
 		skippedByOperator:   make(map[string]bool),
 		skippedByGuard:      make(map[string]bool),
-		reporters:           make(map[string]*reporter),
+		pendingQuestions:    make(map[string]map[string]pendingQuestion),
 		stepCancels:         make(map[string]context.CancelFunc),
 		stopping:            make(map[string]bool),
 		postExecChain: []postExecHandler{
@@ -1229,13 +1245,9 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	subs := s.subs
 	inbox := s.inbox
 	rep := &reporter{
-		subs: subs,
-		// answerCh is created here on the scheduler goroutine — before the worker
-		// starts — so the field is never written from the executor goroutine and
-		// an answer delivered any time after dispatch has a live channel to land
-		// on. Buffered(1) so AnswerQuestion never blocks the scheduler.
-		answerCh: make(chan string, 1),
-		inbox:    inbox,
+		subs:   subs,
+		stepID: stepID,
+		inbox:  inbox,
 		ev: func(e Event) {
 			// Tag the event with run/step IDs and fan-out without holding any lock.
 			switch e := e.(type) {
@@ -1248,15 +1260,6 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 			case StepMessage:
 				e.RunID, e.StepID = runID, stepID
 				fanOutLive(subs, e)
-			case AgentQuestion:
-				e.RunID, e.StepID = runID, stepID
-				fanOutCtrl(subs, e)
-				// Notify the scheduler to transition the step to StatusNeedsInput.
-				// Non-blocking: inbox is buffered (64) and rarely full.
-				select {
-				case inbox <- agentQuestionNotifyMsg{stepID: stepID}:
-				default:
-				}
 			case SecurityFinding:
 				// Must-not-drop: rides ctrl, not live.
 				e.RunID, e.StepID = runID, stepID
@@ -1271,7 +1274,6 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 			}
 		},
 	}
-	s.reporters[st.ID] = rep
 	var artifactDir, transcriptPath string
 	if s.runDir != "" {
 		artifactDir = filepath.Join(s.runDir, "artifacts")

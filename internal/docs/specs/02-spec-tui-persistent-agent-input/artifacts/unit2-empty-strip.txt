@@ -1,5 +1,5 @@
 ╭─ Steps ──────────────────────╮╭─ a ──────────────────────────────────────────╮
-│ ▌  ○  a   pending            ││   ○  pending                                 │
+│ ▌  ○  a   pending            ││   ○  a  pending                              │
 │      —                       ││                                              │
 │    ○  b   pending            ││   transcript unavailable (persistence off)   │
 │      —                       ││                                              │

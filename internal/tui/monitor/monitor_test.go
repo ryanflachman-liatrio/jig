@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"jig/internal/datastore"
 	"jig/internal/engine"
 	"jig/internal/helpchat"
+	"jig/internal/interaction"
 	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/transcript"
@@ -1100,21 +1102,13 @@ func TestMonitorMessageCount(t *testing.T) {
 func TestMonitorAgentQuestionShowsPanel(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
-	m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{
-		RunID:     "run-1",
-		StepID:    "a",
-		ToolUseID: "tu1",
-		Questions: []engine.AgentQuestionItem{
-			{
-				Header:   "Format",
-				Question: "Which format should we use?",
-				Options: []engine.AgentQuestionOption{
-					{Label: "JSON", Description: "structured output"},
-					{Label: "Text", Description: "plain output"},
-				},
-			},
-		},
-	}})
+	m, _ = m.Update(EngineEventMsg{Event: questionEvent(
+		"run-1", "a", "tu1",
+		selectQuestion("format", "Format", "Which format should we use?", false,
+			interaction.QuestionOption{Value: "JSON", Label: "JSON", Description: "structured output"},
+			interaction.QuestionOption{Value: "Text", Label: "Text", Description: "plain output"},
+		),
+	)})
 
 	if len(m.inputQueue) == 0 {
 		t.Fatal("AgentQuestion not added to input queue")
@@ -1128,7 +1122,7 @@ func TestMonitorAgentQuestionShowsPanel(t *testing.T) {
 	}
 
 	body := m.gateStrip()
-	for _, want := range []string{"(question)", "Which format should we use?", "[Format]", "[1] JSON", "[2] Text", "structured output"} {
+	for _, want := range []string{"(question)", "Which format should we use?", "[Format]", "JSON", "Text", "structured output"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("question body missing %q:\n%s", want, body)
 		}
@@ -1143,36 +1137,31 @@ func TestMonitorAgentQuestionShowsPanel(t *testing.T) {
 func TestMonitorAgentQuestionSelectEmits(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
-	m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{
-		RunID:     "run-1",
-		StepID:    "a",
-		ToolUseID: "tu1",
-		Questions: []engine.AgentQuestionItem{
-			{
-				Question: "Pick one",
-				Options: []engine.AgentQuestionOption{
-					{Label: "Alpha"},
-					{Label: "Beta"},
-				},
-			},
-		},
-	}})
+	m, _ = m.Update(EngineEventMsg{Event: questionEvent(
+		"run-1", "a", "tu1",
+		selectQuestion("pick", "", "Pick one", false,
+			interaction.QuestionOption{Value: "Alpha", Label: "Alpha"},
+			interaction.QuestionOption{Value: "Beta", Label: "Beta"},
+		),
+	)})
 
 	// Decision 6: no auto-focus — manually focus the gate to answer.
 	m.focus = focusGate
-	m, cmd := m.Update(key("2"))
+	m, _ = m.Update(key("down"))
+	m, _ = m.Update(key("enter"))
+	m, cmd := m.Update(key("enter"))
 	if cmd == nil {
-		t.Fatal("digit key produced no command")
+		t.Fatal("review submit produced no command")
 	}
 	msg, ok := cmd().(AgentQuestionResponseMsg)
 	if !ok {
 		t.Fatalf("expected agentQuestionResponseMsg, got %T", cmd())
 	}
-	if msg.ToolUseID != "tu1" {
-		t.Fatalf("expected toolUseID tu1, got %q", msg.ToolUseID)
+	if msg.Response.RequestID != "tu1" {
+		t.Fatalf("expected request id tu1, got %q", msg.Response.RequestID)
 	}
-	if !strings.Contains(msg.Answer, "Beta") {
-		t.Fatalf("expected answer to contain 'Beta', got %q", msg.Answer)
+	if got := msg.Response.Answers["pick"].Values; len(got) != 1 || got[0] != "Beta" {
+		t.Fatalf("expected Beta answer, got %v", got)
 	}
 	if len(m.inputQueue) > 0 {
 		t.Fatal("question entry should be removed from queue after answer is submitted")
@@ -1184,46 +1173,32 @@ func TestMonitorAgentQuestionSelectEmits(t *testing.T) {
 func TestMonitorAgentQuestionMultiSelect(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
-	m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{
-		RunID:     "run-1",
-		StepID:    "a",
-		ToolUseID: "tu2",
-		Questions: []engine.AgentQuestionItem{
-			{
-				Question:    "Select features",
-				MultiSelect: true,
-				Options: []engine.AgentQuestionOption{
-					{Label: "Cache"},
-					{Label: "Retry"},
-					{Label: "Logging"},
-				},
-			},
-		},
-	}})
+	m, _ = m.Update(EngineEventMsg{Event: questionEvent(
+		"run-1", "a", "tu2",
+		selectQuestion("features", "", "Select features", true,
+			interaction.QuestionOption{Value: "Cache", Label: "Cache"},
+			interaction.QuestionOption{Value: "Retry", Label: "Retry"},
+			interaction.QuestionOption{Value: "Logging", Label: "Logging"},
+		),
+	)})
 
 	// Decision 6: no auto-focus — manually focus the gate.
 	m.focus = focusGate
 
 	// Toggle options 1 and 3.
-	m, _ = m.Update(key("1"))
-	m, _ = m.Update(key("3"))
+	m, _ = m.Update(key("space"))
+	m, _ = m.Update(key("down"))
+	m, _ = m.Update(key("down"))
+	m, _ = m.Update(key("space"))
 
 	body := m.gateStrip()
 	if !strings.Contains(body, "[x]") {
 		t.Fatalf("toggled options not shown:\n%s", body)
 	}
 
-	// A digit toggle in multiSelect mode should not emit a response.
-	_, cmd := m.Update(key("2"))
-	if cmd != nil {
-		if result := cmd(); result != nil {
-			t.Fatalf("digit toggle in multiSelect emitted unexpected message: %T", result)
-		}
-	}
-
-	// Toggle option 1 back off; confirm with enter.
-	m, _ = m.Update(key("1"))
-	m, cmd = m.Update(key("enter"))
+	// Confirm the field, then submit the review.
+	m, _ = m.Update(key("enter"))
+	m, cmd := m.Update(key("enter"))
 	if cmd == nil {
 		t.Fatal("enter produced no command")
 	}
@@ -1231,11 +1206,12 @@ func TestMonitorAgentQuestionMultiSelect(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected agentQuestionResponseMsg, got %T", cmd())
 	}
-	if !strings.Contains(resp.Answer, "Logging") {
-		t.Fatalf("expected Logging in answer, got %q", resp.Answer)
+	values := resp.Response.Answers["features"].Values
+	if !slices.Contains(values, "Logging") {
+		t.Fatalf("expected Logging in answer, got %v", values)
 	}
-	if strings.Contains(resp.Answer, "Cache") {
-		t.Fatalf("Cache was toggled off but appears in answer: %q", resp.Answer)
+	if !slices.Contains(values, "Cache") {
+		t.Fatalf("expected Cache in answer, got %v", values)
 	}
 }
 
@@ -1244,14 +1220,10 @@ func TestMonitorAgentQuestionMultiSelect(t *testing.T) {
 // while the Gate is focused.
 func TestMonitorAgentQuestionConsumesKeys(t *testing.T) {
 	m := newMonitorWithSteps(t)
-	m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{
-		RunID:     "run-1",
-		StepID:    "a",
-		ToolUseID: "tu1",
-		Questions: []engine.AgentQuestionItem{
-			{Question: "Q?", Options: []engine.AgentQuestionOption{{Label: "A"}}},
-		},
-	}})
+	m, _ = m.Update(EngineEventMsg{Event: questionEvent(
+		"run-1", "a", "tu1",
+		selectQuestion("q", "", "Q?", false, interaction.QuestionOption{Value: "A", Label: "A"}),
+	)})
 	// Decision 6: no auto-focus — manually focus the gate to test key consumption.
 	m.focus = focusGate
 
@@ -1321,14 +1293,10 @@ func TestMonitorStepSubtypeBadge(t *testing.T) {
 func TestMonitorAgentQuestionClearsOnResume(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
-	m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{
-		RunID:     "run-1",
-		StepID:    "a",
-		ToolUseID: "tu1",
-		Questions: []engine.AgentQuestionItem{
-			{Question: "Q?", Options: []engine.AgentQuestionOption{{Label: "A"}}},
-		},
-	}})
+	m, _ = m.Update(EngineEventMsg{Event: questionEvent(
+		"run-1", "a", "tu1",
+		selectQuestion("q", "", "Q?", false, interaction.QuestionOption{Value: "A", Label: "A"}),
+	)})
 	if len(m.inputQueue) == 0 {
 		t.Fatal("question entry should be queued after AgentQuestion event")
 	}
@@ -1438,14 +1406,13 @@ func TestMonitorGateNonBlocking(t *testing.T) {
 	// A gate that owes a tool_result: AskUserQuestion.
 	makeGate := func() Model {
 		m := newMonitorWithSteps(t)
-		m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{
-			RunID:     "run-1",
-			StepID:    "a",
-			ToolUseID: "tu1",
-			Questions: []engine.AgentQuestionItem{
-				{Question: "Pick one", Options: []engine.AgentQuestionOption{{Label: "Alpha"}, {Label: "Beta"}}},
-			},
-		}})
+		m, _ = m.Update(EngineEventMsg{Event: questionEvent(
+			"run-1", "a", "tu1",
+			selectQuestion("pick", "", "Pick one", false,
+				interaction.QuestionOption{Value: "Alpha", Label: "Alpha"},
+				interaction.QuestionOption{Value: "Beta", Label: "Beta"},
+			),
+		)})
 		return m
 	}
 
@@ -1477,16 +1444,18 @@ func TestMonitorGateNonBlocking(t *testing.T) {
 
 	// 2) Returning focus to the gate and answering resolves it with the response.
 	m.focus = focusGate
-	m, cmd := m.Update(key("2"))
+	m, _ = m.Update(key("down"))
+	m, _ = m.Update(key("enter"))
+	m, cmd := m.Update(key("enter"))
 	if cmd == nil {
-		t.Fatal("gate digit produced no command")
+		t.Fatal("gate review submit produced no command")
 	}
 	resp, ok := cmd().(AgentQuestionResponseMsg)
 	if !ok {
 		t.Fatalf("expected agentQuestionResponseMsg, got %T", cmd())
 	}
-	if !strings.Contains(resp.Answer, "Beta") {
-		t.Fatalf("expected answer Beta, got %q", resp.Answer)
+	if got := resp.Response.Answers["pick"].Values; len(got) != 1 || got[0] != "Beta" {
+		t.Fatalf("expected answer Beta, got %v", got)
 	}
 
 	// 3) esc while gate-focused blurs to Steps (ADR 0005 §esc-blurs). The entry
@@ -1612,15 +1581,13 @@ func TestGateSubmitRouting(t *testing.T) {
 // and does not emit showRunsMsg.
 func TestQuestionCancel(t *testing.T) {
 	m := newMonitorWithSteps(t)
-	m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{
-		RunID:  "run-1",
-		StepID: "a",
-		Questions: []engine.AgentQuestionItem{
-			{Question: "Pick one", Options: []engine.AgentQuestionOption{
-				{Label: "Alpha"}, {Label: "Beta"},
-			}},
-		},
-	}})
+	m, _ = m.Update(EngineEventMsg{Event: questionEvent(
+		"run-1", "a", "q1",
+		selectQuestion("pick", "", "Pick one", false,
+			interaction.QuestionOption{Value: "Alpha", Label: "Alpha"},
+			interaction.QuestionOption{Value: "Beta", Label: "Beta"},
+		),
+	)})
 
 	if len(m.inputQueue) == 0 || m.inputQueue[0].kind != inputKindQuestion {
 		t.Fatal("expected inputKindQuestion in queue")
@@ -1637,23 +1604,21 @@ func TestQuestionCancel(t *testing.T) {
 	}
 	// Rerun cmd() to get the actual message (cmd() may only be called once — use a copy).
 	m2 := newMonitorWithSteps(t)
-	m2, _ = m2.Update(EngineEventMsg{Event: engine.AgentQuestion{
-		RunID:  "run-1",
-		StepID: "a",
-		Questions: []engine.AgentQuestionItem{
-			{Question: "Pick one", Options: []engine.AgentQuestionOption{
-				{Label: "Alpha"}, {Label: "Beta"},
-			}},
-		},
-	}})
+	m2, _ = m2.Update(EngineEventMsg{Event: questionEvent(
+		"run-1", "a", "q1",
+		selectQuestion("pick", "", "Pick one", false,
+			interaction.QuestionOption{Value: "Alpha", Label: "Alpha"},
+			interaction.QuestionOption{Value: "Beta", Label: "Beta"},
+		),
+	)})
 	m2.focus = focusGate
 	_, cmd2 := m2.Update(key("q"))
 	resp, ok := cmd2().(AgentQuestionResponseMsg)
 	if !ok {
 		t.Fatalf("expected agentQuestionResponseMsg, got %T", cmd2())
 	}
-	if resp.Answer != "cancelled" {
-		t.Fatalf("expected answer cancelled, got %q", resp.Answer)
+	if resp.Response.Action != interaction.ActionCancel {
+		t.Fatalf("expected cancel action, got %q", resp.Response.Action)
 	}
 	if resp.StepID != "a" {
 		t.Fatalf("expected stepID a, got %q", resp.StepID)
@@ -1753,17 +1718,14 @@ func TestQuestionScroll(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
 	// Build a question with enough options to overflow the fixed gate height.
-	var opts []engine.AgentQuestionOption
+	var opts []interaction.QuestionOption
 	for i := 1; i <= 10; i++ {
-		opts = append(opts, engine.AgentQuestionOption{Label: fmt.Sprintf("Option%d", i)})
+		label := fmt.Sprintf("Option%d", i)
+		opts = append(opts, interaction.QuestionOption{Value: label, Label: label})
 	}
-	m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{
-		RunID:  "run-1",
-		StepID: "a",
-		Questions: []engine.AgentQuestionItem{
-			{Question: "Pick one", Options: opts},
-		},
-	}})
+	m, _ = m.Update(EngineEventMsg{Event: questionEvent(
+		"run-1", "a", "q1", selectQuestion("pick", "", "Pick one", false, opts...),
+	)})
 	m.focus = focusGate
 
 	// Verify scroll is actually needed (budget < len(options)).
@@ -1781,10 +1743,9 @@ func TestQuestionScroll(t *testing.T) {
 		t.Fatalf("Option1 not visible at scrollOffset=0:\n%s", strip0)
 	}
 
-	// Press ↓ (j) to scroll down.
-	m, _ = m.Update(key("j"))
-	if m.inputQueue[0].scrollOffset != 1 {
-		t.Fatalf("expected scrollOffset 1 after j, got %d", m.inputQueue[0].scrollOffset)
+	// Move the cursor far enough to scroll down.
+	for i := 0; i < 8; i++ {
+		m, _ = m.Update(key("j"))
 	}
 	// Height must be unchanged.
 	if stripH() != h0 {
@@ -1800,30 +1761,29 @@ func TestQuestionScroll(t *testing.T) {
 		t.Fatalf("▲ more indicator missing after scroll:\n%s", strip1)
 	}
 
-	// Press ↑ (k) to scroll back up.
-	m, _ = m.Update(key("k"))
-	if m.inputQueue[0].scrollOffset != 0 {
-		t.Fatalf("expected scrollOffset 0 after k, got %d", m.inputQueue[0].scrollOffset)
+	// Move back to the first option.
+	for i := 0; i < 8; i++ {
+		m, _ = m.Update(key("k"))
 	}
 	if stripH() != h0 {
 		t.Fatalf("gate strip height changed after scroll up: was %d, now %d", h0, stripH())
 	}
 
-	// Scroll down past the first visible window so Option1 is off-screen.
-	for i := 0; i < 3; i++ {
+	// Scroll down and select the ninth option by cursor, then submit review.
+	for i := 0; i < 8; i++ {
 		m, _ = m.Update(key("j"))
 	}
-	// Digit "1" must still select Option1 (absolute index, not visible-relative).
-	m2, cmd := m.Update(key("1"))
+	m, _ = m.Update(key("enter"))
+	m2, cmd := m.Update(key("enter"))
 	if cmd == nil {
-		t.Fatal("digit 1 produced no command while scrolled")
+		t.Fatal("review submit produced no command while scrolled")
 	}
 	resp, ok := cmd().(AgentQuestionResponseMsg)
 	if !ok {
 		t.Fatalf("expected agentQuestionResponseMsg from digit 1, got %T", cmd())
 	}
-	if !strings.Contains(resp.Answer, "Option1") {
-		t.Fatalf("digit 1 selected wrong option: %q", resp.Answer)
+	if got := resp.Response.Answers["pick"].Values; len(got) != 1 || got[0] != "Option9" {
+		t.Fatalf("cursor selected wrong option: %v", got)
 	}
 	if len(m2.inputQueue) != 0 {
 		t.Fatalf("queue should be empty after answering, got %d", len(m2.inputQueue))
@@ -1836,22 +1796,20 @@ func TestCaptureUnit6Scroll(t *testing.T) {
 	const artifactPath = "../../docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit6-scroll.txt"
 	m := newMonitorWithSteps(t)
 
-	var opts []engine.AgentQuestionOption
+	var opts []interaction.QuestionOption
 	for i := 1; i <= 10; i++ {
-		opts = append(opts, engine.AgentQuestionOption{Label: fmt.Sprintf("Option%d", i)})
+		label := fmt.Sprintf("Option%d", i)
+		opts = append(opts, interaction.QuestionOption{Value: label, Label: label})
 	}
-	m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{
-		RunID:  "run-1",
-		StepID: "a",
-		Questions: []engine.AgentQuestionItem{
-			{Question: "Pick one", Options: opts},
-		},
-	}})
+	m, _ = m.Update(EngineEventMsg{Event: questionEvent(
+		"run-1", "a", "q1", selectQuestion("pick", "", "Pick one", false, opts...),
+	)})
 	m.focus = focusGate
 
 	// Scroll down so both ▲ and ▼ are visible.
-	m, _ = m.Update(key("j"))
-	m, _ = m.Update(key("j"))
+	for i := 0; i < 8; i++ {
+		m, _ = m.Update(key("j"))
+	}
 
 	view := ansiStrip(m.View())
 	if err := os.WriteFile(artifactPath, []byte(view), 0o644); err != nil {

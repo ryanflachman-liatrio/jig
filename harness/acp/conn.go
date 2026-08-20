@@ -1,10 +1,11 @@
 package acp
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
+	"strings"
 
 	acpsdk "github.com/coder/acp-go-sdk"
 )
@@ -28,14 +29,25 @@ type Conn struct {
 // unavailable. decide and onUpdate are wired into the connection's Client
 // exactly as Run does; onUpdate additionally fires synchronously as each
 // event is captured, for callers that stream rather than batch.
-func Connect(ctx context.Context, decide Decider, onUpdate func(Event)) (*Conn, error) {
+func Connect(ctx context.Context, decide Decider, onUpdate func(Event), elicit Elicitor) (*Conn, error) {
 	npxPath, err := exec.LookPath("npx")
 	if err != nil {
 		return nil, fmt.Errorf("npx not found on PATH: %w", err)
 	}
 
-	cmd := exec.CommandContext(ctx, npxPath, "-y", "@zed-industries/claude-code-acp@latest")
-	cmd.Stderr = os.Stderr
+	cmd := exec.CommandContext(ctx, npxPath, "-y", "@agentclientprotocol/claude-agent-acp@0.70.0")
+	// Capture stderr rather than forwarding it to os.Stderr: npm/npx prints
+	// deprecation warnings and progress lines that would corrupt a TUI's
+	// alt-screen display. The buffer is included in the error message if
+	// Initialize fails, preserving diagnostics without polluting the terminal.
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+	// Put npx and all its children (including the Node.js adapter) in their own
+	// process group so Close() can kill the entire tree with one signal. Without
+	// this, Kill() only sends SIGKILL to the npx PID; Node.js inherits the
+	// stderr pipe write-end and keeps it open, which wedges the copy goroutine
+	// started by cmd.Stderr (a non-*os.File writer) and blocks cmd.Wait() forever.
+	configureProcess(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("stdin pipe: %w", err)
@@ -48,19 +60,33 @@ func Connect(ctx context.Context, decide Decider, onUpdate func(Event)) (*Conn, 
 		return nil, fmt.Errorf("start claude-code-acp: %w", err)
 	}
 
-	client := &Client{Decide: decide, OnUpdate: onUpdate}
+	client := &Client{Decide: decide, OnUpdate: onUpdate, Elicit: elicit}
 	rpc := acpsdk.NewClientSideConnection(client, stdin, stdout)
 
 	initResp, err := rpc.Initialize(ctx, acpsdk.InitializeRequest{
-		ProtocolVersion: acpsdk.ProtocolVersionNumber,
+		ProtocolVersion:    acpsdk.ProtocolVersionNumber,
+		ClientCapabilities: clientCapabilities(elicit),
 	})
 	if err != nil {
-		_ = cmd.Process.Kill()
+		_ = killProcess(cmd)
 		_ = cmd.Wait()
+		if msg := strings.TrimSpace(stderrBuf.String()); msg != "" {
+			return nil, fmt.Errorf("initialize: %w\nadapter output: %s", err, msg)
+		}
 		return nil, fmt.Errorf("initialize: %w", err)
 	}
 
 	return &Conn{cmd: cmd, rpc: rpc, client: client, ProtocolVersion: int(initResp.ProtocolVersion)}, nil
+}
+
+func clientCapabilities(elicit Elicitor) acpsdk.ClientCapabilities {
+	caps := acpsdk.ClientCapabilities{}
+	if elicit != nil {
+		caps.Elicitation = &acpsdk.ElicitationCapabilities{
+			Form: &acpsdk.ElicitationFormCapabilities{},
+		}
+	}
+	return caps
 }
 
 // NewSession creates a new ACP session rooted at cwd and returns its id.
@@ -94,8 +120,8 @@ func (c *Conn) PermissionRequests() []acpsdk.RequestPermissionRequest {
 	return c.client.PermissionRequests()
 }
 
-// Close terminates the adapter subprocess.
+// Close terminates the adapter subprocess and all its children.
 func (c *Conn) Close() error {
-	_ = c.cmd.Process.Kill()
+	_ = killProcess(c.cmd)
 	return c.cmd.Wait()
 }

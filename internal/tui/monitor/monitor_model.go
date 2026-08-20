@@ -14,6 +14,7 @@ import (
 	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/transcript"
+	questionpanel "jig/internal/tui/question"
 	"jig/internal/tui/shared"
 )
 
@@ -62,13 +63,12 @@ type resetConfirmEntry struct {
 // question progress, compose flag, scroll position) is preserved across queue
 // navigation so the user can return to a partially-answered entry.
 type pendingInputEntry struct {
-	kind      pendingInputKind
-	stepID    string
-	toolUseID string // non-empty only for inputKindQuestion
+	kind   pendingInputKind
+	stepID string
 
 	// Exactly one payload pointer is non-nil, matching kind.
 	request      *engine.InputRequest
-	question     *engine.AgentQuestion
+	question     questionpanel.Model
 	prompt       *engine.PromptRequest
 	review       *engine.ReviewRequest
 	recovery     *engine.RecoveryRequest
@@ -83,15 +83,6 @@ type pendingInputEntry struct {
 	// composing is true while composing a message on a review entry, or guidance
 	// on a recovery entry.
 	composing bool
-
-	// AgentQuestion multi-step flow, preserved per entry (Decision 9).
-	questionIdx      int
-	questionSelected map[int]bool
-	questionAnswers  []string
-
-	// scrollOffset windows a long AgentQuestion option list within the fixed
-	// strip height (Unit 6).
-	scrollOffset int
 }
 
 // visibleRow is one row in the Steps panel flat list. Steps always appear; file
@@ -584,14 +575,7 @@ func (m Model) gateHelpSection() shared.HelpSection {
 	case inputKindRequest:
 		sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, entryNav, m.keys.GateBlur}
 	case inputKindQuestion:
-		multi := entry.question != nil &&
-			entry.questionIdx < len(entry.question.Questions) &&
-			entry.question.Questions[entry.questionIdx].MultiSelect
-		if multi {
-			sec.Bindings = []keybind.Binding{m.keys.ToggleOpt, m.keys.QuestionScroll, m.keys.QConfirm, entryNav, m.keys.GateBlur}
-		} else {
-			sec.Bindings = []keybind.Binding{m.keys.Answer, m.keys.QuestionScroll, entryNav, m.keys.GateBlur}
-		}
+		sec.Bindings = []keybind.Binding{m.keys.QuestionScroll, m.keys.QConfirm, entryNav, m.keys.GateBlur}
 	case inputKindReview:
 		switch {
 		case entry.composing:

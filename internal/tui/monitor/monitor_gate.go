@@ -1,9 +1,7 @@
 package monitor
 
 import (
-	"encoding/json"
 	"fmt"
-	"strings"
 
 	keybind "charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
@@ -192,77 +190,22 @@ func (m Model) updateGateRequest(msg tea.KeyPressMsg, entry *pendingInputEntry) 
 
 func (m Model) updateGateQuestion(msg tea.KeyPressMsg, entry *pendingInputEntry) (Model, tea.Cmd) {
 	idx := m.activeInputIdx
-	// q cancels the question and delivers a "cancelled" answer so the engine
-	// can continue; esc is caught by GateBlur above (blurs without cancelling).
-	if keybind.Matches(msg, m.keys.QuestionCancel) && msg.String() == "q" {
-		q := entry.question
-		m.removeEntryAt(idx)
+	if idx < 0 || idx >= len(m.inputQueue) {
+		return m, nil
+	}
+	panel, cmd := entry.question.Update(msg)
+	m.inputQueue[idx].question = panel
+	response, done := panel.Response()
+	if !done {
 		m.refreshPanels()
-		return m, func() tea.Msg {
-			return AgentQuestionResponseMsg{
-				RunID:     q.RunID,
-				StepID:    q.StepID,
-				ToolUseID: q.ToolUseID,
-				Answer:    "cancelled",
-			}
-		}
+		return m, cmd
 	}
-	// j/↓ and k/↑ scroll the option list (Unit 6). These do not collide with
-	// tab (entry cycle), left/right (panel exit), digits (option select), q
-	// (cancel), or enter/space (QConfirm).
-	switch msg.String() {
-	case "j", "down":
-		if idx >= 0 && idx < len(m.inputQueue) {
-			qIdx := m.inputQueue[idx].questionIdx
-			if qIdx < len(entry.question.Questions) {
-				opts := entry.question.Questions[qIdx].Options
-				if m.inputQueue[idx].scrollOffset < len(opts)-1 {
-					m.inputQueue[idx].scrollOffset++
-					m.refreshPanels()
-				}
-			}
-		}
-		return m, nil
-	case "k", "up":
-		if idx >= 0 && idx < len(m.inputQueue) {
-			if m.inputQueue[idx].scrollOffset > 0 {
-				m.inputQueue[idx].scrollOffset--
-				m.refreshPanels()
-			}
-		}
-		return m, nil
+	stepID := entry.stepID
+	m.removeEntryAt(idx)
+	m.refreshPanels()
+	return m, func() tea.Msg {
+		return AgentQuestionResponseMsg{RunID: m.RunID, StepID: stepID, Response: response}
 	}
-	if m.inputQueue[idx].questionIdx < len(entry.question.Questions) {
-		q := entry.question.Questions[m.inputQueue[idx].questionIdx]
-		if q.MultiSelect {
-			for i := range q.Options {
-				if msg.String() == fmt.Sprintf("%d", i+1) {
-					m.inputQueue[idx].questionSelected[i] = !m.inputQueue[idx].questionSelected[i]
-					m.refreshPanels()
-					return m, nil
-				}
-			}
-			if keybind.Matches(msg, m.keys.QConfirm) {
-				var selected []string
-				for i, opt := range q.Options {
-					if m.inputQueue[idx].questionSelected[i] {
-						selected = append(selected, opt.Label)
-					}
-				}
-				if len(selected) == 0 {
-					return m, nil
-				}
-				return m.advanceQuestion(strings.Join(selected, ", "))
-			}
-		} else {
-			for i, opt := range q.Options {
-				if msg.String() == fmt.Sprintf("%d", i+1) {
-					return m.advanceQuestion(opt.Label)
-				}
-			}
-		}
-	}
-	return m, nil
 }
 
 func (m Model) updateGatePrompt(msg tea.KeyPressMsg, entry *pendingInputEntry) (Model, tea.Cmd) {
@@ -460,52 +403,4 @@ func (m Model) updateGateResetConfirm(msg tea.KeyPressMsg, entry *pendingInputEn
 		m.refreshPanels()
 	}
 	return m, nil
-}
-
-// advanceQuestion records the answer for the current question and advances the
-// question index on the active entry. When all questions are answered it removes
-// the entry and emits AgentQuestionResponseMsg with the formatted answer.
-func (m Model) advanceQuestion(answer string) (Model, tea.Cmd) {
-	idx := m.activeInputIdx
-	if idx < 0 || idx >= len(m.inputQueue) || m.inputQueue[idx].kind != inputKindQuestion {
-		return m, nil
-	}
-	m.inputQueue[idx].questionAnswers = append(m.inputQueue[idx].questionAnswers, answer)
-	m.inputQueue[idx].questionIdx++
-	m.inputQueue[idx].questionSelected = make(map[int]bool)
-
-	if m.inputQueue[idx].questionIdx < len(m.inputQueue[idx].question.Questions) {
-		m.refreshPanels()
-		return m, nil
-	}
-
-	q := m.inputQueue[idx].question
-	answers := m.inputQueue[idx].questionAnswers
-	m.removeEntryAt(idx)
-	m.refreshPanels()
-	formatted := formatQuestionAnswers(q.Questions, answers)
-	return m, func() tea.Msg {
-		return AgentQuestionResponseMsg{
-			RunID:     q.RunID,
-			StepID:    q.StepID,
-			ToolUseID: q.ToolUseID,
-			Answer:    formatted,
-		}
-	}
-}
-
-// formatQuestionAnswers encodes the human's selections as a JSON payload that
-// captureStream sends back to Claude as the AskUserQuestion tool result.
-func formatQuestionAnswers(questions []engine.AgentQuestionItem, answers []string) string {
-	m := make(map[string]string, len(questions))
-	for i, q := range questions {
-		if i < len(answers) {
-			m[q.Question] = answers[i]
-		}
-	}
-	b, err := json.Marshal(map[string]any{"answers": m})
-	if err != nil {
-		return strings.Join(answers, ", ")
-	}
-	return string(b)
 }

@@ -14,7 +14,7 @@
 #   - deterministic gates ([step.validate]) and on_failure policies
 #   - inline inputs, worktree isolation, and [defaults] inheritance
 #
-# Validate it with:  jig validate examples/feature.toml
+# Validate it with:  jig validate .agents/jig/feature.toml
 # =============================================================================
 
 [workflow]

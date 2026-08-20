@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	claudecode "github.com/severity1/claude-agent-sdk-go"
+
+	"jig/internal/interaction"
 )
 
 // ClaudeHarness wraps github.com/severity1/claude-agent-sdk-go, translating
@@ -22,13 +25,12 @@ func NewClaudeHarness() *ClaudeHarness { return &ClaudeHarness{} }
 
 func (*ClaudeHarness) Name() string { return "claude" }
 
-// Capabilities advertises all five capabilities: the Claude SDK path
-// implements the permission callback, in-process MCP, resume, structured
-// output, and partial streaming exactly as it did before extraction.
+// Capabilities advertises the optional semantics implemented by the direct
+// Claude SDK path.
 func (*ClaudeHarness) Capabilities() CapabilitySet {
 	return NewCapabilitySet(
 		CapPermissionCallback,
-		CapInProcessMCP,
+		CapUserQuestion,
 		CapSessionResume,
 		CapStructuredOutput,
 		CapPartialStreaming,
@@ -99,9 +101,6 @@ func claudeOptions(spec SessionSpec) []claudecode.Option {
 		opts = append(opts, claudecode.WithPermissionMode(claudecode.PermissionMode(spec.PermissionMode)))
 	}
 	if len(spec.AllowedTools) > 0 {
-		// AskUserQuestion is not a Claude Code built-in; it is implemented as an
-		// in-process MCP tool (registered below via MCPServers). Rewrite it to
-		// the MCP-qualified name so the CLI recognises it.
 		opts = append(opts, claudecode.WithAllowedTools(rewriteAskUserQuestion(spec.AllowedTools)...))
 	}
 	if len(spec.DisallowedTools) > 0 {
@@ -119,12 +118,13 @@ func claudeOptions(spec SessionSpec) []claudecode.Option {
 			claudecode.WithContinueConversation(true),
 		)
 	}
-	for _, srv := range spec.MCPServers {
-		tools := make([]*claudecode.McpTool, 0, len(srv.Tools))
-		for _, t := range srv.Tools {
-			tools = append(tools, claudecode.NewTool(t.Name, t.Description, t.InputSchema, claudeToolHandler(t)))
-		}
-		opts = append(opts, claudecode.WithSdkMcpServer(srv.Name, claudecode.CreateSDKMcpServer(srv.Name, srv.Version, tools...)))
+	if spec.Question != nil {
+		var seq atomic.Uint64
+		tool := claudeQuestionTool(spec.Question, &seq)
+		opts = append(opts, claudecode.WithSdkMcpServer(
+			"jig",
+			claudecode.CreateSDKMcpServer("jig", "1.0.0", tool),
+		))
 	}
 	if spec.Permission != nil {
 		// When a Tier-1 guard is active, force PermissionModeDefault so the SDK
@@ -163,21 +163,157 @@ func rewriteAskUserQuestion(tools []string) []string {
 	return out
 }
 
-// claudeToolHandler adapts a harness.Tool's backend-agnostic handler to the
-// SDK's McpToolHandler signature.
-func claudeToolHandler(t Tool) claudecode.McpToolHandler {
-	return func(ctx context.Context, args map[string]any) (*claudecode.McpToolResult, error) {
-		res, err := t.Handler(ctx, args)
-		if err != nil {
-			return &claudecode.McpToolResult{
-				IsError: true,
-				Content: []claudecode.McpContent{{Type: "text", Text: err.Error()}},
-			}, nil
+func claudeQuestionTool(ask QuestionFn, seq *atomic.Uint64) *claudecode.McpTool {
+	schema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"questions": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"header":      map[string]any{"type": "string"},
+						"question":    map[string]any{"type": "string"},
+						"multiSelect": map[string]any{"type": "boolean"},
+						"options": map[string]any{
+							"type": "array",
+							"items": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"label":       map[string]any{"type": "string"},
+									"description": map[string]any{"type": "string"},
+								},
+								"required": []any{"label"},
+							},
+						},
+					},
+					"required": []any{"question"},
+				},
+			},
+		},
+		"required": []any{"questions"},
+	}
+	return claudecode.NewTool(
+		"AskUserQuestion",
+		"Ask the user one or more questions and wait for their answer before continuing.",
+		schema,
+		func(ctx context.Context, input map[string]any) (*claudecode.McpToolResult, error) {
+			req, prompts, err := parseClaudeQuestions(input, seq.Add(1))
+			if err != nil {
+				return claudeQuestionResult(err.Error(), true), nil
+			}
+			resp := ask(ctx, req)
+			content, isError := encodeClaudeQuestionResponse(req, prompts, resp)
+			return claudeQuestionResult(content, isError), nil
+		},
+	)
+}
+
+func parseClaudeQuestions(input map[string]any, id uint64) (interaction.QuestionRequest, []string, error) {
+	raw, ok := input["questions"]
+	if !ok {
+		return interaction.QuestionRequest{}, nil, fmt.Errorf("AskUserQuestion: missing questions field")
+	}
+	data, err := json.Marshal(raw)
+	if err != nil {
+		return interaction.QuestionRequest{}, nil, fmt.Errorf("AskUserQuestion: marshal questions: %w", err)
+	}
+	var items []struct {
+		Header      string `json:"header"`
+		Question    string `json:"question"`
+		MultiSelect bool   `json:"multiSelect"`
+		Options     []struct {
+			Label       string `json:"label"`
+			Description string `json:"description"`
+		} `json:"options"`
+	}
+	if err := json.Unmarshal(data, &items); err != nil {
+		return interaction.QuestionRequest{}, nil, fmt.Errorf("AskUserQuestion: unmarshal questions: %w", err)
+	}
+	req := interaction.QuestionRequest{
+		ID:      fmt.Sprintf("claude-question-%d", id),
+		Message: "Please answer the following questions.",
+		Fields:  make([]interaction.QuestionField, len(items)),
+	}
+	prompts := make([]string, len(items))
+	seenPrompts := make(map[string]struct{}, len(items))
+	for i, item := range items {
+		if _, exists := seenPrompts[item.Question]; exists {
+			return interaction.QuestionRequest{}, nil, fmt.Errorf("AskUserQuestion: duplicate question %q", item.Question)
 		}
-		return &claudecode.McpToolResult{
-			IsError: res.IsError,
-			Content: []claudecode.McpContent{{Type: "text", Text: res.Content}},
-		}, nil
+		seenPrompts[item.Question] = struct{}{}
+		prompts[i] = item.Question
+		field := interaction.QuestionField{
+			ID:          fmt.Sprintf("question_%d", i),
+			Header:      item.Header,
+			Prompt:      item.Question,
+			Kind:        interaction.FieldText,
+			AllowCustom: false,
+		}
+		if len(item.Options) > 0 {
+			field.Kind = interaction.FieldSingleSelect
+			if item.MultiSelect {
+				field.Kind = interaction.FieldMultiSelect
+			}
+			field.AllowCustom = true
+			field.Options = make([]interaction.QuestionOption, len(item.Options))
+			for j, option := range item.Options {
+				field.Options[j] = interaction.QuestionOption{
+					Value:       option.Label,
+					Label:       option.Label,
+					Description: option.Description,
+				}
+			}
+		}
+		req.Fields[i] = field
+	}
+	if len(req.Fields) == 1 {
+		req.Message = req.Fields[0].Prompt
+	}
+	if err := req.Validate(); err != nil {
+		return interaction.QuestionRequest{}, nil, fmt.Errorf("AskUserQuestion: %w", err)
+	}
+	return req, prompts, nil
+}
+
+func encodeClaudeQuestionResponse(
+	req interaction.QuestionRequest,
+	prompts []string,
+	resp interaction.QuestionResponse,
+) (string, bool) {
+	if err := resp.Validate(req); err != nil {
+		return "AskUserQuestion: invalid user response: " + err.Error(), true
+	}
+	if resp.Action == interaction.ActionCancel {
+		return "user cancelled the question", true
+	}
+	answers := make(map[string]string, len(resp.Answers))
+	if resp.Action == interaction.ActionAccept {
+		for i, field := range req.Fields {
+			answer, ok := resp.Answers[field.ID]
+			if !ok {
+				continue
+			}
+			text := strings.TrimSpace(answer.Custom)
+			if text == "" {
+				text = strings.Join(answer.Values, ", ")
+			}
+			if text != "" {
+				answers[prompts[i]] = text
+			}
+		}
+	}
+	data, err := json.Marshal(map[string]any{"answers": answers})
+	if err != nil {
+		return "AskUserQuestion: encode response: " + err.Error(), true
+	}
+	return string(data), false
+}
+
+func claudeQuestionResult(content string, isError bool) *claudecode.McpToolResult {
+	return &claudecode.McpToolResult{
+		IsError: isError,
+		Content: []claudecode.McpContent{{Type: "text", Text: content}},
 	}
 }
 

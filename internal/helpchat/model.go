@@ -13,6 +13,8 @@ import (
 	claudecode "github.com/severity1/claude-agent-sdk-go"
 
 	"jig/internal/engine"
+	"jig/internal/interaction"
+	questionpanel "jig/internal/tui/question"
 	"jig/internal/tui/shared"
 )
 
@@ -35,11 +37,8 @@ type pendingGateEntry struct {
 	toolName string         // gateKindPerm: tool being requested
 	input    map[string]any // gateKindPerm: tool input parameters
 	permAnsC chan<- bool    // gateKindPerm: send true=allow, false=deny
-	question string         // gateKindQuestion: question text
-	options  []string       // gateKindQuestion: nil → free-text, non-nil → choice list
-	qAnsC    chan<- string  // gateKindQuestion: send selected/typed answer
-	selected int            // gateKindQuestion option-list cursor
-	textBuf  string         // gateKindQuestion free-text accumulator
+	question questionpanel.Model
+	qAnsC    chan<- interaction.QuestionResponse
 }
 
 type helpTurn struct {
@@ -177,6 +176,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.buildRenderer(innerW)
 			m.updateViewport()
 		}
+		if m.pendingGate != nil && m.pendingGate.kind == gateKindQuestion {
+			g := *m.pendingGate
+			g.question = g.question.Resize(innerW, inputH)
+			m.pendingGate = &g
+		}
 		return m, nil
 
 	case ConnectedMsg:
@@ -257,8 +261,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case QuestionRequestMsg:
 		m.pendingGate = &pendingGateEntry{
 			kind:     gateKindQuestion,
-			question: msg.Question,
-			options:  msg.Options,
+			question: questionpanel.New(msg.Request).Resize(m.vpW, 8),
 			qAnsC:    msg.AnsC,
 		}
 		m.updateViewport()
@@ -342,10 +345,7 @@ func (m Model) gateHint() string {
 		case gateKindPerm:
 			return shared.Theme.Chat.Hint.Render("[y] allow  ·  [n] deny  ·  esc deny")
 		case gateKindQuestion:
-			if len(g.options) > 0 {
-				return shared.Theme.Chat.Hint.Render("↑↓ navigate  ·  enter confirm  ·  esc cancel")
-			}
-			return shared.Theme.Chat.Hint.Render("enter send  ·  esc cancel")
+			return shared.Theme.Chat.Hint.Render(g.question.Hint())
 		}
 	}
 	return shared.Theme.Chat.Hint.Render(`ctrl+\ or esc · close  ·  tab · switch focus`)
@@ -380,49 +380,17 @@ func (m Model) updateGate(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 
 	case gateKindQuestion:
-		if len(g.options) > 0 {
-			newG := *g
-			switch {
-			case keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("up", "k"))):
-				if newG.selected > 0 {
-					newG.selected--
-				}
-				m.pendingGate = &newG
-			case keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("down", "j"))):
-				if newG.selected < len(newG.options)-1 {
-					newG.selected++
-				}
-				m.pendingGate = &newG
-			case keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("enter"))):
-				g.qAnsC <- g.options[g.selected]
-				m.pendingGate = nil
-			case keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("esc"))):
-				g.qAnsC <- ""
-				m.pendingGate = nil
-			}
+		newG := *g
+		var cmd tea.Cmd
+		newG.question, cmd = newG.question.Update(msg)
+		if response, ok := newG.question.Response(); ok {
+			g.qAnsC <- response
+			m.pendingGate = nil
 		} else {
-			newG := *g
-			switch {
-			case keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("enter"))):
-				if newG.textBuf != "" {
-					g.qAnsC <- newG.textBuf
-					m.pendingGate = nil
-				}
-			case keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("backspace"))):
-				if len(newG.textBuf) > 0 {
-					newG.textBuf = newG.textBuf[:len(newG.textBuf)-1]
-				}
-				m.pendingGate = &newG
-			case keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("esc"))):
-				g.qAnsC <- ""
-				m.pendingGate = nil
-			default:
-				if msg.Text != "" {
-					newG.textBuf += msg.Text
-					m.pendingGate = &newG
-				}
-			}
+			m.pendingGate = &newG
 		}
+		m.updateViewport()
+		return m, cmd
 	}
 	m.updateViewport()
 	return m, nil

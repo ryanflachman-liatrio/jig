@@ -46,6 +46,8 @@ run  = "mkdir -p docs/specs"
 [[step]]
 id              = "context_assess"
 type            = "agent"
+backend         = "cursor"
+transport       = "acp"
 model           = "claude-haiku-4-5-20251001"
 depends_on      = ["mkdir_spec"]
 skill           = "../skills/sdd-context-assess"

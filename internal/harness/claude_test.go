@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	claudecode "github.com/severity1/claude-agent-sdk-go"
+
+	"jig/internal/interaction"
 )
 
 func TestClaudeHarnessCapabilities(t *testing.T) {
@@ -15,7 +17,7 @@ func TestClaudeHarnessCapabilities(t *testing.T) {
 	caps := h.Capabilities()
 	for _, c := range []Capability{
 		CapPermissionCallback,
-		CapInProcessMCP,
+		CapUserQuestion,
 		CapSessionResume,
 		CapStructuredOutput,
 		CapPartialStreaming,
@@ -128,20 +130,11 @@ func TestClaudeOptionsTranslation(t *testing.T) {
 			},
 		},
 		{
-			name: "mcp server registered",
+			name: "question tool registered",
 			spec: SessionSpec{
-				MCPServers: []MCPServer{{
-					Name:    "jig",
-					Version: "1.0.0",
-					Tools: []Tool{{
-						Name:        "AskUserQuestion",
-						Description: "ask",
-						InputSchema: map[string]any{"type": "object"},
-						Handler: func(context.Context, map[string]any) (ToolResult, error) {
-							return ToolResult{}, nil
-						},
-					}},
-				}},
+				Question: func(_ context.Context, req interaction.QuestionRequest) interaction.QuestionResponse {
+					return interaction.QuestionResponse{RequestID: req.ID, Action: interaction.ActionDecline}
+				},
 			},
 			check: func(t *testing.T, o *claudecode.Options) {
 				if _, ok := o.McpServers["jig"]; !ok {
@@ -184,5 +177,74 @@ func TestClaudeOptionsPermissionCallbackDecision(t *testing.T) {
 				t.Fatalf("CanUseTool() returned nil result")
 			}
 		})
+	}
+}
+
+func TestClaudeQuestionTranslation(t *testing.T) {
+	req, prompts, err := parseClaudeQuestions(map[string]any{
+		"questions": []any{
+			map[string]any{
+				"header":      "Format",
+				"question":    "Choose a format",
+				"multiSelect": false,
+				"options": []any{
+					map[string]any{"label": "JSON", "description": "Structured"},
+					map[string]any{"label": "Text", "description": "Plain"},
+				},
+			},
+			map[string]any{
+				"question":    "Choose features",
+				"multiSelect": true,
+				"options": []any{
+					map[string]any{"label": "Cache"},
+					map[string]any{"label": "Retry"},
+				},
+			},
+		},
+	}, 7)
+	if err != nil {
+		t.Fatalf("parseClaudeQuestions() error = %v", err)
+	}
+	if req.ID != "claude-question-7" || len(req.Fields) != 2 {
+		t.Fatalf("request = %+v", req)
+	}
+	if req.Fields[0].Kind != interaction.FieldSingleSelect || req.Fields[1].Kind != interaction.FieldMultiSelect {
+		t.Fatalf("field kinds = %q, %q", req.Fields[0].Kind, req.Fields[1].Kind)
+	}
+
+	content, isError := encodeClaudeQuestionResponse(req, prompts, interaction.QuestionResponse{
+		RequestID: req.ID,
+		Action:    interaction.ActionAccept,
+		Answers: map[string]interaction.Answer{
+			"question_0": {Custom: "YAML"},
+			"question_1": {Values: []string{"Cache", "Retry"}},
+		},
+	})
+	if isError {
+		t.Fatalf("encodeClaudeQuestionResponse() returned error content %q", content)
+	}
+	if content != `{"answers":{"Choose a format":"YAML","Choose features":"Cache, Retry"}}` {
+		t.Fatalf("content = %s", content)
+	}
+}
+
+func TestClaudeQuestionDeclineAndCancel(t *testing.T) {
+	req := interaction.QuestionRequest{
+		ID: "q1",
+		Fields: []interaction.QuestionField{{
+			ID: "answer", Prompt: "Answer?", Kind: interaction.FieldText,
+		}},
+	}
+	declined, isError := encodeClaudeQuestionResponse(req, []string{"Answer?"}, interaction.QuestionResponse{
+		RequestID: "q1", Action: interaction.ActionDecline,
+	})
+	if isError || declined != `{"answers":{}}` {
+		t.Fatalf("decline = %q, error=%v", declined, isError)
+	}
+	cancelled, isError := encodeClaudeQuestionResponse(req, []string{"Answer?"}, interaction.QuestionResponse{
+		RequestID: "q1", Action: interaction.ActionCancel,
+	})
+	if !isError || cancelled != "user cancelled the question" {
+		t.Fatalf("cancel = %q, error=%v", cancelled, isError)
 	}
 }

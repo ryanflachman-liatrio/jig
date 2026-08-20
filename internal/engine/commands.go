@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"jig/internal/interaction"
 	"jig/internal/step"
 	"jig/internal/workflow"
 )
@@ -22,7 +23,7 @@ type command interface {
 // post-exec chain / failure-policy path.
 func (m stepDoneMsg) execute(s *scheduler) {
 	s.inFlight--
-	delete(s.reporters, m.stepID)
+	delete(s.pendingQuestions, m.stepID)
 	// Accrue this attempt's cost/tokens once, before any early-return branch
 	// (stopped, recovery-parked, failed) — every executor invocation was paid
 	// for, so retries, loop re-runs, and resumed sessions all add to the step's
@@ -177,29 +178,75 @@ func (m resumeMsg) execute(s *scheduler)             { s.handleResume(m) }
 func (m resetMsg) execute(s *scheduler)              { s.handleReset(m) }
 func (m securityFindingMsg) execute(s *scheduler)    { s.handleSecurityFinding(m.sf) }
 
-// execute transitions a running agent step to StatusNeedsInput: the agent
-// called AskUserQuestion, so the TUI can surface the question. The goroutine
-// is still alive, blocked on rep.answerCh; inFlight remains > 0.
-func (m agentQuestionNotifyMsg) execute(s *scheduler) {
+func (m agentQuestionRequestMsg) execute(s *scheduler) {
 	state := s.states[m.stepID]
-	if state != nil && state.Status == step.StatusRunning {
-		s.transition(m.stepID, step.StatusRunning, step.StatusNeedsInput)
-	}
-}
-
-// execute delivers the human's answer to the blocked agent goroutine.
-func (m agentQuestionAnswerMsg) execute(s *scheduler) {
-	rep := s.reporters[m.stepID]
-	if rep == nil || rep.answerCh == nil {
+	if state == nil || (state.Status != step.StatusRunning && state.Status != step.StatusNeedsInput) {
+		m.reply <- interaction.QuestionResponse{RequestID: m.request.ID, Action: interaction.ActionCancel}
 		return
 	}
+	pending := s.pendingQuestions[m.stepID]
+	if pending == nil {
+		pending = make(map[string]pendingQuestion)
+		s.pendingQuestions[m.stepID] = pending
+	}
+	if _, exists := pending[m.request.ID]; exists {
+		m.reply <- interaction.QuestionResponse{RequestID: m.request.ID, Action: interaction.ActionCancel}
+		return
+	}
+	pending[m.request.ID] = pendingQuestion{request: m.request, reply: m.reply}
+	if state.Status == step.StatusRunning {
+		s.transition(m.stepID, step.StatusRunning, step.StatusNeedsInput)
+	}
+	s.emit(AgentQuestion{RunID: s.runID, StepID: m.stepID, Request: m.request})
+}
+
+func (m agentQuestionAnswerMsg) execute(s *scheduler) {
+	pending := s.pendingQuestions[m.stepID]
+	item, ok := pending[m.response.RequestID]
+	if !ok {
+		return
+	}
+	if err := m.response.Validate(item.request); err != nil {
+		return
+	}
+	delete(pending, m.response.RequestID)
+	if len(pending) == 0 {
+		delete(s.pendingQuestions, m.stepID)
+	}
+	s.emit(AgentQuestionResolved{
+		RunID:     s.runID,
+		StepID:    m.stepID,
+		RequestID: m.response.RequestID,
+		Action:    m.response.Action,
+	})
 	state := s.states[m.stepID]
-	if state != nil && state.Status == step.StatusNeedsInput {
+	if state != nil && state.Status == step.StatusNeedsInput && len(pending) == 0 {
 		s.transition(m.stepID, step.StatusNeedsInput, step.StatusRunning)
 	}
 	select {
-	case rep.answerCh <- m.answer:
+	case item.reply <- m.response:
 	default:
+	}
+}
+
+func (m agentQuestionAbandonMsg) execute(s *scheduler) {
+	pending := s.pendingQuestions[m.stepID]
+	if _, ok := pending[m.requestID]; !ok {
+		return
+	}
+	delete(pending, m.requestID)
+	if len(pending) == 0 {
+		delete(s.pendingQuestions, m.stepID)
+	}
+	s.emit(AgentQuestionResolved{
+		RunID:     s.runID,
+		StepID:    m.stepID,
+		RequestID: m.requestID,
+		Action:    interaction.ActionCancel,
+	})
+	state := s.states[m.stepID]
+	if state != nil && state.Status == step.StatusNeedsInput && len(pending) == 0 {
+		s.transition(m.stepID, step.StatusNeedsInput, step.StatusRunning)
 	}
 }
 

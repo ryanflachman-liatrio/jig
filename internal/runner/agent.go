@@ -86,13 +86,11 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 	if req.Worktree != "" {
 		spec.Cwd = req.Worktree
 	}
-	// If the step enables AskUserQuestion, register the in-process MCP server
-	// so the CLI recognises mcp__jig__AskUserQuestion (rewritten by the harness).
 	if containsStr(req.Step.AllowedTools, "AskUserQuestion") {
-		if !caps.Has(harness.CapInProcessMCP) {
-			return failResult(fmt.Sprintf("step uses AskUserQuestion but harness %q does not support in-process MCP tools (CapInProcessMCP)", h.Name()), start), nil
+		if !caps.Has(harness.CapUserQuestion) {
+			return failResult(fmt.Sprintf("step uses AskUserQuestion but harness %q does not support user questions (CapUserQuestion)", h.Name()), start), nil
 		}
-		spec.MCPServers = append(spec.MCPServers, buildAskUserQuestionServer(ctx, rep))
+		spec.Question = rep.Question
 	}
 	if req.Guard != nil {
 		if !caps.Has(harness.CapPermissionCallback) {
@@ -124,7 +122,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 // buildSessionSpec translates a step's already-defaulted model/tool/permission
 // fields (resolved from [defaults] by workflow.applyDefaults before this ever
 // runs) into a harness.SessionSpec. Zero-value fields are simply omitted so
-// the harness's own defaults apply. Prompt/Cwd/Resume/Permission/MCPServers
+// the harness's own defaults apply. Prompt/Cwd/Resume/Permission/Question
 // are filled in separately by Execute, which has the request-scoped context
 // this function does not.
 //
@@ -166,61 +164,6 @@ func buildSessionSpec(st *workflow.Step, caps harness.CapabilitySet) (harness.Se
 	}
 	spec.Schema = m
 	return spec, nil
-}
-
-// buildAskUserQuestionServer creates an in-process MCP server named "jig" that
-// exposes one tool: AskUserQuestion. When the agent calls the tool the handler
-// blocks on rep.Question, which pauses the step and surfaces the question in the
-// TUI. The harness feeds the returned ToolResult back into the conversation, so
-// no manual send-channel injection is needed.
-//
-// stepCtx is the executing step's context; it is threaded into rep.Question so a
-// Stop/cancel of the step unblocks a pending AskUserQuestion instead of hanging
-// the handler goroutine forever.
-func buildAskUserQuestionServer(stepCtx context.Context, rep engine.Reporter) harness.MCPServer {
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"questions": map[string]any{
-				"type": "array",
-				"items": map[string]any{
-					"type": "object",
-					"properties": map[string]any{
-						"header":      map[string]any{"type": "string"},
-						"question":    map[string]any{"type": "string"},
-						"multiSelect": map[string]any{"type": "boolean"},
-						"options": map[string]any{
-							"type": "array",
-							"items": map[string]any{
-								"type": "object",
-								"properties": map[string]any{
-									"label":       map[string]any{"type": "string"},
-									"description": map[string]any{"type": "string"},
-								},
-								"required": []any{"label", "description"},
-							},
-						},
-					},
-					"required": []any{"question"},
-				},
-			},
-		},
-		"required": []any{"questions"},
-	}
-	tool := harness.Tool{
-		Name:        "AskUserQuestion",
-		Description: "Ask the user one or more questions and wait for their answer before continuing.",
-		InputSchema: schema,
-		Handler: func(_ context.Context, args map[string]any) (harness.ToolResult, error) {
-			questions, err := parseAskUserQuestions(args)
-			if err != nil {
-				return harness.ToolResult{IsError: true, Content: err.Error()}, nil
-			}
-			answer := rep.Question(stepCtx, "ask-user-question", questions)
-			return harness.ToolResult{Content: answer}, nil
-		},
-	}
-	return harness.MCPServer{Name: "jig", Version: "1.0.0", Tools: []harness.Tool{tool}}
 }
 
 // captureStream consumes the harness event stream, appending each turn to the
@@ -583,47 +526,6 @@ func failResult(msg string, start time.Time) *step.Result {
 		Err:      msg,
 		Duration: time.Since(start),
 	}
-}
-
-// parseAskUserQuestions extracts the structured question payload from an
-// AskUserQuestion tool call input map. Returns an error if the payload is
-// malformed or missing.
-func parseAskUserQuestions(input map[string]any) ([]engine.AgentQuestionItem, error) {
-	raw, ok := input["questions"]
-	if !ok {
-		return nil, fmt.Errorf("AskUserQuestion: missing questions field")
-	}
-	// Re-encode and decode to drive the type assertions through JSON.
-	data, err := json.Marshal(raw)
-	if err != nil {
-		return nil, fmt.Errorf("AskUserQuestion: marshal questions: %w", err)
-	}
-	var items []struct {
-		Header      string `json:"header"`
-		Question    string `json:"question"`
-		MultiSelect bool   `json:"multiSelect"`
-		Options     []struct {
-			Label       string `json:"label"`
-			Description string `json:"description"`
-		} `json:"options"`
-	}
-	if err := json.Unmarshal(data, &items); err != nil {
-		return nil, fmt.Errorf("AskUserQuestion: unmarshal questions: %w", err)
-	}
-	out := make([]engine.AgentQuestionItem, len(items))
-	for i, it := range items {
-		opts := make([]engine.AgentQuestionOption, len(it.Options))
-		for j, o := range it.Options {
-			opts[j] = engine.AgentQuestionOption{Label: o.Label, Description: o.Description}
-		}
-		out[i] = engine.AgentQuestionItem{
-			Header:      it.Header,
-			Question:    it.Question,
-			Options:     opts,
-			MultiSelect: it.MultiSelect,
-		}
-	}
-	return out, nil
 }
 
 func containsStr(ss []string, s string) bool {

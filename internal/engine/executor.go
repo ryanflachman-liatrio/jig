@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 
+	"jig/internal/interaction"
 	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/workflow"
@@ -75,12 +76,7 @@ type Reporter interface {
 	// It carries no payload — content is written directly to the transcript
 	// file by the runner; this is a liveness-only nudge for the TUI to refresh.
 	Message(seq, iteration int)
-	// Question delivers a dynamic AskUserQuestion from the agent to the scheduler
-	// and blocks until the human provides an answer. Returns the user's answer text,
-	// or "" if ctx is cancelled first (the step was stopped, the run was cancelled,
-	// or a security finding escalated the step) — so the caller unwinds instead of
-	// hanging forever.
-	Question(ctx context.Context, toolUseID string, questions []AgentQuestionItem) string
+	Question(ctx context.Context, req interaction.QuestionRequest) interaction.QuestionResponse
 	// Finding routes a SecurityFinding through the ctrl channel (must-not-drop).
 	// Called by the runner when the Tier-1 guard or Tier-2 monitor fleet produces
 	// a finding for this step.

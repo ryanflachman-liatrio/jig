@@ -1,5 +1,5 @@
 ╭─ Steps ──────────────────────╮╭─ a ──────────────────────────────────────────╮
-│ ▌  ⊙  a   needs_input        ││   ⊙  needs_input                             │
+│ ▌  ⊙  a   needs_input        ││   ⊙  a  needs_input                          │
 │      —                       ││                                              │
 │    ○  b   pending            ││   transcript unavailable (persistence off)   │
 │      —                       ││                                              │
@@ -14,13 +14,12 @@
                                                                                 
 ╭─ Agent input ────────────────────────────────────────────────────────────────╮
 │ [1 / 1]  a  (question)                                                       │
-│   Pick one                                                                   │
-│                                                                              │
-│     ▲ more                                                                   │
-│     [3] Option3                                                              │
-│     [4] Option4                                                              │
-│     [5] Option5                                                              │
-│     ▼ more                                                                   │
+│ Pick one                                                                     │
+│   ▲ more                                                                     │
+│      Option8                                                                 │
+│ ▶    Option9                                                                 │
+│   ▼ more                                                                     │
+│ ↑↓ navigate · enter select · d decline · q cancel                            │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-  awaiting answer  ·  1-9 select answer  •  ↑/↓ scroll  •  esc blur             
+  awaiting answer  ·  ↑↓ navigate · enter select · d decline · q cancel         

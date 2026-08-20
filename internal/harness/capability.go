@@ -1,6 +1,10 @@
 package harness
 
-import "context"
+import (
+	"context"
+
+	"jig/internal/interaction"
+)
 
 // Capability is one optional behavior a Harness may advertise before Open is
 // called. AgentExecutor gates SessionSpec fields and step semantics (guard,
@@ -14,9 +18,9 @@ const (
 	// synchronously before a tool call executes, and a Deny decision actually
 	// blocks execution (not merely "the callback fired").
 	CapPermissionCallback Capability = 1 << iota
-	// CapInProcessMCP means the harness can register SessionSpec.MCPServers as
-	// in-process tools (used for the AskUserQuestion tool).
-	CapInProcessMCP
+	// CapUserQuestion means the harness can pause an in-flight turn and invoke
+	// SessionSpec.Question for a structured question round-trip.
+	CapUserQuestion
 	// CapSessionResume means Open honors SessionSpec.Resume to reconnect a
 	// prior conversation (block_on / Stop-Resume rely on this).
 	CapSessionResume
@@ -59,23 +63,7 @@ type Decision struct {
 // set (requires CapPermissionCallback).
 type PermissionFn func(toolName string, input map[string]any) Decision
 
-// Tool is one in-process tool exposed to the agent via an MCP server (used
-// today for AskUserQuestion). Handler blocks the calling goroutine until it
-// has a result, mirroring the existing SDK-MCP tool-handler contract.
-type Tool struct {
-	Name        string
-	Description string
-	InputSchema map[string]any
-	Handler     func(ctx context.Context, input map[string]any) (ToolResult, error)
-}
-
-// MCPServer is one in-process MCP server a SessionSpec registers when
-// CapInProcessMCP is advertised.
-type MCPServer struct {
-	Name    string
-	Version string
-	Tools   []Tool
-}
+type QuestionFn func(context.Context, interaction.QuestionRequest) interaction.QuestionResponse
 
 // SessionSpec is the jig-owned set of session options, replacing the Claude
 // SDK's functional-option list so internal/harness has no SDK dependency.
@@ -97,8 +85,8 @@ type SessionSpec struct {
 
 	// Permission requires CapPermissionCallback.
 	Permission PermissionFn
-	// MCPServers requires CapInProcessMCP.
-	MCPServers []MCPServer
+	// Question requires CapUserQuestion.
+	Question QuestionFn
 	// Resume (a prior session/conversation id) requires CapSessionResume.
 	Resume string
 	// Schema (a JSON Schema for structured output) requires CapStructuredOutput.

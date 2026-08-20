@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"jig/internal/engine"
+	"jig/internal/interaction"
 	"jig/internal/step"
 	"jig/internal/workflow"
 )
@@ -31,8 +32,8 @@ func (r *pidReporter) Output(delta string) {
 func (r *pidReporter) ToolCall(string, string)        {}
 func (r *pidReporter) Message(int, int)               {}
 func (r *pidReporter) Finding(engine.SecurityFinding) {}
-func (r *pidReporter) Question(context.Context, string, []engine.AgentQuestionItem) string {
-	return ""
+func (r *pidReporter) Question(_ context.Context, req interaction.QuestionRequest) interaction.QuestionResponse {
+	return interaction.QuestionResponse{RequestID: req.ID, Action: interaction.ActionCancel}
 }
 
 func (r *pidReporter) text() string {

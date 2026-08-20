@@ -146,7 +146,7 @@ allowed_tools = ["Read"]
 		}
 	})
 
-	t.Run("unknown backend", func(t *testing.T) {
+	t.Run("cursor acp backend", func(t *testing.T) {
 		toml := `
 [workflow]
 name = "x"
@@ -156,6 +156,29 @@ id = "a"
 type = "agent"
 skill = "skills/a"
 backend = "cursor"
+transport = "acp"
+allowed_tools = ["Read"]
+`
+		wf, err := Decode(toml, dir)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		a := wf.Steps[wf.index["a"]]
+		if a.Backend != BackendCursor || a.Transport != TransportACP {
+			t.Errorf("a = %s/%s, want cursor/acp", a.Backend, a.Transport)
+		}
+	})
+
+	t.Run("unknown backend", func(t *testing.T) {
+		toml := `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "agent"
+skill = "skills/a"
+backend = "gemini"
 allowed_tools = ["Read"]
 `
 		_, err := Decode(toml, dir)
