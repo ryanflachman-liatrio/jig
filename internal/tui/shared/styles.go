@@ -72,6 +72,7 @@ type Styles struct {
 		ToolResult  lipgloss.Style
 		Hint        lipgloss.Style
 		BlockCursor lipgloss.Style
+		CodeBlock   lipgloss.Style
 
 		// Left thick-bar accents ("▌") coloring each chat block by role. Crush's
 		// signature block affordance; see withBar in monitor.go.
@@ -215,6 +216,11 @@ func DefaultTheme() Styles {
 	s.Chat.ToolResult = lipgloss.NewStyle().Foreground(accent)
 	s.Chat.Hint = lipgloss.NewStyle().Foreground(fgDim)
 	s.Chat.BlockCursor = lipgloss.NewStyle().Bold(true).Foreground(onPrimary).Background(primary)
+	s.Chat.CodeBlock = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(fgDim).
+		Background(bgLeast).
+		Padding(0, 1)
 
 	s.Chat.BarThinking = lipgloss.NewStyle().Foreground(fgDim)
 	s.Chat.BarToolCall = lipgloss.NewStyle().Foreground(primary)
@@ -307,6 +313,7 @@ func charmtoneMarkdown() ansi.StyleConfig {
 
 	c.Code.Color = sp(hexBok)
 	c.Code.BackgroundColor = sp(hexBBQ)
+	c.CodeBlock.Chroma.Background.BackgroundColor = sp(hexBBQ)
 
 	c.Item.Color = sp(hexSash)
 	c.Enumeration.Color = sp(hexCharple)

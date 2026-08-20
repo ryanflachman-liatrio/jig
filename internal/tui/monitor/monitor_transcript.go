@@ -734,23 +734,227 @@ func (m Model) writeBlock(b *strings.Builder, key blockKey, blk transcript.Block
 }
 
 // renderMarkdown renders a text block as markdown, caching the result per block.
-// The cache map is shared across the value copies of Model, so writing to
-// it here persists even though the receiver is by value; the map is invalidated
-// wholesale on a width change (rebuildRenderer).
+// Fenced code is rendered separately so every fence gets its own rounded surface
+// instead of blending into the surrounding prose. The cache map is shared across
+// the value copies of Model, so writing to it here persists even though the
+// receiver is by value; the map is invalidated wholesale on a width change
+// (rebuildRenderer).
 func (m Model) renderMarkdown(key blockKey, text string) string {
 	if cached, ok := m.chatRendered[key]; ok {
 		return cached
 	}
-	out := text
-	if m.renderer != nil {
-		if r, err := m.renderer.Render(text); err == nil {
-			out = r
-		}
-	}
+	out := m.renderMarkdownDocument(text, false, m.transcriptInnerW, 2)
 	if m.chatRendered != nil {
 		m.chatRendered[key] = out
 	}
 	return out
+}
+
+// renderInsetMarkdown reserves room for the thick-bar prefix that wraps expanded
+// tool content. A transcript block is only ever rendered in one context, so the
+// regular per-block cache remains unambiguous.
+func (m Model) renderInsetMarkdown(key blockKey, text string) string {
+	if cached, ok := m.chatRendered[key]; ok {
+		return cached
+	}
+	out := m.renderMarkdownDocument(text, false, m.transcriptInnerW-4, 0)
+	if m.chatRendered != nil {
+		m.chatRendered[key] = out
+	}
+	return out
+}
+
+type markdownPart struct {
+	source  string
+	code    string
+	isFence bool
+}
+
+type markdownFence struct {
+	marker byte
+	size   int
+}
+
+// splitMarkdownFences keeps ordinary markdown intact while extracting complete
+// CommonMark-style backtick and tilde fences. An unmatched opener remains prose,
+// which lets glamour handle malformed or partially streamed markdown as before.
+func splitMarkdownFences(text string) []markdownPart {
+	var parts []markdownPart
+	proseStart := 0
+
+	for lineStart := 0; lineStart < len(text); {
+		lineEnd := markdownLineEnd(text, lineStart)
+		fence, ok := openingMarkdownFence(text[lineStart:lineEnd])
+		if !ok {
+			lineStart = lineEnd
+			continue
+		}
+
+		closeStart, closeEnd := -1, -1
+		for next := lineEnd; next < len(text); {
+			nextEnd := markdownLineEnd(text, next)
+			if closingMarkdownFence(text[next:nextEnd], fence) {
+				closeStart, closeEnd = next, nextEnd
+				break
+			}
+			next = nextEnd
+		}
+		if closeStart < 0 {
+			lineStart = lineEnd
+			continue
+		}
+
+		if proseStart < lineStart {
+			parts = append(parts, markdownPart{source: text[proseStart:lineStart]})
+		}
+		parts = append(parts, markdownPart{
+			source:  text[lineStart:closeEnd],
+			code:    strings.TrimSuffix(text[lineEnd:closeStart], "\n"),
+			isFence: true,
+		})
+		proseStart = closeEnd
+		lineStart = closeEnd
+	}
+
+	if proseStart < len(text) {
+		parts = append(parts, markdownPart{source: text[proseStart:]})
+	}
+	if len(parts) == 0 {
+		return []markdownPart{{source: text}}
+	}
+	return parts
+}
+
+func markdownLineEnd(text string, start int) int {
+	if rel := strings.IndexByte(text[start:], '\n'); rel >= 0 {
+		return start + rel + 1
+	}
+	return len(text)
+}
+
+func openingMarkdownFence(line string) (markdownFence, bool) {
+	line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+	indent := 0
+	for indent < len(line) && indent < 4 && line[indent] == ' ' {
+		indent++
+	}
+	if indent > 3 || indent >= len(line) {
+		return markdownFence{}, false
+	}
+
+	marker := line[indent]
+	if marker != '`' && marker != '~' {
+		return markdownFence{}, false
+	}
+	size := 0
+	for indent+size < len(line) && line[indent+size] == marker {
+		size++
+	}
+	if size < 3 {
+		return markdownFence{}, false
+	}
+	if marker == '`' && strings.ContainsRune(line[indent+size:], '`') {
+		return markdownFence{}, false
+	}
+	return markdownFence{marker: marker, size: size}, true
+}
+
+func closingMarkdownFence(line string, fence markdownFence) bool {
+	line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+	indent := 0
+	for indent < len(line) && indent < 4 && line[indent] == ' ' {
+		indent++
+	}
+	if indent > 3 || indent >= len(line) || line[indent] != fence.marker {
+		return false
+	}
+	size := 0
+	for indent+size < len(line) && line[indent+size] == fence.marker {
+		size++
+	}
+	return size >= fence.size && strings.TrimSpace(line[indent+size:]) == ""
+}
+
+// renderMarkdownDocument renders prose and complete fences independently. Code
+// uses the flush renderer so glamour contributes syntax highlighting without its
+// document margin; lipgloss then owns the box, padding, wrapping, and background.
+func (m Model) renderMarkdownDocument(text string, flush bool, availableWidth, fenceIndent int) string {
+	parts := splitMarkdownFences(text)
+	hasFence := false
+	for _, part := range parts {
+		if part.isFence {
+			hasFence = true
+			break
+		}
+	}
+
+	proseRenderer := m.renderer
+	if flush {
+		proseRenderer = m.fileRenderer
+	}
+	if !hasFence {
+		out := text
+		if proseRenderer != nil {
+			if rendered, err := proseRenderer.Render(text); err == nil {
+				out = rendered
+			}
+		}
+		if flush {
+			return stripBlankEdges(out)
+		}
+		return out
+	}
+
+	codeRenderer := m.fileRenderer
+	if codeRenderer == nil {
+		codeRenderer = proseRenderer
+	}
+
+	renderedParts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part.isFence {
+			code := part.code
+			if codeRenderer != nil {
+				if rendered, err := codeRenderer.Render(part.source); err == nil {
+					code = rendered
+				}
+			}
+			code = strings.TrimSuffix(stripBlankEdges(code), "\n")
+
+			boxWidth := availableWidth - fenceIndent
+			minWidth := shared.Theme.Chat.CodeBlock.GetHorizontalFrameSize() + 1
+			if boxWidth < minWidth {
+				boxWidth = minWidth
+			}
+			box := shared.Theme.Chat.CodeBlock.Width(boxWidth).Render(code)
+			renderedParts = append(renderedParts, indentLines(box, fenceIndent))
+			continue
+		}
+
+		prose := part.source
+		if proseRenderer != nil {
+			if rendered, err := proseRenderer.Render(part.source); err == nil {
+				prose = rendered
+			}
+		}
+		prose = strings.TrimSuffix(stripBlankEdges(prose), "\n")
+		if strings.TrimSpace(stripSGR(prose)) != "" {
+			renderedParts = append(renderedParts, prose)
+		}
+	}
+
+	if len(renderedParts) == 0 {
+		return ""
+	}
+	return strings.Join(renderedParts, "\n\n") + "\n"
+}
+
+func indentLines(s string, width int) string {
+	if width <= 0 || s == "" {
+		return s
+	}
+	indent := strings.Repeat(" ", width)
+	return indent + strings.ReplaceAll(s, "\n", "\n"+indent)
 }
 
 // fenceJSON pretty-prints s as a ```json fenced markdown block so it can be
@@ -814,7 +1018,7 @@ func (m Model) writeCollapsible(b *strings.Builder, key blockKey, labelStyle, ba
 
 	b.WriteString("\n")
 	if formattedContent != "" {
-		b.WriteString(withBar(bar, m.renderMarkdown(key, formattedContent)))
+		b.WriteString(withBar(bar, m.renderInsetMarkdown(key, formattedContent)))
 	} else {
 		var body strings.Builder
 		for _, l := range strings.Split(expandView(content), "\n") {
@@ -989,12 +1193,7 @@ func (m Model) fileBody() string {
 	// fileRenderer has document margin/prefix/suffix zeroed (see rebuildRenderer)
 	// so content sits flush in the panel without glamour's standard document framing.
 	render := func(text string) string {
-		if m.fileRenderer != nil {
-			if r, err := m.fileRenderer.Render(text); err == nil {
-				return stripBlankEdges(r)
-			}
-		}
-		return text
+		return m.renderMarkdownDocument(text, true, m.transcriptInnerW, 0)
 	}
 
 	switch kind {
