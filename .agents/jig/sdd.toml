@@ -86,6 +86,8 @@ version     = "1"
 description = "SDD end-to-end — idea to changelog in one graph: spec, tasks, implement, validate, compliance."
 
 [defaults]
+backend         = "claude"
+transport       = "sdk"
 model           = "claude-opus-4-8"
 effort          = "high"
 permission_mode = "acceptEdits"

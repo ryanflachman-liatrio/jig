@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -124,4 +125,52 @@ func (c *Conn) PermissionRequests() []acpsdk.RequestPermissionRequest {
 func (c *Conn) Close() error {
 	_ = killProcess(c.cmd)
 	return c.cmd.Wait()
+}
+
+// ConnectCursor spawns `cursor-agent acp` and performs the ACP Initialize +
+// Authenticate handshake. Cursor requires an explicit authenticate call (with
+// methodId "cursor_login") before any session can be created; this is the only
+// protocol-level difference from Connect (which spawns the Zed npx adapter and
+// requires no auth step). If CURSOR_API_KEY is set in the environment Cursor
+// treats itself as already authenticated, but calling Authenticate is still
+// safe (it is a no-op when already authenticated).
+func ConnectCursor(ctx context.Context, decide Decider, onUpdate func(Event)) (*Conn, error) {
+	agentPath, err := exec.LookPath("cursor-agent")
+	if err != nil {
+		return nil, fmt.Errorf("cursor-agent not found on PATH (run: cursor-agent --version to verify install): %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, agentPath, "acp")
+	cmd.Stderr = os.Stderr
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("stdin pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("stdout pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start cursor-agent acp: %w", err)
+	}
+
+	client := &Client{Decide: decide, OnUpdate: onUpdate}
+	rpc := acpsdk.NewClientSideConnection(client, stdin, stdout)
+
+	initResp, err := rpc.Initialize(ctx, acpsdk.InitializeRequest{
+		ProtocolVersion: acpsdk.ProtocolVersionNumber,
+	})
+	if err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("initialize: %w", err)
+	}
+
+	if _, err := rpc.Authenticate(ctx, acpsdk.AuthenticateRequest{MethodId: "cursor_login"}); err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("cursor authenticate: %w (run: cursor-agent login)", err)
+	}
+
+	return &Conn{cmd: cmd, rpc: rpc, client: client, ProtocolVersion: int(initResp.ProtocolVersion)}, nil
 }

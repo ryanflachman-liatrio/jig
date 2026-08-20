@@ -178,7 +178,7 @@ version = "1"
 id = "a"
 type = "agent"
 skill = "skills/a"
-backend = "gemini"
+backend = "openai"
 allowed_tools = ["Read"]
 `
 		_, err := Decode(toml, dir)

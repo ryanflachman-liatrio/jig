@@ -28,6 +28,8 @@ version     = "1"
 description = "SDD Phase 2 — translate a complete spec into an audited task list under docs/specs/."
 
 [defaults]
+backend         = "claude"
+transport       = "sdk"
 model           = "claude-opus-4-8"
 effort          = "high"
 permission_mode = "acceptEdits"

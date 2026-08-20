@@ -17,10 +17,9 @@ func TestFor(t *testing.T) {
 		{name: "empty defaults to claude sdk", wantName: "claude"},
 		{name: "claude empty transport is sdk", backend: "claude", wantName: "claude"},
 		{name: "claude acp", backend: "claude", transport: "acp", wantName: "acp"},
-		{name: "cursor acp", backend: "cursor", transport: "acp", wantName: "acp"},
-		{name: "cursor empty transport is acp", backend: "cursor", wantName: "acp"},
-		{name: "cursor invalid transport", backend: "cursor", transport: "sdk", wantErr: true},
-		{name: "unknown backend", backend: "gemini", transport: "acp", wantErr: true},
+		{name: "cursor uses cursor harness", backend: "cursor", transport: "acp", wantName: "cursor"},
+		{name: "cursor no transport uses cursor harness", backend: "cursor", wantName: "cursor"},
+		{name: "unknown backend", backend: "unknown", transport: "acp", wantErr: true},
 		{name: "unknown transport", backend: "claude", transport: "grpc", wantErr: true},
 	}
 	for _, tt := range tests {

@@ -78,11 +78,9 @@ func validPermissionMode(s string) bool {
 }
 
 // Backend and transport name the agent vendor and how jig reaches it.
-// Selected in TOML only (never via env).
+// Selected in TOML only (never via env). Cursor always uses ACP transport.
 const (
 	BackendClaude = "claude"
-	// BackendCursor routes to the Cursor IDE via ACP (transport = "acp" is
-	// implied and required; no SDK transport is available for this backend).
 	BackendCursor = "cursor"
 
 	TransportSDK = "sdk"

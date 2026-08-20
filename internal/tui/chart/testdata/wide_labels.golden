@@ -3,13 +3,13 @@
                            │ agent     │◄╮
                            ╰───────────╯ │
                                  │       │
-                                 ▼       ↺
+                                 ▼       ↺ review == revise_with_d…
                            ╭───────────╮ │
                            │ review    │ │
                            │ review ↺  │─╯
                            ╰───────────╯
                                  │
-                                 ▽
+                                 ▽ review == approve
                            ╭───────────╮
                            │ impl      │
                            │ command ⇢ │

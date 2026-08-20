@@ -30,6 +30,8 @@ version     = "1"
 description = "SDD Phase 4 — validate implementation against spec requirements and produce a gated report."
 
 [defaults]
+backend         = "claude"
+transport       = "sdk"
 model           = "claude-opus-4-8"
 effort          = "high"
 permission_mode = "acceptEdits"

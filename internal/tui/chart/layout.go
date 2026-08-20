@@ -29,14 +29,15 @@ import (
 
 // chartNode is one step positioned in the layered layout.
 type chartNode struct {
-	id        string // step id
-	index     int    // position in wf.Steps (drives within-rank order)
-	typ       string // step type: agent | command | review
-	rank      int    // longest-path depth over depends_on (0 = no deps)
-	gate      bool   // has a [step.validate] gate
-	gateLabel string // compact description of the gate's check; populated for
-	// future box label rendering but not yet drawn (render.go places only the glyph).
-	loop *chartLoop
+	id         string // step id
+	index      int    // position in wf.Steps (drives within-rank order)
+	typ        string // step type: agent | command | review
+	rank       int    // longest-path depth over depends_on (0 = no deps)
+	gate       bool   // has a [step.validate] gate
+	gateLabel  string // compact description of the gate's check (see gateLabel()); not yet drawn
+	retry      bool   // on_failure = "retry"
+	maxRetries int    // max_retries value (0 means use engine default of 1)
+	loop       *chartLoop
 }
 
 // chartLoop is the bounded back-edge hanging off a step, mirrored onto its node
@@ -49,8 +50,7 @@ type chartLoop struct {
 // chartEdge is a depends_on edge from one node to another (always lower rank to
 // higher rank, since rank strictly increases along a dependency). conditional
 // marks the edge the step's `when` guard decorates; label is that guard in
-// compact form, reserved for future compositor-layer label rendering (the
-// current renderer places only the arrowhead glyph).
+// compact form, rendered as a compositor layer next to the ▽ arrowhead.
 type chartEdge struct {
 	from, to    int // wf.Steps indices
 	conditional bool
@@ -60,12 +60,12 @@ type chartEdge struct {
 // chartBackEdge is a bounded loop back-edge from the looping step back to its
 // goto target (higher up the graph). Drawn as a distinct class and routed in a
 // dedicated right-side channel so it never tangles with the downward DAG edges.
-// label is populated for future compositor-layer label rendering; the current
-// renderer places only the loop glyph at the channel midpoint.
+// label is the loop `when` guard plus the ≤N iteration bound, rendered as a
+// compositor layer to the right of the ↺ glyph at the channel midpoint.
 type chartBackEdge struct {
 	from, to int // wf.Steps indices: loop step -> goto target
 	maxIter  int
-	label    string // loop `when` guard plus the ≤N iteration bound
+	label    string
 }
 
 // chartLayout is the full deterministic layout: nodes indexed by Steps position,
@@ -120,11 +120,13 @@ func layoutChart(wf *workflow.Workflow) chartLayout {
 	for i := range steps {
 		s := steps[i]
 		n := chartNode{
-			id:    s.ID,
-			index: i,
-			typ:   string(s.Type),
-			rank:  rank[i],
-			gate:  s.Validate != nil,
+			id:         s.ID,
+			index:      i,
+			typ:        string(s.Type),
+			rank:       rank[i],
+			gate:       s.Validate != nil,
+			retry:      s.OnFailure == workflow.FailRetry,
+			maxRetries: s.MaxRetries,
 		}
 		if s.Validate != nil {
 			n.gateLabel = gateLabel(s.Validate)

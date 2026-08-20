@@ -1,6 +1,7 @@
 package chart
 
 import (
+	"strconv"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -31,6 +32,7 @@ const (
 	chartBoxMaxInner = 18 // cap on box content width so wide graphs still fit
 	chartBoxPadBrd   = 4  // padding (1+1) + border (1+1) added around inner width
 	chartBoxHeight   = 4  // top border + 2 content lines + bottom border
+	chartLabelMax    = 24 // max visible cells for an inline edge condition label
 )
 
 // connector direction bits.
@@ -225,18 +227,58 @@ func RenderChart(wf *workflow.Workflow, width int) string {
 	numRanks := len(lay.ranks)
 	totalH := numRanks*bh + max(0, numRanks-1)*chartVGap
 
-	// Anchor back-edge channels just past the actual rightmost node, not at
-	// totalW. Nodes are centered so totalW is often much wider than the content,
-	// making the horizontal connector span most of the screen unnecessarily.
+	// Anchor back-edge channels just past the right edge of the nodes they
+	// connect, not the global rightEdge. A wide fan-out rank should not push loop
+	// connectors all the way to the right when the loop steps themselves are in
+	// narrow, centered ranks.
 	rightEdge := 0
 	for i := range lay.nodes {
 		if r := xs[i] + bw; r > rightEdge {
 			rightEdge = r
 		}
 	}
-	canvasW := max(totalW, rightEdge+loopMargin)
+
+	// maxLoopNodeRight: the rightmost box edge among nodes involved in any loop.
+	// Back-edge channels start here, keeping horizontal connectors short.
+	maxLoopNodeRight := rightEdge
+	if len(lay.backEdges) > 0 {
+		maxLoopNodeRight = 0
+		for _, be := range lay.backEdges {
+			if r := max(xs[be.from]+bw, xs[be.to]+bw); r > maxLoopNodeRight {
+				maxLoopNodeRight = r
+			}
+		}
+	}
+
+	chanXs := make([]int, len(lay.backEdges))
+	for k := range lay.backEdges {
+		chanXs[k] = maxLoopNodeRight + 1 + k*2
+	}
 
 	cx := func(idx int) int { return xs[idx] + bw/2 }
+
+	// canvasW: wide enough for nodes, back-edge channels, and inline labels.
+	canvasW := max(totalW, rightEdge+loopMargin)
+	for k, be := range lay.backEdges {
+		need := chanXs[k] + 1
+		if be.label != "" {
+			lbl := shared.TruncateTitle(be.label, chartLabelMax)
+			need = chanXs[k] + 2 + lipgloss.Width(lbl)
+		}
+		if need > canvasW {
+			canvasW = need
+		}
+	}
+	for _, e := range lay.edges {
+		if !e.conditional || e.label == "" {
+			continue
+		}
+		lbl := shared.TruncateTitle(e.label, chartLabelMax)
+		right := cx(e.to) + 2 + lipgloss.Width(lbl)
+		if right > canvasW {
+			canvasW = right
+		}
+	}
 
 	g := newChartGrid(canvasW, totalH)
 
@@ -270,10 +312,7 @@ func RenderChart(wf *workflow.Workflow, width int) string {
 	// step's right edge, up the channel, back into the goto target's right edge
 	// with a left-pointing arrowhead, marked with the loop glyph.
 	for k, be := range lay.backEdges {
-		chanX := rightEdge + 1 + k*2
-		if chanX >= canvasW {
-			chanX = canvasW - 1
-		}
+		chanX := chanXs[k]
 		sRow := ys[be.from] + bh/2
 		gRow := ys[be.to] + bh/2
 		sRight := xs[be.from] + bw // cell just right of the loop step's box
@@ -289,12 +328,42 @@ func RenderChart(wf *workflow.Workflow, width int) string {
 	base := g.render()
 
 	// Composite the node boxes on top of the connector base at their positions.
-	layers := make([]*lipgloss.Layer, 0, len(lay.nodes)+1)
+	layers := make([]*lipgloss.Layer, 0, len(lay.nodes)+1+len(lay.backEdges)+len(lay.edges))
 	layers = append(layers, lipgloss.NewLayer(base))
 	for i := range lay.nodes {
 		box := renderNodeBox(lay.nodes[i], innerW)
 		layers = append(layers, lipgloss.NewLayer(box).X(xs[i]).Y(ys[i]).Z(1))
 	}
+
+	// Back-edge condition labels: rendered to the right of the ↺ glyph on the
+	// channel midpoint. Styled in the same back-edge color as the connector.
+	for k, be := range lay.backEdges {
+		if be.label == "" {
+			continue
+		}
+		sRow := ys[be.from] + bh/2
+		gRow := ys[be.to] + bh/2
+		midRow := (sRow + gRow) / 2
+		lbl := shared.TruncateTitle(be.label, chartLabelMax)
+		layers = append(layers, lipgloss.NewLayer(
+			shared.Theme.Chart.BackEdge.Render(lbl),
+		).X(chanXs[k]+2).Y(midRow).Z(1))
+	}
+
+	// Conditional forward edge labels: rendered to the right of the ▽ arrowhead
+	// on the arrowhead row, in the conditional connector color.
+	for _, e := range lay.edges {
+		if !e.conditional || e.label == "" {
+			continue
+		}
+		lbl := shared.TruncateTitle(e.label, chartLabelMax)
+		ccx := cx(e.to)
+		arrowRow := ys[e.to] - 1
+		layers = append(layers, lipgloss.NewLayer(
+			shared.Theme.Chart.Conditional.Render(lbl),
+		).X(ccx+2).Y(arrowRow).Z(1))
+	}
+
 	comp := lipgloss.NewCompositor(layers...)
 	return lipgloss.NewCanvas(canvasW, totalH).Compose(comp).Render()
 }
@@ -317,7 +386,7 @@ func chartInnerWidth(nodes []chartNode) int {
 	return w
 }
 
-// nodeTypeLine is the box's second line: the step type plus gate/loop markers.
+// nodeTypeLine is the box's second line: the step type plus gate/loop/retry markers.
 func nodeTypeLine(n chartNode) string {
 	line := n.typ
 	if n.gate {
@@ -325,6 +394,13 @@ func nodeTypeLine(n chartNode) string {
 	}
 	if n.loop != nil {
 		line += " " + shared.LoopGlyph
+	}
+	if n.retry {
+		s := " " + shared.RetryGlyph
+		if n.maxRetries > 1 {
+			s += strconv.Itoa(n.maxRetries)
+		}
+		line += s
 	}
 	return line
 }

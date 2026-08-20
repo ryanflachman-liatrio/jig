@@ -16,6 +16,8 @@ version     = "1"
 description = "Security review driven by a Claude agent file."
 
 [defaults]
+backend             = "claude"
+transport           = "sdk"
 model               = "claude-opus-4-8"
 fallback_model      = "claude-sonnet-4-6"
 effort              = "high"

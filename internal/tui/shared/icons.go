@@ -19,11 +19,12 @@ const (
 	CollapsedMarker = "▸"
 	ExpandedMarker  = "▾"
 
-	BarThick  = "▌" // left accent bar on chat blocks
-	CursorBar = "▌" // selected-row marker
-	RuleGlyph = "─"
-	LoopGlyph = "↺"
-	GateGlyph = "⇢"
+	BarThick   = "▌" // left accent bar on chat blocks
+	CursorBar  = "▌" // selected-row marker
+	RuleGlyph  = "─"
+	LoopGlyph  = "↺"
+	RetryGlyph = "↻"
+	GateGlyph  = "⇢"
 
 	// Chart connectors (detail chart view). ArrowDown terminates a normal
 	// depends_on edge into a node; CondArrow marks a `when`-guarded edge;
