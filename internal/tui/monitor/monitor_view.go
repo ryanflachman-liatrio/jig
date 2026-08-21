@@ -8,7 +8,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"jig/internal/sentinel"
-	"jig/internal/step"
 	"jig/internal/tui/shared"
 )
 
