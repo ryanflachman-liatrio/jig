@@ -140,6 +140,7 @@ func (m Model) renderGateRecovery(b *strings.Builder, entry *pendingInputEntry) 
 		} else {
 			b.WriteString("\n") // keep height stable when resume is unavailable
 		}
+		b.WriteString("    [s] skip\n")
 		b.WriteString("    [a] abort run\n")
 	}
 }

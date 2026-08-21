@@ -10,8 +10,6 @@
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
-╰──────────────────────────────╯╰──────────────────────────────────────────────╯
-                                                                                
 ╭─ Agent input ────────────────────────────────────────────────────────────────╮
 │ [1 / 1]  a  (question)                                                       │
 │ Pick one                                                                     │
@@ -22,4 +20,5 @@
 │ ↑↓ navigate · enter select · d decline · q cancel                            │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-  awaiting answer  ·  ↑↓ navigate · enter select · d decline · q cancel         
+  Agent input  ·  1 pending  ·  esc to close
+  awaiting answer  ·  ↑↓ navigate · enter select · d decline · q cancel

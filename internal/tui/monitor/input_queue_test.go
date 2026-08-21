@@ -191,6 +191,7 @@ func TestGateOverlayPreservesTranscriptPositionAndDraft(t *testing.T) {
 	m.reloadTranscript()
 	m.focus = focusTranscript
 	m.chatVP.SetYOffset(8)
+	m.chatAutoScroll = false
 	offset := m.chatVP.YOffset()
 	panelH := m.verticalLayout().panelH
 
