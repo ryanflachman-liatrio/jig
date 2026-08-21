@@ -5,11 +5,14 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/tui/shared"
 )
+
+const securityMaxHeight = 5
 
 // helpOverlay composites the help chat modal over the base layout using the
 // same Compositor technique as RenderHelpOverlay. The modal takes 60% of the
@@ -39,18 +42,29 @@ func (m Model) helpOverlay(base string) string {
 	return lipgloss.NewCanvas(m.width, m.height).Compose(comp).Render()
 }
 
-// securityView renders the Security region: a compact list of findings by
-// severity, visible only when at least one finding exists. Every row is rendered
-// verbatim (not through glamour) so redacted previews like [aws-key:…MPLE] are
-// displayed literally rather than being re-interpreted as markdown.
-func (m Model) securityView() string {
-	if len(m.secFindings) == 0 {
+func (m Model) securityViewHeight(available int) int {
+	if len(m.secFindings) == 0 || available < 1 || m.width < 1 {
+		return 0
+	}
+	return min(1+len(m.secFindings), securityMaxHeight, available)
+}
+
+// securityView renders a bounded summary rather than letting an arbitrarily
+// large findings file displace the gate and footer.
+func (m Model) securityView(height int) string {
+	if len(m.secFindings) == 0 || height < 1 || m.width < 1 {
 		return ""
 	}
-	var sb strings.Builder
-	sb.WriteString(shared.Theme.Security.Header.Render("Security findings"))
-	sb.WriteString("\n")
-	for _, f := range m.secFindings {
+
+	header := fmt.Sprintf("Security findings (%d)", len(m.secFindings))
+	lines := []string{shared.Theme.Security.Header.MaxWidth(m.width).Render(header)}
+
+	visible := min(len(m.secFindings), height-1)
+	overflow := len(m.secFindings) > visible
+	if overflow && height > 1 {
+		visible = max(height-2, 0)
+	}
+	for _, f := range m.secFindings[:visible] {
 		sev := strings.ToUpper(string(f.Severity))
 		label := "[" + sev + "] " + f.Monitor + ": "
 		detail := f.Detail
@@ -60,18 +74,49 @@ func (m Model) securityView() string {
 		var row string
 		switch f.Severity {
 		case sentinel.SeverityCritical:
-			row = shared.Theme.Security.CriticalRow.Render(label + detail)
+			row = shared.Theme.Security.CriticalRow.MaxWidth(m.width).Render(label + detail)
 		case sentinel.SeverityHigh:
-			row = shared.Theme.Security.HighRow.Render(label + detail)
+			row = shared.Theme.Security.HighRow.MaxWidth(m.width).Render(label + detail)
 		case sentinel.SeverityMedium:
-			row = shared.Theme.Security.MediumRow.Render(label + detail)
+			row = shared.Theme.Security.MediumRow.MaxWidth(m.width).Render(label + detail)
 		default:
-			row = shared.Theme.Security.LowRow.Render(label + detail)
+			row = shared.Theme.Security.LowRow.MaxWidth(m.width).Render(label + detail)
 		}
-		sb.WriteString(row)
-		sb.WriteString("\n")
+		lines = append(lines, row)
 	}
-	return sb.String()
+	if overflow && height > 1 {
+		remaining := len(m.secFindings) - visible
+		more := fmt.Sprintf("… %d more finding", remaining)
+		if remaining != 1 {
+			more += "s"
+		}
+		lines = append(lines, shared.Theme.Security.LowRow.MaxWidth(m.width).Render(more))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func fitBlock(s string, width, height int) string {
+	if s == "" || width < 1 || height < 1 {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	for i := range lines {
+		lines[i] = ansi.Truncate(lines[i], width, "")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func joinVertical(parts ...string) string {
+	visible := parts[:0]
+	for _, part := range parts {
+		if part != "" {
+			visible = append(visible, part)
+		}
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, visible...)
 }
 
 // statusLabel computes the status text shown in the footer.
@@ -213,17 +258,13 @@ func (m Model) View() string {
 	if !m.ready {
 		return "\n  Loading…\n"
 	}
-
-	footer := m.footerView()
-	gate := m.gateStrip()
-
-	// The gate is always rendered at a fixed height (Unit 2); mirror resize().
-	_, vFrame := shared.PanelFrame()
-	gateH := m.gateBodyHeight() + vFrame
-	panelH := m.height - lipgloss.Height(footer) - gateH
-	if panelH < 1 {
-		panelH = 1
+	if m.width < 1 || m.height < 1 {
+		return ""
 	}
+
+	layout := m.verticalLayout()
+	footer := fitBlock(m.footerView(), m.width, layout.footerH)
+	gate := fitBlock(m.gateStrip(), m.width, layout.gateH)
 
 	rightTitle := m.chatStep
 	if rightTitle == "" {
@@ -231,23 +272,26 @@ func (m Model) View() string {
 	}
 
 	var panels string
-	if m.narrow {
+	if layout.panelH == 0 {
+		panels = ""
+	} else if m.narrow {
 		// Single-panel fallback: render only the focused panel full-width.
 		if m.focus == focusTranscript {
-			panels = shared.Panel(rightTitle, m.chatVP.View(), m.width, panelH, true)
+			panels = shared.Panel(rightTitle, m.chatVP.View(), m.width, layout.panelH, true)
 		} else {
 			// Steps or Gate focus shows the Steps panel (the gate has its own strip).
-			panels = shared.Panel("Steps", m.vp.View(), m.width, panelH, m.focus == focusSteps)
+			panels = shared.Panel("Steps", m.vp.View(), m.width, layout.panelH, m.focus == focusSteps)
 		}
 	} else {
 		stepsW, transcriptW, _ := panelSplit(m.width)
-		left := shared.Panel("Steps", m.vp.View(), stepsW, panelH, m.focus == focusSteps)
-		right := shared.Panel(rightTitle, m.chatVP.View(), transcriptW, panelH, m.focus == focusTranscript)
+		left := shared.Panel("Steps", m.vp.View(), stepsW, layout.panelH, m.focus == focusSteps)
+		right := shared.Panel(rightTitle, m.chatVP.View(), transcriptW, layout.panelH, m.focus == focusTranscript)
 		panels = lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 	}
+	panels = fitBlock(panels, m.width, layout.panelH)
 
-	sec := m.securityView()
-	base := lipgloss.JoinVertical(lipgloss.Left, panels, sec, gate, footer)
+	sec := fitBlock(m.securityView(layout.securityH), m.width, layout.securityH)
+	base := fitBlock(joinVertical(panels, sec, gate, footer), m.width, m.height)
 	if m.helpOpen {
 		return m.helpOverlay(base)
 	}
