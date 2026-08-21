@@ -1953,18 +1953,95 @@ func TestCaptureUnit4Drain(t *testing.T) {
 	}
 }
 
-// TestMonitorResizeRefits asserts a second WindowSizeMsg re-fits both panels with
-// no line exceeding the new terminal width (no overflow, borders intact).
+func monitorLayoutFindings(n int) []sentinel.Finding {
+	findings := make([]sentinel.Finding, n)
+	for i := range findings {
+		findings[i] = sentinel.Finding{
+			StepID:  "a",
+			Monitor: fmt.Sprintf("security-monitor-%d", i+1),
+			Severity: []sentinel.Severity{
+				sentinel.SeverityCritical,
+				sentinel.SeverityHigh,
+				sentinel.SeverityMedium,
+				sentinel.SeverityLow,
+			}[i%4],
+			Action: sentinel.ActionBlocked,
+			Detail: "a deliberately long security finding detail that must remain inside the terminal width",
+		}
+	}
+	return findings
+}
+
+func TestMonitorViewFitsWindow(t *testing.T) {
+	tests := []struct {
+		name     string
+		width    int
+		height   int
+		findings int
+	}{
+		{name: "80x24 empty security", width: 80, height: 24},
+		{name: "80x24 populated security", width: 80, height: 24, findings: 8},
+		{name: "narrow fallback", width: 60, height: 24, findings: 8},
+		{name: "short resize", width: 70, height: 20, findings: 8},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newMonitorWithSteps(t)
+			m.secFindings = monitorLayoutFindings(tt.findings)
+			m, _ = m.Update(tea.WindowSizeMsg{Width: tt.width, Height: tt.height})
+
+			view := m.View()
+			if width := lipgloss.Width(view); width > tt.width {
+				t.Fatalf("width %d exceeds terminal width %d:\n%s", width, tt.width, ansiStrip(view))
+			}
+			if height := lipgloss.Height(view); height > tt.height {
+				t.Fatalf("height %d exceeds terminal height %d:\n%s", height, tt.height, ansiStrip(view))
+			}
+
+			plain := ansiStrip(view)
+			for _, want := range []string{"Agent input", "running"} {
+				if !strings.Contains(plain, want) {
+					t.Fatalf("view missing %q:\n%s", want, plain)
+				}
+			}
+			if tt.findings == 0 {
+				if strings.Contains(plain, "Security findings") {
+					t.Fatalf("empty security section rendered:\n%s", plain)
+				}
+			} else {
+				for _, want := range []string{"Security findings (8)", "… 5 more findings"} {
+					if !strings.Contains(plain, want) {
+						t.Fatalf("populated security summary missing %q:\n%s", want, plain)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestMonitorResizeRefits asserts subsequent WindowSizeMsg values re-fit all
+// regions without losing the security summary, gate, or footer.
 func TestMonitorResizeRefits(t *testing.T) {
 	m := newMonitorWithSteps(t) // 80x24
+	m.secFindings = monitorLayoutFindings(8)
+	m.resize()
 
 	for _, size := range []struct{ w, h int }{{100, 30}, {70, 20}, {120, 40}} {
 		m, _ = m.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
 		view := m.View()
-		for i, line := range strings.Split(view, "\n") {
-			if w := lipgloss.Width(line); w > size.w {
-				t.Fatalf("at %dx%d, line %d width %d exceeds terminal width:\n%q",
-					size.w, size.h, i, w, ansiStrip(line))
+		if width := lipgloss.Width(view); width > size.w {
+			t.Fatalf("at %dx%d, width %d exceeds terminal width:\n%s",
+				size.w, size.h, width, ansiStrip(view))
+		}
+		if height := lipgloss.Height(view); height > size.h {
+			t.Fatalf("at %dx%d, height %d exceeds terminal height:\n%s",
+				size.w, size.h, height, ansiStrip(view))
+		}
+		plain := ansiStrip(view)
+		for _, want := range []string{"Agent input", "running", "Security findings"} {
+			if !strings.Contains(plain, want) {
+				t.Fatalf("at %dx%d, view missing %q:\n%s", size.w, size.h, want, plain)
 			}
 		}
 	}
@@ -2316,7 +2393,7 @@ func TestSecurityPane(t *testing.T) {
 	}
 
 	// Render the security view and verify it contains expected text.
-	secView := m.securityView()
+	secView := m.securityView(securityMaxHeight)
 
 	t.Run("high severity row rendered", func(t *testing.T) {
 		if !strings.Contains(secView, "HIGH") {
@@ -2348,7 +2425,7 @@ func TestSecurityPane(t *testing.T) {
 
 	t.Run("empty when no findings", func(t *testing.T) {
 		m2 := New("run2")
-		if got := m2.securityView(); got != "" {
+		if got := m2.securityView(securityMaxHeight); got != "" {
 			t.Errorf("securityView with no findings returned non-empty string: %q", got)
 		}
 	})

@@ -9,6 +9,38 @@ import (
 	"jig/internal/tui/shared"
 )
 
+type verticalLayout struct {
+	panelH    int
+	securityH int
+	gateH     int
+	footerH   int
+}
+
+// verticalLayout gives the fixed gate and footer priority, then lets a bounded
+// security summary consume space without collapsing the main panels entirely.
+func (m Model) verticalLayout() verticalLayout {
+	height := max(m.height, 0)
+	footerH := min(lipgloss.Height(m.footerView()), height)
+	remaining := height - footerH
+
+	_, vFrame := shared.PanelFrame()
+	gateH := min(m.gateBodyHeight()+vFrame, remaining)
+	remaining -= gateH
+
+	// Preserve a titled panel with one content row whenever the terminal has
+	// enough room; security findings remain available in findings.jsonl when the
+	// inline summary has to be shortened.
+	minPanelH := min(vFrame+1, remaining)
+	securityH := m.securityViewHeight(remaining - minPanelH)
+
+	return verticalLayout{
+		panelH:    remaining - securityH,
+		securityH: securityH,
+		gateH:     gateH,
+		footerH:   footerH,
+	}
+}
+
 // panelSplit computes the two panels' outer widths for the given total width per
 // Resolved Decision 11: Steps = max(32, width/3), clamped so the Transcript keeps
 // an inner width of at least ~40; the Transcript takes the remainder. narrow
@@ -33,24 +65,13 @@ func panelSplit(width int) (stepsW, transcriptW int, narrow bool) {
 	return stepsW, width - stepsW, false
 }
 
-// resize fits both panels to the width split (Resolved Decision 11) minus the
-// footer and gate-strip rows. In the narrow fallback (Decision 14) each panel is
-// sized full-width, since only the focused one renders.
+// resize fits both panels to the current vertical budget and width split. In the
+// narrow fallback (Decision 14) each panel is sized full-width, since only the
+// focused one renders.
 func (m *Model) resize() {
 	hFrame, vFrame := shared.PanelFrame()
-
-	footerH := lipgloss.Height(m.footerView())
-	// The gate strip is always rendered at a fixed height (Unit 2 — no layout shift
-	// when input arrives or departs). Use the derived constant, not a measurement.
-	gateH := m.gateBodyHeight() + vFrame
-	panelH := m.height - footerH - gateH
-	if panelH < 1 {
-		panelH = 1
-	}
-	innerH := panelH - vFrame
-	if innerH < 1 {
-		innerH = 1
-	}
+	layout := m.verticalLayout()
+	innerH := max(layout.panelH-vFrame, 0)
 
 	stepsOuter, transcriptOuter, narrow := panelSplit(m.width)
 	m.narrow = narrow

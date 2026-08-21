@@ -283,6 +283,9 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 				Fingerprint: ev.Fingerprint,
 			})
 		}
+		// Findings arrive after WindowSizeMsg, so the existing viewports still
+		// occupy the rows now needed by the security summary until they are refit.
+		m.resize()
 	}
 	return m, nil
 }
