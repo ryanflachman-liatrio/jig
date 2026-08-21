@@ -3,6 +3,7 @@ package monitor
 import (
 	"charm.land/bubbles/v2/viewport"
 	"charm.land/glamour/v2"
+	"charm.land/glamour/v2/ansi"
 	"charm.land/lipgloss/v2"
 
 	"jig/internal/tui/shared"
@@ -151,10 +152,14 @@ func (m *Model) rebuildRenderer() {
 	if wordWrap < 1 {
 		wordWrap = 1
 	}
-	m.renderer, _ = glamour.NewTermRenderer(
-		glamour.WithStyles(shared.Theme.Markdown),
-		glamour.WithWordWrap(wordWrap),
-	)
+
+	zero := uint(0)
+	chatStyle := shared.Theme.Markdown
+	// The Lip Gloss box owns code-block spacing, so Glamour must not add its
+	// default code margin outside the rounded border.
+	chatStyle.CodeBlock.StyleBlock.Margin = &zero
+	m.renderer = newMarkdownRenderer(chatStyle, wordWrap)
+
 	// fileRenderer strips all glamour document framing so output file content sits
 	// flush in the panel without extra blank lines or indentation:
 	//   - Document.Margin/Indent/BlockPrefix/BlockSuffix: removes the 2-column left
@@ -166,22 +171,51 @@ func (m *Model) rebuildRenderer() {
 	//     (separate from the document margin) so code starts at column 0.
 	// The leading blank line from glamour's code block top padding is stripped in
 	// fileBody() via stripBlankEdges.
-	fileStyle := shared.Theme.Markdown
-	zero := uint(0)
+	fileStyle := chatStyle
 	fileStyle.Document.Margin = &zero
 	fileStyle.Document.Indent = &zero
 	fileStyle.Document.BlockPrefix = ""
 	fileStyle.Document.BlockSuffix = ""
 	fileStyle.Document.Color = nil
 	fileStyle.CodeBlock.StyleBlock.Margin = &zero
-	m.fileRenderer, _ = glamour.NewTermRenderer(
-		glamour.WithStyles(fileStyle),
-		glamour.WithWordWrap(wordWrap),
-	)
+	m.fileRenderer = newMarkdownRenderer(fileStyle, wordWrap)
+
+	insetWidth := wordWrap - 4 // "  ▌ " prefix added by withBar
+	if insetWidth < 1 {
+		insetWidth = 1
+	}
+	m.insetRenderer = newMarkdownRenderer(fileStyle, insetWidth)
+
 	if m.lastTranscriptW != m.transcriptInnerW {
 		m.chatRendered = make(map[blockKey]string)
 		m.lastTranscriptW = m.transcriptInnerW
 	}
+}
+
+func newMarkdownRenderer(style ansi.StyleConfig, wordWrap int) *glamour.TermRenderer {
+	renderer, _ := glamour.NewTermRenderer(
+		glamour.WithStyles(style),
+		glamour.WithWordWrap(wordWrap),
+		glamour.WithChromaFormatter(shared.CodeBlockFormatter(markdownCodeWidth(style, wordWrap))),
+	)
+	return renderer
+}
+
+func markdownCodeWidth(style ansi.StyleConfig, wordWrap int) int {
+	width := wordWrap
+	if style.Document.Indent != nil {
+		width -= int(*style.Document.Indent)
+	}
+	if style.Document.Margin != nil {
+		width -= 2 * int(*style.Document.Margin)
+	}
+	if style.CodeBlock.Indent != nil {
+		width -= int(*style.CodeBlock.Indent)
+	}
+	if style.CodeBlock.Margin != nil {
+		width -= int(*style.CodeBlock.Margin)
+	}
+	return width
 }
 
 // ensureCursorVisible nudges the viewport so the selected step stays on screen

@@ -9,60 +9,6 @@ import (
 	"jig/internal/tui/shared"
 )
 
-func TestSplitMarkdownFences(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name       string
-		markdown   string
-		wantFences int
-	}{
-		{
-			name: "backtick and tilde fences",
-			markdown: "before\n\n```go\nfmt.Println(\"one\")\n```\n\n" +
-				"between\n\n~~~~json\n{\"two\": 2}\n~~~~~\n\nafter",
-			wantFences: 2,
-		},
-		{
-			name:       "up to three leading spaces",
-			markdown:   "   ```text\nindented\n   ```",
-			wantFences: 1,
-		},
-		{
-			name:       "four spaces is ordinary markdown",
-			markdown:   "    ```text\nindented code\n    ```",
-			wantFences: 0,
-		},
-		{
-			name:       "unmatched opener stays prose",
-			markdown:   "before\n```go\nincomplete",
-			wantFences: 0,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			parts := splitMarkdownFences(tt.markdown)
-			gotFences := 0
-			var rebuilt strings.Builder
-			for _, part := range parts {
-				rebuilt.WriteString(part.source)
-				if part.isFence {
-					gotFences++
-				}
-			}
-			if gotFences != tt.wantFences {
-				t.Fatalf("fence count = %d, want %d: %#v", gotFences, tt.wantFences, parts)
-			}
-			if got := rebuilt.String(); got != tt.markdown {
-				t.Fatalf("split did not preserve source:\ngot:  %q\nwant: %q", got, tt.markdown)
-			}
-		})
-	}
-}
-
 func TestRenderMarkdownCodeFencesInSeparateBlocks(t *testing.T) {
 	m := Model{
 		transcriptInnerW: 48,
@@ -93,5 +39,28 @@ func TestRenderMarkdownCodeFencesInSeparateBlocks(t *testing.T) {
 	}
 	if _, unset := shared.Theme.Chat.CodeBlock.GetBackground().(lipgloss.NoColor); unset {
 		t.Fatal("code block background is not configured")
+	}
+}
+
+func TestRenderMarkdownCodeFenceInsideBlockquote(t *testing.T) {
+	m := Model{
+		transcriptInnerW: 64,
+		chatRendered:     make(map[blockKey]string),
+	}
+	m.rebuildRenderer()
+
+	out := m.renderMarkdown(blockKey{seq: 1}, "> Example:\n>\n> ```go\n> fmt.Println(\"nested\")\n> ```")
+	plain := ansiStrip(out)
+
+	if got := strings.Count(plain, "╭"); got != 1 {
+		t.Fatalf("rounded block tops = %d, want 1:\n%s", got, plain)
+	}
+	for _, want := range []string{"Example:", `fmt.Println("nested")`} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("rendered blockquote missing %q:\n%s", want, plain)
+		}
+	}
+	if strings.Contains(plain, "```") {
+		t.Fatalf("rendered blockquote leaked Markdown fence markers:\n%s", plain)
 	}
 }
