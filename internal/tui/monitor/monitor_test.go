@@ -143,7 +143,7 @@ func TestMonitorFoldedReadShowsFilenameAndExpandedReadShowsFullInput(t *testing.
 		t.Fatalf("folded Read leaked full path:\n%s", folded)
 	}
 
-	m, _ = m.Update(key("j"))
+	m, _ = m.Update(key("n"))
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	expanded := ansiStrip(m.chatBody())
 	if !strings.Contains(expanded, fullPath) {
@@ -214,8 +214,8 @@ func TestMonitorChatBlockCursorToggle(t *testing.T) {
 		t.Fatalf("inner block should still be collapsed after group expand")
 	}
 
-	// j → cursor moves to inner block; enter → inner block expands.
-	m, _ = m.Update(key("j"))
+	// n → cursor moves to inner block; enter → inner block expands.
+	m, _ = m.Update(key("n"))
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if !strings.Contains(m.chatBody(), "END") {
 		t.Fatalf("enter on inner block did not reveal full content:\n%s", m.chatBody())
@@ -292,15 +292,15 @@ func TestGroupCursorStability(t *testing.T) {
 	}
 
 	// Navigate into the group to inner block b1 (index 2).
-	m, _ = m.Update(key("j"))
-	m, _ = m.Update(key("j"))
+	m, _ = m.Update(key("n"))
+	m, _ = m.Update(key("n"))
 	if m.chatBlockCursor != 2 {
 		t.Fatalf("expected cursor=2 (second inner block), got %d", m.chatBlockCursor)
 	}
 
-	// Navigate back to group header with k.
-	m, _ = m.Update(key("k"))
-	m, _ = m.Update(key("k"))
+	// Navigate back to group header with N.
+	m, _ = m.Update(key("N"))
+	m, _ = m.Update(key("N"))
 	if m.chatBlockCursor != 0 {
 		t.Fatalf("expected cursor=0 (group header), got %d", m.chatBlockCursor)
 	}
@@ -315,8 +315,8 @@ func TestGroupCursorStability(t *testing.T) {
 	}
 }
 
-// TestGroupNavigation checks that j/k traverse group headers and inner blocks in
-// the correct order, and that after the last block in an expanded group j moves
+// TestGroupNavigation checks that n/N traverse group headers and inner blocks in
+// the correct order, and that after the last block in an expanded group n moves
 // to the next outer item naturally.
 func TestGroupNavigation(t *testing.T) {
 	// Transcript: 2 tool_use → group, then a thinking block.
@@ -338,10 +338,10 @@ func TestGroupNavigation(t *testing.T) {
 		t.Fatalf("expected 4 chatBlocks after expand, got %d: %v", len(m.chatBlocks), m.chatBlocks)
 	}
 
-	// j from header (0) → b0 (1) → b1 (2) → thinking (3) → wraps to header (0).
+	// n from header (0) → b0 (1) → b1 (2) → thinking (3) → wraps to header (0).
 	positions := []int{}
 	for i := 0; i < 4; i++ {
-		m, _ = m.Update(key("j"))
+		m, _ = m.Update(key("n"))
 		positions = append(positions, m.chatBlockCursor)
 	}
 	want := []int{1, 2, 3, 0}
@@ -973,26 +973,50 @@ func TestMonitorEnterAndBack(t *testing.T) {
 	}
 }
 
-// TestMonitorChatScrolls confirms j with the Transcript focused moves the block
-// cursor (not the step list cursor), and J scrolls the viewport without moving
-// the list cursor.
+// TestMonitorChatScrolls keeps viewport motion and collapsible-block navigation
+// independent in the Transcript panel.
 func TestMonitorChatScrolls(t *testing.T) {
+	runDir := writeTranscript(t, "a", []transcript.Entry{
+		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+			{Type: transcript.BlockThinking, Text: "first"},
+			{Type: transcript.BlockThinking, Text: "second"},
+		}},
+		{Role: transcript.RoleSystem, Blocks: []transcript.Block{
+			{Type: transcript.BlockText, Text: strings.Repeat("transcript line\n", 80)},
+		}},
+	})
 	m := newMonitorWithSteps(t)
-	m, _ = m.Update(key("j")) // step list: cursor → 1
-	m, _ = m.Update(key("enter"))
-	if m.focus != focusTranscript {
-		t.Fatalf("expected focusTranscript, got %v", m.focus)
-	}
-	before := m.cursor
-	// j in Transcript focus moves the block cursor, not the step list cursor.
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+	m.chatVP.GotoTop()
+	m.chatAutoScroll = false
+
+	blockBefore := m.chatBlockCursor
+	offsetBefore := m.chatVP.YOffset()
 	m, _ = m.Update(key("j"))
-	if m.cursor != before {
-		t.Fatalf("j with Transcript focused moved the list cursor from %d to %d", before, m.cursor)
+	if m.chatVP.YOffset() <= offsetBefore {
+		t.Fatalf("j did not scroll down: offset %d → %d", offsetBefore, m.chatVP.YOffset())
 	}
-	// J scrolls the viewport — also must not move the list cursor.
-	m, _ = m.Update(key("J"))
-	if m.cursor != before {
-		t.Fatalf("J with Transcript focused moved the list cursor from %d to %d", before, m.cursor)
+	if m.chatBlockCursor != blockBefore {
+		t.Fatalf("j moved block cursor from %d to %d", blockBefore, m.chatBlockCursor)
+	}
+
+	offsetAfterScroll := m.chatVP.YOffset()
+	m, _ = m.Update(key("n"))
+	if m.chatBlockCursor != blockBefore+1 {
+		t.Fatalf("n moved block cursor to %d, want %d", m.chatBlockCursor, blockBefore+1)
+	}
+	if m.chatVP.YOffset() != offsetAfterScroll {
+		t.Fatalf("n scrolled transcript from %d to %d", offsetAfterScroll, m.chatVP.YOffset())
+	}
+
+	m, _ = m.Update(key("N"))
+	if m.chatBlockCursor != blockBefore {
+		t.Fatalf("N moved block cursor to %d, want %d", m.chatBlockCursor, blockBefore)
+	}
+	m, _ = m.Update(key("k"))
+	if m.chatVP.YOffset() >= offsetAfterScroll {
+		t.Fatalf("k did not scroll up: offset %d → %d", offsetAfterScroll, m.chatVP.YOffset())
 	}
 }
 
@@ -1735,14 +1759,14 @@ func TestReviewComposeIsolation(t *testing.T) {
 		t.Fatal("expected composing=true on entry 0 after [m]")
 	}
 
-	// Tab to entry 1 (step "b").
-	m, _ = m.Update(key("tab"))
+	// ] moves to entry 1 (step "b").
+	m, _ = m.Update(key("]"))
 	if m.activeInputIdx != 1 {
 		t.Fatalf("expected activeInputIdx 1, got %d", m.activeInputIdx)
 	}
 	// Entry 1 must not be composing.
 	if m.inputQueue[1].composing {
-		t.Fatal("tab to entry 1 must not carry over composing state")
+		t.Fatal("queue navigation must not carry over composing state")
 	}
 	// Entry 1's draft must be empty.
 	if m.inputQueue[1].draft != "" {
@@ -2592,6 +2616,45 @@ func TestMonitorHelpSections(t *testing.T) {
 		if !titles[want] {
 			t.Errorf("monitor help missing section %q; got %v", want, titles)
 		}
+	}
+
+	m.focus = focusTranscript
+	var transcriptKeys []string
+	for _, sec := range m.HelpSections() {
+		if sec.Title != "Transcript" {
+			continue
+		}
+		for _, binding := range sec.Bindings {
+			transcriptKeys = append(transcriptKeys, binding.Help().Key)
+		}
+	}
+	for _, want := range []string{"j/k", "n/N"} {
+		if !slices.Contains(transcriptKeys, want) {
+			t.Errorf("transcript help missing %q; got %v", want, transcriptKeys)
+		}
+		if !strings.Contains(m.hintLabel(), want) {
+			t.Errorf("transcript footer missing %q: %q", want, m.hintLabel())
+		}
+	}
+
+	for _, id := range []string{"a", "b"} {
+		m, _ = m.Update(EngineEventMsg{Event: engine.InputRequest{RunID: "run-1", StepID: id}})
+	}
+	m.focus = focusGate
+	var gateKeys []string
+	for _, sec := range m.HelpSections() {
+		if sec.Title != "Gate" {
+			continue
+		}
+		for _, binding := range sec.Bindings {
+			gateKeys = append(gateKeys, binding.Help().Key)
+		}
+	}
+	if !slices.Contains(gateKeys, "[/]") {
+		t.Errorf("gate help missing queue navigation; got %v", gateKeys)
+	}
+	if hint := m.hintLabel(); !strings.Contains(hint, "[/] entries") {
+		t.Errorf("gate footer missing queue navigation: %q", hint)
 	}
 }
 

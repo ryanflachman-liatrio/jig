@@ -115,8 +115,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 
 		// Context inspection is deliberately separate from queue navigation:
-		// tab changes the pending decision, while ctrl+o is the only path that
-		// temporarily re-points the Steps and Transcript panels.
+		// ctrl+o is the only path that temporarily re-points the Steps and
+		// Transcript panels.
 		if keybind.Matches(msg, m.keys.GateContext) &&
 			(m.focus == focusGate || m.gateContext != nil) {
 			m.toggleGateContext()
@@ -126,35 +126,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// Focus-switch keys move keyboard focus between the present regions even
 		// while a gate is pending — gates are non-blocking (ADR 0002). Handled
 		// first so navigation is never frozen. In the Transcript panel the block
-		// cursor moved off tab to n/N (Resolved Decision 9), so tab is unambiguous.
+		// cursor uses n/N (Resolved Decision 9), so tab is unambiguous.
 		switch {
 		case keybind.Matches(msg, m.keys.FocusNext):
-			// When the gate has focus, tab cycles queue entries instead of regions
-			// (ADR 0005 §entry-navigation). With a single entry the index is stable.
-			// Entry cycling intentionally does NOT call reloadTranscript or move
-			// cursor — queue navigation and Steps/Transcript navigation are
-			// independent (Decision 2).
 			if m.focus == focusGate {
-				if n := len(m.inputQueue); n > 1 {
-					m.syncActiveTextarea()
-					m.activeInputIdx = (m.activeInputIdx + 1) % n
-					m.loadActiveTextarea()
-					m.refreshPanels()
-				}
-				return m, nil
+				m.syncActiveTextarea()
 			}
 			m.focus = m.cycleFocus(+1)
 			m.refreshPanels()
 			return m, nil
 		case keybind.Matches(msg, m.keys.FocusPrev):
 			if m.focus == focusGate {
-				if n := len(m.inputQueue); n > 1 {
-					m.syncActiveTextarea()
-					m.activeInputIdx = (m.activeInputIdx - 1 + n) % n
-					m.loadActiveTextarea()
-					m.refreshPanels()
-				}
-				return m, nil
+				m.syncActiveTextarea()
 			}
 			m.focus = m.cycleFocus(-1)
 			m.refreshPanels()
@@ -165,6 +148,22 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.syncActiveTextarea()
 			}
 			m.focus = m.aliasPanelFocus(msg.String())
+			m.refreshPanels()
+			return m, nil
+		}
+
+		// Plain brackets are queue commands only when there is somewhere to
+		// navigate. With zero or one entry they continue to the focused region,
+		// allowing a single active textarea to accept literal brackets.
+		if m.focus == focusGate && len(m.inputQueue) > 1 &&
+			keybind.Matches(msg, m.keys.GateEntryNav) {
+			m.syncActiveTextarea()
+			if msg.String() == "]" {
+				m.activeInputIdx = (m.activeInputIdx + 1) % len(m.inputQueue)
+			} else {
+				m.activeInputIdx = (m.activeInputIdx - 1 + len(m.inputQueue)) % len(m.inputQueue)
+			}
+			m.loadActiveTextarea()
 			m.refreshPanels()
 			return m, nil
 		}
@@ -337,11 +336,9 @@ func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
-// updateTranscript handles keys when the Transcript panel holds focus: j/k move
-// the block cursor between collapsible items (vim-style message navigation),
-// J/K scroll the transcript viewport one line at a time, enter/space toggle the
-// cursored block, o toggles all, and h/esc return focus to the Steps panel.
-// Arrow keys and ctrl+d/u/pgup/pgdn fall through to the viewport as before.
+// updateTranscript handles keys when the Transcript panel holds focus: n/N move
+// the block cursor, enter/space toggle the cursored block, o toggles all, and
+// h/esc return focus to the Steps panel. Remaining viewport keys scroll.
 func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	// G jumps to the bottom and re-enables auto-scroll (always processed first
 	// so shift+G never starts a gg chord).
@@ -372,16 +369,13 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m, nil
 	case keybind.Matches(msg, m.keys.TransLeave):
 		return m, func() tea.Msg { return ShowRunsMsg{} }
-	case keybind.Matches(msg, m.keys.NextBlock):
-		// Move the block cursor to the next collapsible block.
+	case keybind.Matches(msg, m.keys.BlockNav):
 		if n := len(m.chatBlocks); n > 0 {
-			m.chatBlockCursor = (m.chatBlockCursor + 1) % n
-			m.refreshPanels()
-		}
-		return m, nil
-	case keybind.Matches(msg, m.keys.PrevBlock):
-		if n := len(m.chatBlocks); n > 0 {
-			m.chatBlockCursor = (m.chatBlockCursor - 1 + n) % n
+			if msg.String() == "n" {
+				m.chatBlockCursor = (m.chatBlockCursor + 1) % n
+			} else {
+				m.chatBlockCursor = (m.chatBlockCursor - 1 + n) % n
+			}
 			m.refreshPanels()
 		}
 		return m, nil
@@ -407,16 +401,11 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.rebuildActiveState(saved)
 		m.refreshPanels()
 		return m, nil
-	case keybind.Matches(msg, m.keys.ScrollDown):
-		m.chatVP.ScrollDown(1)
+	case keybind.Matches(msg, m.keys.Scroll):
+		var cmd tea.Cmd
+		m.chatVP, cmd = m.chatVP.Update(msg)
 		m.chatAutoScroll = m.chatVP.AtBottom()
-		m.refreshPanels()
-		return m, nil
-	case keybind.Matches(msg, m.keys.ScrollUp):
-		m.chatVP.ScrollUp(1)
-		m.chatAutoScroll = m.chatVP.AtBottom()
-		m.refreshPanels()
-		return m, nil
+		return m, cmd
 	}
 	// Arrow keys and ctrl+d/u/pgup/pgdn fall through to the viewport.
 	var cmd tea.Cmd
