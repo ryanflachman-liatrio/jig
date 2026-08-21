@@ -734,17 +734,36 @@ func (m Model) writeBlock(b *strings.Builder, key blockKey, blk transcript.Block
 }
 
 // renderMarkdown renders a text block as markdown, caching the result per block.
-// The cache map is shared across the value copies of Model, so writing to
-// it here persists even though the receiver is by value; the map is invalidated
-// wholesale on a width change (rebuildRenderer).
+// Glamour recognizes code fences and delegates them to the registered
+// Chroma/Lip Gloss formatter. The cache map is shared across the value copies of
+// Model, so writing to it here persists even though the receiver is by value; the
+// map is invalidated wholesale on a width change (rebuildRenderer).
 func (m Model) renderMarkdown(key blockKey, text string) string {
 	if cached, ok := m.chatRendered[key]; ok {
 		return cached
 	}
 	out := text
 	if m.renderer != nil {
-		if r, err := m.renderer.Render(text); err == nil {
-			out = r
+		if rendered, err := m.renderer.Render(text); err == nil {
+			out = rendered
+		}
+	}
+	if m.chatRendered != nil {
+		m.chatRendered[key] = out
+	}
+	return out
+}
+
+// renderInsetMarkdown uses the renderer whose wrap width reserves room for the
+// thick-bar prefix around expanded tool content.
+func (m Model) renderInsetMarkdown(key blockKey, text string) string {
+	if cached, ok := m.chatRendered[key]; ok {
+		return cached
+	}
+	out := text
+	if m.insetRenderer != nil {
+		if rendered, err := m.insetRenderer.Render(text); err == nil {
+			out = stripBlankEdges(rendered)
 		}
 	}
 	if m.chatRendered != nil {
@@ -814,7 +833,7 @@ func (m Model) writeCollapsible(b *strings.Builder, key blockKey, labelStyle, ba
 
 	b.WriteString("\n")
 	if formattedContent != "" {
-		b.WriteString(withBar(bar, m.renderMarkdown(key, formattedContent)))
+		b.WriteString(withBar(bar, m.renderInsetMarkdown(key, formattedContent)))
 	} else {
 		var body strings.Builder
 		for _, l := range strings.Split(expandView(content), "\n") {
@@ -990,8 +1009,8 @@ func (m Model) fileBody() string {
 	// so content sits flush in the panel without glamour's standard document framing.
 	render := func(text string) string {
 		if m.fileRenderer != nil {
-			if r, err := m.fileRenderer.Render(text); err == nil {
-				return stripBlankEdges(r)
+			if rendered, err := m.fileRenderer.Render(text); err == nil {
+				return stripBlankEdges(rendered)
 			}
 		}
 		return text
