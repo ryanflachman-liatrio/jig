@@ -29,6 +29,11 @@ func (m *Model) removeEntryAt(i int) {
 	if i < 0 || i >= len(m.inputQueue) {
 		return
 	}
+	// A decision can be submitted after inspecting its related transcript.
+	// Restore the operator's prior selection before dropping the return target.
+	if m.gateContext != nil {
+		m.restoreGateContext()
+	}
 	m.inputQueue = append(m.inputQueue[:i], m.inputQueue[i+1:]...)
 	if len(m.inputQueue) == 0 {
 		m.activeInputIdx = 0
@@ -102,29 +107,73 @@ func (m *Model) loadActiveTextarea() {
 	}
 }
 
-// kindName returns the short display label for a gate entry kind used in the
-// [N / M]  step-id  (kind) header.
-func kindName(k pendingInputKind) string {
-	switch k {
-	case inputKindReview:
-		return "review"
-	case inputKindQuestion:
-		return "question"
-	case inputKindPrompt:
-		return "prompt"
-	case inputKindRecovery:
-		return "recovery"
-	case inputKindIntegrationConflict:
-		return "integration"
-	case inputKindFinalMerge:
-		return "final merge"
-	case inputKindHelpFinalMerge:
-		return "help merge"
-	case inputKindResetConfirm:
-		return "reset confirm"
-	default:
-		return "input"
+type gatePresentation struct {
+	title        string
+	subjectLabel string
+	subject      string
+	action       string
+	contextStep  string
+	contextName  string
+}
+
+func presentationForGate(entry *pendingInputEntry) gatePresentation {
+	if entry == nil {
+		return gatePresentation{title: "Human actions"}
 	}
+
+	p := gatePresentation{
+		subjectLabel: "Step",
+		subject:      entry.stepID,
+		contextStep:  entry.stepID,
+		contextName:  "transcript",
+	}
+	switch entry.kind {
+	case inputKindRequest:
+		p.title = "Agent input required"
+		p.action = "Enter a message to continue"
+	case inputKindQuestion:
+		p.title = "Answer required"
+		p.action = "Choose or enter an answer"
+	case inputKindPrompt:
+		p.title = "User input required"
+		p.action = "Provide input to continue"
+	case inputKindReview:
+		p.title = "Review required"
+		p.action = "Choose a verdict or send a message"
+		p.contextName = "diff"
+	case inputKindRecovery:
+		p.title = "Recovery action"
+		p.action = "Retry, guide, skip, or abort"
+	case inputKindIntegrationConflict:
+		p.title = "Conflict resolution"
+		p.action = "Resolve the conflict or abort"
+	case inputKindFinalMerge:
+		p.title = "Merge approval"
+		p.subjectLabel = "Run branch"
+		p.contextStep = ""
+		p.contextName = ""
+		p.action = "Merge or discard the run branch"
+		if entry.finalMerge != nil && entry.finalMerge.RunBranch != "" {
+			p.subject = entry.finalMerge.RunBranch
+		}
+	case inputKindResetConfirm:
+		p.title = "Reset confirmation"
+		p.action = "Confirm or cancel the reset"
+	case inputKindHelpFinalMerge:
+		p.title = "Merge approval"
+		p.subjectLabel = "Scope"
+		p.subject = "Run-level action"
+		p.contextStep = ""
+		p.contextName = ""
+		p.action = "Approve or discard the run branch"
+	default:
+		p.title = "Human action required"
+		p.action = "Respond to continue"
+	}
+	if p.subject == "" {
+		p.subject = "Unknown"
+	}
+	return p
 }
 
 // updateGate handles keys when the gate holds focus. Dispatches by the active

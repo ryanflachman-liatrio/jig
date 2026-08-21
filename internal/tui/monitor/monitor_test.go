@@ -1018,7 +1018,7 @@ func TestMonitorReviewQueued(t *testing.T) {
 	if len(m.inputQueue) == 0 {
 		t.Fatal("review event not added to input queue")
 	}
-	if !strings.Contains(m.gateOverlay(), "(review)") {
+	if !strings.Contains(m.gateOverlay(), "Review required") {
 		t.Fatalf("review gate overlay not shown:\n%s", m.gateOverlay())
 	}
 
@@ -1055,7 +1055,7 @@ func TestMonitorRecoveryGate(t *testing.T) {
 		t.Fatal("recovery event not added to input queue")
 	}
 	strip := m.gateOverlay()
-	if !strings.Contains(strip, "(recovery)") {
+	if !strings.Contains(strip, "Recovery action") {
 		t.Fatalf("recovery gate strip not shown:\n%s", strip)
 	}
 	if !strings.Contains(strip, "[r] retry") || !strings.Contains(strip, "[a] abort") {
@@ -1198,7 +1198,7 @@ func TestMonitorAgentQuestionShowsPanel(t *testing.T) {
 	}
 
 	body := m.gateOverlay()
-	for _, want := range []string{"(question)", "Which format should we use?", "[Format]", "JSON", "Text", "structured output"} {
+	for _, want := range []string{"Answer required", "Which format should we use?", "[Format]", "JSON", "Text", "structured output"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("question body missing %q:\n%s", want, body)
 		}
@@ -2000,7 +2000,7 @@ func TestMonitorViewFitsWindow(t *testing.T) {
 			}
 
 			plain := ansiStrip(view)
-			for _, want := range []string{"Agent input", "running"} {
+			for _, want := range []string{"Human actions", "running"} {
 				if !strings.Contains(plain, want) {
 					t.Fatalf("view missing %q:\n%s", want, plain)
 				}
@@ -2065,7 +2065,7 @@ func TestMonitorResizeRefits(t *testing.T) {
 				size.w, size.h, height, ansiStrip(view))
 		}
 		plain := ansiStrip(view)
-		for _, want := range []string{"Agent input", "running", "Security findings"} {
+		for _, want := range []string{"Human actions", "running", "Security findings"} {
 			if !strings.Contains(plain, want) {
 				t.Fatalf("at %dx%d, view missing %q:\n%s", size.w, size.h, want, plain)
 			}
@@ -2087,7 +2087,7 @@ func TestMonitorIntegrationConflictGate(t *testing.T) {
 		t.Fatal("integration conflict event not added to input queue")
 	}
 	strip := m.gateOverlay()
-	if !strings.Contains(strip, "(integration)") {
+	if !strings.Contains(strip, "Conflict resolution") {
 		t.Fatalf("integration gate strip not shown:\n%s", strip)
 	}
 	if !strings.Contains(strip, "shared.go") {
@@ -2138,7 +2138,7 @@ func TestMonitorFinalMergeGate(t *testing.T) {
 		t.Fatal("final merge event not added to input queue")
 	}
 	strip := m.gateOverlay()
-	if !strings.Contains(strip, "(final merge)") {
+	if !strings.Contains(strip, "Merge approval") {
 		t.Fatalf("final-merge gate strip not shown:\n%s", strip)
 	}
 	if !strings.Contains(strip, "main") {

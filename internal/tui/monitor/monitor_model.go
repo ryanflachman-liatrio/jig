@@ -85,6 +85,21 @@ type pendingInputEntry struct {
 	composing bool
 }
 
+type gateContextSnapshot struct {
+	cursor         int
+	rowKind        string
+	stepID         string
+	filePath       string
+	listOffset     int
+	chatOffset     int
+	chatAutoScroll bool
+	chatBlock      chatItem
+	chatExpand     map[blockKey]bool
+	groupExpand    map[blockKey]bool
+	chatExpandAll  bool
+	targetStep     string
+}
+
 // visibleRow is one row in the Steps panel flat list. Steps always appear; file
 // rows appear beneath their parent step only when it is expanded.
 type visibleRow struct {
@@ -186,6 +201,7 @@ type Model struct {
 	// len(inputQueue) > 0; an empty queue leaves only the compact, inert input bar.
 	inputQueue     []pendingInputEntry
 	activeInputIdx int
+	gateContext    *gateContextSnapshot
 
 	// reviews retains the last ReviewRequest seen per step so the Transcript panel
 	// can show the diff when a review step is selected — review steps have no
@@ -272,9 +288,9 @@ const (
 	// and review compose). Changing it here propagates to the overlay height.
 	gateTextareaRows = 4
 
-	// gateHeaderRows is the number of rows reserved for the [N / M] step-id (kind)
-	// header above each gate entry.
-	gateHeaderRows = 1
+	// The contextual subject and required-action rows stay visible above every
+	// gate body so clipped overlays still explain what the operator must decide.
+	gateHeaderRows = 2
 
 	// maxReviewChoices is the bounded maximum number of verdict-choice lines a
 	// review entry can render without overflowing the overlay height. A value
@@ -496,13 +512,19 @@ func (m Model) HelpSections() []shared.HelpSection {
 	case m.focus == focusGate && m.hasGate():
 		sections = append(sections, m.gateHelpSection())
 	case m.focus == focusTranscript:
+		bindings := []keybind.Binding{
+			m.keys.Scroll, m.keys.GotoTop, m.keys.GotoBottom,
+			m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll,
+			m.keys.TransToSteps, m.keys.TransLeave,
+		}
+		if m.gateContext != nil {
+			contextKey := m.keys.GateContext
+			contextKey.SetHelp("ctrl+o", "return")
+			bindings = append([]keybind.Binding{contextKey}, bindings...)
+		}
 		sections = append(sections, shared.HelpSection{
-			Title: "Transcript",
-			Bindings: []keybind.Binding{
-				m.keys.Scroll, m.keys.GotoTop, m.keys.GotoBottom,
-				m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll,
-				m.keys.TransToSteps, m.keys.TransLeave,
-			},
+			Title:    "Transcript",
+			Bindings: bindings,
 		})
 	default: // focusSteps
 		actions := m.selectedLifecycleActions()
@@ -512,12 +534,18 @@ func (m Model) HelpSections() []shared.HelpSection {
 		stopKey.SetEnabled(actions.canStop)
 		resetKey.SetEnabled(actions.canReset)
 		resumeKey.SetEnabled(actions.canResume)
+		bindings := []keybind.Binding{
+			m.keys.StepsNav, m.keys.OpenTranscript, m.keys.ToggleTree,
+			stopKey, resetKey, resumeKey, m.keys.StepsLeave,
+		}
+		if m.gateContext != nil {
+			contextKey := m.keys.GateContext
+			contextKey.SetHelp("ctrl+o", "return")
+			bindings = append([]keybind.Binding{contextKey}, bindings...)
+		}
 		sections = append(sections, shared.HelpSection{
-			Title: "Steps",
-			Bindings: []keybind.Binding{
-				m.keys.StepsNav, m.keys.OpenTranscript, m.keys.ToggleTree,
-				stopKey, resetKey, resumeKey, m.keys.StepsLeave,
-			},
+			Title:    "Steps",
+			Bindings: bindings,
 		})
 	}
 
@@ -541,39 +569,41 @@ func (m Model) gateHelpSection() shared.HelpSection {
 	}
 	entryNav := m.keys.GateEntryNav
 	entryNav.SetEnabled(len(m.inputQueue) > 1)
+	contextKey := m.keys.GateContext
+	contextKey.SetEnabled(presentationForGate(entry).contextStep != "")
 
 	sec := shared.HelpSection{Title: "Gate"}
 	switch entry.kind {
 	case inputKindRequest:
-		sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, entryNav, m.keys.GateBlur}
+		sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, contextKey, entryNav, m.keys.GateBlur}
 	case inputKindQuestion:
-		sec.Bindings = []keybind.Binding{m.keys.QuestionScroll, m.keys.QConfirm, entryNav, m.keys.GateBlur}
+		sec.Bindings = []keybind.Binding{m.keys.QuestionScroll, m.keys.QConfirm, contextKey, entryNav, m.keys.GateBlur}
 	case inputKindReview:
 		switch {
 		case entry.composing:
-			sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, m.keys.GateBlur}
+			sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, contextKey, m.keys.GateBlur}
 		case entry.review != nil && entry.review.AllowMessage:
-			sec.Bindings = []keybind.Binding{m.keys.Verdict, m.keys.Message, entryNav, m.keys.GateBlur}
+			sec.Bindings = []keybind.Binding{m.keys.Verdict, m.keys.Message, contextKey, entryNav, m.keys.GateBlur}
 		default:
-			sec.Bindings = []keybind.Binding{m.keys.Verdict, entryNav, m.keys.GateBlur}
+			sec.Bindings = []keybind.Binding{m.keys.Verdict, contextKey, entryNav, m.keys.GateBlur}
 		}
 	case inputKindPrompt:
-		sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, entryNav, m.keys.GateBlur}
+		sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, contextKey, entryNav, m.keys.GateBlur}
 	case inputKindRecovery:
 		switch {
 		case entry.composing:
-			sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, m.keys.GateBlur}
+			sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, contextKey, m.keys.GateBlur}
 		case entry.recovery != nil && entry.recovery.CanResume:
-			sec.Bindings = []keybind.Binding{m.keys.RecoverRetry, m.keys.RecoverGuide, m.keys.RecoverSkip, m.keys.RecoverAbort, entryNav, m.keys.GateBlur}
+			sec.Bindings = []keybind.Binding{m.keys.RecoverRetry, m.keys.RecoverGuide, m.keys.RecoverSkip, m.keys.RecoverAbort, contextKey, entryNav, m.keys.GateBlur}
 		default:
-			sec.Bindings = []keybind.Binding{m.keys.RecoverRetry, m.keys.RecoverSkip, m.keys.RecoverAbort, entryNav, m.keys.GateBlur}
+			sec.Bindings = []keybind.Binding{m.keys.RecoverRetry, m.keys.RecoverSkip, m.keys.RecoverAbort, contextKey, entryNav, m.keys.GateBlur}
 		}
 	case inputKindIntegrationConflict:
-		sec.Bindings = []keybind.Binding{m.keys.IntegrationResolve, m.keys.RecoverAbort, entryNav, m.keys.GateBlur}
+		sec.Bindings = []keybind.Binding{m.keys.IntegrationResolve, m.keys.RecoverAbort, contextKey, entryNav, m.keys.GateBlur}
 	case inputKindFinalMerge, inputKindHelpFinalMerge:
-		sec.Bindings = []keybind.Binding{m.keys.FinalMergeApprove, m.keys.FinalMergeDiscard, entryNav, m.keys.GateBlur}
+		sec.Bindings = []keybind.Binding{m.keys.FinalMergeApprove, m.keys.FinalMergeDiscard, contextKey, entryNav, m.keys.GateBlur}
 	case inputKindResetConfirm:
-		sec.Bindings = []keybind.Binding{m.keys.GateBlur}
+		sec.Bindings = []keybind.Binding{contextKey, m.keys.GateBlur}
 	}
 	return sec
 }

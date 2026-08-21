@@ -45,6 +45,7 @@ type monitorKeys struct {
 	Submit         keybind.Binding // matched (enter: input/prompt/compose submit)
 	Newline        keybind.Binding // display-only (textarea-owned)
 	GateBlur       keybind.Binding // matched (esc: blurs gate → Steps, all kinds; ADR 0005)
+	GateContext    keybind.Binding // matched (ctrl+o: view/return from the active gate's step context)
 	GateEntryNav   keybind.Binding // display-only ("tab/⇧tab entries", multi-entry queue)
 	InputLeave     keybind.Binding // retained for legacy footer refs; no longer triggers ShowRunsMsg
 	PromptLeave    keybind.Binding // display-only ("esc blur", prompt gate)
@@ -110,6 +111,7 @@ func defaultMonitorKeys() monitorKeys {
 		Submit:         keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "submit")),
 		Newline:        keybind.NewBinding(keybind.WithKeys("alt+enter", "shift+enter"), keybind.WithHelp("alt+enter", "newline")),
 		GateBlur:       keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "blur")),
+		GateContext:    keybind.NewBinding(keybind.WithKeys("ctrl+o"), keybind.WithHelp("ctrl+o", "view context")),
 		GateEntryNav:   keybind.NewBinding(keybind.WithKeys("tab", "shift+tab"), keybind.WithHelp("tab/⇧tab", "entries")),
 		InputLeave:     keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "blur")),
 		PromptLeave:    keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "blur")),
