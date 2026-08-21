@@ -80,8 +80,8 @@ func enterChatStep(t *testing.T, m Model, id string) Model {
 }
 
 // TestMonitorChatRendersBlocks renders a transcript with every block kind and
-// asserts each surfaces correctly in modeChat. Tool calls are now grouped: the
-// collapsed group header shows a summary line; individual block labels are only
+// asserts each surfaces correctly in modeChat. Tool calls are grouped: the
+// collapsed group header shows only the count; individual block labels are only
 // visible inside an expanded group.
 func TestMonitorChatRendersBlocks(t *testing.T) {
 	runDir := writeTranscript(t, "a", []transcript.Entry{
@@ -100,12 +100,10 @@ func TestMonitorChatRendersBlocks(t *testing.T) {
 	m.RunDir = runDir
 	m = enterChatStep(t, m, "a")
 
-	// Collapsed view: thinking label, text content, and group summary are present;
+	// Collapsed view: thinking label, text content, and tool count are present;
 	// individual tool block labels are hidden inside the collapsed group.
-	// The group header now shows "▸ ✓ 1 tool call: ◈ Read(…)" so we check for
-	// the count/noun and the tool name separately (a category icon sits between).
 	body := m.chatBody()
-	for _, want := range []string{shared.IconThinking + " reasoning", "Reading the file", "1 tool call", "Read"} {
+	for _, want := range []string{shared.IconThinking + " reasoning", "Reading the file", "1 tool call"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("chat body missing %q:\n%s", want, body)
 		}
@@ -400,39 +398,86 @@ func TestMonitorChatIterationSeparators(t *testing.T) {
 	}
 }
 
-// TestPrimaryArg verifies the primaryArg helper's key priority order,
-// fallback to sorted keys, truncation, and empty-input handling.
-func TestPrimaryArg(t *testing.T) {
-	cases := []struct {
-		name  string
-		input map[string]any
-		want  string
-	}{
-		{"file_path key", map[string]any{"file_path": "/a/b.go", "command": "ignored"}, "/a/b.go"},
-		{"path key fallback", map[string]any{"path": "/x.go"}, "/x.go"},
-		{"command key", map[string]any{"command": "go test ./..."}, "go test ./..."},
-		{"pattern key", map[string]any{"pattern": "*.go"}, "*.go"},
-		{"unknown key sorted", map[string]any{"zzz": "last", "aaa": "first"}, "first"},
-		{"non-string value skipped", map[string]any{"file_path": 42, "command": "cmd"}, "cmd"},
-		{"no string values", map[string]any{"count": 1, "ok": true}, ""},
-		{"empty input", nil, ""},
-		{"truncation to 40 runes", map[string]any{"file_path": strings.Repeat("x", 50)}, strings.Repeat("x", 39) + "…"},
+func TestMonitorToolGroupLayout(t *testing.T) {
+	runDir := writeTranscript(t, "a", []transcript.Entry{
+		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+			{Type: transcript.BlockToolUse, Name: "Read", ToolUseID: "t1",
+				Input: rawJSON(t, map[string]string{"file_path": "config.toml"})},
+		}},
+		{Role: transcript.RoleUser, Blocks: []transcript.Block{
+			{Type: transcript.BlockToolResult, ToolUseID: "t1", Content: "configuration loaded"},
+		}},
+		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+			{Type: transcript.BlockToolUse, Name: "Bash", ToolUseID: "t2",
+				Input: rawJSON(t, map[string]string{"command": "go test ./internal/tui/monitor"})},
+		}},
+		{Role: transcript.RoleUser, Blocks: []transcript.Block{
+			{Type: transcript.BlockToolResult, ToolUseID: "t2", Content: "PASS"},
+		}},
+	})
+
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+
+	collapsedView := m.View()
+	collapsed := ansiStrip(m.chatBody())
+	var groupLine string
+	for _, line := range strings.Split(collapsed, "\n") {
+		if strings.Contains(line, "tool calls") {
+			groupLine = strings.TrimSpace(line)
+			break
+		}
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var raw json.RawMessage
-			if tc.input != nil {
-				var err error
-				raw, err = json.Marshal(tc.input)
-				if err != nil {
-					t.Fatalf("marshal: %v", err)
-				}
+	if groupLine != shared.BarThick+" "+shared.CollapsedMarker+" 2 tool calls" {
+		t.Fatalf("collapsed group = %q, want count only:\n%s", groupLine, collapsed)
+	}
+	for _, hidden := range []string{"Read", "Bash", "configuration loaded", "PASS"} {
+		if strings.Contains(collapsed, hidden) {
+			t.Fatalf("collapsed group exposed %q:\n%s", hidden, collapsed)
+		}
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	expandedView := m.View()
+	expanded := ansiStrip(m.chatBody())
+	lines := strings.Split(expanded, "\n")
+	var blockLines []int
+	for i, line := range lines {
+		if strings.Contains(line, "◈ Read") ||
+			strings.Contains(line, shared.IconToolResult+" result") ||
+			strings.Contains(line, "$ Bash") {
+			blockLines = append(blockLines, i)
+		}
+	}
+	if len(blockLines) != 4 {
+		t.Fatalf("expanded group has %d tool/result messages, want 4:\n%s", len(blockLines), expanded)
+	}
+	for i := 1; i < len(blockLines); i++ {
+		separated := false
+		for _, line := range lines[blockLines[i-1]+1 : blockLines[i]] {
+			if strings.TrimSpace(line) == "" {
+				separated = true
+				break
 			}
-			got := primaryArg("", raw)
-			if got != tc.want {
-				t.Fatalf("primaryArg(%q) = %q, want %q", string(raw), got, tc.want)
+		}
+		if !separated {
+			t.Fatalf("messages %d and %d have no blank line between them:\n%s", i, i+1, expanded)
+		}
+	}
+
+	if dir := os.Getenv("JIG_UI_SNAPSHOT_DIR"); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("create snapshot dir: %v", err)
+		}
+		for name, view := range map[string]string{
+			"tool-group-folded.ansi":   collapsedView,
+			"tool-group-unfolded.ansi": expandedView,
+		} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(view), 0o644); err != nil {
+				t.Fatalf("write %s: %v", name, err)
 			}
-		})
+		}
 	}
 }
 
