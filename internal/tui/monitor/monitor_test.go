@@ -2039,7 +2039,7 @@ func TestGateOverlayKeepsActionsAvailableInNarrowTerminal(t *testing.T) {
 		t.Fatalf("height %d exceeds terminal height:\n%s", height, ansiStrip(view))
 	}
 	plain := ansiStrip(view)
-	for _, action := range []string{"[r] retry", "[g] retry with guidance", "s skip", "[a] abort"} {
+	for _, action := range []string{"[r] retry", "[g] retry with guidance", "[s] skip", "[a] abort"} {
 		if !strings.Contains(plain, action) {
 			t.Fatalf("narrow overlay missing %q:\n%s", action, plain)
 		}
