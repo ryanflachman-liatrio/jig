@@ -18,8 +18,8 @@ to the absolute option index regardless of scroll position.
 - Digit selection uses the absolute `[N]` label regardless of scroll position —
   pressing `1` selects Option1 even when Option1 is off-screen.
 - `QuestionScroll` (↑/↓) is added to `keys.go` and appears in the footer hint.
-- j/k do not collide with tab, left/right, digit select, enter/space (QConfirm),
-  or q (cancel).
+- j/k do not collide with `[`/`]` queue navigation, tab/shift+tab or left/right
+  focus movement, digit select, enter/space (QConfirm), or q (cancel).
 - Full TUI suite passes with the race detector.
 
 ## Evidence Summary

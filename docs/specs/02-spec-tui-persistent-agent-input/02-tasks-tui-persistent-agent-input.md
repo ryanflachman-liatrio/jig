@@ -18,7 +18,7 @@ engine or request-type changes (spec Non-Goal 5). All work lands in
 | `internal/tui/monitor_test.go` | Table-driven TUI tests. Add the queue-ingest, prune, fixed-height, navigation, draft-preservation, routing, review-diff, and scroll tests here (or split queue tests into `input_queue_test.go`). Reuse `newMonitorWithSteps`, `enterChatStep`, and the `key()` helper. |
 | `internal/tui/input_queue_test.go` (new, optional) | Optional home for the Unit 1–3 pure-state/navigation tests if `monitor_test.go` grows unwieldy; follow the same table-driven pattern. |
 | `internal/tui/styles.go` | Add the `[N / M]  step-id  (kind)` header style token to the appropriate `Styles` sub-struct and set it in `DefaultTheme()` from existing color tokens (or reuse `theme.Title`). Never a bare `lipgloss.NewStyle()`. |
-| `internal/tui/keys.go` | Rework gate keybindings: `esc` blurs (drop `InputLeave`/`ReviewLeave`/`QuestionCancel`→runs-list); keep `tab`/`shift+tab` for entry cycling; add `↑`/`↓` (`j`/`k`) option scroll for question entries; update footer help text. |
+| `internal/tui/keys.go` | Rework gate keybindings: `esc` blurs (drop `InputLeave`/`ReviewLeave`/`QuestionCancel`→runs-list); use `[`/`]` for entry cycling and keep `tab`/`shift+tab` for region focus; add `↑`/`↓` (`j`/`k`) option scroll for question entries; update footer help text. |
 | `internal/tui/keys_test.go` | Update any keymap assertions affected by the gate-key rework. |
 | `internal/tui/input.go` | `newInputTextarea(placeholder, width, rows)` — the shared textarea builder used to rebuild a per-entry textarea from its `draft`. Referenced, not modified. |
 | `CONTEXT.md` | Normative glossary (Gate, Input queue, Input entry, Focus). Naming reference only — already updated for this feature. |
@@ -170,32 +170,32 @@ Unit 2; Design "Layout height".)
 
 ### [x] 3.0 Queue navigation, focus & per-entry draft preservation
 
-With the gate focused, `tab`/`shift+tab` cycle `activeInputIdx` (mod len), not
-regions; per-entry `draft` survives navigation; a themed `[N / M]  step-id
-(kind)` header renders above the entry body; `esc` blurs to Steps (no
-`showRunsMsg`); `left`/`right` still exit to the panels. (Spec Unit 3; Design
-"Keybinding changes".)
+With the gate focused, `[`/`]` cycle `activeInputIdx` (mod len) while
+`tab`/`shift+tab` continue to cycle regions; per-entry `draft` survives
+navigation; a themed `[N / M]  step-id (kind)` header renders above the entry
+body; `esc` blurs to Steps (no `showRunsMsg`); `left`/`right` remain panel-focus
+aliases. (Spec Unit 3; Design "Keybinding changes".)
 
 #### 3.0 Proof Artifact(s)
 
 - Screenshot: `docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit3-nav.txt`
   captures three `View()` frames for a two-entry queue — initial `[1 / 2]`, after
-  `tab` → `[2 / 2]`, after `shift+tab` from `[1 / 2]` → wraps to `[2 / 2]`.
+  `]` → `[2 / 2]`, then `[` → `[1 / 2]`.
 - Test: `go test ./internal/tui -run TestGateDraftPreservation` passes — typing a
-  partial answer into entry 2, `tab` to entry 1, `tab` back restores the text.
+  partial answer into entry 2, `[` to entry 1, then `]` back restores the text.
 - Test: `go test ./internal/tui -run TestGateEscBlurs` passes — `esc` while
   `m.focus == focusGate` yields `m.focus == focusSteps`, `len(inputQueue)`
   unchanged, and no `showRunsMsg` emitted.
 
 #### 3.0 Tasks
 
-- [x] 3.1 In `Update`'s `tea.KeyPressMsg` block (`monitor.go:289–303`), intercept
-  `FocusNext`/`FocusPrev` **before** the `cycleFocus` calls **only when**
-  `m.focus == focusGate`: advance/retreat `m.activeInputIdx = (idx ± 1 + n) % n`
-  (no-op when `n == 1`), save the outgoing entry's textarea value to its `draft`,
-  rebuild `m.promptTextarea` from the new entry's `draft` via `newInputTextarea`,
-  `refreshPanels()`, return. When `m.focus != focusGate`, fall through to the
-  existing `cycleFocus` handling unchanged.
+- [x] 3.1 In `Update`'s `tea.KeyPressMsg` block (`monitor.go:289–303`), keep
+  `FocusNext`/`FocusPrev` on the unconditional `cycleFocus` path. Before
+  focused-region dispatch, match `GateEntryNav` only when `m.focus == focusGate`
+  and `len(inputQueue) > 1`: `[` retreats and `]` advances
+  `m.activeInputIdx = (idx ± 1 + n) % n`, saves the outgoing draft, rebuilds
+  `m.promptTextarea`, refreshes, and returns. With one entry brackets reach the
+  textarea as literals.
 - [x] 3.2 Add a `syncActiveTextarea()` helper: saves
   `m.promptTextarea.Value()` into `m.inputQueue[activeInputIdx].draft` (guarded
   for request/prompt/review-compose kinds), used on every navigate/blur. Add its
@@ -219,7 +219,7 @@ regions; per-entry `draft` survives navigation; a themed `[N / M]  step-id
   `activeInputIdx` and rebuilds the active textarea after a removal; emptying the
   queue sets `m.focus = focusSteps`.
 - [x] 3.7 Write `TestGateDraftPreservation` and `TestGateEscBlurs`. Capture the
-  two-entry `tab`/`shift+tab` `View()` frames to `artifacts/unit3-nav.txt`.
+  two-entry `[`/`]` `View()` frames to `artifacts/unit3-nav.txt`.
 - [x] 3.8 (F1) Add a `left`/`right`-exit variant to `TestGateDraftPreservation`
   (or a sibling case): type a partial answer, exit the gate with `right`/`left`,
   re-enter via `tab`, and assert the draft is restored — proving arrow-exit calls
@@ -280,13 +280,13 @@ remove the entry, and auto-advance. (Spec Unit 4.)
 - [x] 4.7 Rewrite `footerView()` gate hints (`monitor.go:1620–1644`) to switch on
   the active entry's kind, and the status line (1607–1618) to read from the queue
   (e.g. "awaiting N input(s)"). Add the gate-context entry-cycle hint
-  (`tab/⇧tab entries`, `←/→ panel`, `esc blur`, per-kind actions).
+  (`[/] entries`, `tab/⇧tab` and `←/→` focus, `esc blur`, per-kind actions).
 - [x] 4.8 Write `TestGateSubmitRouting` and `TestQuestionCancel`; capture the
   drain sequence `View()` to `artifacts/unit4-drain.txt`. Update/replace the
   existing `TestMonitorReviewAutoFocusesGate` (auto-focus is removed — Decision 6)
   and any other tests asserting the old single-pointer fields or focus-steal.
 - [x] 4.9 (F1) Write `TestReviewComposeIsolation`: enqueue two `ReviewRequest`
-  entries, press `[m]` on the active one and type a message, `tab` to the other
+  entries, press `[m]` on the active one and type a message, `]` to the other
   review entry, and assert the second entry's `composing == false` and its
   `draft` is empty — proving the compose sub-flow is per-entry (task 4.6), not a
   shared model field.
@@ -316,7 +316,7 @@ keep queue navigation and Steps-list selection independent; add an in-entry hint
   the verbatim path. Keep the verdict-choice list out of the Transcript (choices
   live in the gate entry now) — render only the diff (+ a short heading).
 - [x] 5.2 Verify `reloadTranscript`/`updateSteps` selection does **not** touch
-  `m.activeInputIdx`, and that `tab` cycling entries (3.1) does **not** call
+  `m.activeInputIdx`, and that bracket-key entry cycling (3.1) does **not** call
   `reloadTranscript` or move `m.cursor`. Add a guard/comment asserting the two
   navigations are independent (Decision 2).
 - [x] 5.3 In the `inputKindReview` gate body (4.1), add a one-line hint:
@@ -352,8 +352,9 @@ and the active entry is a question, without colliding with existing gate keys.
   blind-typing a number still selects the right option even when scrolled.
 - [x] 6.2 Add a `ScrollUp`/`ScrollDown` (or reuse `Up`/`Down`) key handling in
   `updateGate`'s question branch that adjusts `m.inputQueue[activeInputIdx].scrollOffset`
-  within `[0, maxOffset]`; ensure these keys do not collide with `tab` (entries),
-  `left`/`right` (exit), digit selection, `enter`/`space` (`QConfirm`), or `q`.
+  within `[0, maxOffset]`; ensure these keys do not collide with `[`/`]` (entries),
+  `tab`/`shift+tab` or `left`/`right` (focus), digit selection, `enter`/`space`
+  (`QConfirm`), or `q`.
   Add the binding(s) to `keys.go` and the footer hint for question entries.
 - [x] 6.3 Guarantee no option is truncated away: `maxOffset` is bounded so the
   last option is always reachable; digit selection maps to the absolute option

@@ -43,8 +43,8 @@ Run 2 (post-remediation).
 | U1: `hasGate()` = `len>0`; old fields removed | `go build` + `go vet` clean (task 1.8) |
 | U2: strip always renders + placeholder; fixed derived height; no layout jump | `TestGateFixedHeight`, `artifacts/unit2-empty-strip.txt` |
 | U2: empty gate skipped by `tab` | `TestCycleFocusSkipsEmptyGate` |
-| U3: `tab`/`shift+tab` cycle entries + `[N/M]` header | `artifacts/unit3-nav.txt` |
-| U3: per-entry draft preservation (`tab` and `left`/`right` exit) | `TestGateDraftPreservation` (+ arrow-exit variant, task 3.8) |
+| U3: `[`/`]` cycle entries + `[N/M]` header | `artifacts/unit3-nav.txt` |
+| U3: per-entry draft preservation (queue navigation and focus exit) | `TestGateDraftPreservation` (+ arrow-exit variant, task 3.8) |
 | U3: `esc` blurs (no `showRunsMsg`) | `TestGateEscBlurs` |
 | U4: per-kind render + routed submit + queue shrink | `TestGateSubmitRouting`, `artifacts/unit4-drain.txt` |
 | U4: `q` question-cancel delivers `"cancelled"`, stays in Monitor | `TestQuestionCancel` |

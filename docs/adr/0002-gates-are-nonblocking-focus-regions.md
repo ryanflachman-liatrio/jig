@@ -30,9 +30,10 @@ request-ID routing. This keeps drafts intact while users inspect other regions
 and prevents transport-specific Claude or ACP payloads from leaking into TUI
 state.
 
-Queue navigation and transcript selection remain independent, but a focused
-step-level gate offers `ctrl+o` as an explicit context jump. The monitor saves
-the prior Steps and Transcript selection, opens the gate's transcript (or review
-diff), and uses `ctrl+o` again to return without resolving the gate. Run-level
-merge approvals identify their branch or scope instead because they have no
-owning workflow step.
+Queue navigation and transcript selection remain independent. While the Gate has
+focus, `[` and `]` select the previous and next queued entry; `tab` and
+`shift+tab` remain region-focus keys in every region. A focused step-level gate
+offers `ctrl+o` as an explicit context jump. The monitor saves the prior Steps
+and Transcript selection, opens the gate's transcript (or review diff), and uses
+`ctrl+o` again to return without resolving the gate. Run-level merge approvals
+identify their branch or scope instead because they have no owning workflow step.

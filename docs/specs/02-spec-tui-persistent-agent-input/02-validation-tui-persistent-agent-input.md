@@ -39,7 +39,7 @@
 | **U2** — `gateStrip()` always returns a panel; placeholder when empty | Verified | `monitor.go:1260–1263`; `artifacts/unit2-empty-strip.txt` |
 | **U2** — Fixed body height; `resize()` uses constant, not `lipgloss.Height()` | Verified | `monitor.go:1012–1013`, `1895–1897`; `TestGateFixedHeight` PASS |
 | **U2** — Empty gate not focusable via `tab`; `cycleFocus` guards `len > 0` | Verified | `monitor.go:534–537`; `TestCycleFocusSkipsEmptyGate` PASS |
-| **U3** — `tab`/`shift+tab` cycle `activeInputIdx` when gate focused; `cycleFocus` unchanged otherwise | Verified | `monitor.go:344–371`; `TestGateDraftPreservation` PASS; `artifacts/unit3-nav.txt` |
+| **U3** — `[`/`]` cycle `activeInputIdx` when a multi-entry gate is focused; `tab`/`shift+tab` always call `cycleFocus` | Verified | `monitor_update.go`; `TestGateDraftPreservation`, `TestGateTabAlwaysMovesFocus`, and `TestSingleEntryTextareaAcceptsBrackets` PASS; `artifacts/unit3-nav.txt` |
 | **U3** — Draft saved on tab/exit; textarea rebuilt from draft on landing | Verified | `syncActiveTextarea()` / `loadActiveTextarea()` at `monitor.go:454–501`; `TestGateDraftPreservation` PASS (incl. arrow-exit variant) |
 | **U3** — `esc` blurs to Steps; queue unchanged; no `showRunsMsg` | Verified | `monitor.go:650–655`; `TestGateEscBlurs` PASS |
 | **U3** — `[N / M]  step-id  (kind)` header using `theme.Title` | Verified | `monitor.go:1285–1288`; unit3/4 artifacts show header |

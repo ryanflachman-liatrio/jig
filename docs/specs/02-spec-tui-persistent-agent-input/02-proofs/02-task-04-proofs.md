@@ -79,7 +79,7 @@ ok  	jig/internal/tui	0.472s
 ## Artifact: TestReviewComposeIsolation
 
 **What it proves:** Starting compose on review entry 0 does not set `composing`
-or carry over `draft` to review entry 1 after tabbing between them.
+or carry over `draft` to review entry 1 after navigating with `]`.
 
 **Why it matters:** Per-entry `composing` is the key invariant that makes the queue
 model safe — a single shared bool would corrupt the second entry's UI state.
@@ -91,7 +91,7 @@ go test ./internal/tui -run TestReviewComposeIsolation -v
 ```
 
 **Result summary:** PASS — entry 1 has `composing == false` and empty `draft`
-after tabbing from composing entry 0.
+after navigating from composing entry 0.
 
 ```
 === RUN   TestReviewComposeIsolation
