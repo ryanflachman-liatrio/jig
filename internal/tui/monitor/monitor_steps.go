@@ -148,8 +148,8 @@ func (m Model) listBody() string {
 	}
 
 	// Human-in-the-loop gates (review/input/question/prompt) render in the
-	// gate strip beneath the panels (gateStrip), not inline here — the strip is a
-	// non-blocking focus region (ADR 0002).
+	// focused overlay, not inline here — the gate remains a non-blocking focus
+	// region (ADR 0002).
 
 	// Streaming output: show last outputMaxLines lines for any running agent step.
 	for _, s := range m.steps {

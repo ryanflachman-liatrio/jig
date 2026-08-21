@@ -1018,8 +1018,8 @@ func TestMonitorReviewQueued(t *testing.T) {
 	if len(m.inputQueue) == 0 {
 		t.Fatal("review event not added to input queue")
 	}
-	if !strings.Contains(m.gateStrip(), "(review)") {
-		t.Fatalf("review gate strip not shown:\n%s", m.gateStrip())
+	if !strings.Contains(m.gateOverlay(), "(review)") {
+		t.Fatalf("review gate overlay not shown:\n%s", m.gateOverlay())
 	}
 
 	// Tab from Transcript → Gate, then send verdict.
@@ -1054,7 +1054,7 @@ func TestMonitorRecoveryGate(t *testing.T) {
 	if len(m.inputQueue) == 0 {
 		t.Fatal("recovery event not added to input queue")
 	}
-	strip := m.gateStrip()
+	strip := m.gateOverlay()
 	if !strings.Contains(strip, "(recovery)") {
 		t.Fatalf("recovery gate strip not shown:\n%s", strip)
 	}
@@ -1103,8 +1103,8 @@ func TestMonitorRecoveryGuidance(t *testing.T) {
 		Err:       "agent gave up",
 		CanResume: true,
 	}})
-	if !strings.Contains(m.gateStrip(), "[g] retry with guidance") {
-		t.Fatalf("guidance affordance missing when CanResume=true:\n%s", m.gateStrip())
+	if !strings.Contains(m.gateOverlay(), "[g] retry with guidance") {
+		t.Fatalf("guidance affordance missing when CanResume=true:\n%s", m.gateOverlay())
 	}
 
 	m.focus = focusGate
@@ -1197,7 +1197,7 @@ func TestMonitorAgentQuestionShowsPanel(t *testing.T) {
 		t.Fatalf("question arrival must not steal focus, got %v", m.focus)
 	}
 
-	body := m.gateStrip()
+	body := m.gateOverlay()
 	for _, want := range []string{"(question)", "Which format should we use?", "[Format]", "JSON", "Text", "structured output"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("question body missing %q:\n%s", want, body)
@@ -1267,7 +1267,7 @@ func TestMonitorAgentQuestionMultiSelect(t *testing.T) {
 	m, _ = m.Update(key("down"))
 	m, _ = m.Update(key("space"))
 
-	body := m.gateStrip()
+	body := m.gateOverlay()
 	if !strings.Contains(body, "[x]") {
 		t.Fatalf("toggled options not shown:\n%s", body)
 	}
@@ -1810,11 +1810,11 @@ func TestQuestionScroll(t *testing.T) {
 		t.Skipf("options (%d) don't exceed budget (%d) — increase option count", len(opts), budget)
 	}
 
-	stripH := func() int { return lipgloss.Height(m.gateStrip()) }
+	stripH := func() int { return lipgloss.Height(m.gateOverlay()) }
 	h0 := stripH()
 
 	// Initial state: Option1 visible, Option10 not.
-	strip0 := ansiStrip(m.gateStrip())
+	strip0 := ansiStrip(m.gateOverlay())
 	if !strings.Contains(strip0, "Option1") {
 		t.Fatalf("Option1 not visible at scrollOffset=0:\n%s", strip0)
 	}
@@ -1827,7 +1827,7 @@ func TestQuestionScroll(t *testing.T) {
 	if stripH() != h0 {
 		t.Fatalf("gate strip height changed after scroll: was %d, now %d", h0, stripH())
 	}
-	strip1 := ansiStrip(m.gateStrip())
+	strip1 := ansiStrip(m.gateOverlay())
 	// Option1 should now be scrolled off; a higher-indexed option should appear.
 	if strings.Contains(strip1, "[1] Option1") {
 		t.Fatalf("Option1 still in view after scrolling down:\n%s", strip1)
@@ -2020,6 +2020,32 @@ func TestMonitorViewFitsWindow(t *testing.T) {
 	}
 }
 
+func TestGateOverlayKeepsActionsAvailableInNarrowTerminal(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
+	m, _ = m.Update(EngineEventMsg{Event: engine.RecoveryRequest{
+		RunID:     "run-1",
+		StepID:    "a",
+		Err:       "agent stopped after exhausting its turn budget",
+		CanResume: true,
+	}})
+	m.focus = focusGate
+
+	view := m.View()
+	if width := lipgloss.Width(view); width > 60 {
+		t.Fatalf("width %d exceeds terminal width:\n%s", width, ansiStrip(view))
+	}
+	if height := lipgloss.Height(view); height > 24 {
+		t.Fatalf("height %d exceeds terminal height:\n%s", height, ansiStrip(view))
+	}
+	plain := ansiStrip(view)
+	for _, action := range []string{"[r] retry", "[g] retry with guidance", "[s] skip", "[a] abort"} {
+		if !strings.Contains(plain, action) {
+			t.Fatalf("narrow overlay missing %q:\n%s", action, plain)
+		}
+	}
+}
+
 // TestMonitorResizeRefits asserts subsequent WindowSizeMsg values re-fit all
 // regions without losing the security summary, gate, or footer.
 func TestMonitorResizeRefits(t *testing.T) {
@@ -2060,7 +2086,7 @@ func TestMonitorIntegrationConflictGate(t *testing.T) {
 	if len(m.inputQueue) == 0 {
 		t.Fatal("integration conflict event not added to input queue")
 	}
-	strip := m.gateStrip()
+	strip := m.gateOverlay()
 	if !strings.Contains(strip, "(integration)") {
 		t.Fatalf("integration gate strip not shown:\n%s", strip)
 	}
@@ -2111,7 +2137,7 @@ func TestMonitorFinalMergeGate(t *testing.T) {
 	if len(m.inputQueue) == 0 {
 		t.Fatal("final merge event not added to input queue")
 	}
-	strip := m.gateStrip()
+	strip := m.gateOverlay()
 	if !strings.Contains(strip, "(final merge)") {
 		t.Fatalf("final-merge gate strip not shown:\n%s", strip)
 	}

@@ -10,6 +10,7 @@ import (
 	"jig/internal/engine"
 	"jig/internal/interaction"
 	"jig/internal/step"
+	"jig/internal/transcript"
 )
 
 // TestInputQueueIngest verifies that three InputRequest events for distinct steps
@@ -154,50 +155,82 @@ func TestInputQueuePruneOnStatus(t *testing.T) {
 	// No panic = pass.
 }
 
-// TestGateFixedHeight verifies that the Steps and Transcript panel heights
-// (derived from View()) are the same before and after an InputRequest arrives.
-// This proves the layout does not shift when the gate transitions from
-// empty-placeholder to an active entry (Spec Unit 2, Success Metric 4).
-func TestGateFixedHeight(t *testing.T) {
+func TestEmptyInputBarIsCompactAndPanelHeightIsStable(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
-	// Capture heights with an empty queue.
-	gateHBefore := lipgloss.Height(m.gateStrip())
-	footerHBefore := lipgloss.Height(m.footerView())
-	totalHBefore := lipgloss.Height(m.View())
-	panelHBefore := totalHBefore - footerHBefore - gateHBefore
-
-	if gateHBefore == 0 {
-		t.Fatal("gate strip height is 0 — gate is not rendering when queue is empty")
+	barHBefore := lipgloss.Height(m.inputBarView())
+	panelHBefore := m.verticalLayout().panelH
+	if barHBefore < 1 || barHBefore > 2 {
+		t.Fatalf("empty input bar height = %d, want 1–2 rows", barHBefore)
 	}
 
-	// Send an InputRequest so the gate switches from placeholder to active.
 	m, _ = m.Update(EngineEventMsg{Event: engine.InputRequest{
 		RunID:  "run-1",
 		StepID: "a",
 	}})
 
-	gateHAfter := lipgloss.Height(m.gateStrip())
-	footerHAfter := lipgloss.Height(m.footerView())
-	totalHAfter := lipgloss.Height(m.View())
-	panelHAfter := totalHAfter - footerHAfter - gateHAfter
-
-	if gateHAfter != gateHBefore {
-		t.Fatalf("gate height changed on InputRequest arrival: %d → %d", gateHBefore, gateHAfter)
+	if got := lipgloss.Height(m.inputBarView()); got != barHBefore {
+		t.Fatalf("input bar height changed on request arrival: %d → %d", barHBefore, got)
 	}
-	if panelHAfter != panelHBefore {
+	if panelHAfter := m.verticalLayout().panelH; panelHAfter != panelHBefore {
 		t.Fatalf("panel height changed on InputRequest arrival: %d → %d", panelHBefore, panelHAfter)
 	}
+}
 
-	// Capture empty-strip View() as artifact.
-	m2 := newMonitorWithSteps(t)
-	emptyView := m2.View()
-	_ = os.MkdirAll("../../docs/specs/02-spec-tui-persistent-agent-input/artifacts", 0o755)
-	_ = os.WriteFile(
-		"../../docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit2-empty-strip.txt",
-		[]byte(stripANSI(emptyView)),
-		0o644,
-	)
+func TestGateOverlayPreservesTranscriptPositionAndDraft(t *testing.T) {
+	runDir := writeTranscript(t, "a", []transcript.Entry{{
+		Role: transcript.RoleSystem,
+		Blocks: []transcript.Block{{
+			Type: transcript.BlockText,
+			Text: strings.Repeat("transcript line\n", 80),
+		}},
+	}})
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m.chatStep = ""
+	m.reloadTranscript()
+	m.focus = focusTranscript
+	m.chatVP.SetYOffset(8)
+	m.chatAutoScroll = false
+	offset := m.chatVP.YOffset()
+	panelH := m.verticalLayout().panelH
+
+	m, _ = m.Update(EngineEventMsg{Event: engine.InputRequest{RunID: "run-1", StepID: "a"}})
+	if m.focus != focusTranscript {
+		t.Fatalf("request arrival stole focus: got %v", m.focus)
+	}
+
+	m, _ = m.Update(key("tab"))
+	if m.focus != focusGate {
+		t.Fatalf("tab from transcript focused %v, want gate", m.focus)
+	}
+	if got := m.verticalLayout().panelH; got != panelH {
+		t.Fatalf("opening overlay changed panel height: %d → %d", panelH, got)
+	}
+	if got := m.chatVP.YOffset(); got != offset {
+		t.Fatalf("opening overlay changed transcript offset: %d → %d", offset, got)
+	}
+	m.promptTextarea.SetValue("partial answer")
+
+	m, _ = m.Update(key("esc"))
+	if m.focus != focusSteps {
+		t.Fatalf("esc from gate focused %v, want steps", m.focus)
+	}
+	if got := m.chatVP.YOffset(); got != offset {
+		t.Fatalf("closing overlay changed transcript offset: %d → %d", offset, got)
+	}
+	if got := m.inputQueue[0].draft; got != "partial answer" {
+		t.Fatalf("draft after closing overlay = %q", got)
+	}
+
+	m, _ = m.Update(key("tab"))
+	m, _ = m.Update(key("tab"))
+	if m.focus != focusGate {
+		t.Fatalf("reopening gate focused %v", m.focus)
+	}
+	if got := m.promptTextarea.Value(); got != "partial answer" {
+		t.Fatalf("draft after reopening overlay = %q", got)
+	}
 }
 
 // stripANSI removes ANSI escape codes from s for plain-text artifact storage.

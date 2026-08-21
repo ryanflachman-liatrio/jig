@@ -12,7 +12,7 @@ manages code across steps.
 | ADR | Title | Status | Decision summary |
 |-----|-------|--------|-----------------|
 | [0001](0001-manual-border-title-compositing.md) | Manual border-title compositing in the panel helper | accepted | lipgloss v2 exposes no border-title API; compositing border titles by hand is the only portable option. |
-| [0002](0002-gates-are-nonblocking-focus-regions.md) | Monitor gates are non-blocking focus regions, not modal dialogs | accepted | Human gates render as a focus region beneath the step — the run and in-flight siblings stay alive while a human decides. |
+| [0002](0002-gates-are-nonblocking-focus-regions.md) | Monitor gates are non-blocking focus regions, not modal dialogs | accepted | A compact bar advertises queued gates; focusing one opens an overlay without resizing the monitor or blocking in-flight siblings. |
 | [0003](0003-extensibility-lives-in-engine-and-schema.md) | Extensibility lives in the engine and schema, not the TUI | accepted | New step types are added via `engine.Executor` and `runner.Mux`; the TUI is a consumer, not the extension seam. |
 | [0004](0004-tui-root-composes-screens-via-screen-interface.md) | The TUI root composes screens via a compile-time Screen interface | accepted | `rootModel` holds a `Screen` interface value; each screen is a self-contained Elm component, swapped by the root. |
 | *(0005 absent)* | — | — | — |

@@ -27,17 +27,17 @@ The property of holding keyboard input. The focused region's border is drawn in 
 primary color (Charple); every blurred region's border is dim (Iron). On a
 single-panel screen the whole screen is the focused region. In the Monitor, focus
 moves between the Steps panel, the Transcript panel, and the Gate — the Gate only
-while the input queue is non-empty (an empty gate is visible but not focusable and
-is skipped by the `tab` cycle).
+while the input queue is non-empty (the empty input bar is inert and skipped by
+the `tab` cycle).
 _Avoid_: Active, selected (reserve "selected" for the list cursor row).
 
 **Gate**:
-The always-present full-width strip beneath the two panels through which the
-Monitor collects human input. It is the single surface for every kind of
-human-in-the-loop request and is drawn even when nothing is pending (then it shows
-a placeholder). A pending gate does NOT freeze navigation — the user can still move
-focus between the panels to read context while the gate waits.
-_Avoid_: Overlay, modal, dialog, prompt (reserve "prompt" for the from="user" entry).
+The Monitor surface through which human input is collected. An always-present,
+one-line action bar reports pending entries; focusing a pending Gate opens its
+controls as an overlay without resizing the Steps or Transcript panels. A pending
+Gate does NOT freeze navigation — the user can still move focus between the panels
+to read context while the Gate waits.
+_Avoid_: Modal, dialog, prompt (reserve "prompt" for the from="user" entry).
 
 **Input queue**:
 The ordered set of all steps currently blocked on a human, surfaced through the

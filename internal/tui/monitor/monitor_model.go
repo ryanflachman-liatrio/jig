@@ -182,9 +182,8 @@ type Model struct {
 	selFile string // absolute path of the selected file
 
 	// inputQueue holds every step currently blocked on a human, in arrival order.
-	// activeInputIdx is the entry currently shown in the gate strip. hasGate() is
-	// len(inputQueue) > 0; an empty queue still renders (placeholder) but is not
-	// focusable via cycleFocus.
+	// activeInputIdx is the entry currently shown in the gate overlay. hasGate() is
+	// len(inputQueue) > 0; an empty queue leaves only the compact, inert input bar.
 	inputQueue     []pendingInputEntry
 	activeInputIdx int
 
@@ -270,17 +269,15 @@ const (
 const (
 	// gateTextareaRows is the content-row count passed to shared.NewInputTextarea for
 	// every gate entry that uses a textarea (inputKindRequest, inputKindPrompt,
-	// and review compose). Changing it here propagates to gateBodyHeight().
+	// and review compose). Changing it here propagates to the overlay height.
 	gateTextareaRows = 4
 
 	// gateHeaderRows is the number of rows reserved for the [N / M] step-id (kind)
-	// header that task 3.4 renders above each non-empty gate entry. Reserved in the
-	// fixed height calculation now so gateBodyHeight() is stable before that task
-	// lands.
+	// header above each gate entry.
 	gateHeaderRows = 1
 
 	// maxReviewChoices is the bounded maximum number of verdict-choice lines a
-	// review entry can render without overflowing the fixed gate height. A value
+	// review entry can render without overflowing the overlay height. A value
 	// of 4 covers the common approve/reject/defer/escalate pattern; the review
 	// panel height is validated against this bound in the unit5-review-diff.txt
 	// proof capture (task 5.4).
