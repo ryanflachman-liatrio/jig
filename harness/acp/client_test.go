@@ -38,9 +38,10 @@ func TestSessionUpdate_CapturesEachEventKind(t *testing.T) {
 					ToolCallId: "call_1",
 					Title:      "Read file.go",
 					Status:     acpsdk.ToolCallStatusPending,
+					RawInput:   map[string]any{"file_path": "/tmp/file.go"},
 				},
 			}},
-			want: Event{Kind: EventToolCall, ToolID: "call_1", Title: "Read file.go", Status: "pending"},
+			want: Event{Kind: EventToolCall, ToolID: "call_1", Title: "Read file.go", Status: "pending", Input: `{"file_path":"/tmp/file.go"}`},
 		},
 		{
 			name: "tool call update",
@@ -48,9 +49,10 @@ func TestSessionUpdate_CapturesEachEventKind(t *testing.T) {
 				ToolCallUpdate: &acpsdk.SessionToolCallUpdate{
 					ToolCallId: "call_1",
 					Status:     statusPtr(acpsdk.ToolCallStatusCompleted),
+					RawInput:   map[string]any{"file_path": "/tmp/file.go"},
 				},
 			}},
-			want: Event{Kind: EventToolCallUpdate, ToolID: "call_1", Status: "completed"},
+			want: Event{Kind: EventToolCallUpdate, ToolID: "call_1", Status: "completed", Input: `{"file_path":"/tmp/file.go"}`},
 		},
 	}
 

@@ -353,17 +353,21 @@ type acpSession struct {
 	// response (after all tool results) is captured.
 	lastText string
 
-	// pendingTools maps tool_id → most-recently-seen title. The ACP adapter
-	// streams tool call starts and title updates as separate EventToolCall
-	// events; we buffer them here and emit a single EventToolUse only when the
-	// corresponding EventToolCallUpdate (the result) arrives.
-	pendingTools map[string]string
+	// ACP may send title and raw-input updates separately before completion.
+	// Keeping both together prevents a title-only update from dropping the
+	// input needed by transcript renderers.
+	pendingTools map[string]pendingTool
 
 	// hasTextSinceFlush is true whenever text or thinking events have been
 	// emitted since the last EventAssistantEnd. Used to decide whether to flush
 	// before the first new tool call, and to flush any trailing text after
 	// Prompt returns.
 	hasTextSinceFlush bool
+}
+
+type pendingTool struct {
+	title string
+	input json.RawMessage
 }
 
 func (s *acpSession) Messages() <-chan Event { return s.events }
@@ -565,10 +569,16 @@ func (s *acpSession) onEvent(ev acp.Event) {
 
 	case acp.EventToolCall:
 		if s.pendingTools == nil {
-			s.pendingTools = make(map[string]string)
+			s.pendingTools = make(map[string]pendingTool)
 		}
-		_, existed := s.pendingTools[ev.ToolID]
-		s.pendingTools[ev.ToolID] = ev.Title
+		tool, existed := s.pendingTools[ev.ToolID]
+		if ev.Title != "" {
+			tool.title = ev.Title
+		}
+		if ev.Input != "" {
+			tool.input = json.RawMessage(ev.Input)
+		}
+		s.pendingTools[ev.ToolID] = tool
 		if !existed {
 			// First time seeing this tool ID: flush any preceding text so it
 			// lands in its own assistant entry, separate from the tool calls.
@@ -584,12 +594,18 @@ func (s *acpSession) onEvent(ev acp.Event) {
 		// is emitted once, when EventToolCallUpdate arrives with the result.
 
 	case acp.EventToolCallUpdate:
-		title := ""
+		tool := pendingTool{}
 		if s.pendingTools != nil {
-			title = s.pendingTools[ev.ToolID]
+			tool = s.pendingTools[ev.ToolID]
 			delete(s.pendingTools, ev.ToolID)
 		}
-		s.events <- Event{Type: EventToolUse, ToolUseID: ev.ToolID, Name: title}
+		if ev.Title != "" {
+			tool.title = ev.Title
+		}
+		if ev.Input != "" {
+			tool.input = json.RawMessage(ev.Input)
+		}
+		s.events <- Event{Type: EventToolUse, ToolUseID: ev.ToolID, Name: tool.title, Input: tool.input}
 		s.events <- Event{Type: EventAssistantEnd}
 		s.events <- Event{Type: EventToolResult, ToolUseID: ev.ToolID, Content: ev.Status, IsError: ev.Status == "failed"}
 		s.events <- Event{Type: EventUserEnd}
