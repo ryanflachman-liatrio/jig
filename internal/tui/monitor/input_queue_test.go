@@ -451,9 +451,9 @@ func captureUnit3NavFrames(m Model) {
 	frames = append(frames, stripANSI(m3.View()))
 
 	combined := strings.Join(frames, "\n\n--- frame ---\n\n")
-	_ = os.MkdirAll("../../docs/specs/02-spec-tui-persistent-agent-input/artifacts", 0o755)
+	_ = os.MkdirAll("../../../docs/specs/02-spec-tui-persistent-agent-input/artifacts", 0o755)
 	_ = os.WriteFile(
-		"../../docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit3-nav.txt",
+		"../../../docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit3-nav.txt",
 		[]byte(combined),
 		0o644,
 	)

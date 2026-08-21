@@ -1893,7 +1893,7 @@ func TestQuestionScroll(t *testing.T) {
 // TestCaptureUnit6Scroll captures View() of a scrollable AgentQuestion,
 // showing the windowed option list with ▲/▼ indicators.
 func TestCaptureUnit6Scroll(t *testing.T) {
-	const artifactPath = "../../docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit6-scroll.txt"
+	const artifactPath = "../../../docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit6-scroll.txt"
 	m := newMonitorWithSteps(t)
 
 	var opts []interaction.QuestionOption
@@ -1920,7 +1920,7 @@ func TestCaptureUnit6Scroll(t *testing.T) {
 // TestCaptureUnit5ReviewDiff captures View() with a review step selected,
 // showing the diff in the Transcript panel and the gate entry with verdict choices.
 func TestCaptureUnit5ReviewDiff(t *testing.T) {
-	const artifactPath = "../../docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit5-review-diff.txt"
+	const artifactPath = "../../../docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit5-review-diff.txt"
 	m := newMonitorWithSteps(t)
 	m, _ = m.Update(EngineEventMsg{Event: engine.ReviewRequest{
 		RunID:        "run-1",
@@ -1943,7 +1943,7 @@ func TestCaptureUnit5ReviewDiff(t *testing.T) {
 // queue to a single entry and then to the empty placeholder, writing the result
 // to docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit4-drain.txt.
 func TestCaptureUnit4Drain(t *testing.T) {
-	const artifactPath = "../../docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit4-drain.txt"
+	const artifactPath = "../../../docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit4-drain.txt"
 	m := newMonitorWithSteps(t)
 	m, _ = m.Update(EngineEventMsg{Event: engine.InputRequest{RunID: "run-1", StepID: "a"}})
 	m, _ = m.Update(EngineEventMsg{Event: engine.InputRequest{RunID: "run-1", StepID: "b"}})
