@@ -5,7 +5,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"jig/internal/helpchat"
-	"jig/internal/step"
 )
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
@@ -301,34 +300,26 @@ func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 
 	// ── spec 08 C4: stop/reset/resume ─────────────────────────────────────────
 	case keybind.Matches(msg, m.keys.StopStep):
-		if !m.cursorIsFileRow() && !m.done && m.cursor < len(m.steps) {
-			st := m.steps[m.cursor]
-			if st.status == step.StatusRunning {
-				runID, stepID := m.RunID, st.id
-				return m, func() tea.Msg { return StopStepMsg{RunID: runID, StepID: stepID} }
-			}
+		actions := m.selectedLifecycleActions()
+		if actions.canStop {
+			runID, stepID := m.RunID, actions.stepID
+			return m, func() tea.Msg { return StopStepMsg{RunID: runID, StepID: stepID} }
 		}
 		return m, nil
 
 	case keybind.Matches(msg, m.keys.ResetStep):
-		if !m.cursorIsFileRow() && !m.done && m.cursor < len(m.steps) {
-			st := m.steps[m.cursor]
-			switch st.status {
-			case step.StatusSucceeded, step.StatusFailed, step.StatusSkipped,
-				step.StatusStopped, step.StatusAwaitingReview:
-				runID, stepID := m.RunID, st.id
-				return m, func() tea.Msg { return RequestResetMsg{RunID: runID, StepID: stepID} }
-			}
+		actions := m.selectedLifecycleActions()
+		if actions.canReset {
+			runID, stepID := m.RunID, actions.stepID
+			return m, func() tea.Msg { return RequestResetMsg{RunID: runID, StepID: stepID} }
 		}
 		return m, nil
 
 	case keybind.Matches(msg, m.keys.ResumeStep):
-		if !m.cursorIsFileRow() && !m.done && m.cursor < len(m.steps) {
-			st := m.steps[m.cursor]
-			if st.status == step.StatusStopped {
-				runID, stepID := m.RunID, st.id
-				return m, func() tea.Msg { return ResumeStepMsg{RunID: runID, StepID: stepID} }
-			}
+		actions := m.selectedLifecycleActions()
+		if actions.canResume {
+			runID, stepID := m.RunID, actions.stepID
+			return m, func() tea.Msg { return ResumeStepMsg{RunID: runID, StepID: stepID} }
 		}
 		return m, nil
 	}

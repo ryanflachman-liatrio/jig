@@ -8,7 +8,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"jig/internal/sentinel"
-	"jig/internal/step"
 	"jig/internal/tui/shared"
 )
 
@@ -206,26 +205,13 @@ func (m Model) hintLabel() string {
 	case m.focus == focusTranscript:
 		return shared.HintString(m.keys.FocusFull, m.keys.Scroll, m.keys.GotoTop, m.keys.GotoBottom, m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll, m.keys.ToggleHelp)
 	default: // focusSteps
-		// Gate eligibility: advertise stop/reset/resume only for eligible steps.
+		actions := m.selectedLifecycleActions()
 		stopKey := m.keys.StopStep
 		resetKey := m.keys.ResetStep
 		resumeKey := m.keys.ResumeStep
-		if m.done || m.cursor >= len(m.steps) {
-			stopKey.SetEnabled(false)
-			resetKey.SetEnabled(false)
-			resumeKey.SetEnabled(false)
-		} else {
-			st := m.steps[m.cursor]
-			stopKey.SetEnabled(st.status == step.StatusRunning)
-			resumeKey.SetEnabled(st.status == step.StatusStopped)
-			switch st.status {
-			case step.StatusSucceeded, step.StatusFailed, step.StatusSkipped,
-				step.StatusStopped, step.StatusAwaitingReview:
-				resetKey.SetEnabled(true)
-			default:
-				resetKey.SetEnabled(false)
-			}
-		}
+		stopKey.SetEnabled(actions.canStop)
+		resetKey.SetEnabled(actions.canReset)
+		resumeKey.SetEnabled(actions.canResume)
 		return shared.HintString(m.keys.FocusFull, m.keys.StepsNav, stopKey, resetKey, resumeKey, m.keys.ToggleHelp, m.keys.StepsLeave, shared.KeyHelp, shared.KeyQuit)
 	}
 	return ""

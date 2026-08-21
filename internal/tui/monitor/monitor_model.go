@@ -123,11 +123,12 @@ type Model struct {
 	totalTokens int
 
 	// Two-panel navigation: focus selects the active region; cursor selects the
-	// step in the Steps panel. chatStep is the step whose transcript the right
-	// panel currently shows — kept in sync with the cursor via eager reload (the
-	// transcript always shows the cursor's step, Resolved Decision 10/13).
+	// visible row in the Steps panel (a step or one of its expanded files).
+	// chatStep is the step whose transcript the right panel currently shows —
+	// kept in sync with the cursor via eager reload (the transcript always shows
+	// the cursor's step, Resolved Decision 10/13).
 	focus    focusRegion
-	cursor   int    // selected step in the Steps panel
+	cursor   int    // selected visible row in the Steps panel
 	chatStep string // step whose transcript the Transcript panel renders
 
 	// Phase 5 chat rendering. RunDir locates the per-step transcript.jsonl on
@@ -374,6 +375,13 @@ type monitorStep struct {
 	attempt   int      // current retry attempt (from StepStatus.Attempt)
 }
 
+type lifecycleActions struct {
+	stepID    string
+	canStop   bool
+	canReset  bool
+	canResume bool
+}
+
 // New creates a fresh monitor model for the given runID.
 func New(runID string) Model {
 	return Model{
@@ -500,37 +508,13 @@ func (m Model) HelpSections() []shared.HelpSection {
 			},
 		})
 	default: // focusSteps
-		// Mirror footerView's eligibility gating so disabled lifecycle actions
-		// drop out of the overlay exactly as they drop out of the footer.
+		actions := m.selectedLifecycleActions()
 		stopKey := m.keys.StopStep
 		resetKey := m.keys.ResetStep
 		resumeKey := m.keys.ResumeStep
-		if m.done || m.cursorIsFileRow() {
-			stopKey.SetEnabled(false)
-			resetKey.SetEnabled(false)
-			resumeKey.SetEnabled(false)
-		} else {
-			stepID := m.cursorStepID()
-			if stepID == "" {
-				stopKey.SetEnabled(false)
-				resetKey.SetEnabled(false)
-				resumeKey.SetEnabled(false)
-			} else {
-				i, ok := m.index[stepID]
-				if ok {
-					st := m.steps[i]
-					stopKey.SetEnabled(st.status == step.StatusRunning)
-					resumeKey.SetEnabled(st.status == step.StatusStopped)
-					switch st.status {
-					case step.StatusSucceeded, step.StatusFailed, step.StatusSkipped,
-						step.StatusStopped, step.StatusAwaitingReview:
-						resetKey.SetEnabled(true)
-					default:
-						resetKey.SetEnabled(false)
-					}
-				}
-			}
-		}
+		stopKey.SetEnabled(actions.canStop)
+		resetKey.SetEnabled(actions.canReset)
+		resumeKey.SetEnabled(actions.canResume)
 		sections = append(sections, shared.HelpSection{
 			Title: "Steps",
 			Bindings: []keybind.Binding{
@@ -643,4 +627,31 @@ func (m Model) cursorIsFileRow() bool {
 		return false
 	}
 	return rows[m.cursor].isFileRow()
+}
+
+// selectedLifecycleActions keeps dispatch and both help surfaces on the same
+// visible-row interpretation; a file row names its parent step, but must never
+// inherit that step's actions.
+func (m Model) selectedLifecycleActions() lifecycleActions {
+	if m.done || m.cursorIsFileRow() {
+		return lifecycleActions{}
+	}
+	stepID := m.cursorStepID()
+	i, ok := m.index[stepID]
+	if stepID == "" || !ok || i < 0 || i >= len(m.steps) {
+		return lifecycleActions{}
+	}
+
+	status := m.steps[i].status
+	actions := lifecycleActions{
+		stepID:    stepID,
+		canStop:   status == step.StatusRunning,
+		canResume: status == step.StatusStopped,
+	}
+	switch status {
+	case step.StatusSucceeded, step.StatusFailed, step.StatusSkipped,
+		step.StatusStopped, step.StatusAwaitingReview:
+		actions.canReset = true
+	}
+	return actions
 }

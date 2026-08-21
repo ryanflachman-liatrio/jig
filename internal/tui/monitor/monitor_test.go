@@ -2334,6 +2334,128 @@ func TestStopKey(t *testing.T) {
 	}
 }
 
+func expandedLifecycleMonitor() Model {
+	m := New("run-lifecycle")
+	m.steps = []monitorStep{
+		{id: "stop-before", status: step.StatusRunning},
+		{id: "reset-before", status: step.StatusSucceeded},
+		{id: "resume-before", status: step.StatusStopped},
+		{id: "expanded-one", status: step.StatusSucceeded},
+		{id: "stop-after", status: step.StatusRunning},
+		{id: "reset-after", status: step.StatusFailed},
+		{id: "resume-after", status: step.StatusStopped},
+	}
+	for i, st := range m.steps {
+		m.index[st.id] = i
+	}
+	m.expanded["expanded-one"] = true
+	m.stepFiles["expanded-one"] = []outputFile{
+		{name: "one.md", path: "/tmp/one.md", kind: kindMarkdown},
+		{name: "two.json", path: "/tmp/two.json", kind: kindJSON},
+	}
+	m.expanded["reset-after"] = true
+	m.stepFiles["reset-after"] = []outputFile{
+		{name: "three.txt", path: "/tmp/three.txt", kind: kindOther},
+	}
+	return m
+}
+
+func visibleStepCursor(t *testing.T, m Model, stepID string) int {
+	t.Helper()
+	for i, row := range m.visibleRows() {
+		if row.isStepRow() && row.stepID == stepID {
+			return i
+		}
+	}
+	t.Fatalf("visible step row %q not found", stepID)
+	return 0
+}
+
+func TestLifecycleActionsTargetVisibleStepRows(t *testing.T) {
+	ctrlR := tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl}
+	tests := []struct {
+		name     string
+		stepID   string
+		key      tea.KeyPressMsg
+		wantKind string
+	}{
+		{name: "stop before expanded rows", stepID: "stop-before", key: key("s"), wantKind: "stop"},
+		{name: "reset before expanded rows", stepID: "reset-before", key: key("r"), wantKind: "reset"},
+		{name: "resume before expanded rows", stepID: "resume-before", key: ctrlR, wantKind: "resume"},
+		{name: "stop after expanded rows", stepID: "stop-after", key: key("s"), wantKind: "stop"},
+		{name: "reset after expanded rows", stepID: "reset-after", key: key("r"), wantKind: "reset"},
+		{name: "resume after multiple expanded trees", stepID: "resume-after", key: ctrlR, wantKind: "resume"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := expandedLifecycleMonitor()
+			m.cursor = visibleStepCursor(t, m, tc.stepID)
+			_, cmd := m.Update(tc.key)
+			if cmd == nil {
+				t.Fatalf("%s on %q produced no command", tc.wantKind, tc.stepID)
+			}
+
+			var gotKind, gotStepID string
+			switch msg := cmd().(type) {
+			case StopStepMsg:
+				gotKind, gotStepID = "stop", msg.StepID
+			case RequestResetMsg:
+				gotKind, gotStepID = "reset", msg.StepID
+			case ResumeStepMsg:
+				gotKind, gotStepID = "resume", msg.StepID
+			default:
+				t.Fatalf("command returned unexpected message %T", msg)
+			}
+			if gotKind != tc.wantKind || gotStepID != tc.stepID {
+				t.Fatalf("command = %s/%q, want %s/%q", gotKind, gotStepID, tc.wantKind, tc.stepID)
+			}
+		})
+	}
+}
+
+func TestFileRowsDisableLifecycleActionsAndHints(t *testing.T) {
+	m := expandedLifecycleMonitor()
+	ctrlR := tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl}
+
+	for cursor, row := range m.visibleRows() {
+		if !row.isFileRow() {
+			continue
+		}
+		t.Run(row.file.name, func(t *testing.T) {
+			fileModel := m
+			fileModel.cursor = cursor
+
+			for _, actionKey := range []tea.KeyPressMsg{key("s"), key("r"), ctrlR} {
+				if _, cmd := fileModel.Update(actionKey); cmd != nil {
+					t.Fatalf("%q dispatched lifecycle command from file row", actionKey.String())
+				}
+			}
+
+			hint := fileModel.hintLabel()
+			for _, action := range []string{"stop", "reset", "resume"} {
+				if strings.Contains(hint, action) {
+					t.Errorf("footer advertised %q on file row: %q", action, hint)
+				}
+			}
+
+			for _, section := range fileModel.HelpSections() {
+				if section.Title != "Steps" {
+					continue
+				}
+				for _, binding := range section.Bindings {
+					switch binding.Help().Desc {
+					case "stop", "reset", "resume":
+						if binding.Enabled() {
+							t.Errorf("help advertised %q on file row", binding.Help().Desc)
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
 // TestSecurityPane verifies that SecurityFinding ctrl events populate the
 // Security pane and that render output is styled by severity (verbatim path,
 // not glamour). It uses the findingsPath mechanism: findings are written to
