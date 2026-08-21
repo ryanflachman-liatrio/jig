@@ -35,20 +35,30 @@ func clipReason(s string, width, maxLines int) string {
 	return strings.Join(lines, "\n")
 }
 
-// gateStrip renders the human-in-the-loop gate as a full-width titled panel
-// beneath the two main panels, above the footer. It always renders — even when
-// the queue is empty — so the Steps and Transcript panels never resize on input
-// arrival or departure (Spec Unit 2). The panel height is always
-// gateBodyHeight()+vFrame, and the border is blurred when focus != focusGate.
-func (m Model) gateStrip() string {
+func (m Model) inputBarView() string {
+	label := shared.Theme.Title.Render("Agent input")
+	if !m.hasGate() {
+		return "  " + label + shared.Theme.Chat.Hint.Render("  ·  no pending inputs")
+	}
+
+	count := fmt.Sprintf("%d pending", len(m.inputQueue))
+	action := "tab to open"
+	if m.focus == focusGate {
+		action = "esc to close"
+	}
+	return "  " + label + "  ·  " + shared.Theme.Marker.Render(count) +
+		shared.Theme.Chat.Hint.Render("  ·  "+action)
+}
+
+// gateOverlay keeps the input controls out of vertical layout calculations, so
+// focusing a gate cannot resize or move either transcript viewport.
+func (m Model) gateOverlay() string {
+	if !m.hasGate() {
+		return ""
+	}
+
 	_, vFrame := shared.PanelFrame()
 	fixedH := m.gateBodyHeight() + vFrame
-
-	// Empty queue: render a placeholder panel with a blurred border.
-	if !m.hasGate() {
-		placeholder := "\n  " + shared.Theme.Chat.Hint.Render("No pending agent inputs")
-		return shared.Panel("Agent input", placeholder, m.width, fixedH, false)
-	}
 
 	entry, _ := m.activeEntry()
 	var b strings.Builder
@@ -80,7 +90,7 @@ func (m Model) gateStrip() string {
 		}
 	}
 
-	return shared.Panel("Agent input", b.String(), m.width, fixedH, m.focus == focusGate)
+	return shared.Panel("Agent input", b.String(), m.width, fixedH, true)
 }
 
 func (m Model) renderGateRequest(b *strings.Builder, entry *pendingInputEntry) {

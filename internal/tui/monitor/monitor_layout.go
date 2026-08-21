@@ -12,31 +12,31 @@ import (
 type verticalLayout struct {
 	panelH    int
 	securityH int
-	gateH     int
+	inputH    int
 	footerH   int
 }
 
-// verticalLayout gives the fixed gate and footer priority, then lets a bounded
+// verticalLayout gives the compact input bar and footer priority, then lets a bounded
 // security summary consume space without collapsing the main panels entirely.
 func (m Model) verticalLayout() verticalLayout {
 	height := max(m.height, 0)
 	footerH := min(lipgloss.Height(m.footerView()), height)
 	remaining := height - footerH
 
-	_, vFrame := shared.PanelFrame()
-	gateH := min(m.gateBodyHeight()+vFrame, remaining)
-	remaining -= gateH
+	inputH := min(lipgloss.Height(m.inputBarView()), remaining)
+	remaining -= inputH
 
 	// Preserve a titled panel with one content row whenever the terminal has
 	// enough room; security findings remain available in findings.jsonl when the
 	// inline summary has to be shortened.
+	_, vFrame := shared.PanelFrame()
 	minPanelH := min(vFrame+1, remaining)
 	securityH := m.securityViewHeight(remaining - minPanelH)
 
 	return verticalLayout{
 		panelH:    remaining - securityH,
 		securityH: securityH,
-		gateH:     gateH,
+		inputH:    inputH,
 		footerH:   footerH,
 	}
 }
@@ -136,10 +136,8 @@ func (m Model) gateInnerWidth() int {
 	return w
 }
 
-// gateBodyHeight returns the fixed body height (inside the panel border, excluding
-// the panel's own vFrame) reserved for the gate strip unconditionally — whether
-// the queue is empty or not. It is the maximum of the two bounded per-kind
-// natural body heights:
+// gateBodyHeight returns the fixed body height inside the focused gate overlay.
+// It is the maximum of the two bounded per-kind natural body heights:
 //
 //   - textarea kinds (inputKindRequest/inputKindPrompt): gateHeaderRows + label
 //     row + gateTextareaRows content rows. The textarea is borderless (the panel

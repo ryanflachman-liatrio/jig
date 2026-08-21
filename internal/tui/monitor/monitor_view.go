@@ -41,6 +41,26 @@ func (m Model) helpOverlay(base string) string {
 	return lipgloss.NewCanvas(m.width, m.height).Compose(comp).Render()
 }
 
+func (m Model) gateOverlayView(base string, layout verticalLayout) string {
+	if m.focus != focusGate || !m.hasGate() {
+		return base
+	}
+
+	available := max(m.height-layout.inputH-layout.footerH, 0)
+	gate := m.gateOverlay()
+	overlayH := min(lipgloss.Height(gate), available)
+	if overlayH < 1 {
+		return base
+	}
+	overlay := fitBlock(gate, m.width, overlayH)
+	y := available - overlayH
+	comp := lipgloss.NewCompositor(
+		lipgloss.NewLayer(base),
+		lipgloss.NewLayer(overlay).Y(y).Z(1),
+	)
+	return lipgloss.NewCanvas(m.width, m.height).Compose(comp).Render()
+}
+
 func (m Model) securityViewHeight(available int) int {
 	if len(m.secFindings) == 0 || available < 1 || m.width < 1 {
 		return 0
@@ -237,7 +257,7 @@ func (m Model) footerView() string {
 }
 
 // View lays the monitor out as two side-by-side titled panels (Steps + the
-// selected step's transcript) with the gate strip and footer beneath. Below the
+// selected step's transcript) with the input bar and footer beneath. Below the
 // narrow threshold only the focused panel renders full-width (Resolved
 // Decision 14). Only the focused region's border is drawn primary.
 func (m Model) View() string {
@@ -250,7 +270,7 @@ func (m Model) View() string {
 
 	layout := m.verticalLayout()
 	footer := fitBlock(m.footerView(), m.width, layout.footerH)
-	gate := fitBlock(m.gateStrip(), m.width, layout.gateH)
+	inputBar := fitBlock(m.inputBarView(), m.width, layout.inputH)
 
 	rightTitle := m.chatStep
 	if rightTitle == "" {
@@ -277,7 +297,8 @@ func (m Model) View() string {
 	panels = fitBlock(panels, m.width, layout.panelH)
 
 	sec := fitBlock(m.securityView(layout.securityH), m.width, layout.securityH)
-	base := fitBlock(joinVertical(panels, sec, gate, footer), m.width, m.height)
+	base := fitBlock(joinVertical(panels, sec, inputBar, footer), m.width, m.height)
+	base = m.gateOverlayView(base, layout)
 	if m.helpOpen {
 		return m.helpOverlay(base)
 	}

@@ -1,5 +1,11 @@
 # 02-spec-tui-persistent-agent-input.md
 
+> **Rendering update:** Issue 9 supersedes this completed spec's permanently
+> expanded, fixed-height empty strip. The queue, routing, focus, and draft
+> guarantees remain; the current monitor uses a compact action bar and opens the
+> full gate as a focused overlay, as recorded in
+> [ADR 0002](../../adr/0002-gates-are-nonblocking-focus-regions.md).
+
 ## Introduction/Overview
 
 The run monitor surfaces human-in-the-loop requests through a **gate strip** at the
