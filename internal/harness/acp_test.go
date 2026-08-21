@@ -221,14 +221,14 @@ func TestOnEvent_ToolCallFlushesText(t *testing.T) {
 		t.Error("hasTextSinceFlush should be false after flush")
 	}
 	// Title buffered.
-	if s.pendingTools["A"] != "undefined" {
-		t.Errorf("pendingTools[A] = %q, want %q", s.pendingTools["A"], "undefined")
+	if s.pendingTools["A"].title != "undefined" {
+		t.Errorf("pendingTools[A].title = %q, want %q", s.pendingTools["A"].title, "undefined")
 	}
 }
 
 func TestOnEvent_ToolCallTitleUpdates(t *testing.T) {
 	s := newTestSession()
-	s.onEvent(acp.Event{Kind: acp.EventToolCall, ToolID: "A", Title: "undefined"})
+	s.onEvent(acp.Event{Kind: acp.EventToolCall, ToolID: "A", Title: "undefined", Input: `{"query":"Go 1.25"}`})
 	drainEvents(s.events) // consume any flush events (empty since no prior text)
 
 	// Second EventToolCall for same ID: only updates title, no extra flush.
@@ -237,8 +237,11 @@ func TestOnEvent_ToolCallTitleUpdates(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatalf("title update should emit nothing, got %+v", got)
 	}
-	if s.pendingTools["A"] != "Go 1.25 release date" {
-		t.Errorf("pendingTools[A] = %q after update", s.pendingTools["A"])
+	if s.pendingTools["A"].title != "Go 1.25 release date" {
+		t.Errorf("pendingTools[A].title = %q after update", s.pendingTools["A"].title)
+	}
+	if string(s.pendingTools["A"].input) != `{"query":"Go 1.25"}` {
+		t.Errorf("pendingTools[A].input = %s after title-only update", s.pendingTools["A"].input)
 	}
 }
 
@@ -247,7 +250,7 @@ func TestOnEvent_ToolCallUpdateEmitsToolUseAndResult(t *testing.T) {
 	s.onEvent(acp.Event{Kind: acp.EventToolCall, ToolID: "A", Title: "Go 1.25 release date"})
 	drainEvents(s.events) // consume any flush events
 
-	s.onEvent(acp.Event{Kind: acp.EventToolCallUpdate, ToolID: "A", Status: "completed"})
+	s.onEvent(acp.Event{Kind: acp.EventToolCallUpdate, ToolID: "A", Status: "completed", Input: `{"query":"Go 1.25"}`})
 	got := drainEvents(s.events)
 	// Expect: EventToolUse, EventAssistantEnd, EventToolResult, EventUserEnd.
 	want := []EventType{EventToolUse, EventAssistantEnd, EventToolResult, EventUserEnd}
@@ -264,6 +267,9 @@ func TestOnEvent_ToolCallUpdateEmitsToolUseAndResult(t *testing.T) {
 	}
 	if got[0].ToolUseID != "A" {
 		t.Errorf("EventToolUse.ToolUseID = %q, want A", got[0].ToolUseID)
+	}
+	if string(got[0].Input) != `{"query":"Go 1.25"}` {
+		t.Errorf("EventToolUse.Input = %s, want raw query input", got[0].Input)
 	}
 	if got[2].IsError {
 		t.Error("completed status should not be an error")

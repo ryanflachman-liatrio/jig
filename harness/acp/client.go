@@ -5,6 +5,7 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -41,6 +42,7 @@ type Event struct {
 	ToolID string
 	Title  string
 	Status string
+	Input  string
 }
 
 // Client implements acp.Client, capturing every session/update into an
@@ -145,7 +147,13 @@ func (c *Client) SessionUpdate(_ context.Context, params acpsdk.SessionNotificat
 	case u.UserMessageChunk != nil:
 		ev = Event{Kind: EventUserMessage, Text: textOf(u.UserMessageChunk.Content)}
 	case u.ToolCall != nil:
-		ev = Event{Kind: EventToolCall, ToolID: string(u.ToolCall.ToolCallId), Title: u.ToolCall.Title, Status: string(u.ToolCall.Status)}
+		ev = Event{
+			Kind:   EventToolCall,
+			ToolID: string(u.ToolCall.ToolCallId),
+			Title:  u.ToolCall.Title,
+			Status: string(u.ToolCall.Status),
+			Input:  marshalToolInput(u.ToolCall.RawInput),
+		}
 	case u.ToolCallUpdate != nil:
 		status := ""
 		if u.ToolCallUpdate.Status != nil {
@@ -155,7 +163,13 @@ func (c *Client) SessionUpdate(_ context.Context, params acpsdk.SessionNotificat
 		if u.ToolCallUpdate.Title != nil {
 			title = *u.ToolCallUpdate.Title
 		}
-		ev = Event{Kind: EventToolCallUpdate, ToolID: string(u.ToolCallUpdate.ToolCallId), Title: title, Status: status}
+		ev = Event{
+			Kind:   EventToolCallUpdate,
+			ToolID: string(u.ToolCallUpdate.ToolCallId),
+			Title:  title,
+			Status: status,
+			Input:  marshalToolInput(u.ToolCallUpdate.RawInput),
+		}
 	case u.Plan != nil:
 		ev = Event{Kind: EventPlan}
 	default:
@@ -175,6 +189,17 @@ func textOf(cb acpsdk.ContentBlock) string {
 		return cb.Text.Text
 	}
 	return ""
+}
+
+func marshalToolInput(input any) string {
+	if input == nil {
+		return ""
+	}
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }
 
 // ReadTextFile, WriteTextFile, and the terminal methods are unused by the
@@ -272,7 +297,7 @@ func WriteLog(w io.Writer, r *Result) error {
 		return err
 	}
 	for _, ev := range r.Events {
-		if _, err := fmt.Fprintf(w, "[%s] title=%q status=%q tool_id=%q text=%q\n", ev.Kind, ev.Title, ev.Status, ev.ToolID, ev.Text); err != nil {
+		if _, err := fmt.Fprintf(w, "[%s] title=%q status=%q tool_id=%q text=%q input=%s\n", ev.Kind, ev.Title, ev.Status, ev.ToolID, ev.Text, ev.Input); err != nil {
 			return err
 		}
 	}

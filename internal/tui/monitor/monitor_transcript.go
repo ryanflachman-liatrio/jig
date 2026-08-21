@@ -348,38 +348,6 @@ func (m *Model) rebuildActiveState(saved chatItem) {
 	}
 }
 
-// toolCategoryIcon returns a unicode glyph for a tool name based on its
-// functional category, enabling fast visual scanning of tool call groups.
-func toolCategoryIcon(name string) string {
-	lower := strings.ToLower(name)
-	for _, kw := range []string{"read", "write", "edit", "create", "view", "file", "notebook"} {
-		if strings.Contains(lower, kw) {
-			return "◈"
-		}
-	}
-	for _, kw := range []string{"search", "grep", "find", "glob"} {
-		if strings.Contains(lower, kw) {
-			return "⌕"
-		}
-	}
-	for _, kw := range []string{"bash", "execute", "shell", "run"} {
-		if strings.Contains(lower, kw) {
-			return "$"
-		}
-	}
-	for _, kw := range []string{"webfetch", "websearch", "fetch", "web"} {
-		if strings.Contains(lower, kw) {
-			return "↗"
-		}
-	}
-	for _, kw := range []string{"task", "todo", "agent"} {
-		if strings.Contains(lower, kw) {
-			return "⊙"
-		}
-	}
-	return shared.IconToolCall
-}
-
 // collapsible reports whether a block type is collapsed to chatCollapseWidth by
 // default (and thus navigable via the block cursor). Text renders in full as
 // markdown; unknown types render as an inert placeholder.
@@ -561,13 +529,14 @@ func (m Model) writeBlock(b *strings.Builder, key blockKey, blk transcript.Block
 		}
 		b.WriteString(m.renderMarkdown(key, blk.Text))
 	case transcript.BlockThinking:
-		m.writeCollapsible(b, key, shared.Theme.Chat.Thinking, shared.Theme.Chat.BarThinking, shared.IconThinking+" reasoning", blk.Text, "", false, blk.Truncated)
+		m.writeCollapsible(b, key, shared.Theme.Chat.Thinking, shared.Theme.Chat.BarThinking, shared.IconThinking+" reasoning", blk.Text, blk.Text, "", false, blk.Truncated)
 	case transcript.BlockToolUse:
 		inp := expandView(string(blk.Input))
-		m.writeCollapsible(b, key, shared.Theme.Chat.ToolCall, shared.Theme.Chat.BarToolCall, toolCategoryIcon(blk.Name)+" "+blk.Name, inp, fenceJSON(inp), false, false)
+		summary := summarizeToolCall(blk)
+		m.writeCollapsible(b, key, shared.Theme.Chat.ToolCall, shared.Theme.Chat.BarToolCall, summary.label, summary.preview, inp, fenceJSON(inp), false, false)
 	case transcript.BlockToolResult:
 		res := expandView(blk.Content)
-		m.writeCollapsible(b, key, shared.Theme.Chat.ToolResult, shared.Theme.Chat.BarToolResult, shared.IconToolResult+" result", res, fenceJSON(res), blk.IsError, blk.Truncated)
+		m.writeCollapsible(b, key, shared.Theme.Chat.ToolResult, shared.Theme.Chat.BarToolResult, shared.IconToolResult+" result", res, res, fenceJSON(res), blk.IsError, blk.Truncated)
 	default:
 		b.WriteString("  " + shared.Theme.Question.Render("[unsupported block: "+string(blk.Type)+"]") + "\n")
 	}
@@ -635,7 +604,7 @@ func fenceJSON(s string) string {
 // clipped to chatCollapseWidth or the bounded full content (also bar-accented).
 // The block under the chat cursor is highlighted so the expand target is
 // obvious; error results take shared.Theme.Error and the danger bar.
-func (m Model) writeCollapsible(b *strings.Builder, key blockKey, labelStyle, barStyle lipgloss.Style, label, content, formattedContent string, isError, truncated bool) {
+func (m Model) writeCollapsible(b *strings.Builder, key blockKey, labelStyle, barStyle lipgloss.Style, label, preview, content, formattedContent string, isError, truncated bool) {
 	expanded := m.chatExpandAll || m.chatExpand[key]
 	cursored := len(m.chatBlocks) > 0 && m.chatBlockCursor < len(m.chatBlocks) &&
 		!m.chatBlocks[m.chatBlockCursor].isGroup &&
@@ -659,13 +628,13 @@ func (m Model) writeCollapsible(b *strings.Builder, key blockKey, labelStyle, ba
 	}
 
 	if !expanded {
-		shown, clipped := collapseLine(content)
+		shown, clipped := collapseLine(preview)
 		if shown != "" {
-			b.WriteString("  " + shared.Theme.Question.Render(shown))
+			b.WriteString(" " + shared.Theme.Question.Render(shown))
 		}
 		if clipped || truncated {
 			b.WriteString(shared.Theme.Chat.Hint.Render(
-				fmt.Sprintf(" [%d chars]", utf8.RuneCountInString(content))))
+				fmt.Sprintf(" [%d chars]", utf8.RuneCountInString(preview))))
 		}
 		b.WriteString("\n")
 		return

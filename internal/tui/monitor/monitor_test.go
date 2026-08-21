@@ -120,6 +120,36 @@ func TestMonitorChatRendersBlocks(t *testing.T) {
 	}
 }
 
+func TestMonitorFoldedReadShowsFilenameAndExpandedReadShowsFullInput(t *testing.T) {
+	const fullPath = "/workspace/internal/tui/monitor/monitor_transcript.go"
+	runDir := writeTranscript(t, "a", []transcript.Entry{
+		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+			{Type: transcript.BlockToolUse, Name: "Read", ToolUseID: "t1",
+				Input: rawJSON(t, map[string]string{"file_path": fullPath})},
+		}},
+	})
+
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	folded := ansiStrip(m.chatBody())
+	if !strings.Contains(folded, "◈ Read · monitor_transcript.go") {
+		t.Fatalf("folded Read missing compact filename summary:\n%s", folded)
+	}
+	if strings.Contains(folded, fullPath) {
+		t.Fatalf("folded Read leaked full path:\n%s", folded)
+	}
+
+	m, _ = m.Update(key("j"))
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	expanded := ansiStrip(m.chatBody())
+	if !strings.Contains(expanded, fullPath) {
+		t.Fatalf("expanded Read missing complete input:\n%s", expanded)
+	}
+}
+
 // TestMonitorChatCollapseExpand checks a long tool_result is hidden behind a
 // collapsed group by default and reveals its full content once expanded (via o).
 func TestMonitorChatCollapseExpand(t *testing.T) {
