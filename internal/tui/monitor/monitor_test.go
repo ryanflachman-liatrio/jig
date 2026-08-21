@@ -131,6 +131,7 @@ func TestMonitorFoldedReadShowsFilenameAndExpandedReadShowsFullInput(t *testing.
 
 	m := newMonitorWithSteps(t)
 	m.RunDir = runDir
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 200, Height: 40})
 	m = enterChatStep(t, m, "a")
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 
@@ -476,7 +477,7 @@ func TestMonitorToolGroupLayout(t *testing.T) {
 	for i, line := range lines {
 		if strings.Contains(line, "◈ Read") ||
 			strings.Contains(line, shared.IconToolResult+" result") ||
-			strings.Contains(line, "$ Bash") {
+			strings.Contains(line, "$ Run") {
 			blockLines = append(blockLines, i)
 		}
 	}
