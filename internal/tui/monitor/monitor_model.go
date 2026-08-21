@@ -326,21 +326,11 @@ type chatItem struct {
 
 // toolGroup is the payload for a group-header chatItem.
 type toolGroup struct {
-	blocks   []blockKey  // all tool_use / tool_result blockKeys in the group, in order
-	tools    []toolLabel // one entry per tool_use block (for the summary line)
-	count    int         // len(tools) — the N in "N tool calls"
-	hasError bool        // true if any tool_result in the group has IsError=true
+	blocks []blockKey // all tool_use / tool_result blockKeys in the group, in order
+	count  int        // number of tool_use blocks — the N in "N tool calls"
 }
 
-// toolLabel is one entry in the group summary line.
-type toolLabel struct {
-	name          string // blk.Name from the transcript block
-	arg           string // primaryArg(name, input) — already truncated to 40 runes
-	toolUseID     string // ToolUseID for pairing with the matching tool_result
-	resultSummary string // short result preview from the matched tool_result; "" if not yet available
-}
-
-// renderKind discriminates the five variants of renderItem.
+// renderKind discriminates the six variants of renderItem.
 type renderKind int
 
 const (
@@ -348,6 +338,7 @@ const (
 	renderEntryHeader                   // "#N role" header line
 	renderText                          // prose text block (assistant markdown or system verbatim)
 	renderGroupHeader                   // tool call group collapsed/expanded header
+	renderGroupGap                      // blank line between blocks in an expanded tool group
 	renderBlock                         // individual collapsible block (thinking or inner tool block)
 )
 
