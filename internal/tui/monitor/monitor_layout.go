@@ -124,7 +124,7 @@ func (m *Model) resize() {
 }
 
 // gateInnerWidth is the content width available to a gate strip's textarea. The
-// gate textarea is borderless (the "Agent input" panel owns the frame, so a
+// gate textarea is borderless (the contextual gate panel owns the frame, so a
 // bordered textarea would double-box), so it fills the panel's full inner width
 // — no textarea frame to subtract, only the panel's own hFrame.
 func (m Model) gateInnerWidth() int {
@@ -142,16 +142,16 @@ func (m Model) gateInnerWidth() int {
 //   - textarea kinds (inputKindRequest/inputKindPrompt): gateHeaderRows + label
 //     row + gateTextareaRows content rows. The textarea is borderless (the panel
 //     owns the frame), so it adds no vertical frame of its own.
-//   - review kind (inputKindReview, non-composing): gateHeaderRows + label row
+//   - review kind (inputKindReview, non-composing): gateHeaderRows + spacer row
 //   - maxReviewChoices verdict lines + [m] affordance + diff-location hint.
 //
 // inputKindQuestion is the only unbounded kind; its option list scrolls within
 // this height (Unit 6) and is therefore excluded from the max.
 func (m Model) gateBodyHeight() int {
 	taVFrame := shared.Theme.Textarea.Borderless.GetVerticalFrameSize()
-	// textarea case: header + label + textarea content rows (borderless: no frame)
+	// Textarea case: contextual header + label + textarea content rows.
 	textareaCaseH := gateHeaderRows + 1 + gateTextareaRows + taVFrame
-	// review case: header + label + bounded choices + [m] affordance + hint (Unit 5)
+	// Review case: contextual header + spacer + bounded choices + [m] + hint.
 	reviewCaseH := gateHeaderRows + 1 + maxReviewChoices + 1 + 1
 	if textareaCaseH > reviewCaseH {
 		return textareaCaseH

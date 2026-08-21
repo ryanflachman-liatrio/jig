@@ -114,6 +114,15 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, hCmd
 		}
 
+		// Context inspection is deliberately separate from queue navigation:
+		// tab changes the pending decision, while ctrl+o is the only path that
+		// temporarily re-points the Steps and Transcript panels.
+		if keybind.Matches(msg, m.keys.GateContext) &&
+			(m.focus == focusGate || m.gateContext != nil) {
+			m.toggleGateContext()
+			return m, nil
+		}
+
 		// Focus-switch keys move keyboard focus between the present regions even
 		// while a gate is pending — gates are non-blocking (ADR 0002). Handled
 		// first so navigation is never frozen. In the Transcript panel the block

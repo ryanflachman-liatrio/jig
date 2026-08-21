@@ -36,17 +36,21 @@ func clipReason(s string, width, maxLines int) string {
 }
 
 func (m Model) inputBarView() string {
-	label := shared.Theme.Title.Render("Agent input")
 	if !m.hasGate() {
-		return "  " + label + shared.Theme.Chat.Hint.Render("  ·  no pending inputs")
+		label := shared.Theme.Title.Render("Human actions")
+		return "  " + label + shared.Theme.Chat.Hint.Render("  ·  no pending actions")
 	}
 
+	entry, _ := m.activeEntry()
+	presentation := presentationForGate(entry)
+	label := shared.Theme.Title.Render(presentation.title)
+	subject := shared.Theme.Marker.Render(presentation.subjectLabel + ": " + presentation.subject)
 	count := fmt.Sprintf("%d pending", len(m.inputQueue))
 	action := "tab to open"
 	if m.focus == focusGate {
 		action = "esc to close"
 	}
-	return "  " + label + "  ·  " + shared.Theme.Marker.Render(count) +
+	return "  " + label + "  ·  " + subject + "  ·  " + shared.Theme.Marker.Render(count) +
 		shared.Theme.Chat.Hint.Render("  ·  "+action)
 }
 
@@ -62,12 +66,23 @@ func (m Model) gateOverlay() string {
 
 	entry, _ := m.activeEntry()
 	var b strings.Builder
+	presentation := presentationForGate(entry)
 
 	if entry != nil {
-		// [N / M]  step-id  (kind) header above every active entry body (task 3.4).
 		n := len(m.inputQueue)
-		header := fmt.Sprintf("[%d / %d]  %s  (%s)", m.activeInputIdx+1, n, entry.stepID, kindName(entry.kind))
+		header := fmt.Sprintf(
+			"[%d / %d]  %s: %s",
+			m.activeInputIdx+1,
+			n,
+			presentation.subjectLabel,
+			presentation.subject,
+		)
 		b.WriteString(shared.Theme.Title.Render(header) + "\n")
+		action := "Required: " + presentation.action
+		if presentation.contextStep != "" {
+			action += "  ·  [ctrl+o] view " + presentation.contextName
+		}
+		b.WriteString("  " + shared.Theme.Chat.Hint.Render(action) + "\n")
 		switch entry.kind {
 		case inputKindRequest:
 			m.renderGateRequest(&b, entry)
@@ -90,7 +105,7 @@ func (m Model) gateOverlay() string {
 		}
 	}
 
-	return shared.Panel("Agent input", b.String(), m.width, fixedH, true)
+	return shared.Panel(presentation.title, b.String(), m.width, fixedH, true)
 }
 
 func (m Model) renderGateRequest(b *strings.Builder, entry *pendingInputEntry) {
@@ -116,7 +131,7 @@ func (m Model) renderGateReview(b *strings.Builder, entry *pendingInputEntry) {
 		if entry.review.AllowMessage {
 			b.WriteString("    [m] message\n")
 		}
-		b.WriteString("\n    " + shared.Theme.Chat.Hint.Render("diff shown in Transcript — select this step") + "\n")
+		b.WriteString("\n    " + shared.Theme.Chat.Hint.Render("[ctrl+o] view diff") + "\n")
 	}
 }
 

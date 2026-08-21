@@ -9,16 +9,16 @@
 │                              ││   -old line                                  │
 │                              ││   +new line                                  │
 │                              ││    context                                   │
-│                              ││                                              │
-╭─ Agent input ────────────────────────────────────────────────────────────────╮
-│ [1 / 1]  a  (review)                                                         │
+╭─ Review required ────────────────────────────────────────────────────────────╮
+│ [1 / 1]  Step: a                                                             │
+│   Required: Choose a verdict or send a message  ·  [ctrl+o] view diff        │
 │     [1] approve                                                              │
 │     [2] reject                                                               │
 │     [m] message                                                              │
 │                                                                              │
-│     diff shown in Transcript — select this step                              │
+│     [ctrl+o] view diff                                                       │
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-  Agent input  ·  1 pending  ·  esc to close
-  awaiting review  ·  1-9 verdict  •  m message  •  esc blur
+  Review required  ·  Step: a  ·  1 pending  ·  esc to close
+  awaiting review  ·  1-9 verdict  •  m message  •  ctrl+o view context  •  esc

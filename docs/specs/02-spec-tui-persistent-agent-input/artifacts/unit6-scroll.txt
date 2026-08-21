@@ -1,26 +1,24 @@
 ╭─ Steps ──────────────────────╮╭─ a ──────────────────────────────────────────╮
-│ ▌ ⊙  a   needs_input         ││   ⊙  needs_input                             │
+│ ▌  ⊙  a   needs_input        ││   ⊙  a  needs_input                          │
 │      —                       ││                                              │
-│   ○  b   pending             ││   transcript unavailable (persistence off)   │
+│    ○  b   pending            ││   transcript unavailable (persistence off)   │
 │      —                       ││                                              │
-│   ○  c   pending             ││                                              │
+│    ○  c   pending            ││                                              │
 │      —                       ││                                              │
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
-│                              ││                                              │
-╰──────────────────────────────╯╰──────────────────────────────────────────────╯
-                                                                                
-╭─ Agent input ────────────────────────────────────────────────────────────────╮
-│ [1 / 1]  a  (question)                                                       │
-│   Pick one                                                                   │
-│                                                                              │
-│     ▲ more                                                                   │
-│     [3] Option3                                                              │
-│     [4] Option4                                                              │
-│     [5] Option5                                                              │
-│     ▼ more                                                                   │
+╭─ Answer required ────────────────────────────────────────────────────────────╮
+│ [1 / 1]  Step: a                                                             │
+│   Required: Choose or enter an answer  ·  [ctrl+o] view transcript           │
+│ Pick one                                                                     │
+│   ▲ more                                                                     │
+│      Option8                                                                 │
+│ ▶    Option9                                                                 │
+│   ▼ more                                                                     │
+│ ↑↓ navigate · enter select · d decline · q cancel                            │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-  awaiting answer  ·  1-9 select answer  •  ↑/↓ scroll  •  esc blur             
+  Answer required  ·  Step: a  ·  1 pending  ·  esc to close
+  awaiting answer  ·  ↑↓ navigate · enter select · d decline · q cancel · ctrl+o

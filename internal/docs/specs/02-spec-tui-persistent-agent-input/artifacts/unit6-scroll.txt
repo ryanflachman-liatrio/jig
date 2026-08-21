@@ -9,9 +9,9 @@
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
-│                              ││                                              │
-╭─ Agent input ────────────────────────────────────────────────────────────────╮
-│ [1 / 1]  a  (question)                                                       │
+╭─ Answer required ────────────────────────────────────────────────────────────╮
+│ [1 / 1]  Step: a                                                             │
+│   Required: Choose or enter an answer  ·  [ctrl+o] view transcript           │
 │ Pick one                                                                     │
 │   ▲ more                                                                     │
 │      Option8                                                                 │
@@ -20,5 +20,5 @@
 │ ↑↓ navigate · enter select · d decline · q cancel                            │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-  Agent input  ·  1 pending  ·  esc to close
-  awaiting answer  ·  ↑↓ navigate · enter select · d decline · q cancel
+  Answer required  ·  Step: a  ·  1 pending  ·  esc to close
+  awaiting answer  ·  ↑↓ navigate · enter select · d decline · q cancel · ctrl+o

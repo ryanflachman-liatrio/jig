@@ -9,9 +9,9 @@
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
-│                              ││                                              │
-╭─ Agent input ────────────────────────────────────────────────────────────────╮
-│ [1 / 2]  a  (input)                                                          │
+╭─ Agent input required ───────────────────────────────────────────────────────╮
+│ [1 / 2]  Step: a                                                             │
+│   Required: Enter a message to continue  ·  [ctrl+o] view transcript         │
 │ ┃ Message to agent…                                                          │
 │ ┃                                                                            │
 │ ┃                                                                            │
@@ -20,8 +20,8 @@
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-  Agent input  ·  2 pending  ·  esc to close
-  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ta
+  Agent input required  ·  Step: a  ·  2 pending  ·  esc to close
+  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ct
 --- frame ---
 
 ╭─ Steps ──────────────────────╮╭─ a ──────────────────────────────────────────╮
@@ -35,9 +35,9 @@
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
-│                              ││                                              │
-╭─ Agent input ────────────────────────────────────────────────────────────────╮
-│ [1 / 1]  b  (input)                                                          │
+╭─ Agent input required ───────────────────────────────────────────────────────╮
+│ [1 / 1]  Step: b                                                             │
+│   Required: Enter a message to continue  ·  [ctrl+o] view transcript         │
 │ ┃ Message to agent…                                                          │
 │ ┃                                                                            │
 │ ┃                                                                            │
@@ -46,8 +46,8 @@
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-  Agent input  ·  1 pending  ·  esc to close
-  awaiting agent input  ·  enter submit  •  alt+enter newline  •  esc blur
+  Agent input required  ·  Step: b  ·  1 pending  ·  esc to close
+  awaiting agent input  ·  enter submit  •  alt+enter newline  •  ctrl+o view co
 --- frame ---
 
 ╭─ Steps ──────────────────────╮╭─ a ──────────────────────────────────────────╮
@@ -72,5 +72,5 @@
 │                              ││                                              │
 │                              ││                                              │
 ╰──────────────────────────────╯╰──────────────────────────────────────────────╯
-  Agent input  ·  no pending inputs                                             
+  Human actions  ·  no pending actions                                          
   running  ·  tab/←/→ focus  •  j/k select  •  ctrl+\ help agent  •  esc runs li
