@@ -149,14 +149,14 @@ func (m Model) renderGateRecovery(b *strings.Builder, entry *pendingInputEntry) 
 				b.WriteString("\n") // pad to keep height stable
 			}
 		}
-		b.WriteString("    [r] retry\n")
-		if entry.recovery.CanResume {
-			b.WriteString("    [g] retry with guidance\n")
-		} else {
-			b.WriteString("\n") // keep height stable when resume is unavailable
+		actions := m.recoveryActions(entry.recovery)
+		for _, action := range actions {
+			help := action.binding.Help()
+			b.WriteString(fmt.Sprintf("    [%s] %s\n", help.Key, action.body))
 		}
-		b.WriteString("    [s] skip\n")
-		b.WriteString("    [a] abort run\n")
+		for i := len(actions); i < recoveryActionRows; i++ {
+			b.WriteString("\n")
+		}
 	}
 }
 

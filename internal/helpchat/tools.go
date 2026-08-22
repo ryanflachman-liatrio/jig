@@ -193,14 +193,14 @@ func buildRecoverStep(run *engine.Run, dispatch DispatchFunc) *claudecode.McpToo
 		"type": "object",
 		"properties": map[string]any{
 			"step_id":  map[string]any{"type": "string", "description": "Step ID to recover"},
-			"action":   map[string]any{"type": "string", "enum": []any{"retry", "resume", "abort"}, "description": "Recovery action"},
+			"action":   map[string]any{"type": "string", "enum": []any{"retry", "resume", "skip", "abort"}, "description": "Recovery action"},
 			"guidance": map[string]any{"type": "string", "description": "Optional guidance text for the resumed agent"},
 		},
 		"required": []any{"step_id", "action"},
 	}
 	return claudecode.NewTool(
 		"recover_step",
-		"Retry, resume, or abort a step in awaiting_recovery state.",
+		"Retry, resume, skip, or abort a step in awaiting_recovery state.",
 		schema,
 		func(_ context.Context, args map[string]any) (*claudecode.McpToolResult, error) {
 			stepID, _ := args["step_id"].(string)

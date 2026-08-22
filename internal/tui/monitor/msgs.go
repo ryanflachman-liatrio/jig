@@ -53,8 +53,8 @@ type AgentQuestionResponseMsg struct {
 
 // RecoverResponseMsg is emitted by the monitor when the user picks a recovery
 // action for a step parked in awaiting_recovery. The root delivers it via
-// Run.Recover. Action is engine.RecoverRetry / RecoverResume / RecoverAbort;
-// Text is optional guidance for the resume path.
+// Run.Recover. Action is one of the engine Recover* constants; Text is optional
+// guidance for the resume path.
 type RecoverResponseMsg struct {
 	RunID  string
 	StepID string

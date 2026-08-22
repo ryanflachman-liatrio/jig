@@ -1459,9 +1459,6 @@ func TestMonitorReviewQueued(t *testing.T) {
 	}
 }
 
-// TestMonitorRecoveryGate verifies that a RecoveryRequest surfaces a recovery
-// gate whose r/a actions emit recoverResponseMsg, and that guidance ([g]) is
-// hidden when the failed step has no resumable session.
 func TestMonitorRecoveryGate(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	m, _ = m.Update(EngineEventMsg{Event: engine.RecoveryRequest{
@@ -1477,7 +1474,9 @@ func TestMonitorRecoveryGate(t *testing.T) {
 	if !strings.Contains(strip, "Recovery action") {
 		t.Fatalf("recovery gate strip not shown:\n%s", strip)
 	}
-	if !strings.Contains(strip, "[r] retry") || !strings.Contains(strip, "[a] abort") {
+	if !strings.Contains(strip, "[r] retry") ||
+		!strings.Contains(strip, "[s] skip — accept failure and continue") ||
+		!strings.Contains(strip, "[a] abort") {
 		t.Fatalf("recovery actions not rendered:\n%s", strip)
 	}
 	// CanResume=false ⇒ no guidance affordance.
@@ -1508,6 +1507,108 @@ func TestMonitorRecoveryGate(t *testing.T) {
 	}
 	if rr, ok := cmd().(RecoverResponseMsg); !ok || rr.Action != engine.RecoverAbort {
 		t.Fatalf("expected RecoverAbort, got %+v (%T)", cmd(), cmd())
+	}
+}
+
+func TestMonitorRecoveryActionsStaySynchronized(t *testing.T) {
+	tests := []struct {
+		name       string
+		canResume  bool
+		wantKeys   []string
+		wantBody   []string
+		wantFooter []string
+		notWant    []string
+	}{
+		{
+			name:       "resumable",
+			canResume:  true,
+			wantKeys:   []string{"r", "g", "s", "a"},
+			wantBody:   []string{"[r] retry", "[g] retry with guidance", "[s] skip — accept failure and continue", "[a] abort run"},
+			wantFooter: []string{"r retry", "g guide+retry", "s skip", "a abort"},
+		},
+		{
+			name:       "non-resumable",
+			canResume:  false,
+			wantKeys:   []string{"r", "s", "a"},
+			wantBody:   []string{"[r] retry", "[s] skip — accept failure and continue", "[a] abort run"},
+			wantFooter: []string{"r retry", "s skip", "a abort"},
+			notWant:    []string{"[g] retry with guidance", "g guide+retry"},
+		},
+	}
+
+	var heights []int
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newMonitorWithSteps(t)
+			m, _ = m.Update(EngineEventMsg{Event: engine.RecoveryRequest{
+				RunID:     "run-1",
+				StepID:    "a",
+				Err:       "agent failed",
+				CanResume: tc.canResume,
+			}})
+			m.focus = focusGate
+
+			body := ansiStrip(m.gateOverlay())
+			footer := ansiStrip(m.hintLabel(200))
+			for _, want := range tc.wantBody {
+				if !strings.Contains(body, want) {
+					t.Errorf("body missing %q:\n%s", want, body)
+				}
+			}
+			for _, want := range tc.wantFooter {
+				if !strings.Contains(footer, want) {
+					t.Errorf("footer missing %q: %q", want, footer)
+				}
+			}
+			for _, notWant := range tc.notWant {
+				if strings.Contains(body, notWant) || strings.Contains(footer, notWant) {
+					t.Errorf("disabled action %q remained visible; body:\n%s\nfooter: %q", notWant, body, footer)
+				}
+			}
+
+			var gotKeys []string
+			for _, binding := range m.gateHelpSection().Bindings {
+				key := binding.Help().Key
+				if binding.Enabled() && slices.Contains([]string{"r", "g", "s", "a"}, key) {
+					gotKeys = append(gotKeys, key)
+				}
+			}
+			if !slices.Equal(gotKeys, tc.wantKeys) {
+				t.Errorf("help action keys = %v, want %v", gotKeys, tc.wantKeys)
+			}
+
+			for keyName, wantAction := range map[string]string{
+				"r": engine.RecoverRetry,
+				"s": engine.RecoverSkip,
+				"a": engine.RecoverAbort,
+			} {
+				actionModel := newMonitorWithSteps(t)
+				actionModel, _ = actionModel.Update(EngineEventMsg{Event: engine.RecoveryRequest{
+					RunID: "run-1", StepID: "a", Err: "agent failed", CanResume: tc.canResume,
+				}})
+				actionModel.focus = focusGate
+				_, cmd := actionModel.Update(key(keyName))
+				if cmd == nil {
+					t.Errorf("%s produced no command", keyName)
+					continue
+				}
+				msg, ok := cmd().(RecoverResponseMsg)
+				if !ok || msg.Action != wantAction {
+					t.Errorf("%s produced %#v, want action %q", keyName, msg, wantAction)
+				}
+			}
+
+			if !tc.canResume {
+				_, cmd := m.Update(key("g"))
+				if cmd != nil {
+					t.Error("disabled guidance key produced a command")
+				}
+			}
+			heights = append(heights, lipgloss.Height(m.gateOverlay()))
+		})
+	}
+	if len(heights) == 2 && heights[0] != heights[1] {
+		t.Fatalf("recovery gate heights differ: resumable=%d non-resumable=%d", heights[0], heights[1])
 	}
 }
 
@@ -2565,7 +2666,12 @@ func TestGateOverlayKeepsActionsAvailableInNarrowTerminal(t *testing.T) {
 		t.Fatalf("height %d exceeds terminal height:\n%s", height, ansiStrip(view))
 	}
 	plain := ansiStrip(view)
-	for _, action := range []string{"[r] retry", "[g] retry with guidance", "[s] skip", "[a] abort"} {
+	for _, action := range []string{
+		"[r] retry",
+		"[g] retry with guidance",
+		"[s] skip — accept failure and continue",
+		"[a] abort",
+	} {
 		if !strings.Contains(plain, action) {
 			t.Fatalf("narrow overlay missing %q:\n%s", action, plain)
 		}
@@ -3436,42 +3542,41 @@ func TestToggleHelp_OpenClose(t *testing.T) {
 	}
 }
 
-// TestHelpDispatch_DispatchedMsg verifies that a DispatchedMsg carrying a
-// RecoverAction is converted to a RecoverResponseMsg by dispatchHelpAction and
-// the returned cmd produces that message when called.
 func TestHelpDispatch_DispatchedMsg(t *testing.T) {
-	m := newMonitorWithSteps(t)
+	for _, action := range []string{"retry", "skip"} {
+		t.Run(action, func(t *testing.T) {
+			m := newMonitorWithSteps(t)
+			dispatched := helpchat.DispatchedMsg{
+				Inner: helpchat.RecoverAction{StepID: "a", Action: action, Text: "try again"},
+			}
 
-	dispatched := helpchat.DispatchedMsg{
-		Inner: helpchat.RecoverAction{StepID: "a", Action: "retry", Text: "try again"},
-	}
+			_, cmd := m.Update(dispatched)
+			if cmd == nil {
+				t.Fatal("DispatchedMsg returned nil cmd")
+			}
 
-	_, cmd := m.Update(dispatched)
-	if cmd == nil {
-		t.Fatal("DispatchedMsg returned nil cmd")
-	}
-
-	// The batch contains the inner action cmd and the re-armed drain cmd. Execute
-	// them until we get a RecoverResponseMsg (or exhaust without finding one).
-	msgs := runBatch(cmd)
-	var found *RecoverResponseMsg
-	for _, msg := range msgs {
-		if r, ok := msg.(RecoverResponseMsg); ok {
-			found = &r
-			break
-		}
-	}
-	if found == nil {
-		t.Fatalf("no RecoverResponseMsg in batch; got %T values", msgs)
-	}
-	if found.StepID != "a" {
-		t.Errorf("StepID = %q, want %q", found.StepID, "a")
-	}
-	if found.Action != "retry" {
-		t.Errorf("Action = %q, want %q", found.Action, "retry")
-	}
-	if found.RunID != "run-1" {
-		t.Errorf("RunID = %q, want %q", found.RunID, "run-1")
+			// The batch contains the inner action cmd and the re-armed drain cmd.
+			msgs := runBatch(cmd)
+			var found *RecoverResponseMsg
+			for _, msg := range msgs {
+				if r, ok := msg.(RecoverResponseMsg); ok {
+					found = &r
+					break
+				}
+			}
+			if found == nil {
+				t.Fatalf("no RecoverResponseMsg in batch; got %T values", msgs)
+			}
+			if found.StepID != "a" {
+				t.Errorf("StepID = %q, want %q", found.StepID, "a")
+			}
+			if found.Action != action {
+				t.Errorf("Action = %q, want %q", found.Action, action)
+			}
+			if found.RunID != "run-1" {
+				t.Errorf("RunID = %q, want %q", found.RunID, "run-1")
+			}
+		})
 	}
 }
 

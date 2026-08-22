@@ -11,6 +11,37 @@ import (
 	"jig/internal/tui/shared"
 )
 
+type recoveryActionSpec struct {
+	binding keybind.Binding
+	body    string
+	action  string
+	compose bool
+}
+
+const recoveryActionRows = 4
+
+func (m Model) recoveryActions(rec *engine.RecoveryRequest) []recoveryActionSpec {
+	actions := []recoveryActionSpec{
+		{binding: m.keys.RecoverRetry, body: "retry", action: engine.RecoverRetry},
+	}
+	if rec != nil && rec.CanResume {
+		actions = append(actions, recoveryActionSpec{
+			binding: m.keys.RecoverGuide,
+			body:    "retry with guidance",
+			action:  engine.RecoverResume,
+			compose: true,
+		})
+	}
+	return append(actions,
+		recoveryActionSpec{
+			binding: m.keys.RecoverSkip,
+			body:    "skip — accept failure and continue",
+			action:  engine.RecoverSkip,
+		},
+		recoveryActionSpec{binding: m.keys.RecoverAbort, body: "abort run", action: engine.RecoverAbort},
+	)
+}
+
 // activeEntry returns a pointer to the entry at activeInputIdx, or (nil, false)
 // when the queue is empty or the index is out of range.
 func (m Model) activeEntry() (*pendingInputEntry, bool) {
@@ -343,31 +374,20 @@ func (m Model) updateGateRecovery(msg tea.KeyPressMsg, entry *pendingInputEntry)
 		m.refreshPanels()
 		return m, taCmd
 	}
-	if keybind.Matches(msg, m.keys.RecoverRetry) {
-		m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
-		m.refreshPanels()
-		return m, func() tea.Msg {
-			return RecoverResponseMsg{RunID: rec.RunID, StepID: rec.StepID, Action: engine.RecoverRetry}
+	for _, action := range m.recoveryActions(rec) {
+		if !keybind.Matches(msg, action.binding) {
+			continue
 		}
-	}
-	if rec.CanResume && keybind.Matches(msg, m.keys.RecoverGuide) {
-		m.inputQueue[m.activeInputIdx].composing = true
-		m.loadActiveTextarea() // recovery-composing branch builds the guidance textarea
-		m.refreshPanels()
-		return m, textarea.Blink
-	}
-	if keybind.Matches(msg, m.keys.RecoverSkip) {
-		m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
-		m.refreshPanels()
-		return m, func() tea.Msg {
-			return RecoverResponseMsg{RunID: rec.RunID, StepID: rec.StepID, Action: engine.RecoverSkip}
+		if action.compose {
+			m.inputQueue[m.activeInputIdx].composing = true
+			m.loadActiveTextarea()
+			m.refreshPanels()
+			return m, textarea.Blink
 		}
-	}
-	if keybind.Matches(msg, m.keys.RecoverAbort) {
 		m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
 		m.refreshPanels()
 		return m, func() tea.Msg {
-			return RecoverResponseMsg{RunID: rec.RunID, StepID: rec.StepID, Action: engine.RecoverAbort}
+			return RecoverResponseMsg{RunID: rec.RunID, StepID: rec.StepID, Action: action.action}
 		}
 	}
 	return m, nil
