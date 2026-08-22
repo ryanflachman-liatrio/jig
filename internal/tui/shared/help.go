@@ -145,7 +145,7 @@ func buildHelpOverlay(width, height int, sections []HelpSection, offset int) hel
 
 	control := "?/F1/esc close"
 	if maxOffset > 0 {
-		control = "↑/↓ scroll · pgup/pgdn · home/end · " + control
+		control += " · ↑/↓ scroll · pgup/pgdn · home/end"
 	}
 	title := ansi.Truncate(Theme.Help.Title.Render("jig · help"), maxInnerW, "")
 	control = ansi.Truncate(Theme.Help.Desc.Render(control), maxInnerW, "")

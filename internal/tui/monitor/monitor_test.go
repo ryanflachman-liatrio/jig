@@ -3047,8 +3047,9 @@ func TestMonitorHelpSections(t *testing.T) {
 func TestMonitorCompactHelpIsContextualAndAtomic(t *testing.T) {
 	inputGate := newMonitorWithSteps(t)
 	inputGate, _ = inputGate.Update(EngineEventMsg{Event: engine.InputRequest{
-		RunID: "run-1", StepID: "a", Prompt: "Explain",
+		RunID: "run-1", StepID: "a",
 	}})
+	inputGate.focus = focusGate
 
 	resetGate := newMonitorWithSteps(t)
 	resetGate, _ = resetGate.Update(ShowResetConfirmMsg{

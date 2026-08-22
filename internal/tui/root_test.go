@@ -105,7 +105,7 @@ run = "echo hi"
 	// "?" opens the overlay over the selector.
 	m, _ = m.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
 	view := m.View().Content
-	for _, want := range []string{"jig · help", "Workflows", "Global", "? or esc to close"} {
+	for _, want := range []string{"jig · help", "Workflows", "Global", "?/F1/esc close"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("help overlay missing %q:\n%s", want, view)
 		}
