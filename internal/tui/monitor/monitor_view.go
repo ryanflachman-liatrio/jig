@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	keybind "charm.land/bubbles/v2/key"
@@ -208,21 +209,102 @@ func (m Model) footerView() string {
 	return f.Render(prefix + hint)
 }
 
+type contentKind uint8
+
+const (
+	contentTranscript contentKind = iota
+	contentReview
+	contentReviewDiff
+	contentFile
+)
+
+type contentContext struct {
+	kind   contentKind
+	stepID string
+	label  string
+}
+
+func (m Model) selectedContent() contentContext {
+	if m.selKind == "file" && m.selFile != "" {
+		stepID, file, ok := m.selectedOutputFile()
+		if ok {
+			return contentContext{kind: contentFile, stepID: stepID, label: file.displayLabel()}
+		}
+		return contentContext{kind: contentFile, stepID: m.chatStep, label: filepath.Base(m.selFile)}
+	}
+
+	if review, ok := m.reviews[m.chatStep]; ok && len(m.chatEntries) == 0 {
+		if review.Diff != "" {
+			return contentContext{kind: contentReviewDiff, stepID: m.chatStep, label: "Review diff"}
+		}
+		return contentContext{kind: contentReview, stepID: m.chatStep, label: "Review"}
+	}
+
+	label := "Transcript"
+	if m.showsTranscriptFollow() {
+		switch {
+		case m.chatAutoScroll:
+			label += " · LIVE"
+		case m.unseenChatEntries() > 0:
+			label += fmt.Sprintf(" · PAUSED · %d new", m.unseenChatEntries())
+		default:
+			label += " · PAUSED"
+		}
+	}
+	return contentContext{kind: contentTranscript, stepID: m.chatStep, label: label}
+}
+
+func (m Model) selectedOutputFile() (string, outputFile, bool) {
+	rows := m.visibleRows()
+	if m.cursor >= 0 && m.cursor < len(rows) {
+		row := rows[m.cursor]
+		if row.file != nil && row.file.path == m.selFile {
+			return row.stepID, *row.file, true
+		}
+	}
+	for _, step := range m.steps {
+		for _, file := range m.stepFiles[step.id] {
+			if file.path == m.selFile {
+				return step.id, file, true
+			}
+		}
+	}
+	return "", outputFile{}, false
+}
+
+func shortRunID(runID string) string {
+	runes := []rune(runID)
+	if len(runes) <= 8 {
+		return runID
+	}
+	return string(runes[len(runes)-8:])
+}
+
+func (m Model) runIdentity() string {
+	runID := shortRunID(m.RunID)
+	switch {
+	case runID != "" && m.workflow != "":
+		return runID + " · " + m.workflow
+	case runID != "":
+		return runID
+	case m.workflow != "":
+		return m.workflow
+	default:
+		return "Run"
+	}
+}
+
 func (m Model) transcriptPanelTitle() string {
-	title := m.chatStep
-	if title == "" {
-		return "Transcript"
-	}
-	if !m.showsTranscriptFollow() {
-		return title
-	}
-	if m.chatAutoScroll {
-		return "LIVE · " + title
-	}
-	if unseen := m.unseenChatEntries(); unseen > 0 {
-		return fmt.Sprintf("PAUSED · %d new · %s", unseen, title)
-	}
-	return "PAUSED · " + title
+	return m.selectedContent().label
+}
+
+func (m Model) stepsPanelTitleParts() []string {
+	return []string{m.runIdentity(), "Steps"}
+}
+
+func (m Model) transcriptPanelTitleParts() []string {
+	content := m.selectedContent()
+	return []string{m.runIdentity(), content.stepID, content.label}
 }
 
 // View lays the monitor out as two side-by-side titled panels (Steps + the
@@ -241,7 +323,8 @@ func (m Model) View() string {
 	footer := fitBlock(m.footerView(), m.width, layout.footerH)
 	inputBar := fitBlock(m.inputBarView(), m.width, layout.inputH)
 
-	rightTitle := m.transcriptPanelTitle()
+	leftTitle := m.stepsPanelTitleParts()
+	rightTitle := m.transcriptPanelTitleParts()
 
 	var panels string
 	if layout.panelH == 0 {
@@ -249,15 +332,15 @@ func (m Model) View() string {
 	} else if m.narrow {
 		// Single-panel fallback: render only the focused panel full-width.
 		if m.focus == focusTranscript {
-			panels = shared.Panel(rightTitle, m.chatVP.View(), m.width, layout.panelH, true)
+			panels = shared.BreadcrumbPanel(rightTitle, m.chatVP.View(), m.width, layout.panelH, true)
 		} else {
 			// Steps or Gate focus shows the Steps panel (the gate has its own strip).
-			panels = shared.Panel("Steps", m.vp.View(), m.width, layout.panelH, m.focus == focusSteps)
+			panels = shared.BreadcrumbPanel(leftTitle, m.vp.View(), m.width, layout.panelH, m.focus == focusSteps)
 		}
 	} else {
 		stepsW, transcriptW, _ := panelSplit(m.width)
-		left := shared.Panel("Steps", m.vp.View(), stepsW, layout.panelH, m.focus == focusSteps)
-		right := shared.Panel(rightTitle, m.chatVP.View(), transcriptW, layout.panelH, m.focus == focusTranscript)
+		left := shared.BreadcrumbPanel(leftTitle, m.vp.View(), stepsW, layout.panelH, m.focus == focusSteps)
+		right := shared.BreadcrumbPanel(rightTitle, m.chatVP.View(), transcriptW, layout.panelH, m.focus == focusTranscript)
 		panels = lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 	}
 	panels = fitBlock(panels, m.width, layout.panelH)

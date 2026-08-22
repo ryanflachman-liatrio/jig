@@ -164,7 +164,7 @@ func TestGateContextJumpAndReturnPreserveTranscriptState(t *testing.T) {
 	if len(jumped.inputQueue) != 1 || jumped.activeInputIdx != 0 {
 		t.Fatal("context navigation changed the gate queue")
 	}
-	for _, want := range []string{"proposed changes", "old", "new"} {
+	for _, want := range []string{"old", "new"} {
 		if !strings.Contains(jumped.chatBody(), want) {
 			t.Fatalf("review context missing %q:\n%s", want, jumped.chatBody())
 		}
@@ -198,7 +198,7 @@ func TestGateContextJumpAndReturnPreserveTranscriptState(t *testing.T) {
 	if got := restored.unseenChatEntries(); got != 1 {
 		t.Fatalf("context return unseen entries = %d, want 1", got)
 	}
-	if title := restored.transcriptPanelTitle(); title != "PAUSED · 1 new · b" {
+	if title := restored.transcriptPanelTitle(); title != "Transcript · PAUSED · 1 new" {
 		t.Fatalf("context return title = %q", title)
 	}
 	if !restored.chatExpand[blockKey{seq: 1, block: 0}] {

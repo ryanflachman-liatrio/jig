@@ -83,3 +83,84 @@ func TestPanelFrame(t *testing.T) {
 		t.Errorf("height = %d, want %d", got, v+1)
 	}
 }
+
+func TestBreadcrumbTitle(t *testing.T) {
+	t.Run("full hierarchy", func(t *testing.T) {
+		got := shared.BreadcrumbTitle(
+			[]string{"a1b2c3d4 · feature", "implement", "output.json"},
+			80,
+		)
+		want := "a1b2c3d4 · feature › implement › output.json"
+		if got != want {
+			t.Fatalf("BreadcrumbTitle() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("elides middle before current content", func(t *testing.T) {
+		const maxWidth = 34
+		got := shared.BreadcrumbTitle(
+			[]string{"a1b2c3d4 · very-long-workflow", "implement", "output.json"},
+			maxWidth,
+		)
+		if lipgloss.Width(got) > maxWidth {
+			t.Fatalf("breadcrumb width = %d, want <= %d: %q", lipgloss.Width(got), maxWidth, got)
+		}
+		for _, want := range []string{"a1b2c3d4", "…", "output.json"} {
+			if !strings.Contains(got, want) {
+				t.Fatalf("compacted breadcrumb %q missing %q", got, want)
+			}
+		}
+		if strings.Contains(got, "implement") {
+			t.Fatalf("compacted breadcrumb retained middle segment: %q", got)
+		}
+	})
+
+	t.Run("sanitizes presentation data", func(t *testing.T) {
+		got := shared.BreadcrumbTitle(
+			[]string{"\x1b[31ma1b2c3d4\x1b[0m · feature\nprod", "out\tput.json"},
+			80,
+		)
+		if strings.ContainsAny(got, "\x1b\n\t") {
+			t.Fatalf("breadcrumb retained control characters: %q", got)
+		}
+		if got != "a1b2c3d4 · feature prod › out put.json" {
+			t.Fatalf("sanitized breadcrumb = %q", got)
+		}
+	})
+
+	t.Run("bounds a long leaf while retaining identity", func(t *testing.T) {
+		const maxWidth = 20
+		got := shared.BreadcrumbTitle(
+			[]string{"a1b2c3d4 · feature", "implement", strings.Repeat("artifact", 8) + ".json"},
+			maxWidth,
+		)
+		if lipgloss.Width(got) > maxWidth {
+			t.Fatalf("breadcrumb width = %d, want <= %d: %q", lipgloss.Width(got), maxWidth, got)
+		}
+		if !strings.HasPrefix(got, "a1b2c3") || !strings.Contains(got, "art") {
+			t.Fatalf("breadcrumb did not retain identity and leaf: %q", got)
+		}
+	})
+}
+
+func TestBreadcrumbPanelPreservesDimensions(t *testing.T) {
+	const (
+		width  = 34
+		height = 6
+	)
+	out := shared.BreadcrumbPanel(
+		[]string{"a1b2c3d4 · feature", "implement", "output.json"},
+		"body",
+		width,
+		height,
+		true,
+	)
+	for i, line := range strings.Split(out, "\n") {
+		if got := lipgloss.Width(line); got != width {
+			t.Errorf("line %d width = %d, want %d: %q", i, got, width, line)
+		}
+	}
+	if got := lipgloss.Height(out); got != height {
+		t.Fatalf("height = %d, want %d", got, height)
+	}
+}

@@ -128,6 +128,39 @@ func TestStepOutputFiles(t *testing.T) {
 	}
 }
 
+func TestCreateOutputFilesUsesShortestUniqueLabels(t *testing.T) {
+	root := t.TempDir()
+	paths := []string{
+		filepath.Join(root, "alpha", "report.json"),
+		filepath.Join(root, "beta", "report.json"),
+		filepath.Join(root, "notes.md"),
+	}
+	for _, path := range paths {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(path, []byte("{}"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	files := createOutputFiles(paths)
+	got := make(map[string]string, len(files))
+	for _, file := range files {
+		got[file.path] = file.label
+	}
+	want := map[string]string{
+		paths[0]: "alpha/report.json",
+		paths[1]: "beta/report.json",
+		paths[2]: "notes.md",
+	}
+	for path, label := range want {
+		if got[path] != label {
+			t.Errorf("label for %s = %q, want %q", path, got[path], label)
+		}
+	}
+}
+
 // seedCanonical writes a valid output.md and output.json under runDir's step dir.
 func seedCanonical(t *testing.T, runDir string) {
 	t.Helper()

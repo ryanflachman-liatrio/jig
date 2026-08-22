@@ -21,10 +21,18 @@ const (
 var errIsDir = errors.New("output path is a directory")
 
 type outputFile struct {
-	name string
-	path string
-	kind fileKind
-	err  error
+	name  string
+	label string
+	path  string
+	kind  fileKind
+	err   error
+}
+
+func (o outputFile) displayLabel() string {
+	if o.label != "" {
+		return o.label
+	}
+	return o.name
 }
 
 type Option func(*outputFile)
@@ -82,7 +90,60 @@ func createOutputFiles(paths []string) []outputFile {
 		files = append(files, statOutputFile(path))
 	}
 
+	assignOutputFileLabels(files)
 	return files
+}
+
+func assignOutputFileLabels(files []outputFile) {
+	groups := make(map[string][]int)
+	for i := range files {
+		files[i].label = files[i].name
+		if files[i].err == nil {
+			groups[files[i].name] = append(groups[files[i].name], i)
+		}
+	}
+	for _, indexes := range groups {
+		if len(indexes) < 2 {
+			continue
+		}
+		for _, index := range indexes {
+			files[index].label = shortestUniquePathSuffix(files, indexes, index)
+		}
+	}
+}
+
+func shortestUniquePathSuffix(files []outputFile, indexes []int, target int) string {
+	parts := pathParts(files[target].path)
+	for depth := 2; depth <= len(parts); depth++ {
+		candidate := strings.Join(parts[len(parts)-depth:], "/")
+		unique := true
+		for _, index := range indexes {
+			if index == target {
+				continue
+			}
+			other := pathParts(files[index].path)
+			if depth <= len(other) && strings.Join(other[len(other)-depth:], "/") == candidate {
+				unique = false
+				break
+			}
+		}
+		if unique {
+			return candidate
+		}
+	}
+	return filepath.ToSlash(filepath.Clean(files[target].path))
+}
+
+func pathParts(path string) []string {
+	clean := filepath.ToSlash(filepath.Clean(path))
+	parts := strings.Split(clean, "/")
+	out := parts[:0]
+	for _, part := range parts {
+		if part != "" && part != "." {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func statOutputFile(path string) outputFile {
