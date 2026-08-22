@@ -110,6 +110,9 @@ func (m *Model) resize() {
 			((entry.kind == inputKindReview || entry.kind == inputKindRecovery) && entry.composing)) {
 		m.promptTextarea.SetWidth(m.gateInnerWidth())
 	}
+	if m.searchOpen {
+		m.searchInput.SetWidth(max(1, m.transcriptInnerW-6))
+	}
 	for i := range m.inputQueue {
 		if m.inputQueue[i].kind == inputKindQuestion {
 			m.inputQueue[i].question = m.inputQueue[i].question.Resize(

@@ -2,6 +2,7 @@ package transcript
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,17 @@ import (
 // picks up newly-appended entries.
 type Reader struct {
 	path string
+}
+
+// Page is a bounded transcript slice. Start and End are opaque byte cursors;
+// callers may pass Start to PageBefore to walk toward the beginning without
+// retaining an index proportional to the transcript.
+type Page struct {
+	Entries    []Entry
+	Start      int64
+	End        int64
+	HasEarlier bool
+	HasLater   bool
 }
 
 // Open returns a Reader for the transcript at path. The file need not exist yet
@@ -73,6 +85,194 @@ func (r *Reader) Tail(n int) ([]Entry, error) {
 		return entries, nil
 	}
 	return entries[len(entries)-n:], nil
+}
+
+// TailPage returns the newest limit well-formed entries using memory
+// proportional to the page rather than the transcript.
+func (r *Reader) TailPage(limit int) (Page, error) {
+	return r.PageBefore(-1, limit)
+}
+
+// PageBefore returns up to limit well-formed entries ending before the opaque
+// byte cursor end. A negative end means the current EOF. Appends do not
+// invalidate cursors because transcript files are append-only.
+func (r *Reader) PageBefore(end int64, limit int) (Page, error) {
+	if limit <= 0 {
+		return Page{}, nil
+	}
+	f, err := os.Open(r.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Page{}, nil
+		}
+		return Page{}, fmt.Errorf("transcript: open %q: %w", r.path, err)
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return Page{}, fmt.Errorf("transcript: stat %q: %w", r.path, err)
+	}
+	size := info.Size()
+	if end < 0 || end > size {
+		end = size
+	}
+	if end < 0 {
+		end = 0
+	}
+
+	page := Page{Start: end, End: end}
+	cursor := end
+	for cursor > 0 && len(page.Entries) < limit {
+		line, start, readErr := previousLine(f, cursor)
+		if readErr != nil {
+			return Page{}, fmt.Errorf("transcript: read page %q: %w", r.path, readErr)
+		}
+		cursor = start
+		page.Start = start
+		if e, ok := decodeEntry(line); ok {
+			page.Entries = append(page.Entries, e)
+		}
+	}
+	reverseEntries(page.Entries)
+
+	hasEarlier, err := hasEntryBefore(f, page.Start)
+	if err != nil {
+		return Page{}, fmt.Errorf("transcript: inspect page %q: %w", r.path, err)
+	}
+	page.HasEarlier = hasEarlier
+	page.HasLater = page.End < size
+	return page, nil
+}
+
+// PageAfter returns up to limit entries beginning at the opaque byte cursor
+// start. It is the forward counterpart to PageBefore and keeps newer-page
+// navigation bounded without a breadcrumb stack.
+func (r *Reader) PageAfter(start int64, limit int) (Page, error) {
+	if limit <= 0 {
+		return Page{}, nil
+	}
+	f, err := os.Open(r.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Page{}, nil
+		}
+		return Page{}, fmt.Errorf("transcript: open %q: %w", r.path, err)
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return Page{}, fmt.Errorf("transcript: stat %q: %w", r.path, err)
+	}
+	size := info.Size()
+	start = min(max(start, int64(0)), size)
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return Page{}, fmt.Errorf("transcript: seek %q: %w", r.path, err)
+	}
+
+	page := Page{Start: start, End: start}
+	br := bufio.NewReader(f)
+	for len(page.Entries) < limit {
+		line, readErr := br.ReadString('\n')
+		page.End += int64(len(line))
+		if e, ok := decodeEntry([]byte(line)); ok {
+			page.Entries = append(page.Entries, e)
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return Page{}, fmt.Errorf("transcript: read page %q: %w", r.path, readErr)
+		}
+	}
+
+	hasEarlier, err := hasEntryBefore(f, page.Start)
+	if err != nil {
+		return Page{}, fmt.Errorf("transcript: inspect page %q: %w", r.path, err)
+	}
+	page.HasEarlier = hasEarlier
+	page.HasLater = page.End < size
+	return page, nil
+}
+
+const reverseReadChunk = 64 * 1024
+
+func previousLine(f *os.File, end int64) ([]byte, int64, error) {
+	if end <= 0 {
+		return nil, 0, io.EOF
+	}
+
+	lineEnd := end
+	var last [1]byte
+	if _, err := f.ReadAt(last[:], end-1); err != nil {
+		return nil, 0, err
+	}
+	if last[0] == '\n' {
+		lineEnd--
+	}
+	if lineEnd == 0 {
+		return nil, 0, nil
+	}
+
+	pos := lineEnd
+	var reverseParts [][]byte
+	for pos > 0 {
+		start := max(int64(0), pos-reverseReadChunk)
+		buf := make([]byte, pos-start)
+		if _, err := f.ReadAt(buf, start); err != nil {
+			return nil, 0, err
+		}
+		if i := bytes.LastIndexByte(buf, '\n'); i >= 0 {
+			reverseParts = append(reverseParts, append([]byte(nil), buf[i+1:]...))
+			lineStart := start + int64(i) + 1
+			return joinReverseParts(reverseParts), lineStart, nil
+		}
+		reverseParts = append(reverseParts, buf)
+		pos = start
+	}
+	return joinReverseParts(reverseParts), 0, nil
+}
+
+func joinReverseParts(parts [][]byte) []byte {
+	total := 0
+	for _, part := range parts {
+		total += len(part)
+	}
+	line := make([]byte, 0, total)
+	for i := len(parts) - 1; i >= 0; i-- {
+		line = append(line, parts[i]...)
+	}
+	return line
+}
+
+func decodeEntry(line []byte) (Entry, bool) {
+	var e Entry
+	if strings.TrimSpace(string(line)) == "" || json.Unmarshal(bytes.TrimSpace(line), &e) != nil {
+		return Entry{}, false
+	}
+	return e, true
+}
+
+func hasEntryBefore(f *os.File, end int64) (bool, error) {
+	cursor := end
+	for cursor > 0 {
+		line, start, err := previousLine(f, cursor)
+		if err != nil {
+			return false, err
+		}
+		cursor = start
+		if _, ok := decodeEntry(line); ok {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func reverseEntries(entries []Entry) {
+	for left, right := 0, len(entries)-1; left < right; left, right = left+1, right-1 {
+		entries[left], entries[right] = entries[right], entries[left]
+	}
 }
 
 // readAll opens the file, parses every well-formed line into an Entry, and

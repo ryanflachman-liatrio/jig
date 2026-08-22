@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -234,6 +235,100 @@ func TestWindowAndTail(t *testing.T) {
 	// Tail larger than the file returns everything.
 	if all, _ := r.Tail(100); len(all) != 10 {
 		t.Errorf("Tail(100) len = %d, want 10", len(all))
+	}
+}
+
+func TestPagedReaderWalksBackwardWithBoundedPages(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "transcript.jsonl")
+	var entries []Entry
+	for i := 0; i < 8; i++ {
+		entries = append(entries, Entry{
+			Role: RoleAssistant,
+			Blocks: []Block{{
+				Type: BlockText,
+				Text: string(rune('a' + i)),
+			}},
+		})
+	}
+	writeAll(t, path, entries)
+
+	r, _ := Open(path)
+	newest, err := r.TailPage(3)
+	if err != nil {
+		t.Fatalf("TailPage: %v", err)
+	}
+	if got := seqs(newest.Entries); !slices.Equal(got, []int{6, 7, 8}) {
+		t.Fatalf("newest seqs = %v", got)
+	}
+	if !newest.HasEarlier {
+		t.Fatal("newest page did not report earlier entries")
+	}
+
+	middle, err := r.PageBefore(newest.Start, 3)
+	if err != nil {
+		t.Fatalf("PageBefore middle: %v", err)
+	}
+	if got := seqs(middle.Entries); !slices.Equal(got, []int{3, 4, 5}) {
+		t.Fatalf("middle seqs = %v", got)
+	}
+	if !middle.HasEarlier {
+		t.Fatal("middle page did not report earlier entries")
+	}
+
+	oldest, err := r.PageBefore(middle.Start, 3)
+	if err != nil {
+		t.Fatalf("PageBefore oldest: %v", err)
+	}
+	if got := seqs(oldest.Entries); !slices.Equal(got, []int{1, 2}) {
+		t.Fatalf("oldest seqs = %v", got)
+	}
+	if oldest.HasEarlier {
+		t.Fatal("oldest page reported nonexistent earlier entries")
+	}
+
+	forward, err := r.PageAfter(oldest.End, 3)
+	if err != nil {
+		t.Fatalf("PageAfter: %v", err)
+	}
+	if got := seqs(forward.Entries); !slices.Equal(got, []int{3, 4, 5}) {
+		t.Fatalf("forward seqs = %v", got)
+	}
+	if !forward.HasEarlier || !forward.HasLater {
+		t.Fatalf("forward page bounds = earlier:%v later:%v", forward.HasEarlier, forward.HasLater)
+	}
+}
+
+func TestPagedReaderSkipsMalformedAndHandlesLargeLines(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "transcript.jsonl")
+	large := strings.Repeat("x", reverseReadChunk+100)
+	lines := []string{
+		`{"seq":1,"role":"assistant","blocks":[{"type":"text","text":"first"}]}`,
+		`not-json`,
+		`{"seq":2,"role":"assistant","blocks":[{"type":"text","text":"` + large + `"}]}`,
+		`{"seq":3,"role":"result","blocks":[{"type":"text","text":"last"}]}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _ := Open(path)
+	page, err := r.TailPage(2)
+	if err != nil {
+		t.Fatalf("TailPage: %v", err)
+	}
+	if got := seqs(page.Entries); !slices.Equal(got, []int{2, 3}) {
+		t.Fatalf("tail seqs = %v", got)
+	}
+	if !page.HasEarlier || len(page.Entries[0].Blocks[0].Text) != len(large) {
+		t.Fatalf("page metadata/content = earlier:%v large:%d", page.HasEarlier, len(page.Entries[0].Blocks[0].Text))
+	}
+
+	older, err := r.PageBefore(page.Start, 2)
+	if err != nil {
+		t.Fatalf("PageBefore: %v", err)
+	}
+	if got := seqs(older.Entries); !slices.Equal(got, []int{1}) {
+		t.Fatalf("older seqs = %v", got)
 	}
 }
 
