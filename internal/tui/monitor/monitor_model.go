@@ -585,21 +585,28 @@ func (m Model) HelpSections() []shared.HelpSection {
 	case m.focus == focusGate && m.hasGate():
 		sections = append(sections, m.gateHelpSection())
 	case m.focus == focusTranscript:
-		blockNav := m.keys.BlockNav
-		if m.searchQuery != "" {
-			blockNav.SetHelp("n/N", "match")
-		}
-		pageOlder := m.keys.PageOlder
-		pageOlder.SetEnabled(m.chatPage.HasEarlier)
-		pageNewer := m.keys.PageNewer
-		pageNewer.SetEnabled(m.chatPage.HasLater)
-		clearView := m.keys.ClearView
-		clearView.SetEnabled(m.searchQuery != "" || m.filters.active())
-		bindings := []keybind.Binding{
-			m.keys.Scroll, m.keys.GotoTop, m.keys.Follow, pageOlder, pageNewer,
-			m.keys.Search, m.keys.Filters, clearView,
-			blockNav, m.keys.Toggle, m.keys.ExpandAll,
-			m.keys.TransToSteps, m.keys.TransLeave,
+		var bindings []keybind.Binding
+		if m.selKind == "file" {
+			bindings = []keybind.Binding{
+				m.keys.Scroll, m.keys.GotoTop, m.keys.TransToSteps, m.keys.TransLeave,
+			}
+		} else {
+			blockNav := m.keys.BlockNav
+			if m.searchQuery != "" {
+				blockNav.SetHelp("n/N", "match")
+			}
+			pageOlder := m.keys.PageOlder
+			pageOlder.SetEnabled(m.chatPage.HasEarlier)
+			pageNewer := m.keys.PageNewer
+			pageNewer.SetEnabled(m.chatPage.HasLater)
+			clearView := m.keys.ClearView
+			clearView.SetEnabled(m.searchQuery != "" || m.filters.active())
+			bindings = []keybind.Binding{
+				m.keys.Scroll, m.keys.Follow, blockNav, m.keys.Toggle,
+				m.keys.GotoTop, pageOlder, pageNewer,
+				m.keys.Search, m.keys.Filters, clearView, m.keys.ExpandAll,
+				m.keys.TransToSteps, m.keys.TransLeave,
+			}
 		}
 		if m.gateContext != nil {
 			contextKey := m.keys.GateContext
@@ -618,9 +625,11 @@ func (m Model) HelpSections() []shared.HelpSection {
 		stopKey.SetEnabled(actions.canStop)
 		resetKey.SetEnabled(actions.canReset)
 		resumeKey.SetEnabled(actions.canResume)
+		treeKey := m.keys.ToggleTree
+		treeKey.SetEnabled(!m.cursorIsFileRow())
 		bindings := []keybind.Binding{
-			m.keys.StepsNav, m.keys.OpenTranscript, m.keys.ToggleTree,
-			stopKey, resetKey, resumeKey, m.keys.StepsLeave,
+			stopKey, resetKey, resumeKey,
+			m.keys.StepsNav, m.keys.OpenTranscript, treeKey, m.keys.StepsLeave,
 		}
 		if m.gateContext != nil {
 			contextKey := m.keys.GateContext
@@ -640,9 +649,17 @@ func (m Model) HelpSections() []shared.HelpSection {
 	})
 	sections = append(sections, shared.HelpSection{
 		Title:    "Global",
-		Bindings: []keybind.Binding{shared.KeyHelp, shared.KeyQuit},
+		Bindings: shared.GlobalHelpBindings(m.CapturesText(), m.keys.ToggleHelp),
 	})
 	return sections
+}
+
+func (m Model) compactHelpBindings() []keybind.Binding {
+	sections := m.HelpSections()
+	if len(sections) == 0 {
+		return nil
+	}
+	return sections[0].Bindings
 }
 
 // gateHelpSection builds the section for the currently-active gate entry.
@@ -661,7 +678,17 @@ func (m Model) gateHelpSection() shared.HelpSection {
 	case inputKindRequest:
 		sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, contextKey, entryNav, m.keys.GateBlur}
 	case inputKindQuestion:
-		sec.Bindings = []keybind.Binding{m.keys.QuestionScroll, m.keys.QConfirm, contextKey, entryNav, m.keys.GateBlur}
+		sec.Bindings = entry.question.HelpBindings()
+		for i := range sec.Bindings {
+			help := sec.Bindings[i].Help()
+			if help.Key == "esc" {
+				sec.Bindings[i].SetEnabled(false)
+			} else if help.Key == "q/esc" {
+				sec.Bindings[i].SetKeys("q")
+				sec.Bindings[i].SetHelp("q", help.Desc)
+			}
+		}
+		sec.Bindings = append(sec.Bindings, contextKey, entryNav, m.keys.GateBlur)
 	case inputKindReview:
 		switch {
 		case entry.composing:
@@ -687,7 +714,7 @@ func (m Model) gateHelpSection() shared.HelpSection {
 	case inputKindFinalMerge, inputKindHelpFinalMerge:
 		sec.Bindings = []keybind.Binding{m.keys.FinalMergeApprove, m.keys.FinalMergeDiscard, contextKey, entryNav, m.keys.GateBlur}
 	case inputKindResetConfirm:
-		sec.Bindings = []keybind.Binding{contextKey, m.keys.GateBlur}
+		sec.Bindings = []keybind.Binding{m.keys.ResetConfirm, m.keys.ResetCancel, contextKey, m.keys.GateBlur}
 	}
 	return sec
 }

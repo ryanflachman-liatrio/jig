@@ -181,18 +181,37 @@ func (m rootModel) handleGlobalKey(msg tea.KeyPressMsg) (rootModel, tea.Cmd, boo
 		}
 		return m, nil, true
 	}
-	// Help is a global modal owned by the root. While open it swallows every
-	// key except its own toggle and esc, so nothing fires on the screen behind
-	// it. When closed, "?" opens it — unless the active screen is capturing free
-	// text, where "?" is a literal character.
+	// Help owns its scrolling keys while open, so the screen underneath cannot
+	// move. F1 opens it during text capture without stealing a printable "?".
 	if m.showHelp {
-		if keybind.Matches(msg, shared.KeyHelp) || msg.String() == "esc" {
+		sections := m.activeProvider().helpSections()
+		page := shared.HelpOverlayPageSize(m.width, m.height, sections)
+		switch {
+		case keybind.Matches(msg, shared.KeyHelp),
+			keybind.Matches(msg, shared.KeyHelpTyping),
+			msg.String() == "esc":
 			m.showHelp = false
+			m.helpOffset = 0
+		case msg.String() == "up" || msg.String() == "k":
+			m.helpOffset = max(m.helpOffset-1, 0)
+		case msg.String() == "down" || msg.String() == "j":
+			m.helpOffset = min(m.helpOffset+1, shared.HelpOverlayMaxOffset(m.width, m.height, sections))
+		case msg.String() == "pgup":
+			m.helpOffset = max(m.helpOffset-page, 0)
+		case msg.String() == "pgdown":
+			m.helpOffset = min(m.helpOffset+page, shared.HelpOverlayMaxOffset(m.width, m.height, sections))
+		case msg.String() == "home":
+			m.helpOffset = 0
+		case msg.String() == "end":
+			m.helpOffset = shared.HelpOverlayMaxOffset(m.width, m.height, sections)
 		}
 		return m, nil, true
 	}
-	if keybind.Matches(msg, shared.KeyHelp) && !m.activeProvider().capturesText() {
+	capturesText := m.activeProvider().capturesText()
+	if (!capturesText && keybind.Matches(msg, shared.KeyHelp)) ||
+		(capturesText && keybind.Matches(msg, shared.KeyHelpTyping)) {
 		m.showHelp = true
+		m.helpOffset = 0
 		return m, nil, true
 	}
 	return m, nil, false
@@ -233,6 +252,9 @@ func (m rootModel) updateWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) 
 	}
 	m.runs, rc = m.runs.Update(msg)
 	m.monitor, mc = m.monitor.Update(msg)
+	if m.showHelp {
+		m.helpOffset = min(m.helpOffset, shared.HelpOverlayMaxOffset(m.width, m.height, m.activeProvider().helpSections()))
+	}
 	return m, tea.Batch(sc, dc, rc, mc)
 }
 

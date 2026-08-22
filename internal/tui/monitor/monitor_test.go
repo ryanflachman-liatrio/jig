@@ -2868,7 +2868,7 @@ func TestFileRowsDisableLifecycleActionsAndHints(t *testing.T) {
 				}
 			}
 
-			hint := fileModel.hintLabel()
+			hint := fileModel.hintLabel(200)
 			for _, action := range []string{"stop", "reset", "resume"} {
 				if strings.Contains(hint, action) {
 					t.Errorf("footer advertised %q on file row: %q", action, hint)
@@ -3018,8 +3018,8 @@ func TestMonitorHelpSections(t *testing.T) {
 		if !slices.Contains(transcriptKeys, want) {
 			t.Errorf("transcript help missing %q; got %v", want, transcriptKeys)
 		}
-		if !strings.Contains(m.hintLabel(), want) {
-			t.Errorf("transcript footer missing %q: %q", want, m.hintLabel())
+		if !strings.Contains(m.hintLabel(200), want) {
+			t.Errorf("transcript footer missing %q: %q", want, m.hintLabel(200))
 		}
 	}
 
@@ -3039,8 +3039,106 @@ func TestMonitorHelpSections(t *testing.T) {
 	if !slices.Contains(gateKeys, "[/]") {
 		t.Errorf("gate help missing queue navigation; got %v", gateKeys)
 	}
-	if hint := m.hintLabel(); !strings.Contains(hint, "[/] entries") {
+	if hint := m.hintLabel(200); !strings.Contains(hint, "[/] entries") {
 		t.Errorf("gate footer missing queue navigation: %q", hint)
+	}
+}
+
+func TestMonitorCompactHelpIsContextualAndAtomic(t *testing.T) {
+	inputGate := newMonitorWithSteps(t)
+	inputGate, _ = inputGate.Update(EngineEventMsg{Event: engine.InputRequest{
+		RunID: "run-1", StepID: "a",
+	}})
+	inputGate.focus = focusGate
+
+	resetGate := newMonitorWithSteps(t)
+	resetGate, _ = resetGate.Update(ShowResetConfirmMsg{
+		RunID: "run-1", StepID: "a", Closure: []string{"a", "b"},
+	})
+	resetGate.focus = focusGate
+
+	fileSteps := expandedLifecycleMonitor()
+	fileSteps.width = 80
+	fileSteps.cursor = 4 // first file under expanded-one
+
+	fileTranscript := fileSteps
+	fileTranscript.focus = focusTranscript
+	fileTranscript.selKind = "file"
+
+	transcript := newMonitorWithSteps(t)
+	transcript.focus = focusTranscript
+
+	tests := []struct {
+		name    string
+		model   Model
+		want    []string
+		notWant []string
+	}{
+		{
+			name:  "steps",
+			model: newMonitorWithSteps(t),
+			want:  []string{"j/k select", "enter transcript", "? more"},
+		},
+		{
+			name:  "transcript",
+			model: transcript,
+			want:  []string{"j/k scroll", "f/G follow", "n/N block", "? more"},
+		},
+		{
+			name:    "file row",
+			model:   fileSteps,
+			want:    []string{"j/k select", "enter transcript", "? more"},
+			notWant: []string{"expand/collapse", "reset", "resume", "stop"},
+		},
+		{
+			name:    "file view",
+			model:   fileTranscript,
+			want:    []string{"j/k scroll", "gg top", "? more"},
+			notWant: []string{"block", "search", "filters", "expand"},
+		},
+		{
+			name:  "reset gate",
+			model: resetGate,
+			want:  []string{"y confirm", "n cancel", "? more"},
+		},
+		{
+			name:    "typing gate",
+			model:   inputGate,
+			want:    []string{"enter submit", "F1 more"},
+			notWant: []string{"? more"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			footer := ansiStrip(tc.model.footerView())
+			if width := lipgloss.Width(tc.model.footerView()); width > 80 {
+				t.Fatalf("footer width = %d, want <= 80: %q", width, footer)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(footer, want) {
+					t.Errorf("footer missing %q: %q", want, footer)
+				}
+			}
+			for _, notWant := range tc.notWant {
+				if strings.Contains(footer, notWant) {
+					t.Errorf("footer unexpectedly contains %q: %q", notWant, footer)
+				}
+			}
+
+			for width := 1; width <= 80; width++ {
+				hint := tc.model.hintLabel(width)
+				if hint == "" {
+					continue
+				}
+				if !strings.HasSuffix(hint, "? more") && !strings.HasSuffix(hint, "F1 more") {
+					t.Fatalf("width %d ended with a partial binding: %q", width, hint)
+				}
+				if lipgloss.Width(hint) > width {
+					t.Fatalf("width %d produced %d cells: %q", width, lipgloss.Width(hint), hint)
+				}
+			}
+		})
 	}
 }
 

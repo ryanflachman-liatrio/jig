@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	keybind "charm.land/bubbles/v2/key"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
@@ -184,95 +185,27 @@ func (m Model) statusLabel() string {
 	return shared.Theme.Running.Render("running")
 }
 
-// hintLabel computes the keyboard hint shown in the footer.
-func (m Model) hintLabel() string {
-	switch {
-	case m.focus == focusGate && m.hasGate():
-		entry := m.inputQueue[m.activeInputIdx]
-		// Show the entry-cycle hint only when there is more than one entry.
-		entryNav := m.keys.GateEntryNav
-		if len(m.inputQueue) < 2 {
-			entryNav.SetEnabled(false)
-		}
-		contextKey := m.keys.GateContext
-		contextKey.SetEnabled(presentationForGate(&entry).contextStep != "")
-		switch entry.kind {
-		case inputKindRequest:
-			return shared.HintString(m.keys.Submit, m.keys.Newline, contextKey, entryNav, m.keys.GateBlur)
-		case inputKindQuestion:
-			hint := entry.question.Hint()
-			if contextKey.Enabled() {
-				hint += " · ctrl+o context"
-			}
-			if len(m.inputQueue) > 1 {
-				hint += " · " + shared.HintString(entryNav)
-			}
-			return hint
-		case inputKindReview:
-			if entry.composing {
-				return shared.HintString(m.keys.Submit, m.keys.Newline, contextKey, m.keys.GateBlur)
-			} else if entry.review.AllowMessage {
-				return shared.HintString(m.keys.Verdict, m.keys.Message, contextKey, entryNav, m.keys.GateBlur)
-			}
-			return shared.HintString(m.keys.Verdict, contextKey, entryNav, m.keys.GateBlur)
-		case inputKindPrompt:
-			return shared.HintString(m.keys.Submit, m.keys.Newline, contextKey, entryNav, m.keys.GateBlur)
-		case inputKindRecovery:
-			if entry.composing {
-				return shared.HintString(m.keys.Submit, m.keys.Newline, contextKey, m.keys.GateBlur)
-			} else if entry.recovery.CanResume {
-				return shared.HintString(m.keys.RecoverRetry, m.keys.RecoverGuide, m.keys.RecoverSkip, m.keys.RecoverAbort, contextKey, entryNav, m.keys.GateBlur)
-			}
-			return shared.HintString(m.keys.RecoverRetry, m.keys.RecoverSkip, m.keys.RecoverAbort, contextKey, entryNav, m.keys.GateBlur)
-		case inputKindIntegrationConflict:
-			return shared.HintString(m.keys.IntegrationResolve, m.keys.RecoverAbort, contextKey, entryNav, m.keys.GateBlur)
-		case inputKindFinalMerge, inputKindHelpFinalMerge:
-			return shared.HintString(m.keys.FinalMergeApprove, m.keys.FinalMergeDiscard, contextKey, entryNav, m.keys.GateBlur)
-		case inputKindResetConfirm:
-			return shared.HintString(contextKey, m.keys.GateBlur) // y/n shown inline in the gate strip
-		}
-	case m.focus == focusTranscript:
-		if m.gateContext != nil {
-			contextKey := m.keys.GateContext
-			contextKey.SetHelp("ctrl+o", "return")
-			return shared.HintString(contextKey, m.keys.FocusFull, m.keys.Scroll, m.keys.GotoTop, m.keys.Follow, m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll, m.keys.ToggleHelp)
-		}
-		return shared.HintString(m.keys.FocusFull, m.keys.Scroll, m.keys.GotoTop, m.keys.Follow, m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll, m.keys.ToggleHelp)
-	default: // focusSteps
-		actions := m.selectedLifecycleActions()
-		stopKey := m.keys.StopStep
-		resetKey := m.keys.ResetStep
-		resumeKey := m.keys.ResumeStep
-		stopKey.SetEnabled(actions.canStop)
-		resetKey.SetEnabled(actions.canReset)
-		resumeKey.SetEnabled(actions.canResume)
-		if m.gateContext != nil {
-			contextKey := m.keys.GateContext
-			contextKey.SetHelp("ctrl+o", "return")
-			return shared.HintString(contextKey, m.keys.FocusFull, m.keys.StepsNav, stopKey, resetKey, resumeKey, m.keys.ToggleHelp, m.keys.StepsLeave, shared.KeyHelp, shared.KeyQuit)
-		}
-		return shared.HintString(m.keys.FocusFull, m.keys.StepsNav, stopKey, resetKey, resumeKey, m.keys.ToggleHelp, m.keys.StepsLeave, shared.KeyHelp, shared.KeyQuit)
+func (m Model) hintLabel(width int) string {
+	bindings := m.compactHelpBindings()
+	if m.hasGate() && m.focus != focusGate {
+		gate := m.keys.FocusNext
+		gate.SetHelp("tab", "gate")
+		bindings = append([]keybind.Binding{gate}, bindings...)
 	}
-	return ""
+	return shared.CompactHint(width, shared.MoreHelpBinding(m.CapturesText()), bindings...)
 }
 
 func (m Model) footerView() string {
 	status := m.statusLabel()
-	hint := m.hintLabel()
-	// When a gate is pending but the user has focused a panel, remind them a gate
-	// is waiting (it is non-blocking — tab returns to it).
-	if m.hasGate() && m.focus != focusGate {
-		hint = "tab to gate  •  " + hint
-	}
+	prefix := "  " + status + "  ·  "
+	hint := m.hintLabel(max(m.width-lipgloss.Width(prefix), 0))
 	// The per-run cost/token total lives at the bottom of the Steps panel
 	// (listBody's Total row), not the footer.
-	// Clip to the terminal width so a long hint line never overflows the panels
-	// and skews JoinVertical's per-line width (which would break the box borders).
 	f := shared.Theme.Footer
 	if m.width > 0 {
 		f = f.MaxWidth(m.width)
 	}
-	return f.Render("  " + status + "  ·  " + hint)
+	return f.Render(prefix + hint)
 }
 
 func (m Model) transcriptPanelTitle() string {

@@ -27,7 +27,7 @@
 │                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
   Agent input required  ·  Step: a  ·  2 pending  ·  esc to close
-  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ctrl+o view context  •  [/] entries  •  es
+  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ctrl+o view context  •  F1 more
 
 --- frame ---
 
@@ -60,7 +60,7 @@
 │                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
   Agent input required  ·  Step: b  ·  2 pending  ·  esc to close
-  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ctrl+o view context  •  [/] entries  •  es
+  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ctrl+o view context  •  F1 more
 
 --- frame ---
 
@@ -93,4 +93,4 @@
 │                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
   Agent input required  ·  Step: a  ·  2 pending  ·  esc to close
-  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ctrl+o view context  •  [/] entries  •  es
+  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ctrl+o view context  •  F1 more

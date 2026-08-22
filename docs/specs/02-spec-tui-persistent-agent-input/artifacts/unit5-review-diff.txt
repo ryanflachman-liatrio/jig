@@ -21,4 +21,4 @@
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
   Review required  ·  Step: a  ·  1 pending  ·  esc to close
-  awaiting review  ·  1-9 verdict  •  m message  •  ctrl+o view context  •  esc
+  awaiting review  ·  1-9 verdict  •  m message  •  esc blur  •  ? more

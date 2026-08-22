@@ -440,14 +440,14 @@ func (m Model) updateGateHelpFinalMerge(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 func (m Model) updateGateResetConfirm(msg tea.KeyPressMsg, entry *pendingInputEntry) (Model, tea.Cmd) {
 	rc := entry.resetConfirm
 	// y confirms the reset; n / esc / GateBlur cancel (esc caught above).
-	if msg.String() == "y" {
+	if keybind.Matches(msg, m.keys.ResetConfirm) {
 		m.removeEntryAt(m.activeInputIdx)
 		m.refreshPanels()
 		return m, func() tea.Msg {
 			return ResetStepMsg{RunID: rc.runID, StepID: rc.stepID}
 		}
 	}
-	if msg.String() == "n" {
+	if keybind.Matches(msg, m.keys.ResetCancel) {
 		m.removeEntryAt(m.activeInputIdx)
 		m.refreshPanels()
 	}

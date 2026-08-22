@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	keybind "charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 
@@ -356,16 +357,43 @@ func (m Model) answerText(field interaction.QuestionField) string {
 }
 
 func (m Model) Hint() string {
+	return shared.HintString(m.HelpBindings()...)
+}
+
+func (m Model) HelpBindings() []keybind.Binding {
+	binding := func(keys []string, key, desc string) keybind.Binding {
+		return keybind.NewBinding(keybind.WithKeys(keys...), keybind.WithHelp(key, desc))
+	}
 	if m.CapturesText() {
-		return "enter submit · esc back/cancel · ctrl+d decline"
+		return []keybind.Binding{
+			binding([]string{"enter"}, "enter", "submit"),
+			binding([]string{"ctrl+d"}, "ctrl+d", "decline"),
+			binding([]string{"esc"}, "esc", "back/cancel"),
+		}
 	}
+
+	navigate := binding([]string{"up", "down", "j", "k"}, "↑/↓/j/k", "navigate")
+	previous := binding([]string{"left", "b"}, "←/b", "previous")
+	decline := binding([]string{"d"}, "d", "decline")
+	cancel := binding([]string{"q", "esc"}, "q/esc", "cancel")
 	if m.phase == phaseReview {
-		return "↑↓ review · e edit · enter submit · d decline · q cancel"
+		return []keybind.Binding{
+			binding([]string{"enter", "s"}, "enter/s", "submit"),
+			navigate,
+			binding([]string{"e"}, "e", "edit"),
+			previous,
+			decline,
+			cancel,
+		}
 	}
+
+	selectBinding := binding([]string{"enter"}, "enter", "select")
+	bindings := []keybind.Binding{selectBinding, navigate}
 	if m.currentField().Kind == interaction.FieldMultiSelect {
-		return "↑↓ navigate · space toggle · enter next · d decline · q cancel"
+		bindings[0].SetHelp("enter", "next")
+		bindings = append(bindings, binding([]string{" ", "space"}, "space", "toggle"))
 	}
-	return "↑↓ navigate · enter select · d decline · q cancel"
+	return append(bindings, previous, decline, cancel)
 }
 
 func (m Model) String() string {

@@ -32,7 +32,7 @@ func (m Model) View() string {
 func (m Model) HelpSections() []shared.HelpSection {
 	return []shared.HelpSection{
 		{Title: "Runs", Bindings: []keybind.Binding{m.keys.Up, m.keys.Down, m.keys.Open, m.keys.NewRun, m.keys.Delete, m.keys.Back}},
-		{Title: "Global", Bindings: []keybind.Binding{shared.KeyHelp, shared.KeyQuit}},
+		{Title: "Global", Bindings: shared.GlobalHelpBindings(m.CapturesText())},
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 
 	keybind "charm.land/bubbles/v2/key"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // HelpSection is one titled group of bindings in the help overlay.
@@ -50,52 +51,127 @@ func RenderConfirmOverlay(base, title, body string, width, height int) string {
 	return lipgloss.NewCanvas(width, height).Compose(comp).Render()
 }
 
-// RenderHelpOverlay composites the modal box centered over base — the live
-// screen — using a lipgloss v2 Canvas so the underlying screen shows through
-// around the box (the box layer draws on top; cells it does not cover keep the
-// base). It renders straight from keybind.Binding structs and skips disabled
-// ones, so the overlay can never advertise a key the screen does not accept.
-func RenderHelpOverlay(base string, width, height int, sections []HelpSection) string {
-	// Compute the key-column width across all enabled bindings so the two columns
-	// align regardless of which section a row belongs to.
-	keyW := 0
-	for _, sec := range sections {
-		for _, b := range sec.Bindings {
-			if !b.Enabled() {
-				continue
-			}
-			if k := lipgloss.Width(b.Help().Key); k > keyW {
-				keyW = k
-			}
-		}
-	}
+type helpOverlayLayout struct {
+	box       string
+	maxOffset int
+	pageSize  int
+}
 
-	var body strings.Builder
-	body.WriteString(Theme.Help.Title.Render("jig · help"))
-	body.WriteString("\n")
-	for _, sec := range sections {
-		rows := make([]string, 0, len(sec.Bindings))
-		for _, b := range sec.Bindings {
-			if !b.Enabled() {
-				continue
-			}
-			h := b.Help()
-			key := Theme.Help.Key.Render(PadRight(h.Key, keyW))
-			rows = append(rows, "  "+key+"  "+Theme.Help.Desc.Render(h.Desc))
-		}
-		if len(rows) == 0 {
+func renderHelpSection(sec HelpSection, maxWidth int) string {
+	keyW := 0
+	for _, binding := range sec.Bindings {
+		if !binding.Enabled() {
 			continue
 		}
-		body.WriteString("\n")
-		body.WriteString(Theme.Help.Section.Render(sec.Title))
-		body.WriteString("\n")
-		body.WriteString(strings.Join(rows, "\n"))
-		body.WriteString("\n")
+		if width := lipgloss.Width(binding.Help().Key); width > keyW {
+			keyW = width
+		}
 	}
-	body.WriteString("\n")
-	body.WriteString(Theme.Help.Desc.Render("? or esc to close"))
+	rows := make([]string, 0, len(sec.Bindings)+1)
+	rows = append(rows, Theme.Help.Section.Render(sec.Title))
+	for _, binding := range sec.Bindings {
+		if !binding.Enabled() {
+			continue
+		}
+		help := binding.Help()
+		key := Theme.Help.Key.Render(PadRight(help.Key, keyW))
+		row := "  " + key + "  " + Theme.Help.Desc.Render(help.Desc)
+		if maxWidth > 0 {
+			row = ansi.Truncate(row, maxWidth, "")
+		}
+		rows = append(rows, row)
+	}
+	return strings.Join(rows, "\n")
+}
 
-	box := Theme.Help.Box.Render(body.String())
+func helpSectionRows(sections []HelpSection, maxWidth int) []string {
+	const columnGap = 3
+	var rows []string
+	var current string
+	for _, sec := range sections {
+		enabled := false
+		for _, binding := range sec.Bindings {
+			if binding.Enabled() {
+				enabled = true
+				break
+			}
+		}
+		if !enabled {
+			continue
+		}
+		block := renderHelpSection(sec, maxWidth)
+		if current == "" {
+			current = block
+			continue
+		}
+		if lipgloss.Width(current)+columnGap+lipgloss.Width(block) <= maxWidth {
+			current = lipgloss.JoinHorizontal(
+				lipgloss.Top,
+				current,
+				strings.Repeat(" ", columnGap),
+				block,
+			)
+			continue
+		}
+		if len(rows) > 0 {
+			rows = append(rows, "")
+		}
+		rows = append(rows, strings.Split(current, "\n")...)
+		current = block
+	}
+	if current != "" {
+		if len(rows) > 0 {
+			rows = append(rows, "")
+		}
+		rows = append(rows, strings.Split(current, "\n")...)
+	}
+	return rows
+}
+
+func buildHelpOverlay(width, height int, sections []HelpSection, offset int) helpOverlayLayout {
+	boxFrameW := Theme.Help.Box.GetHorizontalFrameSize()
+	boxFrameH := Theme.Help.Box.GetVerticalFrameSize()
+	maxInnerW := max(width-4-boxFrameW, 1)
+	maxInnerH := max(height-2-boxFrameH, 1)
+	bodyRows := helpSectionRows(sections, maxInnerW)
+
+	// Title, spacing, and controls remain fixed while only the section grid
+	// scrolls, so users never lose the modal's identity or escape route.
+	pageSize := max(maxInnerH-4, 1)
+	maxOffset := max(len(bodyRows)-pageSize, 0)
+	offset = min(max(offset, 0), maxOffset)
+	end := min(offset+pageSize, len(bodyRows))
+	visible := bodyRows[offset:end]
+
+	control := "?/F1/esc close"
+	if maxOffset > 0 {
+		control += " · ↑/↓ scroll · pgup/pgdn · home/end"
+	}
+	title := ansi.Truncate(Theme.Help.Title.Render("jig · help"), maxInnerW, "")
+	control = ansi.Truncate(Theme.Help.Desc.Render(control), maxInnerW, "")
+	content := []string{title, ""}
+	content = append(content, visible...)
+	content = append(content, "", control)
+
+	return helpOverlayLayout{
+		box:       Theme.Help.Box.Render(strings.Join(content, "\n")),
+		maxOffset: maxOffset,
+		pageSize:  pageSize,
+	}
+}
+
+func HelpOverlayMaxOffset(width, height int, sections []HelpSection) int {
+	return buildHelpOverlay(width, height, sections, 0).maxOffset
+}
+
+func HelpOverlayPageSize(width, height int, sections []HelpSection) int {
+	return buildHelpOverlay(width, height, sections, 0).pageSize
+}
+
+// RenderHelpOverlay keeps complete bindings in a responsive column grid and
+// scrolls that grid inside a fixed-height modal when the terminal is short.
+func RenderHelpOverlay(base string, width, height int, sections []HelpSection, offset int) string {
+	box := buildHelpOverlay(width, height, sections, offset).box
 
 	// Center the box over the base screen. The base is layer z=0 (drawn first);
 	// the box is placed on top at the centered offset, so everything the box does

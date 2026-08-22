@@ -105,7 +105,7 @@ run = "echo hi"
 	// "?" opens the overlay over the selector.
 	m, _ = m.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
 	view := m.View().Content
-	for _, want := range []string{"jig · help", "Workflows", "Global", "? or esc to close"} {
+	for _, want := range []string{"jig · help", "Workflows", "Global", "?/F1/esc close"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("help overlay missing %q:\n%s", want, view)
 		}
@@ -137,6 +137,25 @@ run = "echo hi"
 	if strings.Contains(m.View().Content, "jig · help") {
 		t.Fatal("expected esc to close the overlay")
 	}
+
+	// While filtering, "?" remains text and F1 owns the global help chord.
+	m, _ = m.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
+	m, _ = m.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
+	if strings.Contains(m.View().Content, "jig · help") {
+		t.Fatal("question mark should remain literal while filtering")
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyF1})
+	if view := m.View().Content; !strings.Contains(view, "jig · help") || !strings.Contains(view, "F1") {
+		t.Fatalf("F1 did not open typing help:\n%s", view)
+	}
+
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 30, Height: 8})
+	top := m.View().Content
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnd})
+	bottom := m.View().Content
+	if top == bottom || !strings.Contains(bottom, "ctrl+c") {
+		t.Fatalf("end did not scroll the short help overlay:\n%s", bottom)
+	}
 }
 
 // TestHelpOverlayCompositesOverBase verifies renderHelpOverlay layers the modal
@@ -154,7 +173,7 @@ func TestHelpOverlayCompositesOverBase(t *testing.T) {
 	base := strings.Join(rows, "\n")
 
 	sections := []shared.HelpSection{{Title: "Global", Bindings: []keybind.Binding{shared.KeyHelp, shared.KeyQuit}}}
-	out := shared.RenderHelpOverlay(base, w, h, sections)
+	out := shared.RenderHelpOverlay(base, w, h, sections, 0)
 
 	if !strings.Contains(out, "jig · help") {
 		t.Fatalf("modal content missing:\n%s", out)

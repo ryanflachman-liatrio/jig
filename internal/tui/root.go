@@ -50,10 +50,10 @@ type rootModel struct {
 	ctrlEvents <-chan engine.Event
 	handles    map[string]*engine.Run // runID → Run handle, for Snapshot()
 
-	// showHelp toggles the global "?" modal overlay. It is owned by the root so
-	// the same chord works on every screen; while set, the root composites the
-	// overlay over the active screen and swallows all other keys.
-	showHelp bool
+	// Root ownership lets the modal swallow navigation keys before they reach the
+	// screen underneath; F1 remains available while that screen captures text.
+	showHelp   bool
+	helpOffset int
 
 	// confirmDelete and pendingDeleteID drive the delete-confirmation overlay.
 	// Root owns this (mirroring showHelp) so it can cancel live runs directly
@@ -160,7 +160,7 @@ func (m rootModel) View() tea.View {
 	// a lipgloss Canvas) so the screen shows through around the box, and the same
 	// "?" chord surfaces context-appropriate keys everywhere.
 	if m.showHelp {
-		content = shared.RenderHelpOverlay(content, m.width, m.height, m.activeProvider().helpSections())
+		content = shared.RenderHelpOverlay(content, m.width, m.height, m.activeProvider().helpSections(), m.helpOffset)
 	}
 	// The delete-confirm overlay is also root-owned so it can swallow all keys
 	// and call run.Cancel() directly without a round-trip message.

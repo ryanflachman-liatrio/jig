@@ -21,7 +21,7 @@
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
   Agent input required  ·  Step: a  ·  2 pending  ·  esc to close
-  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ct
+  awaiting agent input (2 pending)  ·  enter submit  •  [/] entries  •  F1 more
 --- frame ---
 
 ╭─ Steps ──────────────────────╮╭─ LIVE · a ───────────────────────────────────╮
@@ -47,7 +47,7 @@
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
   Agent input required  ·  Step: b  ·  1 pending  ·  esc to close
-  awaiting agent input  ·  enter submit  •  alt+enter newline  •  ctrl+o view co
+  awaiting agent input  ·  enter submit  •  alt+enter newline  •  F1 more
 --- frame ---
 
 ╭─ Steps ──────────────────────╮╭─ LIVE · a ───────────────────────────────────╮
@@ -73,4 +73,4 @@
 │                              ││                                              │
 ╰──────────────────────────────╯╰──────────────────────────────────────────────╯
   Human actions  ·  no pending actions
-  running  ·  tab/←/→ focus  •  j/k select  •  ctrl+\ help agent  •  esc runs li
+  running  ·  j/k select  •  enter transcript  •  esc runs list  •  ? more

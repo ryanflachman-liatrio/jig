@@ -112,3 +112,23 @@ func TestQuestionPanelDeclineAndCancelAreDistinct(t *testing.T) {
 		})
 	}
 }
+
+func TestQuestionHelpBindingsFollowPhase(t *testing.T) {
+	m := New(testRequest())
+	if hint := m.Hint(); !strings.Contains(hint, "enter select") || !strings.Contains(hint, "q/esc cancel") {
+		t.Fatalf("selection hint = %q", hint)
+	}
+
+	m, _ = m.Update(press("down"))
+	m, _ = m.Update(press("down"))
+	m, _ = m.Update(press("enter"))
+	if hint := m.Hint(); !strings.Contains(hint, "enter submit") || !strings.Contains(hint, "ctrl+d decline") {
+		t.Fatalf("text hint = %q", hint)
+	}
+
+	m = New(testRequest())
+	m, _ = m.Update(press("enter"))
+	if hint := m.Hint(); !strings.Contains(hint, "space toggle") || !strings.Contains(hint, "enter next") {
+		t.Fatalf("multi-select hint = %q", hint)
+	}
+}
