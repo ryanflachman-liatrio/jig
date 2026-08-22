@@ -1,4 +1,4 @@
-╭─ Steps ──────────────────────╮╭─ a ──────────────────────────────────────────╮
+╭─ Steps ──────────────────────╮╭─ LIVE · a ───────────────────────────────────╮
 │ ▌  ○  a   pending            ││   ○  a  pending                              │
 │      —                       ││                                              │
 │    ○  b   pending            ││   transcript unavailable (persistence off)   │
@@ -24,7 +24,7 @@
   awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ct
 --- frame ---
 
-╭─ Steps ──────────────────────╮╭─ a ──────────────────────────────────────────╮
+╭─ Steps ──────────────────────╮╭─ LIVE · a ───────────────────────────────────╮
 │ ▌  ○  a   pending            ││   ○  a  pending                              │
 │      —                       ││                                              │
 │    ○  b   pending            ││   transcript unavailable (persistence off)   │
@@ -50,7 +50,7 @@
   awaiting agent input  ·  enter submit  •  alt+enter newline  •  ctrl+o view co
 --- frame ---
 
-╭─ Steps ──────────────────────╮╭─ a ──────────────────────────────────────────╮
+╭─ Steps ──────────────────────╮╭─ LIVE · a ───────────────────────────────────╮
 │ ▌  ○  a   pending            ││   ○  a  pending                              │
 │      —                       ││                                              │
 │    ○  b   pending            ││   transcript unavailable (persistence off)   │
