@@ -416,14 +416,22 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			m.searchOpen = true
 			m.searchInput = shared.NewInputTextarea("find in loaded page", max(1, m.transcriptInnerW-6), 1, shared.WithoutBorder())
 			m.searchInput.SetValue(m.searchQuery)
+			m.chatAutoScroll = false
 			m.refreshPanels()
+			if m.ready {
+				m.chatVP.GotoTop()
+			}
 			return m, textarea.Blink
 		}
 		return m, nil
 	case keybind.Matches(msg, m.keys.Filters):
 		if m.selKind == "" && m.RunDir != "" {
 			m.filterOpen = true
+			m.chatAutoScroll = false
 			m.refreshPanels()
+			if m.ready {
+				m.chatVP.GotoTop()
+			}
 		}
 		return m, nil
 	case keybind.Matches(msg, m.keys.ClearView):

@@ -99,7 +99,6 @@ type gateContextSnapshot struct {
 	groupExpand    map[blockKey]bool
 	chatExpandAll  bool
 	chatPageEnd    int64
-	chatNewerEnds  []int64
 	searchQuery    string
 	filters        transcriptFilters
 	targetStep     string
@@ -160,9 +159,6 @@ type Model struct {
 	// an index proportional to the run.
 	chatEntries []transcript.Entry
 	chatPage    transcript.Page
-	// chatNewerEnds is a breadcrumb stack of page-end cursors. Appends never
-	// invalidate these offsets because transcript files are append-only.
-	chatNewerEnds []int64
 
 	// Collapse/expand navigation. chatGroupHeaders is the canonical list of
 	// collapsible navigation items (one entry per toolGroup or standalone thinking
@@ -579,7 +575,7 @@ func (m Model) HelpSections() []shared.HelpSection {
 		pageOlder := m.keys.PageOlder
 		pageOlder.SetEnabled(m.chatPage.HasEarlier)
 		pageNewer := m.keys.PageNewer
-		pageNewer.SetEnabled(len(m.chatNewerEnds) > 0)
+		pageNewer.SetEnabled(m.chatPage.HasLater)
 		clearView := m.keys.ClearView
 		clearView.SetEnabled(m.searchQuery != "" || m.filters.active())
 		bindings := []keybind.Binding{

@@ -27,6 +27,7 @@ type Page struct {
 	Start      int64
 	End        int64
 	HasEarlier bool
+	HasLater   bool
 }
 
 // Open returns a Reader for the transcript at path. The file need not exist yet
@@ -140,6 +141,58 @@ func (r *Reader) PageBefore(end int64, limit int) (Page, error) {
 		return Page{}, fmt.Errorf("transcript: inspect page %q: %w", r.path, err)
 	}
 	page.HasEarlier = hasEarlier
+	page.HasLater = page.End < size
+	return page, nil
+}
+
+// PageAfter returns up to limit entries beginning at the opaque byte cursor
+// start. It is the forward counterpart to PageBefore and keeps newer-page
+// navigation bounded without a breadcrumb stack.
+func (r *Reader) PageAfter(start int64, limit int) (Page, error) {
+	if limit <= 0 {
+		return Page{}, nil
+	}
+	f, err := os.Open(r.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return Page{}, nil
+		}
+		return Page{}, fmt.Errorf("transcript: open %q: %w", r.path, err)
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return Page{}, fmt.Errorf("transcript: stat %q: %w", r.path, err)
+	}
+	size := info.Size()
+	start = min(max(start, int64(0)), size)
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return Page{}, fmt.Errorf("transcript: seek %q: %w", r.path, err)
+	}
+
+	page := Page{Start: start, End: start}
+	br := bufio.NewReader(f)
+	for len(page.Entries) < limit {
+		line, readErr := br.ReadString('\n')
+		page.End += int64(len(line))
+		if e, ok := decodeEntry([]byte(line)); ok {
+			page.Entries = append(page.Entries, e)
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return Page{}, fmt.Errorf("transcript: read page %q: %w", r.path, readErr)
+		}
+	}
+
+	hasEarlier, err := hasEntryBefore(f, page.Start)
+	if err != nil {
+		return Page{}, fmt.Errorf("transcript: inspect page %q: %w", r.path, err)
+	}
+	page.HasEarlier = hasEarlier
+	page.HasLater = page.End < size
 	return page, nil
 }
 

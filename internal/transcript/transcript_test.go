@@ -285,6 +285,17 @@ func TestPagedReaderWalksBackwardWithBoundedPages(t *testing.T) {
 	if oldest.HasEarlier {
 		t.Fatal("oldest page reported nonexistent earlier entries")
 	}
+
+	forward, err := r.PageAfter(oldest.End, 3)
+	if err != nil {
+		t.Fatalf("PageAfter: %v", err)
+	}
+	if got := seqs(forward.Entries); !slices.Equal(got, []int{3, 4, 5}) {
+		t.Fatalf("forward seqs = %v", got)
+	}
+	if !forward.HasEarlier || !forward.HasLater {
+		t.Fatalf("forward page bounds = earlier:%v later:%v", forward.HasEarlier, forward.HasLater)
+	}
 }
 
 func TestPagedReaderSkipsMalformedAndHandlesLargeLines(t *testing.T) {

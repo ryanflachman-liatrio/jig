@@ -44,7 +44,6 @@ func (m *Model) saveGateContext(targetStep string) {
 		groupExpand:    cloneBlockState(m.chatGroupExpand),
 		chatExpandAll:  m.chatExpandAll,
 		chatPageEnd:    m.chatPage.End,
-		chatNewerEnds:  append([]int64(nil), m.chatNewerEnds...),
 		searchQuery:    m.searchQuery,
 		filters:        m.filters,
 		targetStep:     targetStep,
@@ -109,7 +108,6 @@ func (m *Model) restoreGateContext() {
 	if snapshot.chatPageEnd > 0 && snapshot.chatPageEnd != m.chatPage.End {
 		m.loadChatBefore(snapshot.chatPageEnd)
 	}
-	m.chatNewerEnds = append([]int64(nil), snapshot.chatNewerEnds...)
 	m.filters = snapshot.filters
 	m.searchQuery = snapshot.searchQuery
 	m.rebuildLoadedChat(snapshot.chatBlock)

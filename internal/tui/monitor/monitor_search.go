@@ -71,16 +71,15 @@ func (m Model) filteredEntries() []transcript.Entry {
 	for _, e := range m.chatEntries {
 		copyEntry := e
 		copyEntry.Blocks = make([]transcript.Block, len(e.Blocks))
-		visibleCount := 0
 		for bi, blk := range e.Blocks {
 			if visible[blockKey{seq: e.Seq, block: bi}] {
 				copyEntry.Blocks[bi] = blk
-				visibleCount++
 			}
 		}
-		if visibleCount > 0 {
-			filtered = append(filtered, copyEntry)
-		}
+		// Empty placeholders preserve boundaries between tool groups. The render
+		// plan skips them, but dropping the entry here could merge tool calls that
+		// had a filtered-out text or reasoning block between them.
+		filtered = append(filtered, copyEntry)
 	}
 	return filtered
 }

@@ -2,6 +2,8 @@ package monitor
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -34,11 +36,15 @@ func TestTranscriptPagingStaysBoundedAndNavigatesBothDirections(t *testing.T) {
 	}
 
 	m, _ = m.Update(key("["))
-	if len(m.chatEntries) != chatWindowMax || m.chatEntries[0].Seq != 51 || len(m.chatNewerEnds) != 1 {
-		t.Fatalf("older page = len:%d first:%d newer:%d", len(m.chatEntries), m.chatEntries[0].Seq, len(m.chatNewerEnds))
+	if len(m.chatEntries) != chatWindowMax || m.chatEntries[0].Seq != 51 || !m.chatPage.HasLater {
+		t.Fatalf("older page = len:%d first:%d later:%v", len(m.chatEntries), m.chatEntries[0].Seq, m.chatPage.HasLater)
 	}
 	if m.chatAutoScroll {
 		t.Fatal("loading an older page did not pause follow")
+	}
+	m, _ = m.Update(key("j"))
+	if m.chatAutoScroll {
+		t.Fatal("bottom of an older page incorrectly resumed live follow")
 	}
 
 	m, _ = m.Update(key("["))
@@ -110,6 +116,29 @@ func TestTranscriptSearchFindsFilteredLoadedBlocks(t *testing.T) {
 	}
 }
 
+func TestEntryFilterScopes(t *testing.T) {
+	tests := []struct {
+		name    string
+		entry   transcript.Entry
+		filters transcriptFilters
+		want    bool
+	}{
+		{name: "retry excludes initial attempt", entry: transcript.Entry{Attempt: 0}, filters: transcriptFilters{retries: true}},
+		{name: "retry includes later attempt", entry: transcript.Entry{Attempt: 1}, filters: transcriptFilters{retries: true}, want: true},
+		{name: "assistant role", entry: transcript.Entry{Role: transcript.RoleAssistant}, filters: transcriptFilters{assistant: true}, want: true},
+		{name: "user role excluded", entry: transcript.Entry{Role: transcript.RoleUser}, filters: transcriptFilters{assistant: true}},
+		{name: "system role", entry: transcript.Entry{Role: transcript.RoleSystem}, filters: transcriptFilters{system: true}, want: true},
+		{name: "result role", entry: transcript.Entry{Role: transcript.RoleResult}, filters: transcriptFilters{result: true}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := entryMatchesScope(tt.entry, tt.filters); got != tt.want {
+				t.Fatalf("entryMatchesScope() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestErrorFilterKeepsAtomicToolContext(t *testing.T) {
 	runDir := writeTranscript(t, "a", []transcript.Entry{
 		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
@@ -140,6 +169,29 @@ func TestErrorFilterKeepsAtomicToolContext(t *testing.T) {
 	}
 }
 
+func TestToolFilterPreservesHiddenBlockGroupBoundaries(t *testing.T) {
+	runDir := writeTranscript(t, "a", []transcript.Entry{
+		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+			{Type: transcript.BlockToolUse, ToolUseID: "t1", Name: "Read"},
+		}},
+		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+			{Type: transcript.BlockText, Text: "boundary hidden by tools filter"},
+		}},
+		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+			{Type: transcript.BlockToolUse, ToolUseID: "t2", Name: "Edit"},
+		}},
+	})
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+	m.filters.tools = true
+	m.rebuildLoadedChat(chatItem{})
+
+	if len(m.chatGroupHeaders) != 2 {
+		t.Fatalf("tool filter merged groups across hidden text: got %d groups", len(m.chatGroupHeaders))
+	}
+}
+
 func TestSearchInputAndContextualNavigation(t *testing.T) {
 	runDir := writeTranscript(t, "a", []transcript.Entry{
 		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
@@ -154,6 +206,9 @@ func TestSearchInputAndContextualNavigation(t *testing.T) {
 	m, _ = m.Update(key("/"))
 	if !m.searchOpen || !m.CapturesText() {
 		t.Fatal("/ did not open a text-capturing search")
+	}
+	if m.chatAutoScroll || m.chatVP.YOffset() != 0 {
+		t.Fatalf("search input not made visible: auto=%v offset=%d", m.chatAutoScroll, m.chatVP.YOffset())
 	}
 	for _, r := range "needle" {
 		m, _ = m.Update(key(string(r)))
@@ -170,6 +225,21 @@ func TestSearchInputAndContextualNavigation(t *testing.T) {
 	if m.searchHitCursor != 0 {
 		t.Fatalf("N selected hit %d, want 0", m.searchHitCursor)
 	}
+	m.filters.reasoning = true
+	m.rebuildLoadedChat(chatItem{})
+	m.rerunSearch()
+	m.filterOpen = true
+	m.filterCursor = 2
+	m.refreshPanels()
+	if dir := os.Getenv("JIG_UI_SNAPSHOT_DIR"); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("create snapshot dir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "transcript-search-filters.ansi"), []byte(m.View()), 0o644); err != nil {
+			t.Fatalf("write transcript search/filter snapshot: %v", err)
+		}
+	}
+	m.filterOpen = false
 	m, _ = m.Update(key("c"))
 	if m.searchQuery != "" || m.filters.active() {
 		t.Fatal("c did not clear transcript view state")
