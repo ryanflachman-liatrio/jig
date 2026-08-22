@@ -1064,7 +1064,7 @@ func (s *scheduler) anyPendingRunnable() bool {
 			return true
 		}
 		// A step parked for a recovery decision keeps the run alive: the human
-		// will retry, resume, or abort.
+		// will retry, resume, skip, or abort.
 		if st.Status == step.StatusAwaitingRecovery {
 			return true
 		}

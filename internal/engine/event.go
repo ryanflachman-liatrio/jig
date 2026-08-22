@@ -133,7 +133,8 @@ type RunError struct {
 // step.StatusAwaitingRecovery; the run and any in-flight sibling steps stay
 // alive. The TUI surfaces Err and offers: retry (re-run fresh), resume (re-run
 // the failed agent session with the error fed back in — only when CanResume),
-// or abort the run. The decision is delivered via Run.Recover.
+// skip (accept the failure and continue), or abort the run. The decision is
+// delivered via Run.Recover.
 type RecoveryRequest struct {
 	RunID  string
 	StepID string

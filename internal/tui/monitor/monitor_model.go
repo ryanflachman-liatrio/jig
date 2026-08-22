@@ -44,7 +44,7 @@ const (
 	inputKindQuestion                                    // AskUserQuestion AgentQuestion
 	inputKindPrompt                                      // from="user" PromptRequest
 	inputKindReview                                      // ReviewRequest (verdict + message)
-	inputKindRecovery                                    // RecoveryRequest (retry / resume / abort)
+	inputKindRecovery                                    // RecoveryRequest (retry / resume / skip / abort)
 	inputKindIntegrationConflict                         // IntegrationConflictRequest (resolve / abort)
 	inputKindFinalMerge                                  // FinalMergeRequest (approve / discard)
 	inputKindResetConfirm                                // reset confirmation (y/n, default n — spec 08 C4)
@@ -701,13 +701,13 @@ func (m Model) gateHelpSection() shared.HelpSection {
 	case inputKindPrompt:
 		sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, contextKey, entryNav, m.keys.GateBlur}
 	case inputKindRecovery:
-		switch {
-		case entry.composing:
+		if entry.composing {
 			sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, contextKey, m.keys.GateBlur}
-		case entry.recovery != nil && entry.recovery.CanResume:
-			sec.Bindings = []keybind.Binding{m.keys.RecoverRetry, m.keys.RecoverGuide, m.keys.RecoverSkip, m.keys.RecoverAbort, contextKey, entryNav, m.keys.GateBlur}
-		default:
-			sec.Bindings = []keybind.Binding{m.keys.RecoverRetry, m.keys.RecoverSkip, m.keys.RecoverAbort, contextKey, entryNav, m.keys.GateBlur}
+		} else {
+			for _, action := range m.recoveryActions(entry.recovery) {
+				sec.Bindings = append(sec.Bindings, action.binding)
+			}
+			sec.Bindings = append(sec.Bindings, contextKey, entryNav, m.keys.GateBlur)
 		}
 	case inputKindIntegrationConflict:
 		sec.Bindings = []keybind.Binding{m.keys.IntegrationResolve, m.keys.RecoverAbort, contextKey, entryNav, m.keys.GateBlur}

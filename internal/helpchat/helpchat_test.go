@@ -26,7 +26,10 @@ func TestBuildSystemPrompt(t *testing.T) {
 
 	got := BuildSystemPrompt("my-workflow", snap)
 
-	checks := []string{"my-workflow", "run-abc", "build", "succeeded", "test", "failed"}
+	checks := []string{
+		"my-workflow", "run-abc", "build", "succeeded", "test", "failed",
+		`"skip" accepts the failure and continues`,
+	}
 	for _, want := range checks {
 		if !strings.Contains(got, want) {
 			t.Errorf("system prompt missing %q\nfull prompt:\n%s", want, got)
@@ -115,41 +118,64 @@ func TestMcpServerToolSchemas(t *testing.T) {
 	}
 }
 
-// TestDispatchFunc_RecoverStep verifies that the recover_step tool handler
-// emits the correct monitor.RecoverResponseMsg via the DispatchFunc.
 func TestDispatchFunc_RecoverStep(t *testing.T) {
-	dispatched := make(chan tea.Msg, 1)
-	dispatch := func(msg tea.Msg) { dispatched <- msg }
+	for _, action := range []string{"retry", "skip"} {
+		t.Run(action, func(t *testing.T) {
+			dispatched := make(chan tea.Msg, 1)
+			dispatch := func(msg tea.Msg) { dispatched <- msg }
+			tool := buildRecoverStep(fakeRun("run-1"), dispatch)
 
-	tool := buildRecoverStep(fakeRun("run-1"), dispatch)
+			result, err := tool.Call(t.Context(), map[string]any{
+				"step_id":  "build",
+				"action":   action,
+				"guidance": "fix the error",
+			})
+			if err != nil {
+				t.Fatalf("tool call error: %v", err)
+			}
+			if result.IsError {
+				t.Fatalf("tool returned error: %v", result.Content)
+			}
 
-	result, err := tool.Call(t.Context(), map[string]any{
-		"step_id":  "build",
-		"action":   "retry",
-		"guidance": "fix the error",
-	})
-	if err != nil {
-		t.Fatalf("tool call error: %v", err)
+			select {
+			case msg := <-dispatched:
+				ra, ok := msg.(RecoverAction)
+				if !ok {
+					t.Fatalf("dispatched %T, want helpchat.RecoverAction", msg)
+				}
+				if ra.StepID != "build" {
+					t.Errorf("StepID = %q, want %q", ra.StepID, "build")
+				}
+				if ra.Action != action {
+					t.Errorf("Action = %q, want %q", ra.Action, action)
+				}
+			default:
+				t.Fatal("dispatch channel empty after tool call")
+			}
+		})
 	}
-	if result.IsError {
-		t.Fatalf("tool returned error: %v", result.Content)
-	}
+}
 
-	select {
-	case msg := <-dispatched:
-		ra, ok := msg.(RecoverAction)
-		if !ok {
-			t.Fatalf("dispatched %T, want helpchat.RecoverAction", msg)
-		}
-		if ra.StepID != "build" {
-			t.Errorf("StepID = %q, want %q", ra.StepID, "build")
-		}
-		if ra.Action != "retry" {
-			t.Errorf("Action = %q, want %q", ra.Action, "retry")
-		}
-	default:
-		t.Fatal("dispatch channel empty after tool call")
+func TestRecoverStepSchemaIncludesSkip(t *testing.T) {
+	tool := buildRecoverStep(fakeRun("run-1"), func(tea.Msg) {})
+	properties, ok := tool.InputSchema()["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("recover_step schema has no properties map")
 	}
+	action, ok := properties["action"].(map[string]any)
+	if !ok {
+		t.Fatal("recover_step schema has no action property")
+	}
+	values, ok := action["enum"].([]any)
+	if !ok {
+		t.Fatal("recover_step action has no enum")
+	}
+	for _, value := range values {
+		if value == "skip" {
+			return
+		}
+	}
+	t.Fatalf("recover_step action enum = %v, want skip", values)
 }
 
 // TestFinalMergeGate_ChannelRendezvous verifies that resolve_review on the

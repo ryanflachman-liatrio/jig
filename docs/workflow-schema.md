@@ -530,13 +530,15 @@ When the automatic policy is exhausted — `abort`, or `retry` past `max_retries
 — the step does **not** silently tear the run down. It parks in
 `awaiting_recovery` and the engine emits a `RecoveryRequest`, keeping the run and
 any in-flight sibling steps alive while a human decides. The run monitor surfaces
-a recovery gate with three actions:
+a recovery gate with four actions:
 
 - **retry** — re-run the step fresh (a new agent session / full prompt).
 - **retry with guidance** — resume the *failed agent's* session, feeding the
   captured error plus optional operator guidance back in so it doesn't repeat the
   mistake. Offered only when the failed step has a resumable session (an agent
   step that ran; not a worktree/setup failure).
+- **skip** — accept the failed step and continue scheduling its dependents as if
+  it used `on_failure = "continue"`.
 - **abort** — fail the step and tear the run down (the pre-recovery default).
 
 The retry/resume round-trip is bounded (an internal cap) so the static

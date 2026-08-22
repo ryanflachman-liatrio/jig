@@ -7,7 +7,7 @@ package helpchat
 
 type RecoverAction struct {
 	StepID string
-	Action string // "retry", "resume", "abort"
+	Action string // "retry", "resume", "skip", "abort"
 	Text   string // optional guidance for resume
 }
 
