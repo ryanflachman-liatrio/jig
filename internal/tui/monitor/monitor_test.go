@@ -1085,13 +1085,39 @@ func TestMonitorBlockNavigationKeepsCursorVisible(t *testing.T) {
 	if m.chatAutoScroll {
 		t.Fatal("block navigation did not pause transcript follow")
 	}
+	middleView := m.View()
 
-	for range 12 {
+	for range len(blocks) {
+		m, _ = m.Update(key("n"))
+		assertChatCursorVisible(t, m)
+	}
+	if m.chatBlockCursor != len(blocks)-1 {
+		t.Fatalf("forward boundary cursor=%d, want %d", m.chatBlockCursor, len(blocks)-1)
+	}
+	lastView := m.View()
+
+	for range len(blocks) {
 		m, _ = m.Update(key("N"))
 		assertChatCursorVisible(t, m)
 	}
 	if m.chatBlockCursor != 0 {
 		t.Fatalf("reverse navigation ended at cursor %d, want 0", m.chatBlockCursor)
+	}
+	firstView := m.View()
+
+	if dir := os.Getenv("JIG_UI_SNAPSHOT_DIR"); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("create snapshot dir: %v", err)
+		}
+		for name, view := range map[string]string{
+			"block-cursor-middle.ansi":        middleView,
+			"block-cursor-last-clamped.ansi":  lastView,
+			"block-cursor-first-clamped.ansi": firstView,
+		} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(view), 0o644); err != nil {
+				t.Fatalf("write %s: %v", name, err)
+			}
+		}
 	}
 }
 
