@@ -158,7 +158,7 @@ func TestGateContextJumpAndReturnPreserveTranscriptState(t *testing.T) {
 	if jumped.gateContext == nil || jumped.gateContext.targetStep != "a" {
 		t.Fatal("jump did not save the prior context")
 	}
-	if hint := ansiStrip(jumped.hintLabel()); !strings.Contains(hint, "ctrl+o return") {
+	if hint := ansiStrip(jumped.hintLabel(200)); !strings.Contains(hint, "ctrl+o return") {
 		t.Fatalf("context return is not discoverable in transcript hint: %q", hint)
 	}
 	if len(jumped.inputQueue) != 1 || jumped.activeInputIdx != 0 {
