@@ -48,7 +48,7 @@ func (m *Model) removeEntryAt(i int) {
 }
 
 // syncActiveTextarea saves the current textarea content into the active entry's
-// draft field so it survives tab-navigation between entries or a gate blur.
+// draft field so it survives queue navigation or a gate blur.
 func (m *Model) syncActiveTextarea() {
 	if m.activeInputIdx < 0 || m.activeInputIdx >= len(m.inputQueue) {
 		return
@@ -66,7 +66,7 @@ func (m *Model) syncActiveTextarea() {
 
 // loadActiveTextarea rebuilds m.promptTextarea from the active entry's draft
 // with the correct placeholder and height for its kind. Called after entry
-// navigation (tab/shift+tab) and after removeEntryAt advances the index.
+// navigation and after removeEntryAt advances the index.
 func (m *Model) loadActiveTextarea() {
 	if m.activeInputIdx < 0 || m.activeInputIdx >= len(m.inputQueue) {
 		m.promptTextarea = textarea.Model{}

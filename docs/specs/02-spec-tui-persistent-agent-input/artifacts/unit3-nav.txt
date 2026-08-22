@@ -1,87 +1,96 @@
-╭─ Steps ──────────────────────╮╭─ a ──────────────────────────────────────────╮
-│ ▌ ○  a   pending             ││   ○  pending                                 │
-│      —                       ││                                              │
-│   ○  b   pending             ││   transcript unavailable (persistence off)   │
-│      —                       ││                                              │
-│   ○  c   pending             ││                                              │
-│      —                       ││                                              │
-│                              ││                                              │
-│                              ││                                              │
-│                              ││                                              │
-│                              ││                                              │
-│                              ││                                              │
-╰──────────────────────────────╯╰──────────────────────────────────────────────╯
-                                                                                
-╭─ Agent input required ───────────────────────────────────────────────────────╮
-│ [1 / 2]  Step: a                                                             │
-│   Required: Enter a message to continue  ·  [ctrl+o] view transcript         │
-│ ┃ Message to agent…                                                          │
-│ ┃                                                                            │
-│ ┃                                                                            │
-│ ┃                                                                            │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Steps ──────────────────────────────╮╭─ a ──────────────────────────────────────────────────────────────────────────╮
+│ ▌  ○  a   pending                    ││   ○  a  pending                                                              │
+│      —                               ││                                                                              │
+│    ○  b   pending                    ││   transcript unavailable (persistence off)                                   │
+│      —                               ││                                                                              │
+│    ○  c   pending                    ││                                                                              │
+│      —                               ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+╭─ Agent input required ───────────────────────────────────────────────────────────────────────────────────────────────╮
+│ [1 / 2]  Step: a                                                                                                     │
+│   Required: Enter a message to continue  ·  [ctrl+o] view transcript                                                 │
+│ ┃ Message to agent…                                                                                                  │
+│ ┃                                                                                                                    │
+│ ┃                                                                                                                    │
+│ ┃                                                                                                                    │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
   Agent input required  ·  Step: a  ·  2 pending  ·  esc to close
-  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ct
+  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ctrl+o view context  •  [/] entries  •  es
 
 --- frame ---
 
-╭─ Steps ──────────────────────╮╭─ a ──────────────────────────────────────────╮
-│ ▌ ○  a   pending             ││   ○  pending                                 │
-│      —                       ││                                              │
-│   ○  b   pending             ││   transcript unavailable (persistence off)   │
-│      —                       ││                                              │
-│   ○  c   pending             ││                                              │
-│      —                       ││                                              │
-│                              ││                                              │
-│                              ││                                              │
-│                              ││                                              │
-│                              ││                                              │
-│                              ││                                              │
-╰──────────────────────────────╯╰──────────────────────────────────────────────╯
-                                                                                
-╭─ Agent input required ───────────────────────────────────────────────────────╮
-│ [2 / 2]  Step: b                                                             │
-│   Required: Enter a message to continue  ·  [ctrl+o] view transcript         │
-│ ┃ Message to agent…                                                          │
-│ ┃                                                                            │
-│ ┃                                                                            │
-│ ┃                                                                            │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-╰──────────────────────────────────────────────────────────────────────────────╯
+╭─ Steps ──────────────────────────────╮╭─ a ──────────────────────────────────────────────────────────────────────────╮
+│ ▌  ○  a   pending                    ││   ○  a  pending                                                              │
+│      —                               ││                                                                              │
+│    ○  b   pending                    ││   transcript unavailable (persistence off)                                   │
+│      —                               ││                                                                              │
+│    ○  c   pending                    ││                                                                              │
+│      —                               ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+╭─ Agent input required ───────────────────────────────────────────────────────────────────────────────────────────────╮
+│ [2 / 2]  Step: b                                                                                                     │
+│   Required: Enter a message to continue  ·  [ctrl+o] view transcript                                                 │
+│ ┃ Message to agent…                                                                                                  │
+│ ┃                                                                                                                    │
+│ ┃                                                                                                                    │
+│ ┃                                                                                                                    │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
   Agent input required  ·  Step: b  ·  2 pending  ·  esc to close
-  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ct
+  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ctrl+o view context  •  [/] entries  •  es
 
 --- frame ---
 
-╭─ Steps ──────────────────────╮╭─ a ──────────────────────────────────────────╮
-│ ▌ ○  a   pending             ││   ○  pending                                 │
-│      —                       ││                                              │
-│   ○  b   pending             ││   transcript unavailable (persistence off)   │
-│      —                       ││                                              │
-│   ○  c   pending             ││                                              │
-│      —                       ││                                              │
-│                              ││                                              │
-│                              ││                                              │
-│                              ││                                              │
-│                              ││                                              │
-│                              ││                                              │
-╰──────────────────────────────╯╰──────────────────────────────────────────────╯
-                                                                                
-╭─ Agent input required ───────────────────────────────────────────────────────╮
-│ [2 / 2]  Step: b                                                             │
-│   Required: Enter a message to continue  ·  [ctrl+o] view transcript         │
-│ ┃ Message to agent…                                                          │
-│ ┃                                                                            │
-│ ┃                                                                            │
-│ ┃                                                                            │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-╰──────────────────────────────────────────────────────────────────────────────╯
-  Agent input required  ·  Step: b  ·  2 pending  ·  esc to close
-  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ct
+╭─ Steps ──────────────────────────────╮╭─ a ──────────────────────────────────────────────────────────────────────────╮
+│ ▌  ○  a   pending                    ││   ○  a  pending                                                              │
+│      —                               ││                                                                              │
+│    ○  b   pending                    ││   transcript unavailable (persistence off)                                   │
+│      —                               ││                                                                              │
+│    ○  c   pending                    ││                                                                              │
+│      —                               ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+│                                      ││                                                                              │
+╭─ Agent input required ───────────────────────────────────────────────────────────────────────────────────────────────╮
+│ [1 / 2]  Step: a                                                                                                     │
+│   Required: Enter a message to continue  ·  [ctrl+o] view transcript                                                 │
+│ ┃ Message to agent…                                                                                                  │
+│ ┃                                                                                                                    │
+│ ┃                                                                                                                    │
+│ ┃                                                                                                                    │
+│                                                                                                                      │
+│                                                                                                                      │
+│                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+  Agent input required  ·  Step: a  ·  2 pending  ·  esc to close
+  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ctrl+o view context  •  [/] entries  •  es

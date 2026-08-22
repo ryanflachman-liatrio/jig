@@ -4,7 +4,7 @@
 
 This task moves the review diff out of the gate strip and into the Transcript
 panel, so reviewers can read the diff while the gate shows only verdict choices
-and the new diff-location hint. Queue navigation (tab/shift+tab) and Steps
+and the new diff-location hint. Queue navigation (`[`/`]`) and Steps
 navigation remain independent — cycling entries never moves the cursor or
 reloads the transcript.
 
@@ -14,7 +14,7 @@ reloads the transcript.
   panel via `chatBody()`, not in the gate strip.
 - Verdict choices (`[1] approve`, `[2] reject`) are absent from the Transcript
   body — they live exclusively in the gate entry.
-- Tab-cycling queue entries does not call `reloadTranscript` or change `cursor`
+- Bracket-key queue navigation does not call `reloadTranscript` or change `cursor`
   (Decision 2); `activeInputIdx` is unchanged after a `reloadTranscript` call.
 - The gate's review body shows a `diff shown in Transcript — select this step`
   hint so the reviewer knows where to look.

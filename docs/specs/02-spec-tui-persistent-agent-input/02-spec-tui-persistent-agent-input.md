@@ -23,9 +23,9 @@ This spec replaces that with a **persistent, multi-entry input queue**:
 - **Every** human-in-the-loop request — `InputRequest` (`block_on`), `AgentQuestion`
   (AskUserQuestion), `PromptRequest` (`from="user"`), **and `ReviewRequest`** — is
   enqueued as an **entry**; nothing is dropped.
-- The user cycles entries with `tab` / `shift+tab` (while the gate holds focus) and
-  answers them in any order; each response routes to the exact step (and tool-use ID)
-  it came from.
+- While the gate holds focus, the user cycles entries with `[` / `]` and answers
+  them in any order; each response routes to the exact step (and tool-use ID) it
+  came from. `tab` / `shift+tab` always cycle focus regions.
 - A `ReviewRequest` entry carries only its verdict picker and message affordance; its
   **diff renders in the Transcript panel** (not in the strip) when its step is
   selected in the Steps list.
@@ -43,8 +43,9 @@ doc. Glossary terms (**Gate**, **Input queue**, **Input entry**) live in
   blocked steps appear and the layout never jumps when a request arrives or clears.
 - Every `InputRequest`, `AgentQuestion`, `PromptRequest`, and `ReviewRequest` is
   enqueued; no request is ever silently dropped, even when several steps block at once.
-- The user cycles all pending entries with `tab` / `shift+tab` and responds in any
-  order; a new arrival **never steals keyboard focus** from the panel the user is in.
+- The user cycles all pending entries with `[` / `]` and responds in any order;
+  `tab` / `shift+tab` consistently cycle focus regions, and a new arrival **never
+  steals keyboard focus** from the panel the user is in.
 - Each submitted response routes to the exact step (and tool-use ID) of its entry,
   leaving other queued entries undisturbed.
 - After an entry is answered (or its step leaves `StatusNeedsInput`), the queue
@@ -62,8 +63,9 @@ I always know where to look and am never surprised by a blocked step I missed.
 blocked steps collected in a navigable queue so I can respond to each without losing
 any requests.
 
-**As a user**, I want to choose which blocked step to answer first (by tabbing between
-them) so I can prioritize without being forced into a fixed order.
+**As a user**, I want to choose which blocked step to answer first (by moving backward
+or forward through the queue) so I can prioritize without being forced into a fixed
+order.
 
 **As a user reading a transcript when a parallel step blocks**, I do not want the
 cursor yanked into the input box; I want the queue indicator to update quietly so I
@@ -146,25 +148,25 @@ startup and never jump.
 
 ### Unit 3: Queue navigation, focus & draft preservation
 
-**Purpose:** With the gate focused, `tab` / `shift+tab` cycle entries; `left` / `right`
-and `esc` leave the gate; per-entry draft text survives navigation; the `[N/M]`
-indicator tracks position.
+**Purpose:** With the gate focused, `[` / `]` cycle entries; `tab` / `shift+tab`
+always cycle focus regions; `left` / `right` remain panel-focus aliases; per-entry
+draft text survives navigation; the `[N/M]` indicator tracks position.
 
 **Functional Requirements:**
-- When `m.focus == focusGate`, `FocusNext` (`tab`) / `FocusPrev` (`shift+tab`) shall
-  advance / retreat `activeInputIdx` modulo `len(inputQueue)` (a no-op on a single
-  entry) — **not** run `cycleFocus`. This requires intercepting these keys for the
-  gate *before* the top-level `cycleFocus` handling at `monitor.go:290–296`.
-- When `m.focus != focusGate`, `tab` shall continue to cycle regions via `cycleFocus`,
-  entering the gate when the queue is non-empty.
+- When `m.focus == focusGate` and `len(inputQueue) > 1`, `GateEntryNav` shall use
+  `[` to retreat and `]` to advance `activeInputIdx` modulo `len(inputQueue)`.
+  With zero or one entry, these keys shall continue to the focused region so a
+  single textarea can accept literal brackets.
+- `FocusNext` (`tab`) / `FocusPrev` (`shift+tab`) shall always cycle regions via
+  `cycleFocus`, including while the Gate is focused.
 - `PanelFocus` (`left` / `right`) shall continue to exit the gate to the side panels
   (unchanged; already handled at `monitor.go:298`).
 - `esc` shall **blur** the gate — set `m.focus = focusSteps`, keep the entry queued —
   and shall **not** leave the Monitor. Leaving the Monitor stays on `StepsLeave` /
   `TransLeave` from the panels. (Removes the `InputLeave` / `ReviewLeave` → `showRunsMsg`
   behavior from the gate; see [Keybinding changes](#keybinding-changes).)
-- On any navigation away from the active entry (`tab`, `shift+tab`, `left`, `right`,
-  `esc`), the system shall save the current textarea value into
+- On any navigation away from the active entry (`[`, `]`, `tab`, `shift+tab`,
+  `left`, `right`, `esc`), the system shall save the current textarea value into
   `inputQueue[activeInputIdx].draft`; on landing on an entry it shall rebuild the
   textarea from that entry's `draft` via `newInputTextarea`.
 - The strip shall render a `[N / M]  step-id  (kind)` header line above the entry body,
@@ -175,10 +177,10 @@ indicator tracks position.
   was last; emptying the queue shall set `m.focus = focusSteps`.
 
 **Proof Artifacts:**
-- Sequential screenshots: two entries; `tab` moves `[1/2] → [2/2]`; `shift+tab` wraps
-  `[1/2]` back to `[2/2]`.
-- Screenshot: type a partial answer in entry 2, `tab` to entry 1, `tab` back to entry 2
-  — the partial answer is still present.
+- Sequential screenshots: two entries; `]` moves `[1/2] → [2/2]`; `[` moves
+  `[2/2] → [1/2]` and wraps `[1/2] → [2/2]`.
+- Screenshot: type a partial answer in entry 2, `[` to entry 1, then `]` back to
+  entry 2 — the partial answer is still present.
 - Unit test: `esc` while gate-focused yields `m.focus == focusSteps`, the queue length
   unchanged, and no `showRunsMsg` command emitted.
 
@@ -228,9 +230,9 @@ independent of queue navigation, so the reviewer sees the raw change.
   that step's diff via the existing `writeDiff` on the verbatim (non-glamour) path,
   sourced from the retained `reviews` map. Review steps have no `transcript.jsonl`; this
   is a synthetic Transcript view.
-- Queue navigation and Steps-list selection shall remain **independent**: tabbing to a
-  review entry shall not move the Steps cursor, and selecting a review step shall not
-  change `activeInputIdx`.
+- Queue navigation and Steps-list selection shall remain **independent**: moving to a
+  review entry with `[` / `]` shall not move the Steps cursor, and selecting a review
+  step shall not change `activeInputIdx`.
 - The `inputKindReview` entry body shall include a one-line hint that the diff is shown
   in the Transcript panel when the review's step is selected.
 
@@ -250,9 +252,10 @@ rather than growing the panel.
 - When an `inputKindQuestion` entry's rendered options exceed the reserved body rows,
   the strip shall show a scrollable window over the options, driven by an offset stored
   per entry (e.g. `scrollOffset`).
-- `↑` / `↓` (and/or `j` / `k`) shall scroll the option window while the gate holds focus
-  and the active entry is a question; these keys do not collide with `tab` (entries),
-  `left`/`right` (exit), digit selection, `enter`, or `q`.
+- `↑` / `↓` (and/or `j` / `k`) shall scroll the option window while the gate holds
+  focus and the active entry is a question; these keys do not collide with `[` / `]`
+  (entries), `tab` / `shift+tab` (focus), `left`/`right` (panel aliases), digit
+  selection, `enter`, or `q`.
 - Option lists shall **never** be truncated in a way that hides a blind-selectable
   numbered option; scrolling keeps every option reachable.
 
@@ -271,7 +274,7 @@ rather than growing the panel.
    queue.
 3. **Audio or desktop notifications for new queue entries**: the panel is visual-only.
 4. **Filtering or searching the queue**: with bounded parallel steps the queue is short
-   enough for linear `tab` navigation.
+   enough for linear bracket-key navigation.
 5. **Changing the engine event model or the request types**: the engine-side protocol is
    unchanged; only the TUI state model and rendering change. In particular, attaching a
    free-text comment *to a verdict* (routed to the loop's `goto` target) would require an
@@ -390,9 +393,11 @@ Transcript diff view (Unit 5) and outlives the queue entry.
 `updateGate` (`monitor.go:470`) currently branches on the single-pointer fields; it must
 branch on `inputQueue[activeInputIdx].kind`. Additionally:
 
-- Intercept `FocusNext` / `FocusPrev` for the gate **before** the top-level `cycleFocus`
-  handling: when `m.focus == focusGate`, they move `activeInputIdx` (mod len), rebuilding
-  the textarea from the new entry's `draft`.
+- Handle `GateEntryNav` before focused-region dispatch: when `m.focus == focusGate`
+  and more than one entry exists, `[` / `]` move `activeInputIdx` modulo the queue
+  length and rebuild the textarea from the new entry's `draft`.
+- Keep `FocusNext` / `FocusPrev` in the top-level focus path so `tab` /
+  `shift+tab` move focus consistently from every region.
 - Save the current textarea value to the active entry's `draft` on every blur/navigate.
 - Submit paths read routing IDs from the active entry, emit the existing `*Msg`, remove
   the entry, and auto-advance.
@@ -405,14 +410,15 @@ The intent is to keep the same keys but change what leaving means from within th
   `InputLeave` / `ReviewLeave` / `QuestionCancel`→runs-list behavior.
 - **`q` (question entry)**: decline → deliver `"cancelled"`, remove + advance; stays in
   Monitor.
-- **`tab` / `shift+tab` (in gate)**: cycle entries.
+- **`[` / `]` (in gate, multiple entries)**: previous / next entry, wrapping.
+- **`tab` / `shift+tab` (in gate)**: cycle focus regions.
 - **`left` / `right` (in gate)**: exit to side panels (unchanged).
 - **`StepsLeave` / `TransLeave`**: unchanged — the ways to leave the Monitor.
 - `Verdict` (1–9), `Message` (`m`), `QConfirm` (enter/space), digit option select:
   unchanged, now dispatched by the active entry's kind.
 
-Update the footer hint strings to reflect gate-context keys (entries `tab/⇧tab`, exit
-`←/→`, `esc` blur, per-kind actions).
+Update the footer hint strings to reflect gate-context keys (entries `[/]`, focus
+`tab/⇧tab` and `←/→`, `esc` blur, per-kind actions).
 
 ### Layout height
 
@@ -470,10 +476,11 @@ preserves the rationale and the alternatives rejected. Recorded architecturally 
    `max_messages`). A comment bundled *with* a verdict was rejected for this spec because
    it needs an engine change (Non-Goal 5).
 
-4. **`tab` / `shift+tab` cycle entries in-gate; `left` / `right` exit.** Reuses the
-   already-redundant gate-exit keys, so no new bindings. Invariant rule (`tab` = entries
-   even on a single entry; arrows = exit) over a length-dependent rule, to avoid a key
-   whose meaning changes with queue size.
+4. **`[` / `]` cycle entries in-gate; `tab` / `shift+tab` always move focus.**
+   Issue 11 superseded the original gate-only meaning of `tab`, which made focus
+   behavior depend on the active region. Brackets navigate only when multiple
+   entries exist; with a single entry they remain literal textarea input.
+   `left` / `right` remain panel-focus aliases.
 
 5. **`esc` blurs to Steps; it does not leave the Monitor.** From an ever-present panel,
    making the reflexive "escape the text field" key yank the user out of the whole run

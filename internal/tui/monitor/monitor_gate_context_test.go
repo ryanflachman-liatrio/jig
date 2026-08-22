@@ -105,7 +105,7 @@ func TestGateQueueSwitchUpdatesContextWithoutFollowing(t *testing.T) {
 		t.Fatalf("first input bar is not contextual:\n%s", bar)
 	}
 
-	m, _ = m.Update(key("tab"))
+	m, _ = m.Update(key("]"))
 	if m.cursor != 2 || m.chatStep != "c" {
 		t.Fatalf("queue switch followed context: cursor=%d chatStep=%q", m.cursor, m.chatStep)
 	}

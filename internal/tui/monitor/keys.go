@@ -9,8 +9,8 @@ import (
 // own keys, and the gates are non-blocking (ADR 0002) so focus keys are handled
 // before any region sees input. Bindings marked display-only are rendered in the
 // footer but matched elsewhere — the digit gates (Verdict/Answer/ToggleOpt) run a
-// loop that needs the option index, and the *Nav/Scroll/Block/Focus* labels
-// combine keys (e.g. "j/k", "n/N", "tab/←/→") the regions match individually.
+// loop that needs the option index, and the Focus labels combine directional
+// bindings (e.g. "tab/←/→") that are matched individually.
 type monitorKeys struct {
 	// focus movement (handled in Update before region dispatch)
 	FocusNext  keybind.Binding // matched (tab)
@@ -30,12 +30,8 @@ type monitorKeys struct {
 	// Transcript panel
 	TransToSteps keybind.Binding // matched (esc/h → Steps)
 	TransLeave   keybind.Binding // matched (q → runs list)
-	Scroll       keybind.Binding // display-only ("J/K scroll")
-	ScrollDown   keybind.Binding // matched (J — scroll viewport one line down)
-	ScrollUp     keybind.Binding // matched (K — scroll viewport one line up)
-	NextBlock    keybind.Binding // matched (j — next collapsible block)
-	PrevBlock    keybind.Binding // matched (k — prev collapsible block)
-	BlockNav     keybind.Binding // display-only ("j/k block")
+	Scroll       keybind.Binding // matched (j/k — scroll viewport)
+	BlockNav     keybind.Binding // matched (n/N — next/previous collapsible block)
 	Toggle       keybind.Binding // matched (enter/space → expand)
 	ExpandAll    keybind.Binding // matched (o)
 	GotoTop      keybind.Binding // matched (gg chord — pendingGPrefix state in model)
@@ -46,7 +42,7 @@ type monitorKeys struct {
 	Newline        keybind.Binding // display-only (textarea-owned)
 	GateBlur       keybind.Binding // matched (esc: blurs gate → Steps, all kinds; ADR 0005)
 	GateContext    keybind.Binding // matched (ctrl+o: view/return from the active gate's step context)
-	GateEntryNav   keybind.Binding // display-only ("tab/⇧tab entries", multi-entry queue)
+	GateEntryNav   keybind.Binding // matched ([/] — previous/next entry, multi-entry queue)
 	InputLeave     keybind.Binding // retained for legacy footer refs; no longer triggers ShowRunsMsg
 	PromptLeave    keybind.Binding // display-only ("esc blur", prompt gate)
 	ComposeCancel  keybind.Binding // matched (esc, while composing — caught by GateBlur at top)
@@ -97,12 +93,8 @@ func defaultMonitorKeys() monitorKeys {
 
 		TransToSteps: keybind.NewBinding(keybind.WithKeys("esc", "h"), keybind.WithHelp("esc", "steps")),
 		TransLeave:   keybind.NewBinding(keybind.WithKeys("q"), keybind.WithHelp("q", "runs list")),
-		Scroll:       keybind.NewBinding(keybind.WithKeys("J", "K"), keybind.WithHelp("J/K", "scroll")),
-		ScrollDown:   keybind.NewBinding(keybind.WithKeys("J"), keybind.WithHelp("J", "scroll down")),
-		ScrollUp:     keybind.NewBinding(keybind.WithKeys("K"), keybind.WithHelp("K", "scroll up")),
-		NextBlock:    keybind.NewBinding(keybind.WithKeys("j"), keybind.WithHelp("j", "next block")),
-		PrevBlock:    keybind.NewBinding(keybind.WithKeys("k"), keybind.WithHelp("k", "prev block")),
-		BlockNav:     keybind.NewBinding(keybind.WithKeys("j", "k"), keybind.WithHelp("j/k", "block")),
+		Scroll:       keybind.NewBinding(keybind.WithKeys("j", "k"), keybind.WithHelp("j/k", "scroll")),
+		BlockNav:     keybind.NewBinding(keybind.WithKeys("n", "N"), keybind.WithHelp("n/N", "block")),
 		Toggle:       keybind.NewBinding(keybind.WithKeys("enter", " "), keybind.WithHelp("enter", "expand")),
 		ExpandAll:    keybind.NewBinding(keybind.WithKeys("o"), keybind.WithHelp("o", "all")),
 		GotoTop:      keybind.NewBinding(keybind.WithKeys("g"), keybind.WithHelp("gg", "top")),
@@ -112,7 +104,7 @@ func defaultMonitorKeys() monitorKeys {
 		Newline:        keybind.NewBinding(keybind.WithKeys("alt+enter", "shift+enter"), keybind.WithHelp("alt+enter", "newline")),
 		GateBlur:       keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "blur")),
 		GateContext:    keybind.NewBinding(keybind.WithKeys("ctrl+o"), keybind.WithHelp("ctrl+o", "view context")),
-		GateEntryNav:   keybind.NewBinding(keybind.WithKeys("tab", "shift+tab"), keybind.WithHelp("tab/⇧tab", "entries")),
+		GateEntryNav:   keybind.NewBinding(keybind.WithKeys("[", "]"), keybind.WithHelp("[/]", "entries")),
 		InputLeave:     keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "blur")),
 		PromptLeave:    keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "blur")),
 		ComposeCancel:  keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "blur")),

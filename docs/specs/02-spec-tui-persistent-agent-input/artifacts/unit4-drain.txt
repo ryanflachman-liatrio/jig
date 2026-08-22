@@ -1,17 +1,14 @@
 ╭─ Steps ──────────────────────╮╭─ a ──────────────────────────────────────────╮
-│ ▌ ○  a   pending             ││   ○  pending                                 │
+│ ▌  ○  a   pending            ││   ○  a  pending                              │
 │      —                       ││                                              │
-│   ○  b   pending             ││   transcript unavailable (persistence off)   │
+│    ○  b   pending            ││   transcript unavailable (persistence off)   │
 │      —                       ││                                              │
-│   ○  c   pending             ││                                              │
+│    ○  c   pending            ││                                              │
 │      —                       ││                                              │
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
-│                              ││                                              │
-╰──────────────────────────────╯╰──────────────────────────────────────────────╯
-                                                                                
 ╭─ Agent input required ───────────────────────────────────────────────────────╮
 │ [1 / 2]  Step: a                                                             │
 │   Required: Enter a message to continue  ·  [ctrl+o] view transcript         │
@@ -28,19 +25,16 @@
 --- frame ---
 
 ╭─ Steps ──────────────────────╮╭─ a ──────────────────────────────────────────╮
-│ ▌ ○  a   pending             ││   ○  pending                                 │
+│ ▌  ○  a   pending            ││   ○  a  pending                              │
 │      —                       ││                                              │
-│   ○  b   pending             ││   transcript unavailable (persistence off)   │
+│    ○  b   pending            ││   transcript unavailable (persistence off)   │
 │      —                       ││                                              │
-│   ○  c   pending             ││                                              │
+│    ○  c   pending            ││                                              │
 │      —                       ││                                              │
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
-│                              ││                                              │
-╰──────────────────────────────╯╰──────────────────────────────────────────────╯
-                                                                                
 ╭─ Agent input required ───────────────────────────────────────────────────────╮
 │ [1 / 1]  Step: b                                                             │
 │   Required: Enter a message to continue  ·  [ctrl+o] view transcript         │
@@ -57,18 +51,26 @@
 --- frame ---
 
 ╭─ Steps ──────────────────────╮╭─ a ──────────────────────────────────────────╮
-│ ▌ ○  a   pending             ││   ○  pending                                 │
+│ ▌  ○  a   pending            ││   ○  a  pending                              │
 │      —                       ││                                              │
-│   ○  b   pending             ││   transcript unavailable (persistence off)   │
+│    ○  b   pending            ││   transcript unavailable (persistence off)   │
 │      —                       ││                                              │
-│   ○  c   pending             ││                                              │
+│    ○  c   pending            ││                                              │
 │      —                       ││                                              │
+│                              ││                                              │
+│                              ││                                              │
+│                              ││                                              │
+│                              ││                                              │
+│                              ││                                              │
+│                              ││                                              │
+│                              ││                                              │
+│                              ││                                              │
+│                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
 ╰──────────────────────────────╯╰──────────────────────────────────────────────╯
-                                                                                
   Human actions  ·  no pending actions
-  running  ·  tab/←/→ focus  •  j/k select  •  esc runs list  •  ? help  •  ctrl
+  running  ·  tab/←/→ focus  •  j/k select  •  ctrl+\ help agent  •  esc runs li

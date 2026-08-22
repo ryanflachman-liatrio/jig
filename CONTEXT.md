@@ -42,9 +42,10 @@ _Avoid_: Modal, dialog, prompt (reserve "prompt" for the from="user" entry).
 **Input queue**:
 The ordered set of all steps currently blocked on a human, surfaced through the
 Gate. Arrivals append; nothing is dropped when several steps block at once. A
-`[N / M]` indicator names the active position and the total. The user cycles the
-queue with `tab`/`shift+tab` while the Gate holds focus and answers entries in any
-order.
+`[N / M]` indicator names the active position and the total. While the Gate holds
+focus, `[` selects the previous entry and `]` selects the next entry; both wrap so
+the user can answer entries in any order. `tab`/`shift+tab` always move focus
+between regions.
 _Avoid_: Stack, list (reserve "list" for the Steps list), backlog.
 
 **Input entry** (or **entry**):

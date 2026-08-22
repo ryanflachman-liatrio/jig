@@ -205,7 +205,7 @@ func (m Model) hintLabel() string {
 				hint += " · ctrl+o context"
 			}
 			if len(m.inputQueue) > 1 {
-				hint += " · tab entry"
+				hint += " · " + shared.HintString(entryNav)
 			}
 			return hint
 		case inputKindReview:
