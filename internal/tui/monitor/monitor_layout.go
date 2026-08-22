@@ -270,3 +270,42 @@ func (m *Model) ensureCursorVisible() {
 		m.vp.SetYOffset(row + margin - m.vp.Height() + 1)
 	}
 }
+
+func (m *Model) ensureChatCursorVisible() {
+	if len(m.chatBlocks) == 0 || m.chatBlockCursor < 0 || m.chatBlockCursor >= len(m.chatBlocks) {
+		return
+	}
+	rng, ok := m.chatLineRanges[m.chatBlocks[m.chatBlockCursor].lineKey()]
+	if !ok {
+		return
+	}
+	m.ensureTranscriptRangeVisible(rng)
+}
+
+func (m *Model) ensureTranscriptRangeVisible(rng lineRange) {
+	if !m.ready || m.chatVP.Height() <= 0 {
+		return
+	}
+
+	height := m.chatVP.Height()
+	margin := min(2, max((height-1)/2, 0))
+	top := m.chatVP.YOffset()
+	bottom := top + height - 1
+
+	// An expanded block can be taller than the viewport. Its highlighted header
+	// is the actionable cursor target, so anchor that line instead of aligning
+	// the block's bottom and pushing the target off-screen.
+	if rng.end-rng.start+1+2*margin > height {
+		if rng.start-margin < top || rng.start+margin > bottom {
+			m.chatVP.SetYOffset(max(0, rng.start-margin))
+		}
+		return
+	}
+
+	switch {
+	case rng.start-margin < top:
+		m.chatVP.SetYOffset(max(0, rng.start-margin))
+	case rng.end+margin > bottom:
+		m.chatVP.SetYOffset(max(0, rng.end+margin-height+1))
+	}
+}

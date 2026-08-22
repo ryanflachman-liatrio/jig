@@ -288,19 +288,11 @@ func (m *Model) ensureCurrentSearchHitVisible() {
 	if !ok {
 		return
 	}
-	rng, ok := m.chatLineRanges[hit.key]
+	rng, ok := m.chatLineRanges[chatLineKey{blockKey: hit.key}]
 	if !ok {
 		return
 	}
-	const margin = 2
-	top := m.chatVP.YOffset()
-	bottom := top + m.chatVP.Height() - 1
-	switch {
-	case rng.start-margin < top:
-		m.chatVP.SetYOffset(max(0, rng.start-margin))
-	case rng.end+margin > bottom:
-		m.chatVP.SetYOffset(max(0, rng.end+margin-m.chatVP.Height()+1))
-	}
+	m.ensureTranscriptRangeVisible(rng)
 }
 
 func (m Model) searchStatus() string {

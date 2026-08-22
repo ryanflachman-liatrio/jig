@@ -58,7 +58,7 @@ func (m *Model) reloadTranscript() {
 	m.chatExpand = make(map[blockKey]bool)
 	m.chatGroupExpand = make(map[blockKey]bool)
 	m.chatGroupForBlock = make(map[blockKey]blockKey)
-	m.chatLineRanges = make(map[blockKey]lineRange)
+	m.chatLineRanges = make(map[chatLineKey]lineRange)
 	m.chatPage = transcript.Page{}
 	m.searchOpen = false
 	m.searchQuery = ""
@@ -662,7 +662,7 @@ func (m *Model) chatBody() string {
 	}
 
 	// Dumb iterator over the pre-computed render plan.
-	m.chatLineRanges = make(map[blockKey]lineRange)
+	m.chatLineRanges = make(map[chatLineKey]lineRange)
 	currentLine := strings.Count(b.String(), "\n")
 	for _, item := range m.chatRenderPlan {
 		var chunk strings.Builder
@@ -712,7 +712,10 @@ func (m *Model) chatBody() string {
 		lineCount := strings.Count(rendered, "\n")
 		switch item.kind {
 		case renderText, renderGroupHeader, renderBlock:
-			m.chatLineRanges[item.key] = lineRange{
+			m.chatLineRanges[chatLineKey{
+				blockKey: item.key,
+				isGroup:  item.kind == renderGroupHeader,
+			}] = lineRange{
 				start: currentLine,
 				end:   max(currentLine, currentLine+lineCount-1),
 			}

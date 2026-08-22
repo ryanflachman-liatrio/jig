@@ -185,7 +185,7 @@ type Model struct {
 	// inner width changes (see lastTranscriptW / rebuildRenderer).
 	renderer       *glamour.TermRenderer
 	chatRendered   map[blockKey]string
-	chatLineRanges map[blockKey]lineRange
+	chatLineRanges map[chatLineKey]lineRange
 
 	// Search is intentionally page-local: loading another bounded page rebuilds
 	// hits from that page rather than indexing the complete transcript in memory.
@@ -357,6 +357,18 @@ type lineRange struct {
 	end   int
 }
 
+// A tool-group header and its first member intentionally share a blockKey.
+// Keeping the item kind in the rendered-line key prevents navigation to the
+// header from being redirected to the member's later range.
+type chatLineKey struct {
+	blockKey
+	isGroup bool
+}
+
+func (i chatItem) lineKey() chatLineKey {
+	return chatLineKey{blockKey: i.key, isGroup: i.isGroup}
+}
+
 type searchHit struct {
 	key     blockKey
 	preview string
@@ -460,7 +472,7 @@ func New(runID string) Model {
 		chatGroupExpand:   make(map[blockKey]bool),
 		chatGroupForBlock: make(map[blockKey]blockKey),
 		chatRendered:      make(map[blockKey]string),
-		chatLineRanges:    make(map[blockKey]lineRange),
+		chatLineRanges:    make(map[chatLineKey]lineRange),
 		reviews:           make(map[string]engine.ReviewRequest),
 		chatAutoScroll:    true,
 		expanded:          make(map[string]bool),
@@ -504,7 +516,7 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 		m.chatGroupForBlock = make(map[blockKey]blockKey)
 	}
 	if m.chatLineRanges == nil {
-		m.chatLineRanges = make(map[blockKey]lineRange)
+		m.chatLineRanges = make(map[chatLineKey]lineRange)
 	}
 	if m.reviews == nil {
 		m.reviews = make(map[string]engine.ReviewRequest)
