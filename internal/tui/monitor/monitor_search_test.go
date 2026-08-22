@@ -58,6 +58,46 @@ func TestTranscriptPagingStaysBoundedAndNavigatesBothDirections(t *testing.T) {
 	}
 }
 
+func TestTranscriptPageKeepsToolUseWithBoundaryResult(t *testing.T) {
+	entries := manyTranscriptEntries(302)
+	entries[1] = transcript.Entry{Role: transcript.RoleAssistant, Blocks: []transcript.Block{{
+		Type: transcript.BlockToolUse, ToolUseID: "boundary", Name: "Read",
+	}}}
+	entries[2] = transcript.Entry{Role: transcript.RoleUser, Blocks: []transcript.Block{{
+		Type: transcript.BlockToolResult, ToolUseID: "boundary", Content: "contents",
+	}}}
+	runDir := writeTranscript(t, "a", entries)
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+
+	if len(m.chatEntries) > chatWindowMax+2*chatBoundaryContextMax {
+		t.Fatalf("context-expanded page has %d entries", len(m.chatEntries))
+	}
+	if len(m.chatGroupHeaders) == 0 ||
+		m.chatGroupHeaders[0].group == nil ||
+		m.chatGroupHeaders[0].group.count != 1 ||
+		len(m.chatGroupHeaders[0].group.blocks) != 2 {
+		t.Fatalf("boundary tool group incomplete: %+v", m.chatGroupHeaders)
+	}
+}
+
+func TestResultOnlyToolGroupHasUsefulLabel(t *testing.T) {
+	runDir := writeTranscript(t, "a", []transcript.Entry{{
+		Role: transcript.RoleUser,
+		Blocks: []transcript.Block{{
+			Type: transcript.BlockToolResult, ToolUseID: "orphan", Content: "result",
+		}},
+	}})
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+
+	if body := ansiStrip(m.chatBody()); !strings.Contains(body, "1 tool result") || strings.Contains(body, "0 tool calls") {
+		t.Fatalf("result-only group label is misleading:\n%s", body)
+	}
+}
+
 func TestPausedPagedTranscriptSurvivesStepMessage(t *testing.T) {
 	runDir := writeTranscript(t, "a", manyTranscriptEntries(350))
 	m := newMonitorWithSteps(t)
@@ -148,6 +188,9 @@ func TestErrorFilterKeepsAtomicToolContext(t *testing.T) {
 		{Role: transcript.RoleUser, Blocks: []transcript.Block{
 			{Type: transcript.BlockToolResult, ToolUseID: "t1", Content: "permission denied", IsError: true},
 		}},
+		{Role: transcript.RoleResult, Blocks: []transcript.Block{
+			{Type: transcript.BlockText, Text: "agent failed"},
+		}},
 	})
 	m := newMonitorWithSteps(t)
 	m.RunDir = runDir
@@ -156,7 +199,9 @@ func TestErrorFilterKeepsAtomicToolContext(t *testing.T) {
 	m.rebuildLoadedChat(chatItem{})
 
 	body := ansiStrip(m.chatBody())
-	if strings.Contains(body, "ordinary prose") || !strings.Contains(body, "1 tool call") {
+	if strings.Contains(body, "ordinary prose") ||
+		!strings.Contains(body, "1 tool call") ||
+		!strings.Contains(body, "agent failed") {
 		t.Fatalf("error-filtered body lost tool context or kept prose:\n%s", body)
 	}
 	m.chatGroupExpand[m.chatGroupHeaders[0].key] = true

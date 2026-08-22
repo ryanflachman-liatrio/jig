@@ -334,8 +334,12 @@ const (
 
 	// chatWindowMax bounds how many trailing entries modeChat renders, so a long
 	// run with thousands of messages stays responsive. Earlier entries are
-	// summarised by a leading "… N earlier messages" marker.
+	// available through fixed-size pages.
 	chatWindowMax = 300
+	// A tool exchange can straddle an entry-count page boundary. Keep only a
+	// small adjacent run of tool-only entries so the common batched use/result
+	// pair stays together without making memory proportional to transcript size.
+	chatBoundaryContextMax = 16
 
 	// outputMaxLines is the number of streaming output lines shown per step.
 	outputMaxLines = 10
@@ -388,8 +392,9 @@ type chatItem struct {
 
 // toolGroup is the payload for a group-header chatItem.
 type toolGroup struct {
-	blocks []blockKey // all tool_use / tool_result blockKeys in the group, in order
-	count  int        // number of tool_use blocks — the N in "N tool calls"
+	blocks  []blockKey // all tool_use / tool_result blockKeys in the group, in order
+	count   int        // number of tool_use blocks — the N in "N tool calls"
+	results int        // used when a bounded page begins inside a tool exchange
 }
 
 // renderKind discriminates the six variants of renderItem.

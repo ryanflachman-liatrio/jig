@@ -38,7 +38,7 @@ func (m Model) filteredEntries() []transcript.Entry {
 		for _, ref := range pending {
 			e := m.chatEntries[ref.entry]
 			blk := e.Blocks[ref.block]
-			if entryMatchesScope(e, m.filters) && contentMatches(blk, m.filters) {
+			if entryMatchesScope(e, m.filters) && contentMatches(e.Role, blk, m.filters) {
 				matches = true
 				break
 			}
@@ -59,7 +59,7 @@ func (m Model) filteredEntries() []transcript.Entry {
 				pending = append(pending, blockRef{entry: ei, block: bi})
 			default:
 				flushTools()
-				if entryMatchesScope(e, m.filters) && contentMatches(blk, m.filters) {
+				if entryMatchesScope(e, m.filters) && contentMatches(e.Role, blk, m.filters) {
 					visible[blockKey{seq: e.Seq, block: bi}] = true
 				}
 			}
@@ -106,7 +106,7 @@ func entryMatchesScope(e transcript.Entry, filters transcriptFilters) bool {
 	}
 }
 
-func contentMatches(blk transcript.Block, filters transcriptFilters) bool {
+func contentMatches(role transcript.Role, blk transcript.Block, filters transcriptFilters) bool {
 	kindsActive := filters.errors || filters.tools || filters.reasoning
 	if !kindsActive {
 		return true
@@ -118,6 +118,8 @@ func contentMatches(blk transcript.Block, filters transcriptFilters) bool {
 		return filters.tools
 	case transcript.BlockToolResult:
 		return filters.tools || (filters.errors && blk.IsError)
+	case transcript.BlockText:
+		return filters.errors && role == transcript.RoleResult
 	default:
 		return false
 	}

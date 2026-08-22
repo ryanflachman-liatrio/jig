@@ -146,6 +146,7 @@ func (m *Model) loadChatTail() {
 	if err != nil {
 		return
 	}
+	page = completeToolBoundaryContext(r, page)
 	m.setChatPage(page, saved)
 }
 
@@ -169,14 +170,16 @@ func (m *Model) rebuildLoadedChat(saved chatItem) {
 	// a render-only item (text).
 	var pendingBlocks []blockKey
 	pendingToolCount := 0
+	pendingResultCount := 0
 
 	flush := func() {
 		if len(pendingBlocks) == 0 {
 			return
 		}
 		g := &toolGroup{
-			blocks: pendingBlocks,
-			count:  pendingToolCount,
+			blocks:  pendingBlocks,
+			count:   pendingToolCount,
+			results: pendingResultCount,
 		}
 		m.chatGroupHeaders = append(m.chatGroupHeaders, chatItem{
 			isGroup: true,
@@ -185,6 +188,7 @@ func (m *Model) rebuildLoadedChat(saved chatItem) {
 		})
 		pendingBlocks = nil
 		pendingToolCount = 0
+		pendingResultCount = 0
 	}
 
 	for _, e := range entries {
@@ -195,6 +199,8 @@ func (m *Model) rebuildLoadedChat(saved chatItem) {
 				pendingBlocks = append(pendingBlocks, bk)
 				if blk.Type == transcript.BlockToolUse {
 					pendingToolCount++
+				} else {
+					pendingResultCount++
 				}
 			case transcript.BlockThinking:
 				flush()
@@ -223,6 +229,7 @@ func (m *Model) loadOlderChat() {
 	if err != nil || len(page.Entries) == 0 {
 		return
 	}
+	page = completeToolBoundaryContext(r, page)
 	m.setChatPage(page, chatItem{})
 	m.chatAutoScroll = false
 	if m.ready {
@@ -243,6 +250,7 @@ func (m *Model) loadNewerChat() {
 	if err != nil || len(page.Entries) == 0 {
 		return
 	}
+	page = completeToolBoundaryContext(r, page)
 	m.setChatPage(page, chatItem{})
 	m.chatAutoScroll = false
 	if m.ready {
@@ -263,7 +271,45 @@ func (m *Model) loadChatBefore(end int64) bool {
 	if err != nil {
 		return false
 	}
+	page = completeToolBoundaryContext(r, page)
 	m.setChatPage(page, chatItem{})
+	return true
+}
+
+func completeToolBoundaryContext(r *transcript.Reader, page transcript.Page) transcript.Page {
+	if len(page.Entries) == 0 {
+		return page
+	}
+	if page.HasEarlier && toolOnlyEntry(page.Entries[0]) {
+		if before, err := r.PageBefore(page.Start, chatBoundaryContextMax); err == nil &&
+			len(before.Entries) > 0 && toolOnlyEntry(before.Entries[len(before.Entries)-1]) {
+			page.Entries = append(before.Entries, page.Entries...)
+			page.Start = before.Start
+			page.HasEarlier = before.HasEarlier
+		}
+	}
+	if page.HasLater && toolOnlyEntry(page.Entries[len(page.Entries)-1]) {
+		if after, err := r.PageAfter(page.End, chatBoundaryContextMax); err == nil &&
+			len(after.Entries) > 0 && toolOnlyEntry(after.Entries[0]) {
+			page.Entries = append(page.Entries, after.Entries...)
+			page.End = after.End
+			page.HasLater = after.HasLater
+		}
+	}
+	return page
+}
+
+func toolOnlyEntry(entry transcript.Entry) bool {
+	if len(entry.Blocks) == 0 {
+		return false
+	}
+	for _, blk := range entry.Blocks {
+		switch blk.Type {
+		case transcript.BlockToolUse, transcript.BlockToolResult:
+		default:
+			return false
+		}
+	}
 	return true
 }
 
@@ -711,11 +757,20 @@ func (m Model) writeGroupHeader(b *strings.Builder, item renderItem, expanded, c
 	}
 
 	g := item.group
-	noun := "tool calls"
-	if g.count == 1 {
-		noun = "tool call"
+	label := ""
+	if g.count == 0 {
+		noun := "tool results"
+		if g.results == 1 {
+			noun = "tool result"
+		}
+		label = fmt.Sprintf("%d %s", g.results, noun)
+	} else {
+		noun := "tool calls"
+		if g.count == 1 {
+			noun = "tool call"
+		}
+		label = fmt.Sprintf("%d %s", g.count, noun)
 	}
-	label := fmt.Sprintf("%d %s", g.count, noun)
 
 	if cursored {
 		b.WriteString("  " + barGlyph + " " + shared.Theme.Chat.BlockCursor.Render(marker+" "+label))
