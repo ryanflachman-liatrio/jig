@@ -583,17 +583,16 @@ func (m *Model) chatBody() string {
 	}
 	s := m.steps[i]
 	indicator, _ := stepIndicator(s.status)
-	header := indicator + "  " + shared.Theme.Title.Render(m.chatStep) + "  " +
-		statusStyle(s.status).Render(string(s.status))
-	var breadcrumbs []string
+	header := indicator + "  " + statusStyle(s.status).Render(string(s.status))
+	var context []string
 	if s.iteration > 0 {
-		breadcrumbs = append(breadcrumbs, fmt.Sprintf("iter %d", s.iteration+1))
+		context = append(context, fmt.Sprintf("iter %d", s.iteration+1))
 	}
 	if s.attempt > 0 {
-		breadcrumbs = append(breadcrumbs, fmt.Sprintf("attempt %d", s.attempt))
+		context = append(context, fmt.Sprintf("attempt %d", s.attempt))
 	}
-	if len(breadcrumbs) > 0 {
-		header += "  " + shared.Theme.Chat.Hint.Render(strings.Join(breadcrumbs, " • "))
+	if len(context) > 0 {
+		header += "  " + shared.Theme.Chat.Hint.Render(strings.Join(context, " • "))
 	}
 	b.WriteString("  " + header + "\n\n")
 
@@ -638,7 +637,6 @@ func (m *Model) chatBody() string {
 		// Review steps have no transcript. Show the diff here so the reviewer can
 		// read it while the verdict choices live in the gate entry (Decision 2/ADR 0005).
 		if rev, ok := m.reviews[m.chatStep]; ok {
-			b.WriteString("  " + shared.Theme.Chat.Hint.Render("proposed changes") + "\n\n")
 			if rev.Diff != "" {
 				writeDiff(&b, rev.Diff)
 				b.WriteString("\n")
@@ -978,8 +976,7 @@ func clampRunesTail(s string) string {
 }
 
 // writeDiff renders a unified diff with +/-/@@ lines styled and indented two
-// spaces, truncated to maxDiffLines. Shared by the review overlay in the list
-// view and the review-step drill-in in the chat view (Phase 6).
+// spaces, truncated to maxDiffLines.
 func writeDiff(b *strings.Builder, diff string) {
 	b.WriteString("  " + shared.Theme.Question.Render("── diff ─────────────────────────────") + "\n")
 	lines := strings.Split(diff, "\n")

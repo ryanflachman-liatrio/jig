@@ -121,7 +121,7 @@ func (m Model) listBody() string {
 			default:
 				fileMarker = "file"
 			}
-			line := fmt.Sprintf("%s  [%s] %s", cursor, fileMarker, row.file.name)
+			line := fmt.Sprintf("%s  [%s] %s", cursor, fileMarker, row.file.displayLabel())
 			if i == m.cursor {
 				b.WriteString(shared.Theme.SelectedLine.Render(line) + "\n")
 			} else {

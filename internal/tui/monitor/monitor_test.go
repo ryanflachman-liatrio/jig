@@ -771,10 +771,13 @@ func TestMonitorChatReviewFallback(t *testing.T) {
 	m = enterChatStep(t, m, "a")
 	body := m.chatBody()
 	// Diff markers must appear in the Transcript body.
-	for _, want := range []string{"new line", "old line", "proposed changes"} {
+	for _, want := range []string{"new line", "old line"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("review Transcript missing %q:\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, "proposed changes") {
+		t.Fatalf("review body repeats context already carried by the panel title:\n%s", body)
 	}
 	// Verdict choices must NOT appear in the Transcript body (they live in the gate).
 	for _, notWant := range []string{"[1] approve", "[2] reject"} {
@@ -1238,7 +1241,7 @@ func newFollowMonitor(t *testing.T) (Model, string) {
 
 func TestMonitorFollowIndicatorCountsUnseenEntries(t *testing.T) {
 	m, runDir := newFollowMonitor(t)
-	if title := m.transcriptPanelTitle(); title != "LIVE · a" {
+	if title := m.transcriptPanelTitle(); title != "Transcript · LIVE" {
 		t.Fatalf("initial transcript title = %q, want LIVE", title)
 	}
 
@@ -1246,7 +1249,7 @@ func TestMonitorFollowIndicatorCountsUnseenEntries(t *testing.T) {
 	if m.chatAutoScroll {
 		t.Fatal("scrolling up did not pause transcript follow")
 	}
-	if title := m.transcriptPanelTitle(); title != "PAUSED · a" {
+	if title := m.transcriptPanelTitle(); title != "Transcript · PAUSED" {
 		t.Fatalf("paused transcript title = %q", title)
 	}
 	offset := m.chatVP.YOffset()
@@ -1270,7 +1273,7 @@ func TestMonitorFollowIndicatorCountsUnseenEntries(t *testing.T) {
 	if got := m.unseenChatEntries(); got != 4 {
 		t.Fatalf("unseen entries = %d, want 4", got)
 	}
-	if title := m.transcriptPanelTitle(); title != "PAUSED · 4 new · a" {
+	if title := m.transcriptPanelTitle(); title != "Transcript · PAUSED · 4 new" {
 		t.Fatalf("unseen transcript title = %q", title)
 	}
 	if got := m.chatVP.YOffset(); got != offset {
@@ -1301,7 +1304,7 @@ func TestMonitorFollowResumeClearsUnseen(t *testing.T) {
 			if got := m.unseenChatEntries(); got != 0 {
 				t.Fatalf("%s left %d unseen entries", resumeKey, got)
 			}
-			if title := m.transcriptPanelTitle(); title != "LIVE · a" {
+			if title := m.transcriptPanelTitle(); title != "Transcript · LIVE" {
 				t.Fatalf("title after %s = %q", resumeKey, title)
 			}
 		})
@@ -1381,18 +1384,24 @@ func TestMonitorFollowResetsOnStepSwitch(t *testing.T) {
 	if got := m.unseenChatEntries(); got != 0 {
 		t.Fatalf("step switch exposed %d old entries as unseen", got)
 	}
-	if title := m.transcriptPanelTitle(); title != "LIVE · b" {
+	if title := m.transcriptPanelTitle(); title != "Transcript · LIVE" {
 		t.Fatalf("title after step switch = %q", title)
 	}
 }
 
 func TestMonitorFollowIndicatorHiddenForStaticContent(t *testing.T) {
 	m, _ := newFollowMonitor(t)
+	file := outputFile{name: "output.json", label: "output.json", path: "/tmp/output.json", kind: kindJSON}
+	m.stepFiles["a"] = []outputFile{file}
+	m.expanded["a"] = true
+	m.cursor = 1
 	m.selKind = "file"
+	m.selFile = file.path
 	m.chatAutoScroll = false
-	if title := m.transcriptPanelTitle(); title != "a" {
+	if title := m.transcriptPanelTitle(); title != "output.json" {
 		t.Fatalf("file title = %q, want no follow indicator", title)
 	}
+	m.cursor = 0
 	m.reloadTranscript()
 	if !m.chatAutoScroll || m.selKind != "" {
 		t.Fatalf("return from file did not restore transcript follow: auto=%v kind=%q",
@@ -1401,7 +1410,7 @@ func TestMonitorFollowIndicatorHiddenForStaticContent(t *testing.T) {
 
 	m.chatEntries = nil
 	m.reviews["a"] = engine.ReviewRequest{StepID: "a", Diff: "diff"}
-	if title := m.transcriptPanelTitle(); title != "a" {
+	if title := m.transcriptPanelTitle(); title != "Review diff" {
 		t.Fatalf("review title = %q, want no follow indicator", title)
 	}
 }
@@ -1817,13 +1826,12 @@ func TestMonitorTwoPanel(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	view := m.View()
 
-	if !strings.Contains(view, "Steps") {
-		t.Fatalf("view missing Steps panel title:\n%s", view)
-	}
-	// The right panel title is the selected step id ("a") — the cursor's step.
 	top := firstRow(view)
-	if !strings.Contains(top, "a") {
-		t.Fatalf("top edge missing selected-step transcript title:\n%s", top)
+	plainTop := ansiStrip(top)
+	for _, want := range []string{"run-1 · demo › Steps", "run-1 · demo › a › Transcript · LIVE"} {
+		if !strings.Contains(plainTop, want) {
+			t.Fatalf("top edge missing hierarchy %q:\n%s", want, plainTop)
+		}
 	}
 
 	// Default focus is Steps: the Steps (left) title should carry the primary
@@ -1860,6 +1868,111 @@ func TestMonitorTwoPanel(t *testing.T) {
 	// Transcript must appear later in the row than the un-focused Steps title.
 	if primIdx <= stepsIdx {
 		t.Fatalf("primary border did not move to the right panel after tab (primIdx=%d, stepsIdx=%d):\n%q", primIdx, stepsIdx, top2)
+	}
+}
+
+func TestMonitorContentTitles(t *testing.T) {
+	m := newMonitorWithSteps(t)
+
+	t.Run("generic review", func(t *testing.T) {
+		review := m
+		review.reviews["a"] = engine.ReviewRequest{StepID: "a"}
+		review.chatEntries = nil
+		if got := review.selectedContent(); got.kind != contentReview || got.label != "Review" {
+			t.Fatalf("generic review context = %+v", got)
+		}
+	})
+
+	t.Run("review diff", func(t *testing.T) {
+		review := m
+		review.reviews["a"] = engine.ReviewRequest{StepID: "a", Diff: "diff"}
+		review.chatEntries = nil
+		if got := review.selectedContent(); got.kind != contentReviewDiff || got.label != "Review diff" {
+			t.Fatalf("review diff context = %+v", got)
+		}
+	})
+
+	t.Run("file uses selected parent and label", func(t *testing.T) {
+		fileModel := m
+		file := outputFile{
+			name: "report.json", label: "results/report.json",
+			path: "/tmp/results/report.json", kind: kindJSON,
+		}
+		fileModel.stepFiles["b"] = []outputFile{file}
+		fileModel.expanded["b"] = true
+		fileModel.cursor = 2 // a, b, then b's file.
+		fileModel.chatStep = "b"
+		fileModel.selKind = "file"
+		fileModel.selFile = file.path
+		got := fileModel.selectedContent()
+		if got.kind != contentFile || got.stepID != "b" || got.label != "results/report.json" {
+			t.Fatalf("file context = %+v", got)
+		}
+	})
+}
+
+func TestShortRunID(t *testing.T) {
+	tests := []struct {
+		name  string
+		runID string
+		want  string
+	}{
+		{name: "generated", runID: "20260822-210000-a1b2c3d4", want: "a1b2c3d4"},
+		{name: "short legacy", runID: "run-1", want: "run-1"},
+		{name: "rune safe", runID: "legacy-αβγδεζηθ", want: "αβγδεζηθ"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shortRunID(tt.runID); got != tt.want {
+				t.Fatalf("shortRunID(%q) = %q, want %q", tt.runID, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMonitorNarrowTitleKeepsRunAndCurrentContent(t *testing.T) {
+	m := New("20260822-210000-a1b2c3d4")
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
+	m, _ = m.Update(EngineEventMsg{Event: engine.RunStarted{
+		RunID: m.RunID, Workflow: "workflow-with-a-very-long-name",
+		Steps: []string{"implementation-step-with-a-long-name"},
+	}})
+	file := outputFile{
+		name: "output.json", label: "output.json",
+		path: "/tmp/output.json", kind: kindJSON,
+	}
+	stepID := m.steps[0].id
+	m.stepFiles[stepID] = []outputFile{file}
+	m.expanded[stepID] = true
+	m.cursor = 1
+	m.reloadTranscript()
+	m.focus = focusTranscript
+
+	title := ansiStrip(firstRow(m.View()))
+	for _, want := range []string{"a1b2c3d4", "output.json"} {
+		if !strings.Contains(title, want) {
+			t.Fatalf("narrow title missing %q:\n%s", want, title)
+		}
+	}
+	if lipgloss.Width(firstRow(m.View())) != m.width {
+		t.Fatalf("narrow title row width = %d, want %d", lipgloss.Width(firstRow(m.View())), m.width)
+	}
+}
+
+func TestTranscriptStatusContextDoesNotRepeatStepID(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
+		RunID: "run-1", StepID: "a", To: step.StatusRunning, Iteration: 1, Attempt: 2,
+	}})
+	body := ansiStrip(m.chatBody())
+	first := strings.TrimSpace(strings.SplitN(body, "\n", 2)[0])
+	for _, want := range []string{"running", "iter 2", "attempt 2"} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("status context %q missing %q", first, want)
+		}
+	}
+	if strings.Contains(first, " a ") || strings.HasSuffix(first, " a") {
+		t.Fatalf("status context repeats step ID already shown in breadcrumb: %q", first)
 	}
 }
 
@@ -2184,10 +2297,13 @@ func TestReviewDiffInTranscript(t *testing.T) {
 	}
 
 	body := m.chatBody()
-	for _, want := range []string{"removed", "added", "proposed changes"} {
+	for _, want := range []string{"removed", "added"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("chatBody missing %q:\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, "proposed changes") {
+		t.Fatalf("chatBody repeats review context from the panel title:\n%s", body)
 	}
 	// Choices must not appear in Transcript.
 	for _, notWant := range []string{"[1] approve", "[2] reject"} {

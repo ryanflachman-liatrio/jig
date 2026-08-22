@@ -1,14 +1,14 @@
-╭─ Steps ──────────────────────╮╭─ a ──────────────────────────────────────────╮
-│ ▌  ○  a   pending            ││   ○  a  pending                              │
+╭─ run-1 · demo › Steps ───────╮╭─ run-1 · demo › a › Review diff ─────────────╮
+│ ▌  ○  a   pending            ││   ○  pending                                 │
 │      —                       ││                                              │
-│    ○  b   pending            ││   proposed changes                           │
-│      —                       ││                                              │
-│    ○  c   pending            ││   ── diff ─────────────────────────────      │
+│    ○  b   pending            ││   ── diff ─────────────────────────────      │
 │      —                       ││   @@ -1,3 +1,3 @@                            │
-│                              ││    context                                   │
-│                              ││   -old line                                  │
+│    ○  c   pending            ││    context                                   │
+│      —                       ││   -old line                                  │
 │                              ││   +new line                                  │
 │                              ││    context                                   │
+│                              ││                                              │
+│                              ││                                              │
 ╭─ Review required ────────────────────────────────────────────────────────────╮
 │ [1 / 1]  Step: a                                                             │
 │   Required: Choose a verdict or send a message  ·  [ctrl+o] view diff        │

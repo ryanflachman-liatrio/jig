@@ -1,5 +1,5 @@
-╭─ Steps ──────────────────────╮╭─ LIVE · a ───────────────────────────────────╮
-│ ▌  ⊙  a   needs_input        ││   ⊙  a  needs_input                          │
+╭─ run-1 · demo › Steps ───────╮╭─ run-1 · demo › a › Transcript · LIVE ───────╮
+│ ▌  ⊙  a   needs_input        ││   ⊙  needs_input                             │
 │      —                       ││                                              │
 │    ○  b   pending            ││   transcript unavailable (persistence off)   │
 │      —                       ││                                              │

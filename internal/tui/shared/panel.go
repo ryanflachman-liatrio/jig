@@ -2,9 +2,13 @@ package shared
 
 import (
 	"strings"
+	"unicode"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
+
+const BreadcrumbSeparator = " › "
 
 // Panel renders body inside a rounded border with title composited into the top
 // border edge, lazygit-style: `╭─ Title ─────╮`. It is a *pure-presentation*
@@ -38,6 +42,81 @@ func Panel(title, body string, width, height int, focused bool) string {
 	return PanelTopEdge(title, width, border) + "\n" + box
 }
 
+// BreadcrumbPanel keeps hierarchical titles opt-in so screens with ordinary
+// titles retain their existing leading-edge truncation.
+func BreadcrumbPanel(parts []string, body string, width, height int, focused bool) string {
+	return Panel(BreadcrumbTitle(parts, panelTitleWidth(width)), body, width, height, focused)
+}
+
+// BreadcrumbTitle preserves the run identity and current content when the
+// intermediate hierarchy cannot fit. This is preferable to trailing
+// truncation, which would hide the leaf that tells the operator what they are
+// currently viewing.
+func BreadcrumbTitle(parts []string, maxWidth int) string {
+	clean := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = sanitizeTitleSegment(part); part != "" {
+			clean = append(clean, part)
+		}
+	}
+	if len(clean) == 0 || maxWidth < 1 {
+		return ""
+	}
+
+	full := strings.Join(clean, BreadcrumbSeparator)
+	if lipgloss.Width(full) <= maxWidth {
+		return full
+	}
+	if len(clean) == 1 {
+		return TruncateTitle(clean[0], maxWidth)
+	}
+
+	root, leaf := clean[0], clean[len(clean)-1]
+	middle := ""
+	if len(clean) > 2 {
+		middle = BreadcrumbSeparator + "…"
+	}
+	fixed := middle + BreadcrumbSeparator + leaf
+	rootWidth := maxWidth - lipgloss.Width(fixed)
+	if rootWidth >= 1 {
+		return TruncateTitle(root, rootWidth) + fixed
+	}
+
+	// When the leaf itself is long, reserve a compact root prefix before
+	// truncating the leaf. Run IDs lead the root segment, so this still exposes
+	// both pieces of information at practical narrow widths.
+	separatorWidth := lipgloss.Width(BreadcrumbSeparator)
+	if maxWidth > separatorWidth+2 {
+		rootWidth = min(lipgloss.Width(root), 8, maxWidth-separatorWidth-1)
+		root = TruncateTitle(root, rootWidth)
+		leaf = TruncateTitle(leaf, maxWidth-lipgloss.Width(root)-separatorWidth)
+		return root + BreadcrumbSeparator + leaf
+	}
+	return TruncateTitle(leaf, maxWidth)
+}
+
+func sanitizeTitleSegment(s string) string {
+	s = ansi.Strip(s)
+	var b strings.Builder
+	space := false
+	for _, r := range s {
+		if unicode.IsControl(r) || unicode.IsSpace(r) {
+			space = b.Len() > 0
+			continue
+		}
+		if space {
+			b.WriteByte(' ')
+			space = false
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func panelTitleWidth(width int) int {
+	return max(width-5, 0)
+}
+
 // PanelTopEdge builds the titled top line `╭─ Title ─────╮` at exactly width
 // visible cells, coloring the corners/dashes with the border's foreground so it
 // joins seamlessly with the box body rendered by the same border style.
@@ -57,7 +136,7 @@ func PanelTopEdge(title string, width int, border lipgloss.Style) string {
 	// Fixed decoration around the title: corner, one dash, a space either side of
 	// the text, and the closing corner (5 cells). Truncate the title to whatever
 	// width remains so the total never exceeds width.
-	maxTitle := width - 5
+	maxTitle := panelTitleWidth(width)
 	if maxTitle < 1 {
 		// Too narrow for a title; fall back to a plain dashed edge.
 		return PanelTopEdge("", width, border)
