@@ -420,6 +420,9 @@ func (m *Model) refreshPanels() {
 	}
 	m.vp.SetContent(m.listBody())
 	m.chatVP.SetContent(m.chatBody())
+	if m.chatAutoScroll {
+		m.chatVP.GotoBottom()
+	}
 }
 
 // helpBoxW/H return the outer modal dimensions, mirroring helpOverlay in
