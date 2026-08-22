@@ -1952,7 +1952,7 @@ func TestCaptureUnit4Drain(t *testing.T) {
 	var frames []string
 
 	// Frame 1: [1 / 2] — two entries, first active.
-	frames = append(frames, ansiStrip(m.View()))
+	frames = append(frames, trimProofLines(ansiStrip(m.View())))
 
 	// Submit entry "a" (pre-load draft so enter fires).
 	m.inputQueue[0].draft = "answer-a"
@@ -1961,7 +1961,7 @@ func TestCaptureUnit4Drain(t *testing.T) {
 
 	// Frame 2: [1 / 1] — one entry remaining, focus advances.
 	m.focus = focusGate
-	frames = append(frames, ansiStrip(m.View()))
+	frames = append(frames, trimProofLines(ansiStrip(m.View())))
 
 	// Submit entry "b".
 	m.inputQueue[0].draft = "answer-b"
@@ -1969,7 +1969,7 @@ func TestCaptureUnit4Drain(t *testing.T) {
 	m, _ = m.Update(key("enter"))
 
 	// Frame 3: empty placeholder, focus=focusSteps.
-	frames = append(frames, ansiStrip(m.View()))
+	frames = append(frames, trimProofLines(ansiStrip(m.View())))
 
 	out := strings.Join(frames, "\n--- frame ---\n\n")
 	if err := os.WriteFile(artifactPath, []byte(out), 0o644); err != nil {

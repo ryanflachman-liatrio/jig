@@ -35,7 +35,8 @@ branches (ADR 0005 §esc-blurs).
   `[` from index 0 wraps to the last entry.
 - `artifacts/unit3-nav.txt` captures three `View()` frames showing the header
   progression.
-- `go test ./... -race` is clean; `gofmt` and `go vet ./internal/tui` are clean.
+- `go test -race ./internal/tui/...`, `go build ./...`, `gofmt -l .`, and
+  `go vet ./...` are clean.
 
 ## Artifact: TestGateDraftPreservation
 
@@ -59,7 +60,7 @@ re-entering the gate.
 === RUN   TestGateDraftPreservation
 --- PASS: TestGateDraftPreservation (0.00s)
 PASS
-ok  	jig/internal/tui	1.560s
+ok  	jig/internal/tui/monitor
 ```
 
 ## Artifact: TestGateEscBlurs
@@ -113,40 +114,48 @@ PASS
 Frame 1 (initial — `[1 / 2]`):
 
 ```
-│ [1 / 2]  a  (input)                                                          │
+│ [1 / 2]  Step: a
 ```
 
 Frame 2 (after `]` — `[2 / 2]`):
 
 ```
-│ [2 / 2]  b  (input)                                                          │
+│ [2 / 2]  Step: b
 ```
 
 Frame 3 (after `[` — `[1 / 2]`):
 
 ```
-│ [1 / 2]  a  (input)                                                          │
+│ [1 / 2]  Step: a
 ```
 
-## Artifact: Full test suite
+## Artifact: Verification suite
 
-**What it proves:** No regressions in the TUI package or any other package.
+**What it proves:** The complete TUI surface passes with the race detector, and
+all packages build and vet cleanly.
 
 **Command:**
 
 ```bash
-go test ./... && go test ./internal/tui -race
+go build ./...
+go vet ./...
+go test -race ./internal/tui/...
 ```
 
-**Result summary:** All packages pass; race detector clean.
+**Result summary:** Build and vet pass; all TUI packages pass under the race
+detector. The broader `go test ./...` run was attempted separately and reached
+unrelated pre-existing engine integration timeouts while waiting for review/run
+events; the affected engine tests pass when rerun individually.
 
 ```
-ok  	jig/internal/datastore
-ok  	jig/internal/engine
-ok  	jig/internal/runner
-ok  	jig/internal/transcript
 ok  	jig/internal/tui
-ok  	jig/internal/workflow
+ok  	jig/internal/tui/chart
+ok  	jig/internal/tui/chat
+ok  	jig/internal/tui/detail
+ok  	jig/internal/tui/monitor
+ok  	jig/internal/tui/question
+ok  	jig/internal/tui/runs
+ok  	jig/internal/tui/selector
 ```
 
 ## Reviewer Conclusion

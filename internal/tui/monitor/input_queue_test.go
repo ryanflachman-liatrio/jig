@@ -254,6 +254,14 @@ func stripANSI(s string) string {
 	return b.String()
 }
 
+func trimProofLines(s string) string {
+	lines := strings.Split(s, "\n")
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], " \t")
+	}
+	return strings.Join(lines, "\n")
+}
+
 // TestCycleFocusSkipsEmptyGate verifies that with an empty queue, cycling focus
 // from focusTranscript wraps back to focusSteps without landing on focusGate
 // (Unit 2: the empty gate is inert, not focusable via tab).
@@ -437,18 +445,19 @@ func init() {
 }
 
 func captureUnit3NavFrames(m Model) {
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	frames := make([]string, 0, 3)
 
 	// Frame 1: [1 / 2] active.
-	frames = append(frames, stripANSI(m.View()))
+	frames = append(frames, trimProofLines(stripANSI(m.View())))
 
 	// Frame 2: after ] → [2 / 2].
 	m2, _ := m.Update(key("]"))
-	frames = append(frames, stripANSI(m2.View()))
+	frames = append(frames, trimProofLines(stripANSI(m2.View())))
 
 	// Frame 3: [ returns to [1 / 2].
 	m3, _ := m2.Update(key("["))
-	frames = append(frames, stripANSI(m3.View()))
+	frames = append(frames, trimProofLines(stripANSI(m3.View())))
 
 	combined := strings.Join(frames, "\n\n--- frame ---\n\n")
 	_ = os.MkdirAll("../../../docs/specs/02-spec-tui-persistent-agent-input/artifacts", 0o755)
