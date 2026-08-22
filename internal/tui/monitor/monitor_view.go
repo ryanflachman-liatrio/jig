@@ -235,9 +235,9 @@ func (m Model) hintLabel() string {
 		if m.gateContext != nil {
 			contextKey := m.keys.GateContext
 			contextKey.SetHelp("ctrl+o", "return")
-			return shared.HintString(contextKey, m.keys.FocusFull, m.keys.Scroll, m.keys.GotoTop, m.keys.GotoBottom, m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll, m.keys.ToggleHelp)
+			return shared.HintString(contextKey, m.keys.FocusFull, m.keys.Scroll, m.keys.GotoTop, m.keys.Follow, m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll, m.keys.ToggleHelp)
 		}
-		return shared.HintString(m.keys.FocusFull, m.keys.Scroll, m.keys.GotoTop, m.keys.GotoBottom, m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll, m.keys.ToggleHelp)
+		return shared.HintString(m.keys.FocusFull, m.keys.Scroll, m.keys.GotoTop, m.keys.Follow, m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll, m.keys.ToggleHelp)
 	default: // focusSteps
 		actions := m.selectedLifecycleActions()
 		stopKey := m.keys.StopStep
@@ -275,6 +275,23 @@ func (m Model) footerView() string {
 	return f.Render("  " + status + "  ·  " + hint)
 }
 
+func (m Model) transcriptPanelTitle() string {
+	title := m.chatStep
+	if title == "" {
+		return "Transcript"
+	}
+	if !m.showsTranscriptFollow() {
+		return title
+	}
+	if m.chatAutoScroll {
+		return "LIVE · " + title
+	}
+	if unseen := m.unseenChatEntries(); unseen > 0 {
+		return fmt.Sprintf("PAUSED · %d new · %s", unseen, title)
+	}
+	return "PAUSED · " + title
+}
+
 // View lays the monitor out as two side-by-side titled panels (Steps + the
 // selected step's transcript) with the input bar and footer beneath. Below the
 // narrow threshold only the focused panel renders full-width (Resolved
@@ -291,10 +308,7 @@ func (m Model) View() string {
 	footer := fitBlock(m.footerView(), m.width, layout.footerH)
 	inputBar := fitBlock(m.inputBarView(), m.width, layout.inputH)
 
-	rightTitle := m.chatStep
-	if rightTitle == "" {
-		rightTitle = "Transcript"
-	}
+	rightTitle := m.transcriptPanelTitle()
 
 	var panels string
 	if layout.panelH == 0 {

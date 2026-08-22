@@ -35,7 +35,7 @@ type monitorKeys struct {
 	Toggle       keybind.Binding // matched (enter/space → expand)
 	ExpandAll    keybind.Binding // matched (o)
 	GotoTop      keybind.Binding // matched (gg chord — pendingGPrefix state in model)
-	GotoBottom   keybind.Binding // matched (G)
+	Follow       keybind.Binding // matched (f/G — resume follow at latest entry)
 
 	// gates
 	Submit         keybind.Binding // matched (enter: input/prompt/compose submit)
@@ -98,7 +98,7 @@ func defaultMonitorKeys() monitorKeys {
 		Toggle:       keybind.NewBinding(keybind.WithKeys("enter", " "), keybind.WithHelp("enter", "expand")),
 		ExpandAll:    keybind.NewBinding(keybind.WithKeys("o"), keybind.WithHelp("o", "all")),
 		GotoTop:      keybind.NewBinding(keybind.WithKeys("g"), keybind.WithHelp("gg", "top")),
-		GotoBottom:   keybind.NewBinding(keybind.WithKeys("G"), keybind.WithHelp("G", "bottom")),
+		Follow:       keybind.NewBinding(keybind.WithKeys("f", "G"), keybind.WithHelp("f/G", "follow")),
 
 		Submit:         keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "submit")),
 		Newline:        keybind.NewBinding(keybind.WithKeys("alt+enter", "shift+enter"), keybind.WithHelp("alt+enter", "newline")),

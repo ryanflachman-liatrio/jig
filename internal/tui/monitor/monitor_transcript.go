@@ -24,6 +24,7 @@ func (m *Model) reloadTranscript() {
 	if stepID == "" {
 		return
 	}
+	wasFile := m.selKind == "file"
 
 	// File row: set selKind/selFile so chatBody renders the file.
 	rows := m.visibleRows()
@@ -46,6 +47,9 @@ func (m *Model) reloadTranscript() {
 	m.selFile = ""
 
 	if stepID == m.chatStep {
+		if wasFile {
+			m.resumeTranscriptFollow()
+		}
 		return
 	}
 	m.chatStep = stepID
@@ -57,12 +61,48 @@ func (m *Model) reloadTranscript() {
 	// from the previous step would collide with the new step's same-seq blocks.
 	// Reset the render cache along with the other per-step view state.
 	m.chatRendered = make(map[blockKey]string)
-	m.chatAutoScroll = true
 	m.pendingGPrefix = false
 	m.loadChat()
+	m.resumeTranscriptFollow()
+}
+
+func (m Model) latestChatSeq() int {
+	seq := m.msgCount[m.chatStep]
+	if n := len(m.chatEntries); n > 0 && m.chatEntries[n-1].Seq > seq {
+		seq = m.chatEntries[n-1].Seq
+	}
+	return seq
+}
+
+func (m Model) unseenChatEntries() int {
+	if m.chatAutoScroll {
+		return 0
+	}
+	return max(m.msgCount[m.chatStep]-m.chatSeenSeq, 0)
+}
+
+func (m Model) showsTranscriptFollow() bool {
+	if m.chatStep == "" || m.selKind == "file" {
+		return false
+	}
+	_, review := m.reviews[m.chatStep]
+	return !review || len(m.chatEntries) > 0
+}
+
+func (m *Model) resumeTranscriptFollow() {
+	m.chatAutoScroll = true
+	m.chatSeenSeq = m.latestChatSeq()
 	if m.ready {
 		m.chatVP.GotoBottom()
 	}
+}
+
+func (m *Model) updateTranscriptFollow(atBottom bool) {
+	if atBottom {
+		m.resumeTranscriptFollow()
+		return
+	}
+	m.chatAutoScroll = false
 }
 
 // loadChat re-reads chatStep's transcript into the model. The transcript file is

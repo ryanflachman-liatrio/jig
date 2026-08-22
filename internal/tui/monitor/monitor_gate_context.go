@@ -39,6 +39,7 @@ func (m *Model) saveGateContext(targetStep string) {
 		listOffset:     m.vp.YOffset(),
 		chatOffset:     m.chatVP.YOffset(),
 		chatAutoScroll: m.chatAutoScroll,
+		chatSeenSeq:    m.chatSeenSeq,
 		chatExpand:     cloneBlockState(m.chatExpand),
 		groupExpand:    cloneBlockState(m.chatGroupExpand),
 		chatExpandAll:  m.chatExpandAll,
@@ -106,6 +107,7 @@ func (m *Model) restoreGateContext() {
 	m.chatExpandAll = snapshot.chatExpandAll
 	m.rebuildActiveState(snapshot.chatBlock)
 	m.chatAutoScroll = snapshot.chatAutoScroll
+	m.chatSeenSeq = snapshot.chatSeenSeq
 	if m.hasGate() {
 		m.focus = focusGate
 	} else {
@@ -114,7 +116,11 @@ func (m *Model) restoreGateContext() {
 	m.refreshPanels()
 	if m.ready {
 		m.vp.SetYOffset(snapshot.listOffset)
-		m.chatVP.SetYOffset(snapshot.chatOffset)
+		if snapshot.chatAutoScroll {
+			m.resumeTranscriptFollow()
+		} else {
+			m.chatVP.SetYOffset(snapshot.chatOffset)
+		}
 	}
 }
 
