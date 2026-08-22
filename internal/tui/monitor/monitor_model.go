@@ -98,6 +98,10 @@ type gateContextSnapshot struct {
 	chatExpand     map[blockKey]bool
 	groupExpand    map[blockKey]bool
 	chatExpandAll  bool
+	chatPageEnd    int64
+	chatNewerEnds  []int64
+	searchQuery    string
+	filters        transcriptFilters
 	targetStep     string
 }
 
@@ -151,11 +155,14 @@ type Model struct {
 	// disk; the transcript file — not the lossy event bus — is what the
 	// Transcript panel renders (as themed Charmtone markdown).
 
-	// chatEntries is the currently-loaded (windowed) transcript for chatStep,
-	// re-read on entry and on each StepMessage for that step. chatElided counts
-	// entries dropped off the front of the window (see chatWindowMax).
+	// chatEntries is the currently-loaded page for chatStep. Page cursors are
+	// opaque transcript byte offsets, so paging stays bounded without retaining
+	// an index proportional to the run.
 	chatEntries []transcript.Entry
-	chatElided  int
+	chatPage    transcript.Page
+	// chatNewerEnds is a breadcrumb stack of page-end cursors. Appends never
+	// invalidate these offsets because transcript files are append-only.
+	chatNewerEnds []int64
 
 	// Collapse/expand navigation. chatGroupHeaders is the canonical list of
 	// collapsible navigation items (one entry per toolGroup or standalone thinking
@@ -167,20 +174,34 @@ type Model struct {
 	// chatBlockCursor selects the active item in chatBlocks.
 	// chatExpand / chatGroupExpand record per-block and per-group expansion
 	// overrides; chatExpandAll is a global read-only override.
-	chatGroupHeaders []chatItem
-	chatBlocks       []chatItem
-	chatRenderPlan   []renderItem
-	chatBlockCursor  int
-	chatExpand       map[blockKey]bool
-	chatGroupExpand  map[blockKey]bool
-	chatExpandAll    bool
+	chatGroupHeaders  []chatItem
+	chatBlocks        []chatItem
+	chatRenderPlan    []renderItem
+	chatBlockCursor   int
+	chatExpand        map[blockKey]bool
+	chatGroupExpand   map[blockKey]bool
+	chatExpandAll     bool
+	chatGroupForBlock map[blockKey]blockKey
 
 	// renderer renders text blocks as markdown; chatRendered caches the output
 	// keyed by block (glamour re-parses whole documents, so re-rendering on every
 	// event is wasteful). The cache is invalidated when the transcript panel's
 	// inner width changes (see lastTranscriptW / rebuildRenderer).
-	renderer     *glamour.TermRenderer
-	chatRendered map[blockKey]string
+	renderer       *glamour.TermRenderer
+	chatRendered   map[blockKey]string
+	chatLineRanges map[blockKey]lineRange
+
+	// Search is intentionally page-local: loading another bounded page rebuilds
+	// hits from that page rather than indexing the complete transcript in memory.
+	searchOpen      bool
+	searchInput     textarea.Model
+	searchQuery     string
+	searchHits      []searchHit
+	searchHitCursor int
+
+	filterOpen   bool
+	filterCursor int
+	filters      transcriptFilters
 
 	// fileRenderer removes document framing for output files. insetRenderer uses
 	// the same flush layout at the narrower width left inside a tool block's bar.
@@ -331,6 +352,32 @@ type blockKey struct {
 	block int
 }
 
+type lineRange struct {
+	start int
+	end   int
+}
+
+type searchHit struct {
+	key     blockKey
+	preview string
+}
+
+type transcriptFilters struct {
+	errors    bool
+	tools     bool
+	reasoning bool
+	retries   bool
+	assistant bool
+	user      bool
+	system    bool
+	result    bool
+}
+
+func (f transcriptFilters) active() bool {
+	return f.errors || f.tools || f.reasoning || f.retries ||
+		f.assistant || f.user || f.system || f.result
+}
+
 // chatItem is one entry in the canonical navigation list (chatGroupHeaders) and
 // the active navigation list (chatBlocks).
 // isGroup=false: a standalone collapsible block (thinking, or a block outside
@@ -403,18 +450,20 @@ type lifecycleActions struct {
 // New creates a fresh monitor model for the given runID.
 func New(runID string) Model {
 	return Model{
-		RunID:           runID,
-		keys:            defaultMonitorKeys(),
-		index:           make(map[string]int),
-		stepOutput:      make(map[string]*strings.Builder),
-		msgCount:        make(map[string]int),
-		chatExpand:      make(map[blockKey]bool),
-		chatGroupExpand: make(map[blockKey]bool),
-		chatRendered:    make(map[blockKey]string),
-		reviews:         make(map[string]engine.ReviewRequest),
-		chatAutoScroll:  true,
-		expanded:        make(map[string]bool),
-		stepFiles:       make(map[string][]outputFile),
+		RunID:             runID,
+		keys:              defaultMonitorKeys(),
+		index:             make(map[string]int),
+		stepOutput:        make(map[string]*strings.Builder),
+		msgCount:          make(map[string]int),
+		chatExpand:        make(map[blockKey]bool),
+		chatGroupExpand:   make(map[blockKey]bool),
+		chatGroupForBlock: make(map[blockKey]blockKey),
+		chatRendered:      make(map[blockKey]string),
+		chatLineRanges:    make(map[blockKey]lineRange),
+		reviews:           make(map[string]engine.ReviewRequest),
+		chatAutoScroll:    true,
+		expanded:          make(map[string]bool),
+		stepFiles:         make(map[string][]outputFile),
 	}
 }
 
@@ -449,6 +498,12 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 	}
 	if m.chatRendered == nil {
 		m.chatRendered = make(map[blockKey]string)
+	}
+	if m.chatGroupForBlock == nil {
+		m.chatGroupForBlock = make(map[blockKey]blockKey)
+	}
+	if m.chatLineRanges == nil {
+		m.chatLineRanges = make(map[blockKey]lineRange)
 	}
 	if m.reviews == nil {
 		m.reviews = make(map[string]engine.ReviewRequest)
@@ -517,9 +572,20 @@ func (m Model) HelpSections() []shared.HelpSection {
 	case m.focus == focusGate && m.hasGate():
 		sections = append(sections, m.gateHelpSection())
 	case m.focus == focusTranscript:
+		blockNav := m.keys.BlockNav
+		if m.searchQuery != "" {
+			blockNav.SetHelp("n/N", "match")
+		}
+		pageOlder := m.keys.PageOlder
+		pageOlder.SetEnabled(m.chatPage.HasEarlier)
+		pageNewer := m.keys.PageNewer
+		pageNewer.SetEnabled(len(m.chatNewerEnds) > 0)
+		clearView := m.keys.ClearView
+		clearView.SetEnabled(m.searchQuery != "" || m.filters.active())
 		bindings := []keybind.Binding{
-			m.keys.Scroll, m.keys.GotoTop, m.keys.Follow,
-			m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll,
+			m.keys.Scroll, m.keys.GotoTop, m.keys.Follow, pageOlder, pageNewer,
+			m.keys.Search, m.keys.Filters, clearView,
+			blockNav, m.keys.Toggle, m.keys.ExpandAll,
 			m.keys.TransToSteps, m.keys.TransLeave,
 		}
 		if m.gateContext != nil {
@@ -613,9 +679,9 @@ func (m Model) gateHelpSection() shared.HelpSection {
 	return sec
 }
 
-// CapturesText reports whether a gate textarea is capturing free text; delegates
-// to textareaActive. Satisfies the helpProvider interface needed by root.
-func (m Model) CapturesText() bool { return m.textareaActive() }
+// CapturesText reports whether free text belongs to an active editor rather than
+// the root keymap.
+func (m Model) CapturesText() bool { return m.searchOpen || m.textareaActive() }
 
 // visibleRows builds the flat row list for the Steps panel. Steps always
 // appear; file rows appear beneath their parent when it is expanded and has

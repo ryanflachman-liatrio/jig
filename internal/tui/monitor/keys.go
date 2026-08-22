@@ -36,6 +36,11 @@ type monitorKeys struct {
 	ExpandAll    keybind.Binding // matched (o)
 	GotoTop      keybind.Binding // matched (gg chord — pendingGPrefix state in model)
 	Follow       keybind.Binding // matched (f/G — resume follow at latest entry)
+	Search       keybind.Binding // matched (/)
+	Filters      keybind.Binding // matched (F)
+	ClearView    keybind.Binding // matched (c — clear search and filters)
+	PageOlder    keybind.Binding // matched ([)
+	PageNewer    keybind.Binding // matched (])
 
 	// gates
 	Submit         keybind.Binding // matched (enter: input/prompt/compose submit)
@@ -99,6 +104,11 @@ func defaultMonitorKeys() monitorKeys {
 		ExpandAll:    keybind.NewBinding(keybind.WithKeys("o"), keybind.WithHelp("o", "all")),
 		GotoTop:      keybind.NewBinding(keybind.WithKeys("g"), keybind.WithHelp("gg", "top")),
 		Follow:       keybind.NewBinding(keybind.WithKeys("f", "G"), keybind.WithHelp("f/G", "follow")),
+		Search:       keybind.NewBinding(keybind.WithKeys("/"), keybind.WithHelp("/", "search")),
+		Filters:      keybind.NewBinding(keybind.WithKeys("F"), keybind.WithHelp("F", "filters")),
+		ClearView:    keybind.NewBinding(keybind.WithKeys("c"), keybind.WithHelp("c", "clear")),
+		PageOlder:    keybind.NewBinding(keybind.WithKeys("["), keybind.WithHelp("[", "older")),
+		PageNewer:    keybind.NewBinding(keybind.WithKeys("]"), keybind.WithHelp("]", "newer")),
 
 		Submit:         keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "submit")),
 		Newline:        keybind.NewBinding(keybind.WithKeys("alt+enter", "shift+enter"), keybind.WithHelp("alt+enter", "newline")),

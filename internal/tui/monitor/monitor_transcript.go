@@ -57,12 +57,22 @@ func (m *Model) reloadTranscript() {
 	m.chatExpandAll = false
 	m.chatExpand = make(map[blockKey]bool)
 	m.chatGroupExpand = make(map[blockKey]bool)
+	m.chatGroupForBlock = make(map[blockKey]blockKey)
+	m.chatLineRanges = make(map[blockKey]lineRange)
+	m.chatPage = transcript.Page{}
+	m.chatNewerEnds = nil
+	m.searchOpen = false
+	m.searchQuery = ""
+	m.searchHits = nil
+	m.searchHitCursor = 0
+	m.filterOpen = false
+	m.filters = transcriptFilters{}
 	// blockKey is (seq, block) and seq restarts per step-file, so cached renders
 	// from the previous step would collide with the new step's same-seq blocks.
 	// Reset the render cache along with the other per-step view state.
 	m.chatRendered = make(map[blockKey]string)
 	m.pendingGPrefix = false
-	m.loadChat()
+	m.loadChatTail()
 	m.resumeTranscriptFollow()
 }
 
@@ -105,14 +115,10 @@ func (m *Model) updateTranscriptFollow(atBottom bool) {
 	m.chatAutoScroll = false
 }
 
-// loadChat re-reads chatStep's transcript into the model. The transcript file is
-// the source of truth (not the lossy event bus); we read only the trailing
-// chatWindowMax entries so a long run stays bounded. Consecutive tool_use and
-// tool_result blocks are accumulated into tool call groups (chatGroupHeaders);
-// rebuildActiveState derives chatBlocks and chatRenderPlan from those groups and
-// the current expansion state. Safe to call while the writer appends: the reader
-// opens, reads to EOF, and closes.
-func (m *Model) loadChat() {
+// loadChatTail re-reads the newest bounded page. The transcript file remains the
+// source of truth; byte cursors make both memory use and page-read work
+// proportional to chatWindowMax rather than total run length.
+func (m *Model) loadChatTail() {
 	// Preserve the block cursor across same-step reloads (e.g. a new StepMessage
 	// arriving while the user is navigating). The saved key won't be found in a
 	// freshly-loaded different step, so cursor correctly resets to 0 on step changes.
@@ -121,33 +127,36 @@ func (m *Model) loadChat() {
 		saved = m.chatBlocks[m.chatBlockCursor]
 	}
 
-	m.chatEntries = nil
-	m.chatGroupHeaders = nil
-	m.chatBlocks = nil
-	m.chatRenderPlan = nil
-	m.chatElided = 0
 	if m.RunDir == "" || m.chatStep == "" {
+		m.setChatPage(transcript.Page{}, saved)
 		return
 	}
 	r, err := transcript.Open(datastore.TranscriptPath(m.RunDir, m.chatStep))
 	if err != nil {
 		return
 	}
-	count, err := r.Count()
+	page, err := r.TailPage(chatWindowMax)
 	if err != nil {
 		return
 	}
-	offset := 0
-	if count > chatWindowMax {
-		offset = count - chatWindowMax
-		m.chatElided = offset
-	}
-	entries, err := r.Window(offset, chatWindowMax)
-	if err != nil {
-		return
-	}
-	m.chatEntries = entries
+	m.chatNewerEnds = nil
+	m.setChatPage(page, saved)
+}
 
+func (m *Model) setChatPage(page transcript.Page, saved chatItem) {
+	m.chatPage = page
+	m.chatEntries = page.Entries
+	m.prunePageState()
+	m.rebuildLoadedChat(saved)
+	m.rerunSearch()
+}
+
+func (m *Model) rebuildLoadedChat(saved chatItem) {
+	m.chatGroupHeaders = nil
+	m.chatBlocks = nil
+	m.chatRenderPlan = nil
+
+	entries := m.filteredEntries()
 	// Single-pass accumulator: consecutive tool_use / tool_result blocks are
 	// merged into one tool call group; a thinking block or text block flushes
 	// the pending group and becomes a standalone navigation item (thinking) or
@@ -196,6 +205,84 @@ func (m *Model) loadChat() {
 	m.rebuildActiveState(saved)
 }
 
+func (m *Model) loadOlderChat() {
+	if !m.chatPage.HasEarlier || m.RunDir == "" || m.chatStep == "" {
+		return
+	}
+	r, err := transcript.Open(datastore.TranscriptPath(m.RunDir, m.chatStep))
+	if err != nil {
+		return
+	}
+	page, err := r.PageBefore(m.chatPage.Start, chatWindowMax)
+	if err != nil || len(page.Entries) == 0 {
+		return
+	}
+	m.chatNewerEnds = append(m.chatNewerEnds, m.chatPage.End)
+	m.setChatPage(page, chatItem{})
+	m.chatAutoScroll = false
+	if m.ready {
+		m.refreshPanels()
+		m.chatVP.GotoBottom()
+	}
+}
+
+func (m *Model) loadNewerChat() {
+	if len(m.chatNewerEnds) == 0 || m.RunDir == "" || m.chatStep == "" {
+		return
+	}
+	last := len(m.chatNewerEnds) - 1
+	end := m.chatNewerEnds[last]
+	m.chatNewerEnds = m.chatNewerEnds[:last]
+	if !m.loadChatBefore(end) {
+		return
+	}
+	m.chatAutoScroll = false
+	if m.ready {
+		m.refreshPanels()
+		m.chatVP.GotoTop()
+	}
+}
+
+func (m *Model) loadChatBefore(end int64) bool {
+	if m.RunDir == "" || m.chatStep == "" {
+		return false
+	}
+	r, err := transcript.Open(datastore.TranscriptPath(m.RunDir, m.chatStep))
+	if err != nil {
+		return false
+	}
+	page, err := r.PageBefore(end, chatWindowMax)
+	if err != nil {
+		return false
+	}
+	m.setChatPage(page, chatItem{})
+	return true
+}
+
+func (m *Model) prunePageState() {
+	loaded := make(map[blockKey]struct{})
+	for _, e := range m.chatEntries {
+		for bi := range e.Blocks {
+			loaded[blockKey{seq: e.Seq, block: bi}] = struct{}{}
+		}
+	}
+	for key := range m.chatRendered {
+		if _, ok := loaded[key]; !ok {
+			delete(m.chatRendered, key)
+		}
+	}
+	for key := range m.chatExpand {
+		if _, ok := loaded[key]; !ok {
+			delete(m.chatExpand, key)
+		}
+	}
+	for key := range m.chatGroupExpand {
+		if _, ok := loaded[key]; !ok {
+			delete(m.chatGroupExpand, key)
+		}
+	}
+}
+
 // rebuildActiveState builds chatBlocks (the active navigation list) and
 // chatRenderPlan (the pre-computed render sequence) from chatGroupHeaders and
 // the current expansion state (chatGroupExpand, chatExpand, chatExpandAll).
@@ -203,13 +290,14 @@ func (m *Model) loadChat() {
 // restored to its new index after the rebuild (or 0 if not found).
 // Must be called whenever expansion state changes.
 func (m *Model) rebuildActiveState(saved chatItem) {
+	entries := m.filteredEntries()
 	// ── Build block → entry lookup (for cross-entry group member rendering) ──
 	type entryRef struct {
 		entry *transcript.Entry
 	}
-	entryBySeq := make(map[int]entryRef, len(m.chatEntries))
-	for i := range m.chatEntries {
-		entryBySeq[m.chatEntries[i].Seq] = entryRef{entry: &m.chatEntries[i]}
+	entryBySeq := make(map[int]entryRef, len(entries))
+	for i := range entries {
+		entryBySeq[entries[i].Seq] = entryRef{entry: &entries[i]}
 	}
 
 	// ── Build set of all blockKeys that belong to any group ──────────────────
@@ -217,11 +305,13 @@ func (m *Model) rebuildActiveState(saved chatItem) {
 	// inGroup is the full membership set (used to suppress absorbed blocks).
 	groupByFirst := make(map[blockKey]chatItem, len(m.chatGroupHeaders))
 	inGroup := make(map[blockKey]struct{})
+	m.chatGroupForBlock = make(map[blockKey]blockKey)
 	for _, item := range m.chatGroupHeaders {
 		if item.isGroup {
 			groupByFirst[item.key] = item
 			for _, bk := range item.group.blocks {
 				inGroup[bk] = struct{}{}
+				m.chatGroupForBlock[bk] = item.key
 			}
 		}
 	}
@@ -258,7 +348,7 @@ func (m *Model) rebuildActiveState(saved chatItem) {
 	m.chatRenderPlan = m.chatRenderPlan[:0]
 
 	lastIter, lastAttempt, lastGen := -1, -1, -1
-	for _, e := range m.chatEntries {
+	for _, e := range entries {
 		// Emit iteration / retry / re-run banners between entries.
 		if lastGen != -1 && e.Generation > lastGen {
 			m.chatRenderPlan = append(m.chatRenderPlan, renderItem{
@@ -289,13 +379,20 @@ func (m *Model) rebuildActiveState(saved chatItem) {
 
 		// Suppress the entry header if every block is absorbed into a group
 		// (tool-role entries: the user entry that carries only tool_result blocks).
-		allAbsorbed := len(e.Blocks) > 0
-		for bi := range e.Blocks {
-			if _, ok := inGroup[blockKey{seq: e.Seq, block: bi}]; !ok {
-				allAbsorbed = false
-				break
+		allAbsorbed := false
+		visibleBlocks := 0
+		absorbedBlocks := 0
+		for bi, blk := range e.Blocks {
+			if blk.Type == "" {
+				continue
 			}
+			visibleBlocks++
+			if _, ok := inGroup[blockKey{seq: e.Seq, block: bi}]; !ok {
+				continue
+			}
+			absorbedBlocks++
 		}
+		allAbsorbed = visibleBlocks > 0 && visibleBlocks == absorbedBlocks
 		if !allAbsorbed {
 			m.chatRenderPlan = append(m.chatRenderPlan, renderItem{
 				kind: renderEntryHeader,
@@ -319,6 +416,9 @@ func (m *Model) rebuildActiveState(saved chatItem) {
 			bk := blockKey{seq: e.Seq, block: bi}
 			eRef := entryBySeq[e.Seq]
 			blk := &eRef.entry.Blocks[bi]
+			if blk.Type == "" {
+				continue
+			}
 
 			if groupItem, ok := groupByFirst[bk]; ok {
 				// First block of a group: emit the group header (and inner blocks
@@ -403,7 +503,7 @@ func collapsible(t transcript.BlockType) bool {
 // chatBody renders one step's agent chat chain from its transcript, consuming
 // the pre-computed chatRenderPlan so all grouping and expansion decisions are
 // already resolved. chatBody itself is a dumb iterator over renderItems.
-func (m Model) chatBody() string {
+func (m *Model) chatBody() string {
 	if m.selKind == "file" && m.selFile != "" {
 		return m.fileBody()
 	}
@@ -435,6 +535,37 @@ func (m Model) chatBody() string {
 	}
 	b.WriteString("  " + header + "\n\n")
 
+	if m.searchOpen {
+		b.WriteString("  " + shared.Theme.Accent.Render("/") + " " + m.searchInput.View() + "\n")
+	}
+	var viewState []string
+	if status := m.searchStatus(); status != "" {
+		viewState = append(viewState, status)
+	}
+	if filters := m.filterSummary(); filters != "" {
+		viewState = append(viewState, "filters: "+filters)
+	}
+	if len(viewState) > 0 {
+		b.WriteString("  " + shared.Theme.Chat.Hint.Render(strings.Join(viewState, "  •  ")) + "\n\n")
+	}
+	if m.filterOpen {
+		b.WriteString("  " + shared.Theme.Title.Render("Transcript filters") + "\n")
+		for i, label := range filterLabels {
+			mark := "[ ]"
+			if m.filterEnabled(i) {
+				mark = "[x]"
+			}
+			line := fmt.Sprintf("%s %s", mark, label)
+			if i == m.filterCursor {
+				line = shared.Theme.SelectedLine.Render("› " + line)
+			} else {
+				line = "  " + line
+			}
+			b.WriteString("  " + line + "\n")
+		}
+		b.WriteString("  " + shared.Theme.Chat.Hint.Render("j/k move · space toggle · enter done · esc cancel") + "\n\n")
+	}
+
 	running := s.status == step.StatusRunning
 	hasTail := false
 	if buf, ok := m.stepOutput[m.chatStep]; ok && buf.Len() > 0 {
@@ -463,19 +594,27 @@ func (m Model) chatBody() string {
 		}
 	}
 
-	if m.chatElided > 0 {
-		sep := fmt.Sprintf("── %d earlier messages not shown ──", m.chatElided)
+	if m.chatPage.HasEarlier {
+		sep := "── earlier messages available · [ load older ──"
 		b.WriteString("\n  " + shared.Theme.Marker.Render(sep) + "\n\n")
 	}
 
 	// Dumb iterator over the pre-computed render plan.
+	m.chatLineRanges = make(map[blockKey]lineRange)
+	currentLine := strings.Count(b.String(), "\n")
 	for _, item := range m.chatRenderPlan {
+		var chunk strings.Builder
+		if hit, ok := m.currentSearchHit(); ok && item.key == hit.key &&
+			(item.kind == renderText || item.kind == renderBlock) {
+			match := fmt.Sprintf("match %d/%d · %s", m.searchHitCursor+1, len(m.searchHits), hit.preview)
+			chunk.WriteString("  " + shared.Theme.Accent.Render("▶ "+match) + "\n")
+		}
 		switch item.kind {
 		case renderEntrySep:
 			if item.sep == "" {
-				b.WriteString("\n")
+				chunk.WriteString("\n")
 			} else {
-				b.WriteString("\n  " + shared.Theme.Marker.Render(item.sep) + "\n\n")
+				chunk.WriteString("\n  " + shared.Theme.Marker.Render(item.sep) + "\n\n")
 			}
 		case renderEntryHeader:
 			left := fmt.Sprintf("#%d %s", item.key.seq, item.role)
@@ -486,27 +625,42 @@ func (m Model) chatBody() string {
 					pad = 1
 				}
 				line := left + strings.Repeat(" ", pad) + item.ts
-				b.WriteString("  " + shared.Theme.Chat.Hint.Render(line) + "\n")
+				chunk.WriteString("  " + shared.Theme.Chat.Hint.Render(line) + "\n")
 			} else {
-				b.WriteString("  " + shared.Theme.Chat.Hint.Render(left) + "\n")
+				chunk.WriteString("  " + shared.Theme.Chat.Hint.Render(left) + "\n")
 			}
 		case renderText:
 			if item.blk != nil {
-				m.writeBlock(&b, item.key, *item.blk, item.role)
+				m.writeBlock(&chunk, item.key, *item.blk, item.role)
 			}
 		case renderGroupHeader:
 			expanded := m.chatGroupExpand[item.key] || m.chatExpandAll
 			cursored := len(m.chatBlocks) > 0 && m.chatBlockCursor < len(m.chatBlocks) &&
 				m.chatBlocks[m.chatBlockCursor].isGroup &&
 				m.chatBlocks[m.chatBlockCursor].key == item.key
-			m.writeGroupHeader(&b, item, expanded, cursored)
+			m.writeGroupHeader(&chunk, item, expanded, cursored)
 		case renderGroupGap:
-			b.WriteString("\n")
+			chunk.WriteString("\n")
 		case renderBlock:
 			if item.blk != nil {
-				m.writeBlock(&b, item.key, *item.blk, item.role)
+				m.writeBlock(&chunk, item.key, *item.blk, item.role)
 			}
 		}
+		rendered := chunk.String()
+		lineCount := strings.Count(rendered, "\n")
+		switch item.kind {
+		case renderText, renderGroupHeader, renderBlock:
+			m.chatLineRanges[item.key] = lineRange{
+				start: currentLine,
+				end:   max(currentLine, currentLine+lineCount-1),
+			}
+		}
+		b.WriteString(rendered)
+		currentLine += lineCount
+	}
+
+	if len(m.chatNewerEnds) > 0 {
+		b.WriteString("\n  " + shared.Theme.Marker.Render("── newer messages available · ] load newer ──") + "\n")
 	}
 
 	// Live tail: the current, not-yet-finalized bubble.

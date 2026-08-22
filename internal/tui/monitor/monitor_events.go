@@ -202,12 +202,12 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 			buf.Reset()
 		}
 		// The Transcript panel always shows the cursor's step, so re-read whenever
-		// the finalized entry belongs to it.
-		if ev.StepID == m.chatStep {
-			m.loadChat()
-			if m.chatAutoScroll {
-				m.chatSeenSeq = m.latestChatSeq()
-			}
+		// the finalized entry belongs to it and follow is active. A paused or
+		// paged-back view keeps its byte window stable until the operator follows
+		// again, while msgCount still drives the unseen indicator.
+		if ev.StepID == m.chatStep && m.chatAutoScroll {
+			m.loadChatTail()
+			m.chatSeenSeq = m.latestChatSeq()
 		}
 
 	case engine.PromptRequest:

@@ -1,10 +1,14 @@
 package monitor
 
 import (
+	"strings"
+
 	keybind "charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 
 	"jig/internal/helpchat"
+	"jig/internal/tui/shared"
 )
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
@@ -183,6 +187,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	// Route non-key messages to the textarea (blink timer, focus events) for entry
 	// kinds that use the textarea (request, prompt, or a composing review entry).
+	if m.searchOpen {
+		var searchCmd tea.Cmd
+		m.searchInput, searchCmd = m.searchInput.Update(msg)
+		m.refreshPanels()
+		return m, searchCmd
+	}
 	if entry, ok := m.activeEntry(); ok &&
 		(entry.kind == inputKindRequest || entry.kind == inputKindPrompt ||
 			((entry.kind == inputKindReview || entry.kind == inputKindRecovery) && entry.composing)) {
@@ -340,10 +350,50 @@ func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 // the block cursor, enter/space toggle the cursored block, o toggles all, and
 // h/esc return focus to the Steps panel. Remaining viewport keys scroll.
 func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	if m.searchOpen {
+		switch {
+		case msg.String() == "esc":
+			m.searchOpen = false
+			m.refreshPanels()
+			return m, nil
+		case msg.String() == "enter":
+			m.searchQuery = strings.TrimSpace(m.searchInput.Value())
+			m.searchOpen = false
+			m.rerunSearch()
+			if len(m.searchHits) > 0 {
+				m.applyCurrentSearchHit()
+			} else {
+				m.refreshPanels()
+			}
+			return m, nil
+		default:
+			var cmd tea.Cmd
+			m.searchInput, cmd = m.searchInput.Update(msg)
+			m.refreshPanels()
+			return m, cmd
+		}
+	}
+	if m.filterOpen {
+		switch {
+		case msg.String() == "esc" || msg.String() == "enter":
+			m.filterOpen = false
+		case msg.String() == "j" || msg.String() == "down":
+			m.filterCursor = (m.filterCursor + 1) % len(filterLabels)
+		case msg.String() == "k" || msg.String() == "up":
+			m.filterCursor = (m.filterCursor - 1 + len(filterLabels)) % len(filterLabels)
+		case msg.String() == " ":
+			m.toggleCurrentFilter()
+		}
+		m.refreshPanels()
+		return m, nil
+	}
+
 	// Process follow first so shift+G never starts a gg chord.
 	if keybind.Matches(msg, m.keys.Follow) {
 		m.pendingGPrefix = false
+		m.loadChatTail()
 		m.resumeTranscriptFollow()
+		m.refreshPanels()
 		return m, nil
 	}
 	// gg chord: first g arms the prefix; second g fires GotoTop.
@@ -361,6 +411,31 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	m.pendingGPrefix = false
 
 	switch {
+	case keybind.Matches(msg, m.keys.Search):
+		if m.selKind == "" && m.RunDir != "" {
+			m.searchOpen = true
+			m.searchInput = shared.NewInputTextarea("find in loaded page", max(1, m.transcriptInnerW-6), 1, shared.WithoutBorder())
+			m.searchInput.SetValue(m.searchQuery)
+			m.refreshPanels()
+			return m, textarea.Blink
+		}
+		return m, nil
+	case keybind.Matches(msg, m.keys.Filters):
+		if m.selKind == "" && m.RunDir != "" {
+			m.filterOpen = true
+			m.refreshPanels()
+		}
+		return m, nil
+	case keybind.Matches(msg, m.keys.ClearView):
+		m.clearTranscriptView()
+		m.refreshPanels()
+		return m, nil
+	case keybind.Matches(msg, m.keys.PageOlder):
+		m.loadOlderChat()
+		return m, nil
+	case keybind.Matches(msg, m.keys.PageNewer):
+		m.loadNewerChat()
+		return m, nil
 	case keybind.Matches(msg, m.keys.TransToSteps):
 		m.focus = focusSteps
 		m.refreshPanels()
@@ -368,6 +443,14 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	case keybind.Matches(msg, m.keys.TransLeave):
 		return m, func() tea.Msg { return ShowRunsMsg{} }
 	case keybind.Matches(msg, m.keys.BlockNav):
+		if m.searchQuery != "" {
+			if msg.String() == "n" {
+				m.moveSearchHit(1)
+			} else {
+				m.moveSearchHit(-1)
+			}
+			return m, nil
+		}
 		if n := len(m.chatBlocks); n > 0 {
 			if msg.String() == "n" {
 				m.chatBlockCursor = (m.chatBlockCursor + 1) % n

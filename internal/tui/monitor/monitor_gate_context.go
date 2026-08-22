@@ -43,6 +43,10 @@ func (m *Model) saveGateContext(targetStep string) {
 		chatExpand:     cloneBlockState(m.chatExpand),
 		groupExpand:    cloneBlockState(m.chatGroupExpand),
 		chatExpandAll:  m.chatExpandAll,
+		chatPageEnd:    m.chatPage.End,
+		chatNewerEnds:  append([]int64(nil), m.chatNewerEnds...),
+		searchQuery:    m.searchQuery,
+		filters:        m.filters,
 		targetStep:     targetStep,
 	}
 	if m.cursor >= 0 && m.cursor < len(rows) {
@@ -102,6 +106,14 @@ func (m *Model) restoreGateContext() {
 		m.cursor = savedRow
 		m.reloadTranscript()
 	}
+	if snapshot.chatPageEnd > 0 && snapshot.chatPageEnd != m.chatPage.End {
+		m.loadChatBefore(snapshot.chatPageEnd)
+	}
+	m.chatNewerEnds = append([]int64(nil), snapshot.chatNewerEnds...)
+	m.filters = snapshot.filters
+	m.searchQuery = snapshot.searchQuery
+	m.rebuildLoadedChat(snapshot.chatBlock)
+	m.rerunSearch()
 	m.chatExpand = cloneBlockState(snapshot.chatExpand)
 	m.chatGroupExpand = cloneBlockState(snapshot.groupExpand)
 	m.chatExpandAll = snapshot.chatExpandAll
