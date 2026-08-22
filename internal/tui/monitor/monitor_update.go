@@ -196,7 +196,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	if m.focus == focusTranscript {
 		m.chatVP, cmd = m.chatVP.Update(msg)
-		m.chatAutoScroll = m.chatVP.AtBottom()
+		m.updateTranscriptFollow(m.chatVP.AtBottom())
 	} else {
 		m.vp, cmd = m.vp.Update(msg)
 	}
@@ -340,12 +340,10 @@ func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 // the block cursor, enter/space toggle the cursored block, o toggles all, and
 // h/esc return focus to the Steps panel. Remaining viewport keys scroll.
 func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
-	// G jumps to the bottom and re-enables auto-scroll (always processed first
-	// so shift+G never starts a gg chord).
-	if keybind.Matches(msg, m.keys.GotoBottom) {
+	// Process follow first so shift+G never starts a gg chord.
+	if keybind.Matches(msg, m.keys.Follow) {
 		m.pendingGPrefix = false
-		m.chatVP.GotoBottom()
-		m.chatAutoScroll = true
+		m.resumeTranscriptFollow()
 		return m, nil
 	}
 	// gg chord: first g arms the prefix; second g fires GotoTop.
@@ -404,13 +402,13 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	case keybind.Matches(msg, m.keys.Scroll):
 		var cmd tea.Cmd
 		m.chatVP, cmd = m.chatVP.Update(msg)
-		m.chatAutoScroll = m.chatVP.AtBottom()
+		m.updateTranscriptFollow(m.chatVP.AtBottom())
 		return m, cmd
 	}
 	// Arrow keys and ctrl+d/u/pgup/pgdn fall through to the viewport.
 	var cmd tea.Cmd
 	m.chatVP, cmd = m.chatVP.Update(msg)
-	m.chatAutoScroll = m.chatVP.AtBottom()
+	m.updateTranscriptFollow(m.chatVP.AtBottom())
 	return m, cmd
 }
 
@@ -422,6 +420,9 @@ func (m *Model) refreshPanels() {
 	}
 	m.vp.SetContent(m.listBody())
 	m.chatVP.SetContent(m.chatBody())
+	if m.chatAutoScroll {
+		m.chatVP.GotoBottom()
+	}
 }
 
 // helpBoxW/H return the outer modal dimensions, mirroring helpOverlay in

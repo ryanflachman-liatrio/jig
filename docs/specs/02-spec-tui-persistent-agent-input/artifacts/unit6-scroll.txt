@@ -1,4 +1,4 @@
-╭─ Steps ──────────────────────╮╭─ a ──────────────────────────────────────────╮
+╭─ Steps ──────────────────────╮╭─ LIVE · a ───────────────────────────────────╮
 │ ▌  ⊙  a   needs_input        ││   ⊙  a  needs_input                          │
 │      —                       ││                                              │
 │    ○  b   pending            ││   transcript unavailable (persistence off)   │

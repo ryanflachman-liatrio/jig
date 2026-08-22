@@ -205,6 +205,9 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		// the finalized entry belongs to it.
 		if ev.StepID == m.chatStep {
 			m.loadChat()
+			if m.chatAutoScroll {
+				m.chatSeenSeq = m.latestChatSeq()
+			}
 		}
 
 	case engine.PromptRequest:

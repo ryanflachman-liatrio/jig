@@ -93,6 +93,7 @@ type gateContextSnapshot struct {
 	listOffset     int
 	chatOffset     int
 	chatAutoScroll bool
+	chatSeenSeq    int
 	chatBlock      chatItem
 	chatExpand     map[blockKey]bool
 	groupExpand    map[blockKey]bool
@@ -243,6 +244,10 @@ type Model struct {
 	// content to the bottom. True by default; cleared when the user scrolls up;
 	// restored when the user scrolls back to bottom or navigates to a new step.
 	chatAutoScroll bool
+	// chatSeenSeq is the newest entry acknowledged for chatStep. Comparing it
+	// with msgCount keeps the paused count correct even when lossy liveness
+	// events skip directly across several transcript entries.
+	chatSeenSeq int
 	// pendingGPrefix is set on a single 'g' keypress in the Transcript panel
 	// to arm the gg→GotoTop chord; any other key clears it.
 	pendingGPrefix bool
@@ -513,7 +518,7 @@ func (m Model) HelpSections() []shared.HelpSection {
 		sections = append(sections, m.gateHelpSection())
 	case m.focus == focusTranscript:
 		bindings := []keybind.Binding{
-			m.keys.Scroll, m.keys.GotoTop, m.keys.GotoBottom,
+			m.keys.Scroll, m.keys.GotoTop, m.keys.Follow,
 			m.keys.BlockNav, m.keys.Toggle, m.keys.ExpandAll,
 			m.keys.TransToSteps, m.keys.TransLeave,
 		}

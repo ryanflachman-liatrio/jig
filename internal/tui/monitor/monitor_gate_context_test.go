@@ -170,6 +170,17 @@ func TestGateContextJumpAndReturnPreserveTranscriptState(t *testing.T) {
 		}
 	}
 
+	seq := appendTranscriptEntry(t, runDir, "b", transcript.Entry{
+		Role: transcript.RoleAssistant,
+		Blocks: []transcript.Block{{
+			Type: transcript.BlockText,
+			Text: "arrived during context inspection",
+		}},
+	})
+	jumped, _ = jumped.Update(EngineEventMsg{Event: engine.StepMessage{
+		RunID: "run-1", StepID: "b", Seq: seq,
+	}})
+
 	restored, cmd := jumped.Update(ctrlO())
 	if cmd != nil {
 		t.Fatal("context return emitted a command")
@@ -183,6 +194,12 @@ func TestGateContextJumpAndReturnPreserveTranscriptState(t *testing.T) {
 	if restored.chatVP.YOffset() != priorOffset || restored.chatAutoScroll {
 		t.Fatalf("transcript position not restored: offset=%d autoScroll=%v, want %d/false",
 			restored.chatVP.YOffset(), restored.chatAutoScroll, priorOffset)
+	}
+	if got := restored.unseenChatEntries(); got != 1 {
+		t.Fatalf("context return unseen entries = %d, want 1", got)
+	}
+	if title := restored.transcriptPanelTitle(); title != "PAUSED · 1 new · b" {
+		t.Fatalf("context return title = %q", title)
 	}
 	if !restored.chatExpand[blockKey{seq: 1, block: 0}] {
 		t.Fatal("transcript expansion state was not restored")

@@ -47,6 +47,22 @@ func writeTranscript(t *testing.T, stepID string, entries []transcript.Entry) st
 	return runDir
 }
 
+func appendTranscriptEntry(t *testing.T, runDir, stepID string, entry transcript.Entry) int {
+	t.Helper()
+	w, err := transcript.Create(datastore.TranscriptPath(runDir, stepID))
+	if err != nil {
+		t.Fatalf("open transcript: %v", err)
+	}
+	seq, err := w.Append(entry)
+	if err != nil {
+		t.Fatalf("append transcript: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close transcript: %v", err)
+	}
+	return seq
+}
+
 func rawJSON(t *testing.T, v any) json.RawMessage {
 	t.Helper()
 	b, err := json.Marshal(v)
@@ -1017,6 +1033,194 @@ func TestMonitorChatScrolls(t *testing.T) {
 	m, _ = m.Update(key("k"))
 	if m.chatVP.YOffset() >= offsetAfterScroll {
 		t.Fatalf("k did not scroll up: offset %d → %d", offsetAfterScroll, m.chatVP.YOffset())
+	}
+}
+
+func newFollowMonitor(t *testing.T) (Model, string) {
+	t.Helper()
+	runDir := writeTranscript(t, "a", []transcript.Entry{{
+		Role: transcript.RoleSystem,
+		Blocks: []transcript.Block{{
+			Type: transcript.BlockText,
+			Text: strings.Repeat("existing transcript line\n", 80),
+		}},
+	}})
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+	if !m.chatVP.AtBottom() {
+		t.Fatal("follow fixture did not start at the bottom")
+	}
+	return m, runDir
+}
+
+func TestMonitorFollowIndicatorCountsUnseenEntries(t *testing.T) {
+	m, runDir := newFollowMonitor(t)
+	if title := m.transcriptPanelTitle(); title != "LIVE · a" {
+		t.Fatalf("initial transcript title = %q, want LIVE", title)
+	}
+
+	m, _ = m.Update(key("k"))
+	if m.chatAutoScroll {
+		t.Fatal("scrolling up did not pause transcript follow")
+	}
+	if title := m.transcriptPanelTitle(); title != "PAUSED · a" {
+		t.Fatalf("paused transcript title = %q", title)
+	}
+	offset := m.chatVP.YOffset()
+
+	var seq int
+	for i := 0; i < 4; i++ {
+		seq = appendTranscriptEntry(t, runDir, "a", transcript.Entry{
+			Role: transcript.RoleAssistant,
+			Blocks: []transcript.Block{{
+				Type: transcript.BlockText,
+				Text: fmt.Sprintf("new entry %d", i+1),
+			}},
+		})
+	}
+	// StepMessage is deliberately lossy: one event can reveal several entries
+	// appended since the last observed seq.
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepMessage{
+		RunID: "run-1", StepID: "a", Seq: seq,
+	}})
+
+	if got := m.unseenChatEntries(); got != 4 {
+		t.Fatalf("unseen entries = %d, want 4", got)
+	}
+	if title := m.transcriptPanelTitle(); title != "PAUSED · 4 new · a" {
+		t.Fatalf("unseen transcript title = %q", title)
+	}
+	if got := m.chatVP.YOffset(); got != offset {
+		t.Fatalf("paused transcript moved from offset %d to %d", offset, got)
+	}
+}
+
+func TestMonitorFollowResumeClearsUnseen(t *testing.T) {
+	for _, resumeKey := range []string{"f", "G"} {
+		t.Run(resumeKey, func(t *testing.T) {
+			m, runDir := newFollowMonitor(t)
+			m, _ = m.Update(key("k"))
+			seq := appendTranscriptEntry(t, runDir, "a", transcript.Entry{
+				Role: transcript.RoleAssistant,
+				Blocks: []transcript.Block{{
+					Type: transcript.BlockText,
+					Text: "new response",
+				}},
+			})
+			m, _ = m.Update(EngineEventMsg{Event: engine.StepMessage{
+				RunID: "run-1", StepID: "a", Seq: seq,
+			}})
+
+			m, _ = m.Update(key(resumeKey))
+			if !m.chatAutoScroll || !m.chatVP.AtBottom() {
+				t.Fatalf("%s did not resume follow at the bottom", resumeKey)
+			}
+			if got := m.unseenChatEntries(); got != 0 {
+				t.Fatalf("%s left %d unseen entries", resumeKey, got)
+			}
+			if title := m.transcriptPanelTitle(); title != "LIVE · a" {
+				t.Fatalf("title after %s = %q", resumeKey, title)
+			}
+		})
+	}
+}
+
+func TestMonitorFollowResumesWhenManuallyScrolledToBottom(t *testing.T) {
+	m, runDir := newFollowMonitor(t)
+	m, _ = m.Update(key("k"))
+	seq := appendTranscriptEntry(t, runDir, "a", transcript.Entry{
+		Role: transcript.RoleAssistant,
+		Blocks: []transcript.Block{{
+			Type: transcript.BlockText,
+			Text: "new response",
+		}},
+	})
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepMessage{
+		RunID: "run-1", StepID: "a", Seq: seq,
+	}})
+
+	m.chatVP.GotoBottom()
+	m, _ = m.Update(key("j"))
+	if !m.chatAutoScroll || m.unseenChatEntries() != 0 {
+		t.Fatalf("manual return to bottom did not resume follow: auto=%v unseen=%d",
+			m.chatAutoScroll, m.unseenChatEntries())
+	}
+}
+
+func TestMonitorFollowStreamingStaysPaused(t *testing.T) {
+	m, _ := newFollowMonitor(t)
+	m, _ = m.Update(key("k"))
+	offset := m.chatVP.YOffset()
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
+		RunID: "run-1", StepID: "a", To: step.StatusRunning,
+	}})
+
+	for i := 0; i < 20; i++ {
+		m, _ = m.Update(EngineEventMsg{Event: engine.StepOutput{
+			RunID: "run-1", StepID: "a", Delta: "streaming line\n",
+		}})
+	}
+	m, _ = m.Update(TickMsg(time.Now()))
+
+	if got := m.chatVP.YOffset(); got != offset {
+		t.Fatalf("streaming moved paused transcript from offset %d to %d", offset, got)
+	}
+	if m.chatAutoScroll {
+		t.Fatal("streaming resumed paused transcript follow")
+	}
+	if got := m.unseenChatEntries(); got != 0 {
+		t.Fatalf("streaming deltas counted as %d finalized entries", got)
+	}
+}
+
+func TestMonitorFollowResetsOnStepSwitch(t *testing.T) {
+	m, runDir := newFollowMonitor(t)
+	m, _ = m.Update(key("k"))
+	seq := appendTranscriptEntry(t, runDir, "a", transcript.Entry{
+		Role: transcript.RoleAssistant,
+		Blocks: []transcript.Block{{
+			Type: transcript.BlockText,
+			Text: "new response",
+		}},
+	})
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepMessage{
+		RunID: "run-1", StepID: "a", Seq: seq,
+	}})
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepMessage{
+		RunID: "run-1", StepID: "b", Seq: 3,
+	}})
+
+	m, _ = m.Update(key("esc"))
+	m, _ = m.Update(key("j"))
+	if m.chatStep != "b" || !m.chatAutoScroll {
+		t.Fatalf("step switch state: step=%q auto=%v", m.chatStep, m.chatAutoScroll)
+	}
+	if got := m.unseenChatEntries(); got != 0 {
+		t.Fatalf("step switch exposed %d old entries as unseen", got)
+	}
+	if title := m.transcriptPanelTitle(); title != "LIVE · b" {
+		t.Fatalf("title after step switch = %q", title)
+	}
+}
+
+func TestMonitorFollowIndicatorHiddenForStaticContent(t *testing.T) {
+	m, _ := newFollowMonitor(t)
+	m.selKind = "file"
+	m.chatAutoScroll = false
+	if title := m.transcriptPanelTitle(); title != "a" {
+		t.Fatalf("file title = %q, want no follow indicator", title)
+	}
+	m.reloadTranscript()
+	if !m.chatAutoScroll || m.selKind != "" {
+		t.Fatalf("return from file did not restore transcript follow: auto=%v kind=%q",
+			m.chatAutoScroll, m.selKind)
+	}
+
+	m.chatEntries = nil
+	m.reviews["a"] = engine.ReviewRequest{StepID: "a", Diff: "diff"}
+	if title := m.transcriptPanelTitle(); title != "a" {
+		t.Fatalf("review title = %q, want no follow indicator", title)
 	}
 }
 
@@ -2628,7 +2832,7 @@ func TestMonitorHelpSections(t *testing.T) {
 			transcriptKeys = append(transcriptKeys, binding.Help().Key)
 		}
 	}
-	for _, want := range []string{"j/k", "n/N"} {
+	for _, want := range []string{"j/k", "n/N", "f/G"} {
 		if !slices.Contains(transcriptKeys, want) {
 			t.Errorf("transcript help missing %q; got %v", want, transcriptKeys)
 		}
