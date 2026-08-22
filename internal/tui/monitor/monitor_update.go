@@ -461,11 +461,13 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 		if n := len(m.chatBlocks); n > 0 {
 			if msg.String() == "n" {
-				m.chatBlockCursor = (m.chatBlockCursor + 1) % n
+				m.chatBlockCursor = min(m.chatBlockCursor+1, n-1)
 			} else {
-				m.chatBlockCursor = (m.chatBlockCursor - 1 + n) % n
+				m.chatBlockCursor = max(m.chatBlockCursor-1, 0)
 			}
+			m.chatAutoScroll = false
 			m.refreshPanels()
+			m.ensureChatCursorVisible()
 		}
 		return m, nil
 	case keybind.Matches(msg, m.keys.Toggle):
@@ -478,7 +480,9 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 				m.chatExpand[item.key] = !m.chatExpand[item.key]
 			}
 			m.rebuildActiveState(saved)
+			m.chatAutoScroll = false
 			m.refreshPanels()
+			m.ensureChatCursorVisible()
 		}
 		return m, nil
 	case keybind.Matches(msg, m.keys.ExpandAll):
@@ -488,7 +492,9 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 		m.chatExpandAll = !m.chatExpandAll
 		m.rebuildActiveState(saved)
+		m.chatAutoScroll = false
 		m.refreshPanels()
+		m.ensureChatCursorVisible()
 		return m, nil
 	case keybind.Matches(msg, m.keys.Scroll):
 		var cmd tea.Cmd

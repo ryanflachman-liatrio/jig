@@ -354,17 +354,24 @@ func TestGroupNavigation(t *testing.T) {
 		t.Fatalf("expected 4 chatBlocks after expand, got %d: %v", len(m.chatBlocks), m.chatBlocks)
 	}
 
-	// n from header (0) → b0 (1) → b1 (2) → thinking (3) → wraps to header (0).
+	// n from header (0) → b0 (1) → b1 (2) → thinking (3), then clamps.
 	positions := []int{}
 	for i := 0; i < 4; i++ {
 		m, _ = m.Update(key("n"))
 		positions = append(positions, m.chatBlockCursor)
 	}
-	want := []int{1, 2, 3, 0}
+	want := []int{1, 2, 3, 3}
 	for i, got := range positions {
 		if got != want[i] {
 			t.Fatalf("n press %d: want cursor=%d, got %d", i+1, want[i], got)
 		}
+	}
+
+	for range 4 {
+		m, _ = m.Update(key("N"))
+	}
+	if m.chatBlockCursor != 0 {
+		t.Fatalf("N at first item did not clamp: cursor=%d", m.chatBlockCursor)
 	}
 }
 
@@ -1034,6 +1041,155 @@ func TestMonitorChatScrolls(t *testing.T) {
 	if m.chatVP.YOffset() >= offsetAfterScroll {
 		t.Fatalf("k did not scroll up: offset %d → %d", offsetAfterScroll, m.chatVP.YOffset())
 	}
+}
+
+func assertChatCursorVisible(t *testing.T, m Model) {
+	t.Helper()
+	if len(m.chatBlocks) == 0 || m.chatBlockCursor < 0 || m.chatBlockCursor >= len(m.chatBlocks) {
+		t.Fatalf("invalid chat cursor %d for %d blocks", m.chatBlockCursor, len(m.chatBlocks))
+	}
+	item := m.chatBlocks[m.chatBlockCursor]
+	rng, ok := m.chatLineRanges[item.lineKey()]
+	if !ok {
+		t.Fatalf("no rendered range for cursor item %+v", item)
+	}
+	top := m.chatVP.YOffset()
+	bottom := top + m.chatVP.Height() - 1
+	if rng.start < top || rng.start > bottom {
+		t.Fatalf("cursor header line %d outside viewport [%d,%d]", rng.start, top, bottom)
+	}
+}
+
+func TestMonitorBlockNavigationKeepsCursorVisible(t *testing.T) {
+	blocks := make([]transcript.Block, 18)
+	for i := range blocks {
+		blocks[i] = transcript.Block{Type: transcript.BlockThinking, Text: fmt.Sprintf("reasoning %02d", i+1)}
+	}
+	runDir := writeTranscript(t, "a", []transcript.Entry{{
+		Role:   transcript.RoleAssistant,
+		Blocks: blocks,
+	}})
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+	m.chatVP.SetHeight(6)
+	m.chatVP.GotoTop()
+
+	for range 12 {
+		m, _ = m.Update(key("n"))
+		assertChatCursorVisible(t, m)
+	}
+	if m.chatVP.YOffset() == 0 {
+		t.Fatal("forward block navigation did not scroll")
+	}
+	if m.chatAutoScroll {
+		t.Fatal("block navigation did not pause transcript follow")
+	}
+
+	for range 12 {
+		m, _ = m.Update(key("N"))
+		assertChatCursorVisible(t, m)
+	}
+	if m.chatBlockCursor != 0 {
+		t.Fatalf("reverse navigation ended at cursor %d, want 0", m.chatBlockCursor)
+	}
+}
+
+func TestMonitorGroupHeaderAndFirstMemberHaveDistinctRanges(t *testing.T) {
+	runDir := writeTranscript(t, "a", []transcript.Entry{{
+		Role: transcript.RoleAssistant,
+		Blocks: []transcript.Block{
+			{Type: transcript.BlockToolUse, Name: "Read", ToolUseID: "t1"},
+			{Type: transcript.BlockToolUse, Name: "Edit", ToolUseID: "t2"},
+		},
+	}})
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+	m, _ = m.Update(key("enter"))
+
+	group := m.chatBlocks[0]
+	member := m.chatBlocks[1]
+	groupRange, groupOK := m.chatLineRanges[group.lineKey()]
+	memberRange, memberOK := m.chatLineRanges[member.lineKey()]
+	if !groupOK || !memberOK {
+		t.Fatalf("missing ranges: group=%v member=%v", groupOK, memberOK)
+	}
+	if groupRange.start >= memberRange.start {
+		t.Fatalf("group range %+v does not precede first-member range %+v", groupRange, memberRange)
+	}
+
+	m.chatVP.SetHeight(3)
+	m.chatVP.GotoTop()
+	m, _ = m.Update(key("n"))
+	assertChatCursorVisible(t, m)
+}
+
+func TestMonitorTallExpandedBlockKeepsHeaderVisible(t *testing.T) {
+	runDir := writeTranscript(t, "a", []transcript.Entry{{
+		Role: transcript.RoleAssistant,
+		Blocks: []transcript.Block{
+			{Type: transcript.BlockThinking, Text: strings.Repeat("expanded reasoning\n", 30)},
+			{Type: transcript.BlockThinking, Text: "next"},
+		},
+	}})
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+	m.chatVP.SetHeight(6)
+	m.chatVP.GotoTop()
+
+	m, _ = m.Update(key("enter"))
+	assertChatCursorVisible(t, m)
+	expandedRange := m.chatLineRanges[m.chatBlocks[m.chatBlockCursor].lineKey()]
+	if expandedRange.end-expandedRange.start+1 <= m.chatVP.Height() {
+		t.Fatalf("expanded range %+v is not taller than viewport height %d", expandedRange, m.chatVP.Height())
+	}
+
+	m.chatVP.SetYOffset(expandedRange.start + 8)
+	m, _ = m.Update(key("enter"))
+	assertChatCursorVisible(t, m)
+}
+
+func TestMonitorStreamingPreservesBlockNavigationPosition(t *testing.T) {
+	blocks := make([]transcript.Block, 18)
+	for i := range blocks {
+		blocks[i] = transcript.Block{Type: transcript.BlockThinking, Text: fmt.Sprintf("reasoning %02d", i+1)}
+	}
+	runDir := writeTranscript(t, "a", []transcript.Entry{{
+		Role:   transcript.RoleAssistant,
+		Blocks: blocks,
+	}})
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+	m.chatVP.SetHeight(6)
+	m.chatVP.GotoTop()
+	for range 10 {
+		m, _ = m.Update(key("n"))
+	}
+	assertChatCursorVisible(t, m)
+	offset := m.chatVP.YOffset()
+	cursor := m.chatBlockCursor
+
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
+		RunID: "run-1", StepID: "a", To: step.StatusRunning,
+	}})
+	for range 20 {
+		m, _ = m.Update(EngineEventMsg{Event: engine.StepOutput{
+			RunID: "run-1", StepID: "a", Delta: "streaming line\n",
+		}})
+	}
+	m, _ = m.Update(TickMsg(time.Now()))
+
+	if m.chatVP.YOffset() != offset || m.chatBlockCursor != cursor {
+		t.Fatalf("streaming moved manual block position: offset=%d cursor=%d, want %d/%d",
+			m.chatVP.YOffset(), m.chatBlockCursor, offset, cursor)
+	}
+	if m.chatAutoScroll {
+		t.Fatal("streaming resumed follow after block navigation")
+	}
+	assertChatCursorVisible(t, m)
 }
 
 func newFollowMonitor(t *testing.T) (Model, string) {
