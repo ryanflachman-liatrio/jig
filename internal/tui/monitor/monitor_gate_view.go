@@ -48,7 +48,8 @@ func (m Model) inputBarView() string {
 	count := fmt.Sprintf("%d pending", len(m.inputQueue))
 	action := "tab to open"
 	if m.focus == focusGate {
-		action = "esc to close"
+		escape := m.gateEscapeBinding(entry).Help()
+		action = escape.Key + " to " + escape.Desc
 	}
 	return "  " + label + "  ·  " + subject + "  ·  " + shared.Theme.Marker.Render(count) +
 		shared.Theme.Chat.Hint.Render("  ·  "+action)

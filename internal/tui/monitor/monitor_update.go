@@ -109,7 +109,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		// When the help modal is open and captures text, route all key input to it.
 		if m.helpOpen {
-			if keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("esc"))) {
+			if keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("esc"))) &&
+				!m.helpModel.HandlesEscape() {
 				m.helpOpen = false
 				return m, nil
 			}

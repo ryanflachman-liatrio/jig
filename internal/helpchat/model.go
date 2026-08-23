@@ -345,10 +345,27 @@ func (m Model) gateHint() string {
 		case gateKindPerm:
 			return shared.Theme.Chat.Hint.Render("[y] allow  ·  [n] deny  ·  esc deny")
 		case gateKindQuestion:
-			return shared.Theme.Chat.Hint.Render(g.question.Hint())
+			bindings := g.question.HelpBindings()
+			if !g.question.HasInnerBack() {
+				bindings = append(bindings, keybind.NewBinding(
+					keybind.WithKeys("esc"),
+					keybind.WithHelp("esc", "close"),
+				))
+			}
+			return shared.Theme.Chat.Hint.Render(shared.HintString(bindings...))
 		}
 	}
 	return shared.Theme.Chat.Hint.Render(`ctrl+\ or esc · close  ·  tab · switch focus`)
+}
+
+func (m Model) HandlesEscape() bool {
+	if m.pendingGate == nil {
+		return false
+	}
+	if m.pendingGate.kind == gateKindPerm {
+		return true
+	}
+	return m.pendingGate.kind == gateKindQuestion && m.pendingGate.question.HasInnerBack()
 }
 
 // CapturesText returns true when this model should receive all key presses —

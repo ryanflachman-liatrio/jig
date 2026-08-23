@@ -207,6 +207,41 @@ func presentationForGate(entry *pendingInputEntry) gatePresentation {
 	return p
 }
 
+func (m Model) gateHasInnerBack(entry *pendingInputEntry) bool {
+	if entry == nil {
+		return false
+	}
+	if entry.composing {
+		return entry.kind == inputKindReview || entry.kind == inputKindRecovery
+	}
+	return entry.kind == inputKindQuestion && entry.question.HasInnerBack()
+}
+
+func (m Model) gateEscapeBinding(entry *pendingInputEntry) keybind.Binding {
+	if m.gateHasInnerBack(entry) {
+		return m.keys.GateBack
+	}
+	return m.keys.GateBlur
+}
+
+func (m Model) updateGateEscape(msg tea.KeyPressMsg, entry *pendingInputEntry) (Model, tea.Cmd) {
+	if entry.kind == inputKindQuestion && entry.question.HasInnerBack() {
+		return m.updateGateQuestion(msg, entry)
+	}
+	if m.gateHasInnerBack(entry) {
+		m.syncActiveTextarea()
+		m.inputQueue[m.activeInputIdx].composing = false
+		m.loadActiveTextarea()
+		m.refreshPanels()
+		return m, nil
+	}
+
+	m.syncActiveTextarea()
+	m.focus = focusSteps
+	m.refreshPanels()
+	return m, nil
+}
+
 // updateGate handles keys when the gate holds focus. Dispatches by the active
 // entry's kind; each submit path reads routing IDs from the entry, emits the
 // unchanged routing message, and removes the entry (auto-advance via removeEntryAt).
@@ -216,13 +251,8 @@ func (m Model) updateGate(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// esc blurs the gate to Steps without navigating away (ADR 0005 §esc-blurs).
-	// Handled before the per-kind switch so all kinds share one blur path.
 	if keybind.Matches(msg, m.keys.GateBlur) {
-		m.syncActiveTextarea()
-		m.focus = focusSteps
-		m.refreshPanels()
-		return m, nil
+		return m.updateGateEscape(msg, entry)
 	}
 
 	switch entry.kind {
@@ -314,12 +344,6 @@ func (m Model) updateGatePrompt(msg tea.KeyPressMsg, entry *pendingInputEntry) (
 
 func (m Model) updateGateReview(msg tea.KeyPressMsg, entry *pendingInputEntry) (Model, tea.Cmd) {
 	if entry.composing {
-		if keybind.Matches(msg, m.keys.ComposeCancel) {
-			m.inputQueue[m.activeInputIdx].composing = false
-			m.loadActiveTextarea()
-			m.refreshPanels()
-			return m, nil
-		}
 		if keybind.Matches(msg, m.keys.Submit) {
 			text := m.promptTextarea.Value()
 			if text == "" {
@@ -459,7 +483,6 @@ func (m Model) updateGateHelpFinalMerge(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 
 func (m Model) updateGateResetConfirm(msg tea.KeyPressMsg, entry *pendingInputEntry) (Model, tea.Cmd) {
 	rc := entry.resetConfirm
-	// y confirms the reset; n / esc / GateBlur cancel (esc caught above).
 	if keybind.Matches(msg, m.keys.ResetConfirm) {
 		m.removeEntryAt(m.activeInputIdx)
 		m.refreshPanels()

@@ -17,8 +17,8 @@
 │      Option8                                                                 │
 │ ▶    Option9                                                                 │
 │   ▼ more                                                                     │
-│ enter select  •  ↑/↓/j/k navigate  •  ←/b previous  •  d decline  •  q/esc … │
+│                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-  Answer required  ·  Step: a  ·  1 pending  ·  esc to close
+  Answer required  ·  Step: a  ·  1 pending  ·  esc to blur
   awaiting answer  ·  enter select  •  ↑/↓/j/k navigate  •  d decline  •  ? more

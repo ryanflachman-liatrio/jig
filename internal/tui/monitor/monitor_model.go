@@ -672,49 +672,44 @@ func (m Model) gateHelpSection() shared.HelpSection {
 	entryNav.SetEnabled(len(m.inputQueue) > 1)
 	contextKey := m.keys.GateContext
 	contextKey.SetEnabled(presentationForGate(entry).contextStep != "")
+	escapeKey := m.gateEscapeBinding(entry)
 
 	sec := shared.HelpSection{Title: "Gate"}
 	switch entry.kind {
 	case inputKindRequest:
-		sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, contextKey, entryNav, m.keys.GateBlur}
+		sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, contextKey, entryNav, escapeKey}
 	case inputKindQuestion:
 		sec.Bindings = entry.question.HelpBindings()
-		for i := range sec.Bindings {
-			help := sec.Bindings[i].Help()
-			if help.Key == "esc" {
-				sec.Bindings[i].SetEnabled(false)
-			} else if help.Key == "q/esc" {
-				sec.Bindings[i].SetKeys("q")
-				sec.Bindings[i].SetHelp("q", help.Desc)
-			}
+		sec.Bindings = append(sec.Bindings, contextKey, entryNav)
+		if !entry.question.HasInnerBack() {
+			sec.Bindings = append(sec.Bindings, escapeKey)
 		}
-		sec.Bindings = append(sec.Bindings, contextKey, entryNav, m.keys.GateBlur)
 	case inputKindReview:
 		switch {
 		case entry.composing:
-			sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, contextKey, m.keys.GateBlur}
+			sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, contextKey, escapeKey}
 		case entry.review != nil && entry.review.AllowMessage:
-			sec.Bindings = []keybind.Binding{m.keys.Verdict, m.keys.Message, contextKey, entryNav, m.keys.GateBlur}
+			sec.Bindings = []keybind.Binding{m.keys.Verdict, m.keys.Message, contextKey, entryNav, escapeKey}
 		default:
-			sec.Bindings = []keybind.Binding{m.keys.Verdict, contextKey, entryNav, m.keys.GateBlur}
+			sec.Bindings = []keybind.Binding{m.keys.Verdict, contextKey, entryNav, escapeKey}
 		}
 	case inputKindPrompt:
-		sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, contextKey, entryNav, m.keys.GateBlur}
+		sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, contextKey, entryNav, escapeKey}
 	case inputKindRecovery:
 		if entry.composing {
-			sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, contextKey, m.keys.GateBlur}
+			sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, contextKey, escapeKey}
 		} else {
 			for _, action := range m.recoveryActions(entry.recovery) {
 				sec.Bindings = append(sec.Bindings, action.binding)
 			}
-			sec.Bindings = append(sec.Bindings, contextKey, entryNav, m.keys.GateBlur)
+			sec.Bindings = append(sec.Bindings, contextKey, entryNav, escapeKey)
 		}
 	case inputKindIntegrationConflict:
-		sec.Bindings = []keybind.Binding{m.keys.IntegrationResolve, m.keys.RecoverAbort, contextKey, entryNav, m.keys.GateBlur}
+		sec.Bindings = []keybind.Binding{m.keys.IntegrationResolve, m.keys.RecoverAbort, contextKey, entryNav, escapeKey}
 	case inputKindFinalMerge, inputKindHelpFinalMerge:
-		sec.Bindings = []keybind.Binding{m.keys.FinalMergeApprove, m.keys.FinalMergeDiscard, contextKey, entryNav, m.keys.GateBlur}
+		sec.Bindings = []keybind.Binding{m.keys.FinalMergeApprove, m.keys.FinalMergeDiscard, contextKey, entryNav, escapeKey}
 	case inputKindResetConfirm:
-		sec.Bindings = []keybind.Binding{m.keys.ResetConfirm, m.keys.ResetCancel, contextKey, m.keys.GateBlur}
+		sec.Bindings = []keybind.Binding{m.keys.ResetConfirm, m.keys.ResetCancel, contextKey, escapeKey}
 	}
 	return sec
 }
