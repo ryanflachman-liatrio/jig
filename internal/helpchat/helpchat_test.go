@@ -68,6 +68,46 @@ func TestQuestionPanelRoundTrip(t *testing.T) {
 	}
 }
 
+func TestQuestionEscapeOwnershipFollowsNestedPhase(t *testing.T) {
+	m := New(nil, "", engine.RunSnapshot{})
+	req := interaction.QuestionRequest{
+		ID: "help-q1",
+		Fields: []interaction.QuestionField{{
+			ID: "choice", Prompt: "Choose", Kind: interaction.FieldSingleSelect,
+			Options:     []interaction.QuestionOption{{Value: "a", Label: "Alpha"}},
+			AllowCustom: true,
+		}},
+	}
+	m, _ = m.Update(QuestionRequestMsg{
+		Request: req,
+		AnsC:    make(chan interaction.QuestionResponse, 1),
+	})
+
+	if m.HandlesEscape() {
+		t.Fatal("top-level question captured esc instead of leaving it to the modal")
+	}
+	if hint := m.gateHint(); !strings.Contains(hint, "esc close") || strings.Contains(hint, "esc cancel") {
+		t.Fatalf("top-level question hint = %q", hint)
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !m.HandlesEscape() {
+		t.Fatal("custom answer editor did not capture esc for inner back")
+	}
+	if hint := m.gateHint(); !strings.Contains(hint, "esc back") || strings.Contains(hint, "esc close") {
+		t.Fatalf("custom answer hint = %q", hint)
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if m.HandlesEscape() {
+		t.Fatal("custom answer esc did not return to the top-level question")
+	}
+	if m.pendingGate == nil {
+		t.Fatal("custom answer esc resolved the pending question")
+	}
+}
+
 // TestMcpServerToolSchemas verifies that all 11 expected tools are registered
 // with the correct names.
 func TestMcpServerToolSchemas(t *testing.T) {
