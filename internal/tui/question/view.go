@@ -18,7 +18,6 @@ func (m Model) View() string {
 	default:
 		lines = m.fieldLines()
 	}
-	lines = append(lines, shared.Theme.Chat.Hint.Render(m.Hint()))
 	if len(lines) > m.height {
 		lines = lines[:m.height]
 	}

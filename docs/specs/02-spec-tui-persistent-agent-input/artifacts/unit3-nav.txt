@@ -26,7 +26,7 @@
 │                                                                                                                      │
 │                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-  Agent input required  ·  Step: a  ·  2 pending  ·  esc to close
+  Agent input required  ·  Step: a  ·  2 pending  ·  esc to blur
   awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ctrl+o view context  •  F1 more
 
 --- frame ---
@@ -59,7 +59,7 @@
 │                                                                                                                      │
 │                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-  Agent input required  ·  Step: b  ·  2 pending  ·  esc to close
+  Agent input required  ·  Step: b  ·  2 pending  ·  esc to blur
   awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ctrl+o view context  •  F1 more
 
 --- frame ---
@@ -92,5 +92,5 @@
 │                                                                                                                      │
 │                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-  Agent input required  ·  Step: a  ·  2 pending  ·  esc to close
+  Agent input required  ·  Step: a  ·  2 pending  ·  esc to blur
   awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ctrl+o view context  •  F1 more

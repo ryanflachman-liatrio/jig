@@ -21,8 +21,9 @@ const (
 )
 
 type Model struct {
-	request interaction.QuestionRequest
-	answers map[string]interaction.Answer
+	request      interaction.QuestionRequest
+	answers      map[string]interaction.Answer
+	customDrafts map[string]string
 
 	fieldIdx     int
 	optionCursor int
@@ -38,11 +39,12 @@ type Model struct {
 
 func New(req interaction.QuestionRequest) Model {
 	m := Model{
-		request:  req,
-		answers:  make(map[string]interaction.Answer),
-		selected: make(map[string]bool),
-		width:    80,
-		height:   10,
+		request:      req,
+		answers:      make(map[string]interaction.Answer),
+		customDrafts: make(map[string]string),
+		selected:     make(map[string]bool),
+		width:        80,
+		height:       10,
 	}
 	m.loadField()
 	return m
@@ -68,6 +70,10 @@ func (m Model) Resize(width, height int) Model {
 
 func (m Model) CapturesText() bool {
 	return m.phase == phaseCustom || (m.phase == phaseField && m.currentField().Kind == interaction.FieldText)
+}
+
+func (m Model) HasInnerBack() bool {
+	return m.phase == phaseCustom
 }
 
 func (m Model) Response() (interaction.QuestionResponse, bool) {
@@ -96,10 +102,12 @@ func (m Model) updateText(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		if m.phase == phaseCustom {
+			m.customDrafts[m.currentField().ID] = m.textarea.Value()
 			m.phase = phaseField
 			m.buildTextarea()
-			return m, nil
 		}
+		return m, nil
+	case "ctrl+g":
 		return m.finish(interaction.ActionCancel), nil
 	case "ctrl+d":
 		return m.finish(interaction.ActionDecline), nil
@@ -113,6 +121,7 @@ func (m Model) updateText(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			delete(m.answers, field.ID)
 		} else if m.phase == phaseCustom {
 			m.answers[field.ID] = interaction.Answer{Custom: value}
+			delete(m.customDrafts, field.ID)
 		} else {
 			m.answers[field.ID] = interaction.Answer{Values: []string{value}}
 		}
@@ -130,8 +139,10 @@ func (m Model) updateSelect(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		count++
 	}
 	switch msg.String() {
-	case "q", "esc":
+	case "q":
 		return m.finish(interaction.ActionCancel), nil
+	case "esc":
+		return m, nil
 	case "d":
 		return m.finish(interaction.ActionDecline), nil
 	case "up", "k":
@@ -144,7 +155,7 @@ func (m Model) updateSelect(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			m.optionCursor++
 			m.ensureCursorVisible(count)
 		}
-	case "left", "b":
+	case "b":
 		m = m.previous()
 	case " ", "space":
 		if field.Kind == interaction.FieldMultiSelect && m.optionCursor < len(field.Options) {
@@ -186,8 +197,10 @@ func (m Model) updateSelect(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 
 func (m Model) updateReview(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch msg.String() {
-	case "q", "esc":
+	case "q":
 		return m.finish(interaction.ActionCancel), nil
+	case "esc":
+		return m, nil
 	case "d":
 		return m.finish(interaction.ActionDecline), nil
 	case "up", "k":
@@ -198,7 +211,7 @@ func (m Model) updateReview(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		if m.reviewCursor < len(m.request.Fields)-1 {
 			m.reviewCursor++
 		}
-	case "left", "b":
+	case "b":
 		m.fieldIdx = len(m.request.Fields) - 1
 		m.phase = phaseField
 		m.loadField()
@@ -268,6 +281,12 @@ func (m *Model) buildTextarea() {
 		rows = 1
 	}
 	m.textarea = shared.NewInputTextarea(placeholder, m.width, rows, shared.WithoutBorder())
+	if m.phase == phaseCustom {
+		if draft, ok := m.customDrafts[field.ID]; ok {
+			m.textarea.SetValue(draft)
+			return
+		}
+	}
 	if answer, ok := m.answers[field.ID]; ok {
 		if m.phase == phaseCustom {
 			m.textarea.SetValue(answer.Custom)
@@ -365,17 +384,21 @@ func (m Model) HelpBindings() []keybind.Binding {
 		return keybind.NewBinding(keybind.WithKeys(keys...), keybind.WithHelp(key, desc))
 	}
 	if m.CapturesText() {
-		return []keybind.Binding{
+		bindings := []keybind.Binding{
 			binding([]string{"enter"}, "enter", "submit"),
 			binding([]string{"ctrl+d"}, "ctrl+d", "decline"),
-			binding([]string{"esc"}, "esc", "back/cancel"),
+			binding([]string{"ctrl+g"}, "ctrl+g", "cancel"),
 		}
+		if m.HasInnerBack() {
+			bindings = append(bindings, binding([]string{"esc"}, "esc", "back"))
+		}
+		return bindings
 	}
 
 	navigate := binding([]string{"up", "down", "j", "k"}, "↑/↓/j/k", "navigate")
-	previous := binding([]string{"left", "b"}, "←/b", "previous")
+	previous := binding([]string{"b"}, "b", "previous")
 	decline := binding([]string{"d"}, "d", "decline")
-	cancel := binding([]string{"q", "esc"}, "q/esc", "cancel")
+	cancel := binding([]string{"q"}, "q", "cancel")
 	if m.phase == phaseReview {
 		return []keybind.Binding{
 			binding([]string{"enter", "s"}, "enter/s", "submit"),

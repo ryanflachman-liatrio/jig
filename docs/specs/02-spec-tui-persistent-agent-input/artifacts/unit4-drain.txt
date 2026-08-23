@@ -20,7 +20,7 @@
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-  Agent input required  ·  Step: a  ·  2 pending  ·  esc to close
+  Agent input required  ·  Step: a  ·  2 pending  ·  esc to blur
   awaiting agent input (2 pending)  ·  enter submit  •  [/] entries  •  F1 more
 --- frame ---
 
@@ -46,7 +46,7 @@
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-  Agent input required  ·  Step: b  ·  1 pending  ·  esc to close
+  Agent input required  ·  Step: b  ·  1 pending  ·  esc to blur
   awaiting agent input  ·  enter submit  •  alt+enter newline  •  F1 more
 --- frame ---
 

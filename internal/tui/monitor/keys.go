@@ -8,9 +8,9 @@ import (
 // panel, the Transcript panel, and (when present) the Gate; each region reads its
 // own keys, and the gates are non-blocking (ADR 0002) so focus keys are handled
 // before any region sees input. Bindings marked display-only are rendered in the
-// footer but matched elsewhere — the digit gates (Verdict/Answer/ToggleOpt) run a
-// loop that needs the option index, and the Focus labels combine directional
-// bindings (e.g. "tab/←/→") that are matched individually.
+// footer but matched elsewhere — Verdict runs a loop that needs the option index,
+// and the Focus labels combine directional bindings (e.g. "tab/←/→") that are
+// matched individually.
 type monitorKeys struct {
 	// focus movement (handled in Update before region dispatch)
 	FocusNext  keybind.Binding // matched (tab)
@@ -43,22 +43,14 @@ type monitorKeys struct {
 	PageNewer    keybind.Binding // matched (])
 
 	// gates
-	Submit         keybind.Binding // matched (enter: input/prompt/compose submit)
-	Newline        keybind.Binding // display-only (textarea-owned)
-	GateBlur       keybind.Binding // matched (esc: blurs gate → Steps, all kinds; ADR 0005)
-	GateContext    keybind.Binding // matched (ctrl+o: view/return from the active gate's step context)
-	GateEntryNav   keybind.Binding // matched ([/] — previous/next entry, multi-entry queue)
-	InputLeave     keybind.Binding // retained for legacy footer refs; no longer triggers ShowRunsMsg
-	PromptLeave    keybind.Binding // display-only ("esc blur", prompt gate)
-	ComposeCancel  keybind.Binding // matched (esc, while composing — caught by GateBlur at top)
-	Message        keybind.Binding // matched (m, review gate)
-	ReviewLeave    keybind.Binding // retained; esc caught by GateBlur; q unhandled until task 4
-	Verdict        keybind.Binding // display-only ("1-9 verdict")
-	Answer         keybind.Binding // display-only ("1-9 select answer")
-	ToggleOpt      keybind.Binding // display-only ("1-9 toggle", multiSelect)
-	QConfirm       keybind.Binding // matched (enter/space, multiSelect confirm)
-	QuestionCancel keybind.Binding // retained; esc caught by GateBlur; q → task 4.5
-	QuestionScroll keybind.Binding // display-only ("↑/↓ scroll", question option list overflow)
+	Submit       keybind.Binding // matched (enter: input/prompt/compose submit)
+	Newline      keybind.Binding // display-only (textarea-owned)
+	GateBack     keybind.Binding // display-only (esc: leaves a nested form)
+	GateBlur     keybind.Binding // matched (esc: blurs a top-level gate → Steps)
+	GateContext  keybind.Binding // matched (ctrl+o: view/return from the active gate's step context)
+	GateEntryNav keybind.Binding // matched ([/] — previous/next entry, multi-entry queue)
+	Message      keybind.Binding // matched (m, review gate)
+	Verdict      keybind.Binding // display-only ("1-9 verdict")
 
 	RecoverRetry keybind.Binding // matched (r, recovery gate: re-run fresh)
 	RecoverGuide keybind.Binding // matched (g, recovery gate: compose guidance + resume session)
@@ -112,22 +104,14 @@ func defaultMonitorKeys() monitorKeys {
 		PageOlder:    keybind.NewBinding(keybind.WithKeys("["), keybind.WithHelp("[", "older")),
 		PageNewer:    keybind.NewBinding(keybind.WithKeys("]"), keybind.WithHelp("]", "newer")),
 
-		Submit:         keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "submit")),
-		Newline:        keybind.NewBinding(keybind.WithKeys("alt+enter", "shift+enter"), keybind.WithHelp("alt+enter", "newline")),
-		GateBlur:       keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "blur")),
-		GateContext:    keybind.NewBinding(keybind.WithKeys("ctrl+o"), keybind.WithHelp("ctrl+o", "view context")),
-		GateEntryNav:   keybind.NewBinding(keybind.WithKeys("[", "]"), keybind.WithHelp("[/]", "entries")),
-		InputLeave:     keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "blur")),
-		PromptLeave:    keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "blur")),
-		ComposeCancel:  keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "blur")),
-		Message:        keybind.NewBinding(keybind.WithKeys("m"), keybind.WithHelp("m", "message")),
-		ReviewLeave:    keybind.NewBinding(keybind.WithKeys("esc", "q"), keybind.WithHelp("esc", "blur")),
-		Verdict:        keybind.NewBinding(keybind.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"), keybind.WithHelp("1-9", "verdict")),
-		Answer:         keybind.NewBinding(keybind.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"), keybind.WithHelp("1-9", "select answer")),
-		ToggleOpt:      keybind.NewBinding(keybind.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"), keybind.WithHelp("1-9", "toggle")),
-		QConfirm:       keybind.NewBinding(keybind.WithKeys("enter", " "), keybind.WithHelp("enter", "confirm")),
-		QuestionCancel: keybind.NewBinding(keybind.WithKeys("esc", "q"), keybind.WithHelp("esc", "blur")),
-		QuestionScroll: keybind.NewBinding(keybind.WithKeys("j", "k", "down", "up"), keybind.WithHelp("↑/↓", "scroll")),
+		Submit:       keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "submit")),
+		Newline:      keybind.NewBinding(keybind.WithKeys("alt+enter", "shift+enter"), keybind.WithHelp("alt+enter", "newline")),
+		GateBack:     keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "back")),
+		GateBlur:     keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "blur")),
+		GateContext:  keybind.NewBinding(keybind.WithKeys("ctrl+o"), keybind.WithHelp("ctrl+o", "view context")),
+		GateEntryNav: keybind.NewBinding(keybind.WithKeys("[", "]"), keybind.WithHelp("[/]", "entries")),
+		Message:      keybind.NewBinding(keybind.WithKeys("m"), keybind.WithHelp("m", "message")),
+		Verdict:      keybind.NewBinding(keybind.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"), keybind.WithHelp("1-9", "verdict")),
 
 		RecoverRetry: keybind.NewBinding(keybind.WithKeys("r"), keybind.WithHelp("r", "retry")),
 		RecoverGuide: keybind.NewBinding(keybind.WithKeys("g"), keybind.WithHelp("g", "guide+retry")),
