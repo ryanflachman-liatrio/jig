@@ -40,6 +40,10 @@ func (*AcpHarness) Capabilities() CapabilitySet {
 	return NewCapabilitySet(CapPermissionCallback, CapUserQuestion, CapPartialStreaming, CapStructuredOutput)
 }
 
+func (*AcpHarness) PreviewPrompt(spec SessionSpec) string {
+	return appendSchemaPrompt(spec.Prompt, spec.Schema)
+}
+
 // Open spawns the adapter, opens a session at spec.Cwd, and starts the
 // prompt turn in the background so Messages() can begin delivering events
 // immediately. It rejects any capability-gated SessionSpec field this

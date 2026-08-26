@@ -6,7 +6,9 @@
 //	  journal.jsonl          – one Envelope per line, written by manifest.Writer
 //	  steps/
 //	    <step-id>/
+//	      input.md           – assembled agent prompt for the latest dispatch
 //	      result.json        – written on terminal step status events
+//	      transcript.jsonl    – append-only agent/command conversation
 //	  artifacts/             – agent output (Phase 4+)
 //
 // RunDir and StepDir create the directory tree on first call and return the
@@ -96,6 +98,12 @@ func TranscriptPath(runDir, stepID string) string {
 	return filepath.Join(runDir, "steps", stepID, "transcript.jsonl")
 }
 
+// InputPath returns the canonical path to input.md for a step inside runDir.
+// Agent steps write the fully assembled prompt here before opening the harness.
+func InputPath(runDir, stepID string) string {
+	return filepath.Join(runDir, "steps", stepID, "input.md")
+}
+
 // FindingsPath returns the path to findings.jsonl for a run inside runDir.
 // The append-only findings file holds every security finding emitted by both
 // Tier-1 (guard) and Tier-2 (monitor fleet) for this run (see internal/sentinel).
@@ -128,8 +136,8 @@ func DeleteRun(root, runID string) error {
 	return os.RemoveAll(filepath.Join(root, "runs", runID))
 }
 
-// ClearStepOutputs removes the derived per-step outputs for stepID —
-// result.json, output.md, and output.json — so a reset step starts fresh.
+// ClearStepOutputs removes the derived per-step inputs and outputs for stepID —
+// input.md, result.json, output.md, and output.json — so a reset step starts fresh.
 // transcript.jsonl is intentionally left intact: it is append-only and a
 // re-run appends a new generation rather than overwriting history.
 // No-ops silently when runDir is empty (persistence-off path) or when any
@@ -139,12 +147,13 @@ func ClearStepOutputs(runDir, stepID string) error {
 		return nil
 	}
 	for _, path := range []string{
+		InputPath(runDir, stepID),
 		ResultPath(runDir, stepID),
 		OutputPath(runDir, stepID),
 		OutputJSONPath(runDir, stepID),
 	} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("datastore: clear step %q output %q: %w", stepID, path, err)
+			return fmt.Errorf("datastore: clear step %q artifact %q: %w", stepID, path, err)
 		}
 	}
 	return nil

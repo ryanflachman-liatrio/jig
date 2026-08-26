@@ -16,6 +16,8 @@ const (
 	kindOther fileKind = iota
 	kindMarkdown
 	kindJSON
+	kindJSONL
+	kindLog
 )
 
 var errIsDir = errors.New("output path is a directory")
@@ -47,6 +49,10 @@ func detectFileKind(path string) fileKind {
 		return kindMarkdown
 	case ".json":
 		return kindJSON
+	case ".jsonl":
+		return kindJSONL
+	case ".log":
+		return kindLog
 	default:
 		return kindOther
 	}
@@ -61,15 +67,46 @@ func stepOutputFiles(runDir string, stepId string, declaredOutput string) []outp
 	var paths []string
 
 	paths = append(paths,
+		datastore.InputPath(runDir, stepId),
 		datastore.OutputJSONPath(runDir, stepId),
 		datastore.OutputPath(runDir, stepId),
 	)
+	paths = append(paths, stepDiagnosticPaths(runDir, stepId)...)
 
 	if declaredOutput != "" {
 		paths = append(paths, declaredOutput)
 	}
 
 	return createOutputFiles(paths)
+}
+
+func stepDiagnosticPaths(runDir, stepID string) []string {
+	stepDir := filepath.Join(runDir, "steps", stepID)
+	entries, err := os.ReadDir(stepDir)
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Name() == "transcript.jsonl" {
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(entry.Name()))
+		if ext == ".jsonl" || ext == ".log" {
+			paths = append(paths, filepath.Join(stepDir, entry.Name()))
+		}
+	}
+	return paths
+}
+
+func (m *Model) refreshLiveStepFiles(stepID string) {
+	if m.RunDir == "" {
+		return
+	}
+	if m.stepFiles == nil {
+		m.stepFiles = make(map[string][]outputFile)
+	}
+	m.stepFiles[stepID] = stepOutputFiles(m.RunDir, stepID, "")
 }
 
 func createOutputFiles(paths []string) []outputFile {

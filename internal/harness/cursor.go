@@ -27,6 +27,10 @@ func (*CursorHarness) Capabilities() CapabilitySet {
 	return NewCapabilitySet(CapPermissionCallback, CapStructuredOutput)
 }
 
+func (*CursorHarness) PreviewPrompt(spec SessionSpec) string {
+	return appendSchemaPrompt(spec.Prompt, spec.Schema)
+}
+
 // Open spawns cursor-agent acp, authenticates, opens a session at spec.Cwd,
 // and starts the prompt turn in the background. Rejects capability-gated
 // SessionSpec fields this harness does not advertise.

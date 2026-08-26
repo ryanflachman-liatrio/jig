@@ -86,12 +86,12 @@ version     = "1"
 description = "SDD end-to-end — idea to changelog in one graph: spec, tasks, implement, validate, compliance."
 
 [defaults]
-backend         = "claude"
-transport       = "sdk"
-model           = "claude-opus-4-8"
+backend         = "codex"
+transport       = "acp"
+model         = "gpt-5.6-luna"
 effort          = "high"
 permission_mode = "acceptEdits"
-max_parallel    = 5
+max_parallel    = 1
 
 # ════════════════════════════════════════════════════════════════════════
 # PHASE 1 — SPEC  (mkdir_spec → context_assess → … → spec_review)
@@ -110,7 +110,7 @@ run  = "mkdir -p docs/specs"
 [[step]]
 id              = "context_assess"
 type            = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on      = ["mkdir_spec"]
 skill           = "../skills/sdd-context-assess"
 output_template = "templates/context-assess.md"
@@ -137,7 +137,7 @@ isolation     = "none"
 [[step]]
 id            = "research_security"
 type          = "agent"
-model         = "claude-sonnet-4-6"
+model         = "gpt-5.6-luna"
 depends_on    = ["context_assess"]
 skill         = "../skills/sdd-research-security"
 inputs        = ["@context_assess.summary", "@context_assess.technologies"]
@@ -154,7 +154,7 @@ isolation     = "none"
 [[step]]
 id            = "research_api_contracts"
 type          = "agent"
-model         = "claude-sonnet-4-6"
+model         = "gpt-5.6-luna"
 depends_on    = ["context_assess"]
 skill         = "../skills/sdd-research-api-contracts"
 inputs        = ["@context_assess.summary", "@context_assess.technologies"]
@@ -171,7 +171,7 @@ isolation     = "none"
 [[step]]
 id            = "research_data_patterns"
 type          = "agent"
-model         = "claude-sonnet-4-6"
+model         = "gpt-5.6-luna"
 depends_on    = ["context_assess"]
 skill         = "../skills/sdd-research-data-patterns"
 inputs        = ["@context_assess.summary", "@context_assess.technologies"]
@@ -188,7 +188,7 @@ isolation     = "none"
 [[step]]
 id            = "research_testing_standards"
 type          = "agent"
-model         = "claude-sonnet-4-6"
+model         = "gpt-5.6-luna"
 depends_on    = ["context_assess"]
 skill         = "../skills/sdd-research-testing-standards"
 inputs        = ["@context_assess.summary", "@context_assess.technologies"]
@@ -205,7 +205,7 @@ isolation     = "none"
 [[step]]
 id            = "research_ecosystem"
 type          = "agent"
-model         = "claude-sonnet-4-6"
+model         = "gpt-5.6-luna"
 depends_on    = ["context_assess"]
 skill         = "../skills/sdd-research-ecosystem"
 inputs        = ["@context_assess.summary", "@context_assess.technologies"]
@@ -227,7 +227,7 @@ isolation     = "none"
 [[step]]
 id            = "synthesize_research"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["research_security", "research_api_contracts", "research_data_patterns", "research_testing_standards", "research_ecosystem"]
 skill         = "../skills/sdd-synthesize-research"
 inputs        = [
@@ -256,7 +256,7 @@ isolation     = "none"
 [[step]]
 id            = "scope_assess"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["context_assess", "synthesize_research"]
 skill         = "../skills/sdd-scope-assess"
 inputs        = ["@context_assess.summary", "@synthesize_research.summary"]
@@ -359,7 +359,7 @@ max_messages = 10
 [[step]]
 id            = "arch_fitness"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["spec_review", "write_spec", "context_assess"]
 when          = "spec_review == 'approve'"
 skill         = "../skills/sdd-arch-fitness"
@@ -409,7 +409,7 @@ max_messages = 5
 [[step]]
 id            = "analyze_spec_requirements"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["arch_gate", "spec_review", "context_assess", "write_spec"]
 when          = "spec_review == 'approve'"
 skill         = "../skills/sdd-analyze-spec-requirements"
@@ -428,7 +428,7 @@ isolation     = "none"
 [[step]]
 id            = "analyze_repo_standards"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["arch_gate", "spec_review", "context_assess", "write_spec"]
 when          = "spec_review == 'approve'"
 skill         = "../skills/sdd-analyze-repo-standards"
@@ -450,7 +450,7 @@ isolation     = "none"
 [[step]]
 id            = "synthesize_spec_analysis"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["analyze_spec_requirements", "analyze_repo_standards"]
 skill         = "../skills/sdd-synthesize-spec-analysis"
 inputs        = [
@@ -534,7 +534,7 @@ isolation     = "none"
 [[step]]
 id            = "audit_traceability"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["synthesize_spec_analysis", "gen_subtasks"]
 skill         = "../skills/sdd-audit-traceability"
 inputs        = ["@synthesize_spec_analysis.spec_path", "@synthesize_spec_analysis.spec_name", "@gen_subtasks.task_path"]
@@ -551,7 +551,7 @@ isolation     = "none"
 [[step]]
 id            = "audit_proof_quality"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["synthesize_spec_analysis", "gen_subtasks"]
 skill         = "../skills/sdd-audit-proof-quality"
 inputs        = ["@synthesize_spec_analysis.spec_path", "@gen_subtasks.task_path"]
@@ -568,7 +568,7 @@ isolation     = "none"
 [[step]]
 id            = "audit_standards_consistency"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["synthesize_spec_analysis", "gen_subtasks"]
 skill         = "../skills/sdd-audit-standards-consistency"
 inputs        = ["@synthesize_spec_analysis.spec_path", "@synthesize_spec_analysis.spec_name", "@gen_subtasks.task_path", "@synthesize_spec_analysis.standards_evidence"]
@@ -585,7 +585,7 @@ isolation     = "none"
 [[step]]
 id            = "audit_open_questions"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["synthesize_spec_analysis", "gen_subtasks"]
 skill         = "../skills/sdd-audit-open-questions"
 inputs        = ["@synthesize_spec_analysis.spec_path", "@gen_subtasks.task_path"]
@@ -606,7 +606,7 @@ isolation     = "none"
 [[step]]
 id            = "synthesize_audit"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["audit_traceability", "audit_proof_quality", "audit_standards_consistency", "audit_open_questions", "synthesize_spec_analysis", "gen_subtasks"]
 skill         = "../skills/sdd-synthesize-audit"
 inputs        = [
@@ -663,7 +663,7 @@ max_messages = 10
 [[step]]
 id            = "find_next_task"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["audit_review", "context_assess"]
 when          = "audit_review == 'approve'"
 skill         = "../skills/sdd-find-next-task"
@@ -745,7 +745,7 @@ script     = ".agents/jig/scripts/check-coverage.sh"
 [[step]]
 id            = "create_proofs"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["run_tests", "run_lint", "check_coverage", "find_next_task"]
 when          = "find_next_task.progress == 'continue'"
 skill         = "../skills/sdd-create-proofs"
@@ -819,7 +819,7 @@ max_messages = 10
 [[step]]
 id            = "discover_artifacts"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["final_review", "context_assess"]
 when          = "final_review == 'approve'"
 skill         = "../skills/sdd-discover-artifacts"
@@ -848,7 +848,7 @@ isolation     = "none"
 [[step]]
 id            = "build_coverage_matrix"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["discover_artifacts"]
 skill         = "../skills/sdd-build-coverage-matrix"
 inputs        = ["@discover_artifacts.spec_path", "@discover_artifacts.task_path", "@discover_artifacts.requirements", "@discover_artifacts.proof_artifact_paths"]
@@ -872,7 +872,7 @@ isolation     = "none"
 [[step]]
 id            = "check_standards_compliance"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["discover_artifacts"]
 skill         = "../skills/sdd-check-standards-compliance"
 inputs        = ["@discover_artifacts.spec_path", "@discover_artifacts.task_path", "@discover_artifacts.changed_files", "@discover_artifacts.spec_name"]
@@ -889,7 +889,7 @@ isolation     = "none"
 [[step]]
 id            = "check_git_traceability"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["discover_artifacts"]
 skill         = "../skills/sdd-check-git-traceability"
 inputs        = ["@discover_artifacts.git_log", "@discover_artifacts.task_path", "@discover_artifacts.spec_path"]
@@ -906,7 +906,7 @@ isolation     = "none"
 [[step]]
 id            = "check_scope_integrity"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["discover_artifacts"]
 skill         = "../skills/sdd-check-scope-integrity"
 inputs        = ["@discover_artifacts.changed_files", "@discover_artifacts.task_path", "@discover_artifacts.spec_path"]
@@ -958,7 +958,7 @@ script     = ".agents/jig/scripts/breaking-changes.sh"
 [[step]]
 id            = "analyze_performance"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["discover_artifacts"]
 skill         = "../skills/sdd-analyze-performance"
 inputs        = ["@discover_artifacts.spec_path", "@discover_artifacts.changed_files", "@discover_artifacts.task_path"]
@@ -979,7 +979,7 @@ isolation     = "none"
 [[step]]
 id            = "assemble_report"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["build_coverage_matrix", "check_standards_compliance", "check_git_traceability", "check_scope_integrity", "check_credentials", "verify_proof_files", "check_breaking_changes", "analyze_performance", "discover_artifacts"]
 skill         = "../skills/sdd-assemble-report"
 inputs        = [
@@ -1042,7 +1042,7 @@ max_messages = 10
 [[step]]
 id            = "compliance_scope"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["validation_review", "discover_artifacts", "assemble_report"]
 when          = "validation_review == 'approve'"
 skill         = "../skills/sdd-compliance-scope"
@@ -1076,7 +1076,7 @@ script     = ".agents/jig/scripts/check-accessibility.sh"
 [[step]]
 id            = "check_owasp_security"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["compliance_scope", "discover_artifacts", "validation_review"]
 when          = "validation_review == 'approve'"
 skill         = "../skills/sdd-check-owasp"
@@ -1093,7 +1093,7 @@ isolation     = "none"
 [[step]]
 id            = "check_pci_compliance"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["compliance_scope", "discover_artifacts"]
 when          = "compliance_scope.includes_payments == 'yes'"
 skill         = "../skills/sdd-check-pci"
@@ -1110,7 +1110,7 @@ isolation     = "none"
 [[step]]
 id            = "check_data_privacy"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["compliance_scope", "discover_artifacts"]
 when          = "compliance_scope.includes_sensitive_data == 'yes'"
 skill         = "../skills/sdd-check-data-privacy"
@@ -1145,7 +1145,7 @@ script     = ".agents/jig/scripts/dep-audit.sh"
 [[step]]
 id            = "assemble_compliance_report"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["check_accessibility", "check_owasp_security", "check_pci_compliance", "check_data_privacy", "run_dep_audit", "compliance_scope", "discover_artifacts", "validation_review"]
 when          = "validation_review == 'approve'"
 skill         = "../skills/sdd-assemble-compliance"
@@ -1197,7 +1197,7 @@ max_messages = 10
 [[step]]
 id            = "gen_changelog"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
+model         = "gpt-5.6-luna"
 depends_on    = ["compliance_review", "discover_artifacts", "assemble_compliance_report"]
 when          = "compliance_review == 'approve'"
 skill         = "../skills/sdd-gen-changelog"

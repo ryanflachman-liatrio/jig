@@ -76,6 +76,9 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 	}
 
 	spec.Prompt = buildAgentPrompt(req)
+	if req.TranscriptPath != "" {
+		spec.DiagnosticsDir = filepath.Dir(req.TranscriptPath)
+	}
 	if req.ResumeSessionID != "" {
 		if !caps.Has(harness.CapSessionResume) {
 			return failResult(fmt.Sprintf("resume requested but harness %q does not support session resume (CapSessionResume)", h.Name()), start), nil
@@ -105,6 +108,13 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 			return harness.Decision{Allow: dec.Allow, Reason: dec.Reason}
 		}
 	}
+	inputPrompt := spec.Prompt
+	if previewer, ok := h.(harness.PromptPreviewer); ok {
+		inputPrompt = previewer.PreviewPrompt(spec)
+	}
+	if err := writeAgentInput(req, inputPrompt); err != nil {
+		return failResult(fmt.Sprintf("input artifact: %v", err), start), nil
+	}
 
 	sess, err := h.Open(ctx, spec)
 	if err != nil {
@@ -117,6 +127,13 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 		initialMsg = req.Message
 	}
 	return captureStream(sess.Messages(), req, rep, start, initialMsg)
+}
+
+func writeAgentInput(req engine.StepRequest, prompt string) error {
+	if req.TranscriptPath == "" {
+		return nil
+	}
+	return os.WriteFile(filepath.Join(filepath.Dir(req.TranscriptPath), "input.md"), []byte(prompt), 0o644)
 }
 
 // buildSessionSpec translates a step's already-defaulted model/tool/permission

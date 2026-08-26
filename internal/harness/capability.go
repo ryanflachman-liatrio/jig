@@ -82,6 +82,9 @@ type SessionSpec struct {
 	AllowedTools      []string
 	DisallowedTools   []string
 	Cwd               string
+	// DiagnosticsDir is an optional run-local directory for transport diagnostics.
+	// Harnesses that do not own a subprocess ignore it.
+	DiagnosticsDir string
 
 	// Permission requires CapPermissionCallback.
 	Permission PermissionFn
@@ -93,4 +96,11 @@ type SessionSpec struct {
 	Schema map[string]any
 	// Partial (request incremental streaming) requires CapPartialStreaming.
 	Partial bool
+}
+
+// PromptPreviewer exposes the effective initial prompt for transports that
+// inject instructions before sending it. Harnesses whose prompt is unchanged
+// do not need to implement it.
+type PromptPreviewer interface {
+	PreviewPrompt(SessionSpec) string
 }

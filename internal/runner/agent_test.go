@@ -54,6 +54,122 @@ func scriptChan(evts ...harness.Event) <-chan harness.Event {
 
 func floatPtr(f float64) *float64 { return &f }
 
+func TestExecuteDerivesDiagnosticsDirOnlyWithTranscript(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		transcriptPath string
+		wantDir        string
+	}{
+		{name: "persistence on", transcriptPath: filepath.Join(t.TempDir(), "transcript.jsonl"), wantDir: "set"},
+		{name: "persistence off"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &harness.FakeHarness{NameVal: "fake", Sess: harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}})}
+			_, err := NewAgentExecutorFixed(h).Execute(context.Background(), engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: tt.transcriptPath}, &captureReporter{})
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if tt.wantDir == "set" && h.OpenSpec.DiagnosticsDir != filepath.Dir(tt.transcriptPath) {
+				t.Errorf("DiagnosticsDir = %q, want %q", h.OpenSpec.DiagnosticsDir, filepath.Dir(tt.transcriptPath))
+			}
+			if tt.wantDir == "" && h.OpenSpec.DiagnosticsDir != "" {
+				t.Errorf("DiagnosticsDir = %q, want empty", h.OpenSpec.DiagnosticsDir)
+			}
+		})
+	}
+}
+
+func TestExecuteWritesAssembledPromptToInputArtifact(t *testing.T) {
+	dir := t.TempDir()
+	tPath := filepath.Join(dir, "transcript.jsonl")
+	h := &harness.FakeHarness{
+		NameVal: "fake",
+		Sess:    harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}}),
+	}
+	req := engine.StepRequest{
+		Step: &workflow.Step{
+			AppendSystemPrompt: "Perform the requested review.",
+		},
+		Inputs: []engine.ResolvedInput{{
+			Ref:   workflow.Input{Path: "notes.md", Inline: true},
+			Value: "untrusted input contents",
+		}},
+		WorkflowContext: "## Workflow context\n- Step: review\n---",
+		TranscriptPath:  tPath,
+	}
+
+	_, err := NewAgentExecutorFixed(h).Execute(context.Background(), req, &captureReporter{})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "input.md"))
+	if err != nil {
+		t.Fatalf("read input.md: %v", err)
+	}
+	if string(got) != h.OpenSpec.Prompt {
+		t.Errorf("input.md does not match harness prompt\ninput.md:\n%s\n\nharness prompt:\n%s", got, h.OpenSpec.Prompt)
+	}
+	for _, want := range []string{"Workflow context", "Perform the requested review.", "untrusted input contents"} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("input.md missing %q", want)
+		}
+	}
+}
+
+func TestExecuteWritesTransportInjectedPromptToInputArtifact(t *testing.T) {
+	dir := t.TempDir()
+	h := &harness.FakeHarness{
+		NameVal: "fake",
+		Sess:    harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}}),
+		Preview: func(spec harness.SessionSpec) string {
+			return spec.Prompt + "\n\ntransport-injected schema"
+		},
+	}
+	req := engine.StepRequest{
+		Step:           &workflow.Step{AppendSystemPrompt: "Base task."},
+		TranscriptPath: filepath.Join(dir, "transcript.jsonl"),
+	}
+
+	_, err := NewAgentExecutorFixed(h).Execute(context.Background(), req, &captureReporter{})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "input.md"))
+	if err != nil {
+		t.Fatalf("read input.md: %v", err)
+	}
+	if want := h.Preview(h.OpenSpec); string(got) != want {
+		t.Errorf("input.md = %q, want effective prompt %q", got, want)
+	}
+}
+
+func TestExecuteWritesResumeMessageToInputArtifact(t *testing.T) {
+	dir := t.TempDir()
+	h := &harness.FakeHarness{
+		NameVal: "fake",
+		Caps:    harness.NewCapabilitySet(harness.CapSessionResume),
+		Sess:    harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}}),
+	}
+	req := engine.StepRequest{
+		Step:            &workflow.Step{},
+		TranscriptPath:  filepath.Join(dir, "transcript.jsonl"),
+		ResumeSessionID: "session-1",
+		Message:         "Continue with the operator's answer.",
+	}
+
+	_, err := NewAgentExecutorFixed(h).Execute(context.Background(), req, &captureReporter{})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "input.md"))
+	if err != nil {
+		t.Fatalf("read input.md: %v", err)
+	}
+	if string(got) != req.Message {
+		t.Errorf("input.md = %q, want resume message %q", got, req.Message)
+	}
+}
+
 // TestCaptureStream_RichCapture drives captureStream with a scripted assistant
 // turn (thinking + text + tool_use), a tool_result user turn, and a success
 // result, then asserts the transcript holds the expected ordered entries with

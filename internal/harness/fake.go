@@ -12,6 +12,7 @@ type FakeHarness struct {
 	Caps    CapabilitySet
 	Sess    *FakeSession
 	OpenErr error
+	Preview func(SessionSpec) string
 
 	// OpenSpec records the SessionSpec passed to the most recent Open call, so
 	// tests can assert which capability-gated fields the executor set.
@@ -21,6 +22,13 @@ type FakeHarness struct {
 func (h *FakeHarness) Name() string { return h.NameVal }
 
 func (h *FakeHarness) Capabilities() CapabilitySet { return h.Caps }
+
+func (h *FakeHarness) PreviewPrompt(spec SessionSpec) string {
+	if h.Preview != nil {
+		return h.Preview(spec)
+	}
+	return spec.Prompt
+}
 
 func (h *FakeHarness) Open(_ context.Context, spec SessionSpec) (Session, error) {
 	h.OpenSpec = spec

@@ -207,6 +207,7 @@ so it survives worktree switches:
   journal.jsonl                – orchestration events (one Envelope/line)
   steps/<step-id>/
     result.json                – terminal step summary
+    input.md                   – effective agent prompt for the latest dispatch
     transcript.jsonl           – append-only per-step conversation
   artifacts/                   – producer output (@stepid resolves here)
 ```

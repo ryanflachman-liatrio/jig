@@ -118,6 +118,10 @@ func (m Model) listBody() string {
 				fileMarker = "md"
 			case kindJSON:
 				fileMarker = "json"
+			case kindJSONL:
+				fileMarker = "jsonl"
+			case kindLog:
+				fileMarker = "log"
 			default:
 				fileMarker = "file"
 			}

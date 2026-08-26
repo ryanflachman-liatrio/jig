@@ -23,6 +23,10 @@ func (*CodexHarness) Capabilities() CapabilitySet {
 	return NewCapabilitySet(CapPermissionCallback, CapSessionResume, CapStructuredOutput, CapPartialStreaming)
 }
 
+func (*CodexHarness) PreviewPrompt(spec SessionSpec) string {
+	return appendSchemaPrompt(spec.Prompt, spec.Schema)
+}
+
 func (h *CodexHarness) Open(ctx context.Context, spec SessionSpec) (Session, error) {
 	events := make(chan Event, 32)
 	sess := &acpSession{events: events, hasSchema: spec.Schema != nil, schema: spec.Schema}
@@ -34,9 +38,9 @@ func (h *CodexHarness) Open(ctx context.Context, spec SessionSpec) (Session, err
 		}
 	}
 
-	conn, err := acp.ConnectCodex(ctx, decide, func(ev acp.Event) {
+	conn, err := acp.ConnectCodexWithDiagnostics(ctx, decide, func(ev acp.Event) {
 		sess.onEvent(ev)
-	})
+	}, spec.DiagnosticsDir)
 	if err != nil {
 		return nil, fmt.Errorf("codex: %w", err)
 	}
@@ -60,6 +64,7 @@ func (h *CodexHarness) Open(ctx context.Context, spec SessionSpec) (Session, err
 		_ = conn.Close()
 		return nil, fmt.Errorf("codex: %w", err)
 	}
+	conn.ConfigurationCompleted()
 	events <- Event{Type: EventSessionID, SessionID: sessionID}
 
 	go sess.run(ctx, sessionID, spec.Prompt)

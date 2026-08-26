@@ -137,3 +137,32 @@ func TestTranscriptPath(t *testing.T) {
 		t.Errorf("TranscriptPath: want %q, got %q", want, p)
 	}
 }
+
+func TestInputPath(t *testing.T) {
+	p := InputPath("/some/run/dir", "my-step")
+	want := filepath.Join("/some/run/dir", "steps", "my-step", "input.md")
+	if p != want {
+		t.Errorf("InputPath: want %q, got %q", want, p)
+	}
+}
+
+func TestClearStepOutputsRemovesInputArtifact(t *testing.T) {
+	runDir, err := RunDir(t.TempDir(), "run1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := StepDir(runDir, "my-step"); err != nil {
+		t.Fatal(err)
+	}
+	path := InputPath(runDir, "my-step")
+	if err := os.WriteFile(path, []byte("assembled prompt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ClearStepOutputs(runDir, "my-step"); err != nil {
+		t.Fatalf("ClearStepOutputs: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("input.md still exists after reset: %v", err)
+	}
+}

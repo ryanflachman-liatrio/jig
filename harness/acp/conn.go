@@ -21,6 +21,7 @@ type Conn struct {
 	rpc           *acpsdk.ClientSideConnection
 	client        *Client
 	sessionConfig map[string][]acpsdk.SessionConfigOption
+	diagnostics   *diagnosticLog
 
 	// ProtocolVersion is the version the adapter reported during Initialize.
 	ProtocolVersion int
@@ -87,14 +88,31 @@ func Connect(ctx context.Context, decide Decider, onUpdate func(Event), elicit E
 // handshake. The adapter reads the operator's existing Codex CLI login; jig
 // deliberately does not provide credentials or select an authentication method.
 func ConnectCodex(ctx context.Context, decide Decider, onUpdate func(Event)) (*Conn, error) {
+	return ConnectCodexWithDiagnostics(ctx, decide, onUpdate, "")
+}
+
+// ConnectCodexWithDiagnostics is ConnectCodex with an optional artifact
+// directory. The artifacts live beside the step transcript so they survive an
+// ungraceful parent-process exit without polluting the TUI's alt screen.
+func ConnectCodexWithDiagnostics(ctx context.Context, decide Decider, onUpdate func(Event), diagnosticsDir string) (*Conn, error) {
 	npxPath, err := exec.LookPath("npx")
 	if err != nil {
 		return nil, fmt.Errorf("npx not found on PATH: %w", err)
 	}
+	diagnostics, err := newDiagnosticLog(diagnosticsDir, nil)
+	if err != nil {
+		return nil, fmt.Errorf("open diagnostics: %w", err)
+	}
+	closeDiagnostics := true
+	defer func() {
+		if closeDiagnostics {
+			_ = diagnostics.Close()
+		}
+	}()
 
 	cmd := exec.CommandContext(ctx, npxPath, "-y", "@agentclientprotocol/codex-acp@1.6.2")
-	var stderrBuf bytes.Buffer
-	cmd.Stderr = &stderrBuf
+	diagnostics.Event("adapter_start", nil)
+	cmd.Stderr = diagnostics.StderrWriter()
 	configureProcess(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -105,8 +123,11 @@ func ConnectCodex(ctx context.Context, decide Decider, onUpdate func(Event)) (*C
 		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
+		diagnostics.Event("adapter_start_failed", errorFields(err))
 		return nil, fmt.Errorf("start codex-acp: %w", err)
 	}
+	diagnostics.setRootPID(cmd.Process.Pid)
+	diagnostics.Event("adapter_started", nil)
 
 	client := &Client{Decide: decide, OnUpdate: onUpdate}
 	rpc := acpsdk.NewClientSideConnection(client, stdin, stdout)
@@ -115,17 +136,23 @@ func ConnectCodex(ctx context.Context, decide Decider, onUpdate func(Event)) (*C
 	})
 	if err != nil {
 		_ = killProcess(cmd)
-		_ = cmd.Wait()
-		if msg := strings.TrimSpace(stderrBuf.String()); msg != "" {
+		waitErr := cmd.Wait()
+		fields := map[string]any{"rpc_error": errorKind(err), "adapter_exit_error": errorKind(waitErr)}
+		addExitStatus(fields, cmd)
+		diagnostics.Event("initialize_failed", fields)
+		if msg := diagnostics.StderrTail(); msg != "" {
 			return nil, fmt.Errorf("initialize: %w\nadapter output: %s", err, msg)
 		}
 		return nil, fmt.Errorf("initialize: %w", err)
 	}
+	diagnostics.Event("initialized", map[string]any{"protocol_version": initResp.ProtocolVersion})
+	closeDiagnostics = false
 
 	return &Conn{
 		cmd:                 cmd,
 		rpc:                 rpc,
 		client:              client,
+		diagnostics:         diagnostics,
 		ProtocolVersion:     int(initResp.ProtocolVersion),
 		SupportsLoadSession: initResp.AgentCapabilities.LoadSession,
 	}, nil
@@ -143,12 +170,15 @@ func clientCapabilities(elicit Elicitor) acpsdk.ClientCapabilities {
 
 // NewSession creates a new ACP session rooted at cwd and returns its id.
 func (c *Conn) NewSession(ctx context.Context, cwd string) (string, error) {
+	c.diagnostic("new_session_started", nil)
 	resp, err := c.rpc.NewSession(ctx, acpsdk.NewSessionRequest{Cwd: cwd, McpServers: []acpsdk.McpServer{}})
 	if err != nil {
+		c.diagnostic("new_session_failed", errorFields(err))
 		return "", fmt.Errorf("new session: %w", err)
 	}
 	sessionID := string(resp.SessionId)
 	c.setSessionConfig(sessionID, resp.ConfigOptions)
+	c.diagnostic("new_session_finished", map[string]any{"config_options": len(resp.ConfigOptions)})
 	return sessionID, nil
 }
 
@@ -191,10 +221,18 @@ func (c *Conn) SetSelectConfig(ctx context.Context, sessionID, configID, value s
 		},
 	})
 	if err != nil {
+		c.diagnostic("set_config_failed", errorFields(err))
 		return fmt.Errorf("set %s %q: %w", configID, value, err)
 	}
 	c.setSessionConfig(sessionID, resp.ConfigOptions)
+	c.diagnostic("set_config_finished", nil)
 	return nil
+}
+
+// ConfigurationCompleted records the boundary after the harness has applied
+// its session configuration policy.
+func (c *Conn) ConfigurationCompleted() {
+	c.diagnostic("configuration_completed", nil)
 }
 
 // SetSelectConfigByCategory applies a select option found by ACP's semantic
@@ -275,13 +313,16 @@ func containsConfigValue(values []string, want string) bool {
 // own read loop, concurrently with this call being in flight — Prompt
 // blocking does not delay event delivery.
 func (c *Conn) Prompt(ctx context.Context, sessionID, text string) (acpsdk.StopReason, error) {
+	c.diagnostic("prompt_started", map[string]any{"prompt_bytes": len(text)})
 	resp, err := c.rpc.Prompt(ctx, acpsdk.PromptRequest{
 		SessionId: acpsdk.SessionId(sessionID),
 		Prompt:    []acpsdk.ContentBlock{acpsdk.TextBlock(text)},
 	})
 	if err != nil {
+		c.diagnostic("prompt_failed", errorFields(err))
 		return "", fmt.Errorf("prompt: %w", err)
 	}
+	c.diagnostic("prompt_finished", map[string]any{"stop_reason": resp.StopReason})
 	return resp.StopReason, nil
 }
 
@@ -293,8 +334,45 @@ func (c *Conn) PermissionRequests() []acpsdk.RequestPermissionRequest {
 
 // Close terminates the adapter subprocess and all its children.
 func (c *Conn) Close() error {
+	c.diagnostic("adapter_close_requested", nil)
 	_ = killProcess(c.cmd)
-	return c.cmd.Wait()
+	err := c.cmd.Wait()
+	fields := errorFields(err)
+	if fields == nil {
+		fields = make(map[string]any)
+	}
+	addExitStatus(fields, c.cmd)
+	c.diagnostic("adapter_exited", fields)
+	if c.diagnostics != nil {
+		_ = c.diagnostics.Close()
+	}
+	return err
+}
+
+func (c *Conn) diagnostic(event string, fields map[string]any) {
+	if c.diagnostics != nil {
+		c.diagnostics.Event(event, fields)
+	}
+}
+
+func errorFields(err error) map[string]any {
+	if err == nil {
+		return nil
+	}
+	return map[string]any{"error_type": errorKind(err)}
+}
+
+func errorKind(err error) string {
+	if err == nil {
+		return ""
+	}
+	return fmt.Sprintf("%T", err)
+}
+
+func addExitStatus(fields map[string]any, cmd *exec.Cmd) {
+	if cmd != nil && cmd.ProcessState != nil {
+		fields["exit_code"] = cmd.ProcessState.ExitCode()
+	}
 }
 
 // ConnectCursor spawns `cursor-agent acp` and performs the ACP Initialize +

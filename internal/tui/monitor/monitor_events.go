@@ -48,8 +48,8 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		}
 		if ev.To == step.StatusSucceeded || ev.To == step.StatusFailed || ev.To == step.StatusSkipped {
 			m.steps[i].end = time.Now()
-			// Re-discover output files when a step reaches a terminal state — the
-			// runner may have just written output.md/output.json.
+			// Re-discover step files when a step reaches a terminal state — the
+			// runner may have just written input.md/output.md/output.json.
 			if m.RunDir != "" {
 				m.stepFiles[ev.StepID] = stepOutputFiles(m.RunDir, ev.StepID, "")
 			}
@@ -194,6 +194,7 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		if ev.Seq > m.msgCount[ev.StepID] {
 			m.msgCount[ev.StepID] = ev.Seq
 		}
+		m.refreshLiveStepFiles(ev.StepID)
 		// A StepMessage means a message was just finalized to the transcript, so
 		// the live-typing tail for that step is now on disk: reset it (the next
 		// deltas belong to the next, not-yet-finalized bubble). If that step's
