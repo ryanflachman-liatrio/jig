@@ -53,12 +53,6 @@ func (m *Model) reloadTranscript() {
 		return
 	}
 	m.chatStep = stepID
-	m.chatBlockCursor = 0
-	m.chatExpandAll = false
-	m.chatExpand = make(map[blockKey]bool)
-	m.chatGroupExpand = make(map[blockKey]bool)
-	m.chatGroupForBlock = make(map[blockKey]blockKey)
-	m.chatLineRanges = make(map[chatLineKey]lineRange)
 	m.chatItems = nil
 	m.chatVisibleItems = nil
 	m.chatItemCursor = 0
@@ -136,12 +130,8 @@ func (m *Model) loadChatTail() {
 	// Preserve the block cursor across same-step reloads (e.g. a new StepMessage
 	// arriving while the user is navigating). The saved key won't be found in a
 	// freshly-loaded different step, so cursor correctly resets to 0 on step changes.
-	var saved chatItem
-	if len(m.chatBlocks) > 0 && m.chatBlockCursor < len(m.chatBlocks) {
-		saved = m.chatBlocks[m.chatBlockCursor]
-	}
 	if m.RunDir == "" || m.chatStep == "" {
-		m.setChatPage(transcript.Page{}, saved)
+		m.setChatPage(transcript.Page{})
 		return
 	}
 	r, err := transcript.Open(datastore.TranscriptPath(m.RunDir, m.chatStep))
@@ -153,10 +143,10 @@ func (m *Model) loadChatTail() {
 		return
 	}
 	page = completeToolBoundaryContext(r, page)
-	m.setChatPage(page, saved)
+	m.setChatPage(page)
 }
 
-func (m *Model) setChatPage(page transcript.Page, saved chatItem) {
+func (m *Model) setChatPage(page transcript.Page) {
 	var savedItem transcriptItemKey
 	if len(m.chatVisibleItems) > 0 && m.chatItemCursor >= 0 && m.chatItemCursor < len(m.chatVisibleItems) {
 		savedItem = m.chatVisibleItems[m.chatItemCursor].key
@@ -166,7 +156,7 @@ func (m *Model) setChatPage(page transcript.Page, saved chatItem) {
 	m.chatItems = buildTranscriptItems(page.Entries, m.currentChatStepRunning())
 	m.chatVisibleItems = nil
 	m.prunePageState()
-	m.rebuildLoadedChat(saved)
+	m.rebuildLoadedChat(chatItem{})
 	m.rebuildTranscriptItemState(savedItem)
 	m.rerunSearch()
 }
@@ -216,65 +206,40 @@ func (m Model) currentChatStepRunning() bool {
 	return ok && m.steps[i].status == step.StatusRunning
 }
 
+// rebuildLoadedChat is temporary compatibility for focused regression fixtures;
+// the live monitor renders the normalized transcript-item path.
 func (m *Model) rebuildLoadedChat(saved chatItem) {
 	m.chatGroupHeaders = nil
-	m.chatBlocks = nil
-	m.chatRenderPlan = nil
-
-	entries := m.filteredEntries()
-	// Single-pass accumulator: consecutive tool_use / tool_result blocks are
-	// merged into one tool call group; a thinking block or text block flushes
-	// the pending group and becomes a standalone navigation item (thinking) or
-	// a render-only item (text).
-	var pendingBlocks []blockKey
-	pendingToolCount := 0
-	pendingResultCount := 0
-
+	var pending []blockKey
+	uses, results := 0, 0
 	flush := func() {
-		if len(pendingBlocks) == 0 {
+		if len(pending) == 0 {
 			return
 		}
-		g := &toolGroup{
-			blocks:  pendingBlocks,
-			count:   pendingToolCount,
-			results: pendingResultCount,
-		}
-		m.chatGroupHeaders = append(m.chatGroupHeaders, chatItem{
-			isGroup: true,
-			key:     pendingBlocks[0],
-			group:   g,
-		})
-		pendingBlocks = nil
-		pendingToolCount = 0
-		pendingResultCount = 0
+		m.chatGroupHeaders = append(m.chatGroupHeaders, chatItem{isGroup: true, key: pending[0], group: &toolGroup{blocks: pending, count: uses, results: results}})
+		pending = nil
+		uses, results = 0, 0
 	}
-
-	for _, e := range entries {
-		for bi, blk := range e.Blocks {
-			bk := blockKey{seq: e.Seq, block: bi}
-			switch blk.Type {
-			case transcript.BlockToolUse, transcript.BlockToolResult:
-				pendingBlocks = append(pendingBlocks, bk)
-				if blk.Type == transcript.BlockToolUse {
-					pendingToolCount++
-				} else {
-					pendingResultCount++
-				}
+	for _, entry := range m.filteredEntries() {
+		for blockIndex, block := range entry.Blocks {
+			key := blockKey{seq: entry.Seq, block: blockIndex}
+			switch block.Type {
+			case transcript.BlockToolUse:
+				pending = append(pending, key)
+				uses++
+			case transcript.BlockToolResult:
+				pending = append(pending, key)
+				results++
 			case transcript.BlockThinking:
 				flush()
-				m.chatGroupHeaders = append(m.chatGroupHeaders, chatItem{key: bk})
+				m.chatGroupHeaders = append(m.chatGroupHeaders, chatItem{key: key})
 			default:
-				// Text and other non-collapsible types: flush any pending group
-				// but do not become a navigation item themselves.
 				flush()
 			}
 		}
 	}
 	flush()
-
 	m.rebuildActiveState(saved)
-	// Keep legacy callers that still rebuild the old render plan from exposing a
-	// stale item view while the migration removes that plan.
 	m.rebuildTranscriptItemState(m.selectedTranscriptItemKey())
 }
 
@@ -291,7 +256,7 @@ func (m *Model) loadOlderChat() {
 		return
 	}
 	page = completeToolBoundaryContext(r, page)
-	m.setChatPage(page, chatItem{})
+	m.setChatPage(page)
 	m.chatAutoScroll = false
 	if m.ready {
 		m.refreshPanels()
@@ -312,7 +277,7 @@ func (m *Model) loadNewerChat() {
 		return
 	}
 	page = completeToolBoundaryContext(r, page)
-	m.setChatPage(page, chatItem{})
+	m.setChatPage(page)
 	m.chatAutoScroll = false
 	if m.ready {
 		m.refreshPanels()
@@ -333,7 +298,7 @@ func (m *Model) loadChatBefore(end int64) bool {
 		return false
 	}
 	page = completeToolBoundaryContext(r, page)
-	m.setChatPage(page, chatItem{})
+	m.setChatPage(page)
 	return true
 }
 
@@ -650,7 +615,16 @@ func (m *Model) chatBody() string {
 		return m.fileBody()
 	}
 	if len(m.chatItems) > 0 {
-		return m.itemTranscriptBody()
+		body := m.itemTranscriptBody()
+		if i, ok := m.index[m.chatStep]; ok {
+			s := m.steps[i]
+			if s.status == step.StatusFailed && s.err != "" {
+				// A transcript can end before the backend reports its terminal result.
+				// Keep the recovered failure visible beside that partial evidence.
+				return "  " + shared.Theme.Error.Render(shared.IconError+" "+s.err) + "\n\n" + body
+			}
+		}
+		return body
 	}
 
 	var b strings.Builder

@@ -133,8 +133,8 @@ func TestGateContextJumpAndReturnPreserveTranscriptState(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	m.RunDir = runDir
 	m = enterChatStep(t, m, "b")
-	m.chatExpand[blockKey{seq: 1, block: 0}] = true
-	m.rebuildActiveState(m.chatBlocks[0])
+	item := m.chatVisibleItems[0]
+	m.chatItemExpand[item.key] = true
 	m.refreshPanels()
 	m.chatVP.SetYOffset(5)
 	m.chatAutoScroll = false
@@ -201,7 +201,7 @@ func TestGateContextJumpAndReturnPreserveTranscriptState(t *testing.T) {
 	if title := restored.transcriptPanelTitle(); title != "Transcript · PAUSED · 1 new" {
 		t.Fatalf("context return title = %q", title)
 	}
-	if !restored.chatExpand[blockKey{seq: 1, block: 0}] {
+	if !restored.chatItemExpand[item.key] {
 		t.Fatal("transcript expansion state was not restored")
 	}
 	if len(restored.inputQueue) != 1 {

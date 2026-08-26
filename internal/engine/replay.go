@@ -5,7 +5,10 @@ import (
 	"os"
 
 	"jig/internal/datastore"
+	"jig/internal/step"
 )
+
+const interruptedSDKSessionErr = "agent SDK session terminated abruptly before reporting a terminal result"
 
 // ReplayJournal reads runDir's journal.jsonl and returns the events it recorded,
 // in seq order. It is the read side of the "state = fold(journal)" invariant:
@@ -43,5 +46,59 @@ func ReplayJournal(runDir string) ([]Event, error) {
 			break // io.EOF or a read error; either way, stop with what we have.
 		}
 	}
-	return events, nil
+	return reconcileInterruptedRun(events), nil
+}
+
+// reconcileInterruptedRun supplies terminal events that could not be journaled
+// when the jig process disappeared while an SDK-backed step was in flight. The
+// returned events are deliberately virtual: the original journal remains an
+// accurate record of what was durably observed, while every replay consumer
+// gets a truthful terminal state instead of displaying a permanently-running
+// step with no owner left to update it.
+func reconcileInterruptedRun(events []Event) []Event {
+	var started *RunStarted
+	finished := false
+	states := make(map[string]step.Status)
+	lastStatus := make(map[string]StepStatus)
+
+	for _, event := range events {
+		switch event := event.(type) {
+		case RunStarted:
+			copy := event
+			started = &copy
+		case StepStatus:
+			states[event.StepID] = event.To
+			lastStatus[event.StepID] = event
+		case RunFinished:
+			finished = true
+		}
+	}
+	if started == nil || finished {
+		return events
+	}
+
+	var recovered []Event
+	for _, stepID := range started.Steps {
+		if states[stepID] != step.StatusRunning {
+			continue
+		}
+		prior := lastStatus[stepID]
+		recovered = append(recovered, StepStatus{
+			RunID:      started.RunID,
+			StepID:     stepID,
+			From:       step.StatusRunning,
+			To:         step.StatusFailed,
+			Attempt:    prior.Attempt,
+			Iteration:  prior.Iteration,
+			Generation: prior.Generation,
+			Err:        interruptedSDKSessionErr,
+		})
+	}
+	if len(recovered) == 0 {
+		return events
+	}
+	return append(append([]Event{}, events...), append(recovered, RunFinished{
+		RunID:  started.RunID,
+		Failed: true,
+	})...)
 }

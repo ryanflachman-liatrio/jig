@@ -831,6 +831,28 @@ func TestMonitorWithJournal(t *testing.T) {
 	}
 }
 
+func TestMonitorWithJournal_RendersInterruptedSDKSessionFailure(t *testing.T) {
+	const errText = "agent SDK session terminated abruptly before reporting a terminal result"
+	runDir := writeTranscript(t, "synthesize", []transcript.Entry{
+		{Role: transcript.RoleUser, Blocks: []transcript.Block{{Type: transcript.BlockToolResult, Content: "completed"}}},
+	})
+	m := New("r1")
+	m.RunDir = runDir
+	m = m.WithJournal([]engine.Event{
+		engine.RunStarted{RunID: "r1", Workflow: "feature", Steps: []string{"synthesize"}},
+		engine.StepStatus{RunID: "r1", StepID: "synthesize", To: step.StatusFailed, Err: errText},
+		engine.RunFinished{RunID: "r1", Failed: true},
+	})
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+
+	if !m.done || !m.failed {
+		t.Fatalf("run state: want done and failed, got done=%v failed=%v", m.done, m.failed)
+	}
+	if got := ansiStrip(m.View()); !strings.Contains(got, errText) {
+		t.Errorf("monitor did not render the interrupted-session reason:\n%s", got)
+	}
+}
+
 // TestMonitorCostTokens verifies that StepStatus events drive the per-step
 // token/cost metadata line and the run-total row, that both survive the narrow
 // (80-col) Steps panel without being clipped, and that a re-run accumulates
@@ -2893,6 +2915,7 @@ func TestResetConfirmation(t *testing.T) {
 // non-terminal step is a no-op.
 func TestResetLinearTipTUI(t *testing.T) {
 	m := buildResetMonitor(t)
+	m.run = &engine.Run{}
 
 	// Navigate to step "a" (index 0 in the monitor step list).
 	// Press r: since a is Succeeded, it emits requestResetMsg.
@@ -2929,6 +2952,7 @@ func TestResetLinearTipTUI(t *testing.T) {
 	m2Running, _ = m2Running.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID: "run-running", StepID: "x", From: step.StatusPending, To: step.StatusRunning,
 	}})
+	m2Running.run = &engine.Run{}
 	// x is Running → r key should emit stopStepMsg (not requestResetMsg),
 	// since StopStep binding uses "s" and ResetStep uses "r" — r on running
 	// is a no-op for reset (only terminal/stopped trigger reset).
@@ -2964,6 +2988,7 @@ func TestStopKey(t *testing.T) {
 	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID: "run-stop", StepID: "x", From: step.StatusPending, To: step.StatusRunning,
 	}})
+	m.run = &engine.Run{}
 
 	// Cursor is on x (Running). s → stopStepMsg.
 	_, cmd := m.Update(key("s"))
@@ -3048,6 +3073,7 @@ func TestLifecycleActionsTargetVisibleStepRows(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			m := expandedLifecycleMonitor()
+			m.run = &engine.Run{}
 			m.cursor = visibleStepCursor(t, m, tc.stepID)
 			_, cmd := m.Update(tc.key)
 			if cmd == nil {
@@ -3072,8 +3098,44 @@ func TestLifecycleActionsTargetVisibleStepRows(t *testing.T) {
 	}
 }
 
+func TestJournalOnlyRunDisablesLifecycleActions(t *testing.T) {
+	tests := []struct {
+		name   string
+		status step.Status
+		key    tea.KeyPressMsg
+		label  string
+	}{
+		{name: "running step cannot stop", status: step.StatusRunning, key: key("s"), label: "stop"},
+		{name: "stopped step cannot reset", status: step.StatusStopped, key: key("r"), label: "reset"},
+		{name: "stopped step cannot resume", status: step.StatusStopped, key: tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl}, label: "resume"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := New("recovered")
+			m.steps = []monitorStep{{id: "step", status: tc.status}}
+			m.index["step"] = 0
+
+			if _, cmd := m.Update(tc.key); cmd != nil {
+				t.Fatalf("journal-only run dispatched %q", tc.label)
+			}
+			for _, section := range m.HelpSections() {
+				if section.Title != "Steps" {
+					continue
+				}
+				for _, binding := range section.Bindings {
+					if binding.Help().Desc == tc.label && binding.Enabled() {
+						t.Fatalf("journal-only run advertised %q", tc.label)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestFileRowsDisableLifecycleActionsAndHints(t *testing.T) {
 	m := expandedLifecycleMonitor()
+	m.run = &engine.Run{}
 	ctrlR := tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl}
 
 	for cursor, row := range m.visibleRows() {

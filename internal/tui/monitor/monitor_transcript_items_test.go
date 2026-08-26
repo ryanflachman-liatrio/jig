@@ -132,7 +132,7 @@ func TestTranscriptReloadBuildsAndPrunesPageLocalItems(t *testing.T) {
 	if len(m.chatVisibleItems) != 1 || m.chatVisibleItems[m.chatItemCursor].key != key {
 		t.Fatalf("same-step reload did not restore item key: %+v", m.chatVisibleItems)
 	}
-	m.setChatPage(transcript.Page{}, chatItem{})
+	m.setChatPage(transcript.Page{})
 	if len(m.chatItems) != 0 || len(m.chatItemExpand) != 0 {
 		t.Fatalf("empty page retained item state: items=%+v expand=%+v", m.chatItems, m.chatItemExpand)
 	}

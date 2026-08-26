@@ -161,28 +161,15 @@ type Model struct {
 	chatEntries []transcript.Entry
 	chatPage    transcript.Page
 
-	// Collapse/expand navigation. chatGroupHeaders is the canonical list of
-	// collapsible navigation items (one entry per toolGroup or standalone thinking
-	// block), stable until the next loadChat call. chatBlocks is the active
-	// navigation list derived from chatGroupHeaders: when a group is expanded its
-	// individual block items are inserted immediately after the group header.
-	// chatRenderPlan is the pre-computed sequence of render items consumed by
-	// chatBody; rebuilt by rebuildActiveState whenever expansion state changes.
-	// chatBlockCursor selects the active item in chatBlocks.
-	// chatExpand / chatGroupExpand record per-block and per-group expansion
-	// overrides; chatExpandAll is a global read-only override.
-	chatGroupHeaders  []chatItem
-	chatBlocks        []chatItem
-	chatRenderPlan    []renderItem
-	chatBlockCursor   int
-	chatExpand        map[blockKey]bool
-	chatGroupExpand   map[blockKey]bool
-	chatExpandAll     bool
-	chatGroupForBlock map[blockKey]blockKey
-
-	// Transcript-item state is the replacement navigation and cache surface for
-	// the old consecutive tool-group representation. It is kept separate while
-	// the remaining migration moves rendering and interaction atomically.
+	// Legacy group state is retained only until Task 4 migration cleanup lands.
+	chatGroupHeaders   []chatItem
+	chatBlocks         []chatItem
+	chatRenderPlan     []renderItem
+	chatBlockCursor    int
+	chatExpand         map[blockKey]bool
+	chatGroupExpand    map[blockKey]bool
+	chatExpandAll      bool
+	chatGroupForBlock  map[blockKey]blockKey
 	chatItems          []transcriptItem
 	chatVisibleItems   []transcriptItem
 	chatItemCursor     int
@@ -451,17 +438,12 @@ type lineRange struct {
 	end   int
 }
 
-// A tool-group header and its first member intentionally share a blockKey.
-// Keeping the item kind in the rendered-line key prevents navigation to the
-// header from being redirected to the member's later range.
 type chatLineKey struct {
 	blockKey
 	isGroup bool
 }
 
-func (i chatItem) lineKey() chatLineKey {
-	return chatLineKey{blockKey: i.key, isGroup: i.isGroup}
-}
+func (i chatItem) lineKey() chatLineKey { return chatLineKey{blockKey: i.key, isGroup: i.isGroup} }
 
 type searchHit struct {
 	key     blockKey
@@ -479,59 +461,39 @@ type transcriptFilters struct {
 	result    bool
 }
 
-func (f transcriptFilters) active() bool {
-	return f.errors || f.tools || f.reasoning || f.retries ||
-		f.assistant || f.user || f.system || f.result
-}
-
-// chatItem is one entry in the canonical navigation list (chatGroupHeaders) and
-// the active navigation list (chatBlocks).
-// isGroup=false: a standalone collapsible block (thinking, or a block outside
-// any group). isGroup=true: a tool call group header; group points to its
-// toolGroup payload. key is always the blockKey of the item's first block (used
-// as the groupKey for chatGroupExpand).
 type chatItem struct {
 	isGroup bool
 	key     blockKey
 	group   *toolGroup
 }
-
-// toolGroup is the payload for a group-header chatItem.
 type toolGroup struct {
-	blocks  []blockKey // all tool_use / tool_result blockKeys in the group, in order
-	count   int        // number of tool_use blocks — the N in "N tool calls"
-	results int        // used when a bounded page begins inside a tool exchange
+	blocks         []blockKey
+	count, results int
 }
-
-// renderKind discriminates the six variants of renderItem.
 type renderKind int
 
 const (
-	renderEntrySep    renderKind = iota // iteration/retry/re-run separator line
-	renderEntryHeader                   // "#N role" header line
-	renderText                          // prose text block (assistant markdown or system verbatim)
-	renderGroupHeader                   // tool call group collapsed/expanded header
-	renderGroupGap                      // blank line between blocks in an expanded tool group
-	renderBlock                         // individual collapsible block (thinking or inner tool block)
+	renderEntrySep renderKind = iota
+	renderEntryHeader
+	renderText
+	renderGroupHeader
+	renderGroupGap
+	renderBlock
 )
 
-// renderItem is one element of the pre-computed render plan (chatRenderPlan).
-// kind determines which fields are populated.
 type renderItem struct {
-	kind renderKind
-
-	// renderEntrySep: sep is the separator string (e.g., "── iteration 2 ──").
-	sep string
-
-	// renderEntryHeader: key.seq is the entry seq; role is the entry role.
-	// ts is the entry timestamp formatted as "HH:MM:SS"; "" if unavailable.
-	// renderText, renderBlock: key identifies the block; blk is a pointer into chatEntries.
-	// renderGroupHeader: key is the groupKey (first block); group points to the toolGroup.
+	kind  renderKind
+	sep   string
 	key   blockKey
 	blk   *transcript.Block
 	role  transcript.Role
 	group *toolGroup
-	ts    string // "HH:MM:SS" for renderEntryHeader; "" if timestamp absent or unparseable
+	ts    string
+}
+
+func (f transcriptFilters) active() bool {
+	return f.errors || f.tools || f.reasoning || f.retries ||
+		f.assistant || f.user || f.system || f.result
 }
 
 type monitorStep struct {
@@ -872,7 +834,9 @@ func (m Model) cursorIsFileRow() bool {
 // visible-row interpretation; a file row names its parent step, but must never
 // inherit that step's actions.
 func (m Model) selectedLifecycleActions() lifecycleActions {
-	if m.done || m.cursorIsFileRow() {
+	// Replayed journals have no scheduler handle. Do not advertise controls the
+	// root would have to discard without feedback.
+	if m.done || m.run == nil || m.cursorIsFileRow() {
 		return lifecycleActions{}
 	}
 	stepID := m.cursorStepID()

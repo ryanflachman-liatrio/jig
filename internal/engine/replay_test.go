@@ -82,6 +82,36 @@ func TestReplayJournal_MissingJournal(t *testing.T) {
 	}
 }
 
+func TestReplayJournal_RecoversRunningStepWithoutTerminalEvent(t *testing.T) {
+	runDir := t.TempDir()
+	writeJournal(t, runDir, []Event{
+		RunStarted{RunID: "r1", Workflow: "feature", Steps: []string{"synthesize"}},
+		StepStatus{RunID: "r1", StepID: "synthesize", From: step.StatusPending, To: step.StatusRunning},
+	})
+
+	got, err := ReplayJournal(runDir)
+	if err != nil {
+		t.Fatalf("ReplayJournal: %v", err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("event count: want 4 (including recovered terminal events), got %d", len(got))
+	}
+	failed, ok := got[2].(StepStatus)
+	if !ok {
+		t.Fatalf("event[2]: want StepStatus, got %T", got[2])
+	}
+	if failed.From != step.StatusRunning || failed.To != step.StatusFailed {
+		t.Errorf("recovered status = %q -> %q, want running -> failed", failed.From, failed.To)
+	}
+	if failed.Err != "agent SDK session terminated abruptly before reporting a terminal result" {
+		t.Errorf("recovered error = %q", failed.Err)
+	}
+	finished, ok := got[3].(RunFinished)
+	if !ok || !finished.Failed {
+		t.Errorf("event[3] = %#v, want failed RunFinished", got[3])
+	}
+}
+
 func TestReplayJournal_SkipsUndecodableLines(t *testing.T) {
 	runDir := t.TempDir()
 	good, _ := MarshalEnvelope(1, RunStarted{RunID: "r1", Workflow: "wf", Steps: []string{"a"}})

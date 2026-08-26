@@ -75,11 +75,15 @@ func TestTranscriptPageKeepsToolUseWithBoundaryResult(t *testing.T) {
 	if len(m.chatEntries) > chatWindowMax+2*chatBoundaryContextMax {
 		t.Fatalf("context-expanded page has %d entries", len(m.chatEntries))
 	}
-	if len(m.chatGroupHeaders) == 0 ||
-		m.chatGroupHeaders[0].group == nil ||
-		m.chatGroupHeaders[0].group.count != 1 ||
-		len(m.chatGroupHeaders[0].group.blocks) != 2 {
-		t.Fatalf("boundary tool group incomplete: %+v", m.chatGroupHeaders)
+	found := false
+	for _, item := range m.chatItems {
+		if item.kind == transcriptItemToolExchange && item.toolUse != nil && item.toolResult != nil {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("boundary exchange was not normalized")
 	}
 }
 

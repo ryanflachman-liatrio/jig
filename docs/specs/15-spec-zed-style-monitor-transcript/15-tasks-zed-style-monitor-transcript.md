@@ -149,7 +149,7 @@ page-local bounds and deterministic fallback behavior.
 - [x] 3.6 Update `monitor_layout.go`, `monitor_view.go`, and `keys.go` for thin-guide inset widths, surface-aware cache invalidation, compact selected-step chrome, and activity/detail help terminology.
 - [x] 3.7 Add search/filter, navigation, resize, reload, follow, and Gate-context regression tests in their existing package-local test files, including cache-key collision and missing-saved-key cases.
 
-### [ ] 4.0 Complete migration cleanup and verify the Monitor end to end
+### [~] 4.0 Complete migration cleanup and verify the Monitor end to end
 
 **Covers:** Spec Unit 4 migration, persistence-off, and repository-conformance requirements.
 
@@ -166,8 +166,8 @@ captures.
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Remove obsolete `toolGroup`, group header/gap render kinds, group expansion maps, double-expansion branches, and group-only tests after all item-based paths are active.
-- [ ] 4.2 Verify state maps and caches are pruned to the loaded page, summary JSON is decoded during rebuild rather than repaint, and resize invalidates only width-dependent render surfaces.
-- [ ] 4.3 Add and run persistence-off, corrupt/partial input, bounded edge-context, and no-unbounded-scan regression cases; confirm Monitor behavior remains backend-agnostic and transcript-schema-free.
+- [~] 4.1 Remove obsolete `toolGroup`, group header/gap render kinds, group expansion maps, double-expansion branches, and group-only tests after all item-based paths are active.
+- [x] 4.2 Verify state maps and caches are pruned to the loaded page, summary JSON is decoded during rebuild rather than repaint, and resize invalidates only width-dependent render surfaces.
+- [x] 4.3 Add and run persistence-off, corrupt/partial input, bounded edge-context, and no-unbounded-scan regression cases; confirm Monitor behavior remains backend-agnostic and transcript-schema-free.
 - [ ] 4.4 Generate synthetic, sanitized ANSI acceptance captures for default, one-detail, all-details, narrow, search-output-hit, error-filter, live, paused, and persistence-off scenarios.
 - [ ] 4.5 Run focused Monitor/shared tests, `go test ./... -count=1`, `gofmt -l -w .`, `go vet ./...`, and `go build ./cmd/jig`; attach the exact outputs to the parent proof artifact during implementation.
