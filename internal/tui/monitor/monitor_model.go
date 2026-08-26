@@ -179,6 +179,17 @@ type Model struct {
 	chatExpandAll     bool
 	chatGroupForBlock map[blockKey]blockKey
 
+	// Transcript-item state is the replacement navigation and cache surface for
+	// the old consecutive tool-group representation. It is kept separate while
+	// the remaining migration moves rendering and interaction atomically.
+	chatItems          []transcriptItem
+	chatVisibleItems   []transcriptItem
+	chatItemCursor     int
+	chatItemExpand     map[transcriptItemKey]bool
+	chatItemExpandAll  bool
+	chatItemRendered   map[transcriptRenderKey]string
+	chatItemLineRanges map[transcriptLineKey]lineRange
+
 	// renderer renders text blocks as markdown; chatRendered caches the output
 	// keyed by block (glamour re-parses whole documents, so re-rendering on every
 	// event is wasteful). The cache is invalidated when the transcript panel's
@@ -352,6 +363,88 @@ type blockKey struct {
 	block int
 }
 
+// transcriptItemKey is stable for the lifetime of a loaded transcript page.
+// Tool exchanges are anchored to their use block, while every other item uses
+// its own block position. That keeps selection and expansion attached to the
+// conversation event a reader sees, even when a later result enriches it.
+type transcriptItemKey struct {
+	anchor blockKey
+	kind   transcriptItemKind
+}
+
+type transcriptItemKind int
+
+const (
+	transcriptItemText transcriptItemKind = iota
+	transcriptItemThinking
+	transcriptItemToolExchange
+	transcriptItemToolResult
+	transcriptItemSystem
+	transcriptItemUnsupported
+)
+
+// transcriptBlockRef points into the bounded loaded page; it intentionally
+// contains no transcript reader or file path, so normalization cannot expand
+// its scope beyond that page.
+type transcriptBlockRef struct {
+	key      blockKey
+	entryIdx int
+	blockIdx int
+}
+
+// toolCorrelationKey scopes reusable tool IDs to one execution attempt.
+// ToolUseID alone is not sufficient because retries and operator re-runs append
+// to the same durable transcript.
+type toolCorrelationKey struct {
+	generation int
+	iteration  int
+	attempt    int
+	toolUseID  string
+}
+
+type toolDisplayState int
+
+const (
+	toolDisplaySuccess toolDisplayState = iota
+	toolDisplayError
+	toolDisplayRunning
+	toolDisplayUnknownUse
+	toolDisplayUnknownResult
+)
+
+// transcriptItem is the immutable, page-local conversation unit consumed by
+// rendering, search, and navigation. A paired tool exchange has both refs;
+// incomplete exchanges retain exactly the evidence present in the page.
+type transcriptItem struct {
+	key          transcriptItemKey
+	kind         transcriptItemKind
+	role         transcript.Role
+	primary      transcriptBlockRef
+	toolUse      *transcriptBlockRef
+	toolResult   *transcriptBlockRef
+	displayState toolDisplayState
+	coord        toolCorrelationKey
+}
+
+// transcriptRenderKey separates markdown and detail cache surfaces so changing
+// a detail width cannot reuse output formatted for the conversation body.
+type transcriptRenderKey struct {
+	itemKey transcriptItemKey
+	surface transcriptRenderSurface
+	width   int
+}
+
+type transcriptRenderSurface int
+
+const (
+	transcriptRenderMarkdown transcriptRenderSurface = iota
+	transcriptRenderDetail
+)
+
+type transcriptLineKey struct {
+	itemKey transcriptItemKey
+}
+
 type lineRange struct {
 	start int
 	end   int
@@ -463,20 +556,23 @@ type lifecycleActions struct {
 // New creates a fresh monitor model for the given runID.
 func New(runID string) Model {
 	return Model{
-		RunID:             runID,
-		keys:              defaultMonitorKeys(),
-		index:             make(map[string]int),
-		stepOutput:        make(map[string]*strings.Builder),
-		msgCount:          make(map[string]int),
-		chatExpand:        make(map[blockKey]bool),
-		chatGroupExpand:   make(map[blockKey]bool),
-		chatGroupForBlock: make(map[blockKey]blockKey),
-		chatRendered:      make(map[blockKey]string),
-		chatLineRanges:    make(map[chatLineKey]lineRange),
-		reviews:           make(map[string]engine.ReviewRequest),
-		chatAutoScroll:    true,
-		expanded:          make(map[string]bool),
-		stepFiles:         make(map[string][]outputFile),
+		RunID:              runID,
+		keys:               defaultMonitorKeys(),
+		index:              make(map[string]int),
+		stepOutput:         make(map[string]*strings.Builder),
+		msgCount:           make(map[string]int),
+		chatExpand:         make(map[blockKey]bool),
+		chatGroupExpand:    make(map[blockKey]bool),
+		chatGroupForBlock:  make(map[blockKey]blockKey),
+		chatRendered:       make(map[blockKey]string),
+		chatLineRanges:     make(map[chatLineKey]lineRange),
+		chatItemExpand:     make(map[transcriptItemKey]bool),
+		chatItemRendered:   make(map[transcriptRenderKey]string),
+		chatItemLineRanges: make(map[transcriptLineKey]lineRange),
+		reviews:            make(map[string]engine.ReviewRequest),
+		chatAutoScroll:     true,
+		expanded:           make(map[string]bool),
+		stepFiles:          make(map[string][]outputFile),
 	}
 }
 
@@ -517,6 +613,15 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 	}
 	if m.chatLineRanges == nil {
 		m.chatLineRanges = make(map[chatLineKey]lineRange)
+	}
+	if m.chatItemExpand == nil {
+		m.chatItemExpand = make(map[transcriptItemKey]bool)
+	}
+	if m.chatItemRendered == nil {
+		m.chatItemRendered = make(map[transcriptRenderKey]string)
+	}
+	if m.chatItemLineRanges == nil {
+		m.chatItemLineRanges = make(map[transcriptLineKey]lineRange)
 	}
 	if m.reviews == nil {
 		m.reviews = make(map[string]engine.ReviewRequest)

@@ -59,6 +59,13 @@ func (m *Model) reloadTranscript() {
 	m.chatGroupExpand = make(map[blockKey]bool)
 	m.chatGroupForBlock = make(map[blockKey]blockKey)
 	m.chatLineRanges = make(map[chatLineKey]lineRange)
+	m.chatItems = nil
+	m.chatVisibleItems = nil
+	m.chatItemCursor = 0
+	m.chatItemExpand = make(map[transcriptItemKey]bool)
+	m.chatItemExpandAll = false
+	m.chatItemRendered = make(map[transcriptRenderKey]string)
+	m.chatItemLineRanges = make(map[transcriptLineKey]lineRange)
 	m.chatPage = transcript.Page{}
 	m.searchOpen = false
 	m.searchQuery = ""
@@ -133,7 +140,6 @@ func (m *Model) loadChatTail() {
 	if len(m.chatBlocks) > 0 && m.chatBlockCursor < len(m.chatBlocks) {
 		saved = m.chatBlocks[m.chatBlockCursor]
 	}
-
 	if m.RunDir == "" || m.chatStep == "" {
 		m.setChatPage(transcript.Page{}, saved)
 		return
@@ -151,11 +157,41 @@ func (m *Model) loadChatTail() {
 }
 
 func (m *Model) setChatPage(page transcript.Page, saved chatItem) {
+	var savedItem transcriptItemKey
+	if len(m.chatVisibleItems) > 0 && m.chatItemCursor >= 0 && m.chatItemCursor < len(m.chatVisibleItems) {
+		savedItem = m.chatVisibleItems[m.chatItemCursor].key
+	}
 	m.chatPage = page
 	m.chatEntries = page.Entries
+	m.chatItems = buildTranscriptItems(page.Entries, m.currentChatStepRunning())
+	m.chatVisibleItems = nil
 	m.prunePageState()
 	m.rebuildLoadedChat(saved)
+	m.rebuildTranscriptItemState(savedItem)
 	m.rerunSearch()
+}
+
+// rebuildTranscriptItemState establishes the item list as the page-local
+// navigation source. Filtering will later replace the visible slice while
+// retaining this same stable-key restoration behavior.
+func (m *Model) rebuildTranscriptItemState(saved transcriptItemKey) {
+	m.chatVisibleItems = m.chatItems
+	if len(m.chatVisibleItems) == 0 {
+		m.chatItemCursor = 0
+		return
+	}
+	m.chatItemCursor = 0
+	for i, item := range m.chatVisibleItems {
+		if item.key == saved {
+			m.chatItemCursor = i
+			return
+		}
+	}
+}
+
+func (m Model) currentChatStepRunning() bool {
+	i, ok := m.index[m.chatStep]
+	return ok && m.steps[i].status == step.StatusRunning
 }
 
 func (m *Model) rebuildLoadedChat(saved chatItem) {
@@ -333,6 +369,25 @@ func (m *Model) prunePageState() {
 	for key := range m.chatGroupExpand {
 		if _, ok := loaded[key]; !ok {
 			delete(m.chatGroupExpand, key)
+		}
+	}
+	loadedItems := make(map[transcriptItemKey]struct{}, len(m.chatItems))
+	for _, item := range m.chatItems {
+		loadedItems[item.key] = struct{}{}
+	}
+	for key := range m.chatItemExpand {
+		if _, ok := loadedItems[key]; !ok {
+			delete(m.chatItemExpand, key)
+		}
+	}
+	for key := range m.chatItemRendered {
+		if _, ok := loadedItems[key.itemKey]; !ok {
+			delete(m.chatItemRendered, key)
+		}
+	}
+	for key := range m.chatItemLineRanges {
+		if _, ok := loadedItems[key.itemKey]; !ok {
+			delete(m.chatItemLineRanges, key)
 		}
 	}
 }

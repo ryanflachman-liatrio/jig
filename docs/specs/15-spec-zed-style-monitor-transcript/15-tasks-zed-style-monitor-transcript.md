@@ -74,7 +74,7 @@ approved for detailed decomposition.
 
 ## Tasks
 
-### [ ] 1.0 Normalize bounded transcript pages into stable Transcript items
+### [x] 1.0 Normalize bounded transcript pages into stable Transcript items
 
 **Covers:** Spec Unit 1 — all functional requirements.
 
@@ -91,13 +91,13 @@ unknown content.
 
 #### 1.0 Tasks
 
-- [ ] 1.1 Add a dense synthetic transcript fixture and characterization assertions in `monitor_transcript_test.go`; include interleaved text/thinking, out-of-order results, incomplete tools, execution boundaries, malformed input, and unsupported content.
-- [ ] 1.2 Define stable Transcript-item, item-key, block-reference, correlation-key, display-state, cache-key, and line-range types in `monitor_model.go`; replace group-only model fields without retaining compatibility state.
-- [ ] 1.3 Create `monitor_transcript_items.go` with pure page flattening and scoped FIFO correlation keyed by generation, iteration, attempt, and tool ID; anchor exchanges at uses and emit independent empty-ID/incomplete items.
-- [ ] 1.4 Implement conservative Tool-exchange display-state derivation for matched success/error, running use-only, terminal use-only, and result-only cases; never infer an unsupported lifecycle state.
-- [ ] 1.5 Add pure visible-boundary insertion, unsupported-item construction, item-member lookup, and item spacing helpers; keep them free of styles, file I/O, and model mutation.
-- [ ] 1.6 Add table-driven `monitor_transcript_items_test.go` coverage for pair order, duplicate/empty/reused IDs, page edges, interleaved blocks, boundaries, unsupported blocks, and item identity.
-- [ ] 1.7 Migrate transcript reload/page-switch pruning in `monitor_transcript.go` to rebuild item state from the bounded page while preserving persistence-off and saved-key restoration behavior.
+- [x] 1.1 Add a dense synthetic transcript fixture and characterization assertions in `monitor_transcript_test.go`; include interleaved text/thinking, out-of-order results, incomplete tools, execution boundaries, malformed input, and unsupported content.
+- [x] 1.2 Define stable Transcript-item, item-key, block-reference, correlation-key, display-state, cache-key, and line-range types in `monitor_model.go`; replace group-only model fields without retaining compatibility state.
+- [x] 1.3 Create `monitor_transcript_items.go` with pure page flattening and scoped FIFO correlation keyed by generation, iteration, attempt, and tool ID; anchor exchanges at uses and emit independent empty-ID/incomplete items.
+- [x] 1.4 Implement conservative Tool-exchange display-state derivation for matched success/error, running use-only, terminal use-only, and result-only cases; never infer an unsupported lifecycle state.
+- [x] 1.5 Add pure visible-boundary insertion, unsupported-item construction, item-member lookup, and item spacing helpers; keep them free of styles, file I/O, and model mutation.
+- [x] 1.6 Add table-driven `monitor_transcript_items_test.go` coverage for pair order, duplicate/empty/reused IDs, page edges, interleaved blocks, boundaries, unsupported blocks, and item identity.
+- [x] 1.7 Migrate transcript reload/page-switch pruning in `monitor_transcript.go` to rebuild item state from the bounded page while preserving persistence-off and saved-key restoration behavior.
 
 ### [ ] 2.0 Render the conversation-first Transcript and bounded disclosures
 
