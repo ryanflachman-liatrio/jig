@@ -73,8 +73,10 @@ skill = "s"
 id = "gate"
 type = "review"
 depends_on = ["analyze"]
-review = "diff"
 output_type = "bool"
+[[step.review]]
+source = "diff"
+label = "Code changes"
 `,
 		},
 		{
@@ -128,12 +130,14 @@ skill = "s"
 id = "review"
 type = "review"
 depends_on = ["plan"]
-review = "@plan.summary"
 output_type = { enum = ["approve", "revise"] }
 [step.loop]
 when = "review == 'revise'"
 goto = "plan"
 max_iterations = 3
+[[step.review]]
+source = "@plan.summary"
+label = "Plan summary"
 [[step]]
 id = "impl"
 type = "command"
@@ -164,12 +168,14 @@ skill = "s"
 id = "review"
 type = "review"
 depends_on = ["plan"]
-review = "@plan.summary"
 output_type = { enum = ["approve", "revise_with_detailed_feedback"] }
 [step.loop]
 when = "review == 'revise_with_detailed_feedback'"
 goto = "plan"
 max_iterations = 3
+[[step.review]]
+source = "@plan.summary"
+label = "Plan summary"
 [[step]]
 id = "impl"
 type = "command"

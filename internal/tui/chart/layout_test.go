@@ -147,8 +147,10 @@ max_parallel = 3
 [[step]]
 id = "gate"
 type = "review"
-review = "diff"
 output_type = "bool"
+[[step.review]]
+source = "diff"
+label = "Code changes"
 [[step]]
 id = "other"
 type = "command"
@@ -196,12 +198,14 @@ skill = "s"
 id = "check"
 type = "review"
 depends_on = ["work"]
-review = "@work.summary"
 output_type = { enum = ["ok", "redo"] }
 [step.loop]
 when = "check == 'redo'"
 goto = "work"
 max_iterations = 4
+[[step.review]]
+source = "@work.summary"
+label = "Work summary"
 `)
 		lay := layoutChart(wf)
 		if len(lay.backEdges) != 1 {

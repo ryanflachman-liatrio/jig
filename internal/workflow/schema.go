@@ -316,9 +316,8 @@ type Step struct {
 	Run    string `toml:"run"`
 	Script string `toml:"script"`
 
-	// Review-only. "@stepid" (render that markdown) or "diff".
-	Review      string `toml:"review"`
-	MaxMessages int    `toml:"max_messages"` // review-only; 0 = engine default (10)
+	// Review-only. `@step` / `@step.field` / `diff` / literal workflow file.
+	Review []ReviewTarget `toml:"review"`
 
 	// Agent-only. Condition checked against the step's own structured output
 	// after it completes. While true the step stays in StatusNeedsInput and the
@@ -328,6 +327,18 @@ type Step struct {
 	Validate *Validate    `toml:"validate"`
 	Loop     *Loop        `toml:"loop"`
 	Security StepSecurity `toml:"security"`
+}
+
+// ReviewTarget is one review target row in a review step.
+type ReviewTarget struct {
+	Source       string `toml:"source"`
+	Label        string `toml:"label"`
+	resolvedPath string
+}
+
+// ResolvedPath returns the resolved absolute path for literal file review sources.
+func (r ReviewTarget) ResolvedPath() string {
+	return r.resolvedPath
 }
 
 // AgentPrompt returns the body of the resolved agent file for this step, or ""

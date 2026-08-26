@@ -20,14 +20,12 @@ import (
 	"jig/internal/datastore"
 	"jig/internal/interaction"
 	"jig/internal/manifest"
+	"jig/internal/review"
 	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/workflow"
 )
 
-// defaultReviewMaxMessages is the message-round-trip cap for review gates when
-// max_messages is omitted from the workflow. Generous to support real workflows
-// while preserving the static termination guarantee.
 const defaultReviewMaxMessages = 10
 
 // sub holds a subscriber's two event channels: live for high-volume droppable
@@ -347,7 +345,11 @@ func (r *Run) Reset(stepID string) { r.inbox <- resetMsg{stepID: stepID} }
 
 // Resolve delivers a human verdict for a review step (Phase 3+).
 func (r *Run) Resolve(stepID, verdict string) {
-	r.inbox <- verdictMsg{stepID: stepID, verdict: verdict}
+	r.inbox <- reviewSubmissionMsg{stepID: stepID, submission: review.Submission{Verdict: verdict}}
+}
+
+func (r *Run) ResolveReview(stepID string, submission review.Submission) {
+	r.inbox <- reviewSubmissionMsg{stepID: stepID, submission: submission}
 }
 
 // ProvideUserInput delivers text collected from the user for a from="user" input.
@@ -452,9 +454,9 @@ type stepDoneMsg struct {
 	err    error
 }
 
-type verdictMsg struct {
-	stepID  string
-	verdict string
+type reviewSubmissionMsg struct {
+	stepID     string
+	submission review.Submission
 }
 
 type userInputMsg struct {
@@ -553,7 +555,7 @@ type resetMsg struct {
 }
 
 func (stepDoneMsg) isSchedMsg()             {}
-func (verdictMsg) isSchedMsg()              {}
+func (reviewSubmissionMsg) isSchedMsg()     {}
 func (userInputMsg) isSchedMsg()            {}
 func (snapshotReqMsg) isSchedMsg()          {}
 func (closureReqMsg) isSchedMsg()           {}
@@ -697,7 +699,8 @@ type scheduler struct {
 	// terminal verdict is chosen. The cap (max_messages) bounds the round-trips.
 	resumeSessions map[string]string // stepID → SDK session ID for next dispatch
 	stepMessage    map[string]string // stepID → human message for resumed query
-	reviewMessages map[string]int    // reviewStepID → messages sent so far
+	reviewSessions map[string]review.Session
+	reviewMessages map[string]int // retained for old monitor message routing until the workspace is integrated
 
 	// block_on: tracks how many times a human has provided input to a blocked step.
 	stepInputCount map[string]int // stepID → input rounds delivered so far
@@ -791,6 +794,7 @@ func newScheduler(
 		preResolvedInputs:   make(map[string][]ResolvedInput),
 		resumeSessions:      make(map[string]string),
 		stepMessage:         make(map[string]string),
+		reviewSessions:      make(map[string]review.Session),
 		reviewMessages:      make(map[string]int),
 		stepInputCount:      make(map[string]int),
 		recoverCount:        make(map[string]int),
@@ -1663,7 +1667,7 @@ func (s *scheduler) handleReset(m resetMsg) {
 		delete(s.stepFeedback, id)
 		delete(s.rerunSource, id)
 		delete(s.recoverCount, id)
-		delete(s.reviewMessages, id)
+		delete(s.reviewSessions, id)
 		delete(s.stepInputCount, id)
 		delete(s.pendingUserInputs, id)
 		delete(s.collectedUserInputs, id)
@@ -2054,7 +2058,7 @@ func (s *scheduler) handleHumanMessage(m humanMessageMsg) {
 	}
 
 	// Resolve "@stepid" or "@stepid.field" → bare step ID.
-	targetID := strings.TrimPrefix(wfStep.Review, "@")
+	targetID := strings.TrimPrefix(reviewSource(wfStep), "@")
 	if dot := strings.Index(targetID, "."); dot >= 0 {
 		targetID = targetID[:dot]
 	}
@@ -2064,15 +2068,11 @@ func (s *scheduler) handleHumanMessage(m humanMessageMsg) {
 	}
 
 	// Cap enforcement.
-	maxMsg := defaultReviewMaxMessages
-	if wfStep.MaxMessages > 0 {
-		maxMsg = wfStep.MaxMessages
-	}
 	s.reviewMessages[m.stepID]++
-	if s.reviewMessages[m.stepID] > maxMsg {
+	if s.reviewMessages[m.stepID] > defaultReviewMaxMessages {
 		s.emit(RunError{
 			RunID: s.runID,
-			Err:   fmt.Sprintf("step %q: max_messages %d reached", m.stepID, maxMsg),
+			Err:   fmt.Sprintf("step %q: review message limit %d reached", m.stepID, defaultReviewMaxMessages),
 		})
 		// Roll back the increment so the gate stays and the count stays at cap.
 		s.reviewMessages[m.stepID]--
@@ -2122,44 +2122,6 @@ func (s *scheduler) handleAgentInput(m agentInputMsg) {
 	s.resumeSessions[m.stepID] = state.Result.SessionID
 	s.stepMessage[m.stepID] = m.text
 	s.transition(m.stepID, step.StatusNeedsInput, step.StatusPending)
-}
-
-// dispatchReview handles a review step inline: it never goes to a worker.
-// The step is parked at awaiting_review and a ReviewRequest is emitted so the
-// TUI can render choices and collect a human verdict via Run.Resolve.
-// When review = "diff", the Diff field is populated by walking the dependency
-// graph for any captured worktree diffs.
-func (s *scheduler) dispatchReview(st *workflow.Step) {
-	from := s.states[st.ID].Status
-	s.transition(st.ID, from, step.StatusAwaitingReview)
-
-	var diff string
-	if st.Review == "diff" {
-		diff = s.collectDepDiffs(st.ID)
-	}
-
-	allowMsg := false
-	if strings.HasPrefix(st.Review, "@") {
-		targetID := strings.TrimPrefix(st.Review, "@")
-		if dot := strings.Index(targetID, "."); dot >= 0 {
-			targetID = targetID[:dot]
-		}
-		if tgt := s.stepByID(targetID); tgt != nil && tgt.Type == workflow.StepAgent {
-			maxMsg := defaultReviewMaxMessages
-			if st.MaxMessages > 0 {
-				maxMsg = st.MaxMessages
-			}
-			allowMsg = s.reviewMessages[st.ID] < maxMsg
-		}
-	}
-
-	s.emit(ReviewRequest{
-		RunID:        s.runID,
-		StepID:       st.ID,
-		Choices:      reviewChoices(st),
-		Diff:         diff,
-		AllowMessage: allowMsg,
-	})
 }
 
 // collectDepDiffs walks the dependency graph of stepID and concatenates any

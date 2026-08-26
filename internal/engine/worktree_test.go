@@ -202,8 +202,11 @@ skill = "skills/mutate"
 id = "check"
 type = "review"
 depends_on = ["mutate"]
-review = "diff"
 output_type = { enum = ["approve", "reject"] }
+
+[[step.review]]
+source = "diff"
+label = "Code changes"
 `
 	wf, err := workflow.Decode(toml, "")
 	if err != nil {

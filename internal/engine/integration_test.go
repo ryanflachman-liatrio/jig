@@ -704,9 +704,11 @@ depends_on = ["a"]
 [[step]]
 id = "gate"
 type = "review"
-review = "diff"
 output_type = "bool"
 depends_on = ["b"]
+[[step.review]]
+source = "diff"
+label = "Code changes"
 `
 
 // TestResetFanOut verifies that Reset("a") on the fan-out workflow re-runs
@@ -844,9 +846,11 @@ depends_on = ["a"]
 [[step]]
 id = "gate"
 type = "review"
-review = "diff"
 output_type = "bool"
 depends_on = ["b"]
+[[step.review]]
+source = "diff"
+label = "Code changes"
 `
 	wf, err := workflow.Decode(toml, "")
 	if err != nil {

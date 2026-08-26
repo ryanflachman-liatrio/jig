@@ -1320,8 +1320,11 @@ run = "echo prep"
 id = "check"
 type = "review"
 depends_on = ["prep"]
-review = "@prep"
 output_type = { enum = ["approve", "reject"] }
+
+[[step.review]]
+source = "diff"
+label = "Preparation output"
 `
 	wf, err := workflow.Decode(toml, "")
 	if err != nil {

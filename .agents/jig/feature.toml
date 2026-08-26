@@ -106,7 +106,6 @@ allowed_tools = ["Read", "Grep", "Glob"]
 id          = "plan_review"
 type        = "review"
 depends_on  = ["plan"]
-review      = "@plan.summary"
 output_type = { enum = ["approve", "revise"] }
 
   [step.loop]
@@ -114,6 +113,10 @@ output_type = { enum = ["approve", "revise"] }
   goto           = "plan"
   max_iterations = 3
   feedback       = "@plan_review"
+
+[[step.review]]
+source = "@plan.summary"
+label = "Plan summary"
 
 # -----------------------------------------------------------------------------
 # 5. Implement — the only mutating agent: Edit/Write/Bash flip worktree isolation
@@ -186,8 +189,11 @@ id          = "final_review"
 type        = "review"
 depends_on  = ["qa"]
 when        = "qa.passed"
-review      = "diff"
 output_type = { enum = ["ship", "hold"] }
+
+[[step.review]]
+source = "diff"
+label = "Code changes"
 
 # -----------------------------------------------------------------------------
 # 9. Terminal branches — mutually exclusive commands guarded on the verdict.

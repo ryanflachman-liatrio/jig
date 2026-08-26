@@ -125,6 +125,48 @@ func OutputJSONPath(runDir, stepID string) string {
 	return filepath.Join(runDir, "steps", stepID, "output.json")
 }
 
+func ReviewRoot(runDir, stepID string) string {
+	if runDir == "" {
+		return ""
+	}
+	return filepath.Join(runDir, "steps", stepID, "review")
+}
+
+func ReviewRoundDir(runDir, stepID, roundID string) string {
+	if runDir == "" {
+		return ""
+	}
+	return filepath.Join(ReviewRoot(runDir, stepID), roundID)
+}
+
+func ReviewDraftPath(runDir, stepID, roundID string) string {
+	if dir := ReviewRoundDir(runDir, stepID, roundID); dir != "" {
+		return filepath.Join(dir, "draft.json")
+	}
+	return ""
+}
+
+func ReviewSubmissionPath(runDir, stepID, roundID string) string {
+	if dir := ReviewRoundDir(runDir, stepID, roundID); dir != "" {
+		return filepath.Join(dir, "submission.json")
+	}
+	return ""
+}
+
+func ReviewFeedbackPath(runDir, stepID, roundID string) string {
+	if dir := ReviewRoundDir(runDir, stepID, roundID); dir != "" {
+		return filepath.Join(dir, "feedback.md")
+	}
+	return ""
+}
+
+func ReviewDocumentsDir(runDir, stepID, roundID string) string {
+	if dir := ReviewRoundDir(runDir, stepID, roundID); dir != "" {
+		return filepath.Join(dir, "documents")
+	}
+	return ""
+}
+
 // DeleteRun removes the entire run directory for runID from disk.  It is a
 // no-op when root is empty (persistence-off path) or when the directory does
 // not exist.  It does not call RunDir, so no directories are created as a

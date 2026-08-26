@@ -155,17 +155,12 @@ func (m userInputMsg) execute(s *scheduler) {
 }
 
 // execute delivers the human's verdict to an awaiting_review step.
-func (m verdictMsg) execute(s *scheduler) {
+func (m reviewSubmissionMsg) execute(s *scheduler) {
 	state := s.states[m.stepID]
-	if state.Status != step.StatusAwaitingReview {
+	if state == nil || state.Status != step.StatusAwaitingReview {
 		return // stale or duplicate verdict
 	}
-	state.Result = &step.Result{Status: step.StatusSucceeded, Verdict: m.verdict}
-	wfStep := s.stepByID(m.stepID)
-	s.transition(m.stepID, step.StatusAwaitingReview, step.StatusSucceeded)
-	if wfStep != nil && wfStep.Loop != nil {
-		s.recordLoopIntent(m.stepID, wfStep)
-	}
+	s.finalizeReview(m.stepID, m.submission)
 }
 
 func (m humanMessageMsg) execute(s *scheduler)       { s.handleHumanMessage(m) }

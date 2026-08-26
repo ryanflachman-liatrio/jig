@@ -45,6 +45,8 @@ func eventKind(e Event) string {
 		return "steps_reset"
 	case ReviewRequest:
 		return "review_request"
+	case ReviewSubmitted:
+		return "review_submitted"
 	case InputRequest:
 		return "input_request"
 	case RunError:
@@ -124,6 +126,10 @@ var decoders = map[string]func([]byte) (Event, error){
 	},
 	"review_request": func(b []byte) (Event, error) {
 		var e ReviewRequest
+		return e, json.Unmarshal(b, &e)
+	},
+	"review_submitted": func(b []byte) (Event, error) {
+		var e ReviewSubmitted
 		return e, json.Unmarshal(b, &e)
 	},
 	"run_error": func(b []byte) (Event, error) {

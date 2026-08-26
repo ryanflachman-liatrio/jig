@@ -270,11 +270,8 @@ func (v *validator) checkAgent(s *Step) {
 	if s.Isolation != IsolationWorktree && s.Isolation != IsolationNone {
 		v.errf("agent step %q has invalid isolation %q (want worktree|none)", s.ID, s.Isolation)
 	}
-	if s.Run != "" || s.Script != "" || s.Review != "" {
+	if s.Run != "" || s.Script != "" || len(s.Review) > 0 {
 		v.errf("agent step %q sets fields belonging to another step type (run/script/review)", s.ID)
-	}
-	if s.MaxMessages != 0 {
-		v.errf("agent step %q: max_messages is only valid on review steps", s.ID)
 	}
 	if s.BlockOn != "" {
 		cond, err := ParseCondition(s.BlockOn)
@@ -332,11 +329,8 @@ func (v *validator) checkCommand(s *Step) {
 			v.errf("command step %q: script %q not found (resolved from project root %q)", s.ID, s.Script, root)
 		}
 	}
-	if s.Review != "" || hasAgentOnlyFields(s) {
+	if len(s.Review) > 0 || hasAgentOnlyFields(s) {
 		v.errf("command step %q sets fields belonging to another step type (agent skill/agent_file/tools or review)", s.ID)
-	}
-	if s.MaxMessages != 0 {
-		v.errf("command step %q: max_messages is only valid on review steps", s.ID)
 	}
 	if s.InjectContext != nil {
 		v.errf("step %q: inject_context is only valid on agent steps", s.ID)
@@ -344,17 +338,62 @@ func (v *validator) checkCommand(s *Step) {
 }
 
 func (v *validator) checkReview(s *Step) {
-	if s.Review == "" {
-		v.errf("review step %q requires `review` (\"@stepid\" or \"diff\")", s.ID)
-	} else if ref, ok := strings.CutPrefix(s.Review, "@"); ok {
-		step, field := parseRef(ref)
-		if ti, known := v.wf.index[step]; !known {
-			v.errf("review step %q reviews unknown step %q", s.ID, step)
-		} else if len(field) > 0 {
-			v.checkFieldRef(s.ID, "review target "+s.Review, &v.wf.Steps[ti], field)
+	if len(s.Review) == 0 {
+		v.errf("review step %q requires at least one `review` target", s.ID)
+	}
+	labels := make(map[string]bool, len(s.Review))
+	sources := make(map[string]bool, len(s.Review))
+	for i := range s.Review {
+		target := &s.Review[i]
+		source := strings.TrimSpace(target.Source)
+		label := strings.TrimSpace(target.Label)
+		if source == "" {
+			v.errf("review step %q target %d requires a non-blank `source`", s.ID, i+1)
+			continue
 		}
-	} else if s.Review != "diff" {
-		v.errf("review step %q: `review` must be \"@stepid\" or \"diff\", got %q", s.ID, s.Review)
+		if label == "" {
+			v.errf("review step %q target %d requires a non-blank `label`", s.ID, i+1)
+		} else if labels[label] {
+			v.errf("review step %q has duplicate review label %q", s.ID, label)
+		}
+		labels[label] = true
+		resolved := source
+		if target.ResolvedPath() != "" {
+			resolved = target.ResolvedPath()
+		}
+		if sources[resolved] {
+			v.errf("review step %q has duplicate review source %q", s.ID, source)
+		}
+		sources[resolved] = true
+		if source == "diff" {
+			continue
+		}
+		if ref, ok := strings.CutPrefix(source, "@"); ok {
+			stepID, field := parseRef(ref)
+			ti, known := v.wf.index[stepID]
+			if !known {
+				v.errf("review step %q reviews unknown step %q", s.ID, stepID)
+				continue
+			}
+			if !contains(s.DependsOn, stepID) {
+				v.errf("review step %q target %q must also list %q in depends_on", s.ID, source, stepID)
+			}
+			if len(field) > 0 {
+				f, ok := v.checkFieldRef(s.ID, "review target "+source, &v.wf.Steps[ti], field)
+				if ok && f.Type != FieldText {
+					v.errf("review step %q target %q must reference a text field, got %q", s.ID, source, f.Type)
+				}
+			}
+			continue
+		}
+		if v.baseDir != "" {
+			fi, err := os.Stat(target.ResolvedPath())
+			if err != nil {
+				v.errf("review step %q target %q: file not found", s.ID, source)
+			} else if !fi.Mode().IsRegular() {
+				v.errf("review step %q target %q is not a regular file", s.ID, source)
+			}
+		}
 	}
 	// A review exists to capture a human decision, so it must be typed.
 	if s.OutputType.Kind != OutputEnum && s.OutputType.Kind != OutputBool {
@@ -362,9 +401,6 @@ func (v *validator) checkReview(s *Step) {
 	}
 	if s.Run != "" || s.Script != "" || hasAgentOnlyFields(s) {
 		v.errf("review step %q sets fields belonging to another step type (agent skill/agent_file/tools or run/script)", s.ID)
-	}
-	if s.MaxMessages < 0 {
-		v.errf("review step %q: max_messages must be >= 0", s.ID)
 	}
 	if s.InjectContext != nil {
 		v.errf("step %q: inject_context is only valid on agent steps", s.ID)

@@ -260,15 +260,17 @@ output        = ".jig/artifacts/plan.md"
 id           = "plan_review"
 type         = "review"
 depends_on   = ["plan"]
-review       = "@plan.summary"
 output_type  = { enum = ["approve", "revise"] }
-max_messages = 5
 
   [step.loop]
   when           = "plan_review == 'revise'"
   goto           = "plan"
   max_iterations = 3
   feedback       = "@plan_review"
+
+[[step.review]]
+source = "@plan.summary"
+label = "Plan summary"
 
 # ─── 7. Implement ────────────────────────────────────────────────────────────
 # The only mutating agent. worktree isolation is on by default for Edit/Write/Bash.
@@ -353,8 +355,11 @@ id          = "security_review"
 type        = "review"
 depends_on  = ["qa"]
 when        = "qa.passed"
-review      = "diff"
 output_type = "bool"
+
+[[step.review]]
+source = "diff"
+label = "Code changes"
 
 # ─── 13. Final review ────────────────────────────────────────────────────────
 # Last human gate before shipping. Runs only when security cleared the diff.
@@ -366,9 +371,11 @@ id           = "final_review"
 type         = "review"
 depends_on   = ["security_review", "qa"]
 when         = "security_review"
-review       = "@qa.summary"
 output_type  = { enum = ["ship", "hold"] }
-max_messages = 3
+
+[[step.review]]
+source = "@qa.summary"
+label = "QA summary"
 
 # ─── 14–15. Terminal branches ────────────────────────────────────────────────
 # Mutually exclusive commands guarded on the final_review verdict.

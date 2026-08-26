@@ -51,6 +51,9 @@ func Decode(data, baseDir string) (*Workflow, error) {
 	if err := wf.resolveOutputTemplates(baseDir); err != nil {
 		return nil, err
 	}
+	if err := wf.resolveReviewTargets(baseDir); err != nil {
+		return nil, err
+	}
 
 	// Load built-in and project-local profiles, then apply them. Profiles run
 	// after agent_file resolution (explicit step fields and file-derived values
@@ -233,6 +236,23 @@ func (wf *Workflow) applyProfiles() {
 			injectAskUserQuestion(s)
 		}
 	}
+}
+
+// resolveReviewTargets populates each literal file review source with an absolute
+// path under baseDir. It intentionally does no existence checks; validate() owns
+// those checks for both static (baseDir == "") and full validation modes.
+func (wf *Workflow) resolveReviewTargets(baseDir string) error {
+	for i := range wf.Steps {
+		for j := range wf.Steps[i].Review {
+			src := strings.TrimSpace(wf.Steps[i].Review[j].Source)
+			wf.Steps[i].Review[j].Source = src
+			if baseDir == "" || src == "" || src == "diff" || strings.HasPrefix(src, "@") {
+				continue
+			}
+			wf.Steps[i].Review[j].resolvedPath = filepath.Join(baseDir, src)
+		}
+	}
+	return nil
 }
 
 // injectAskUserQuestion appends "AskUserQuestion" to s.AllowedTools if it is

@@ -75,7 +75,6 @@ inputs = ["@research_backend.summary", "@research_frontend.summary", "@security_
 id = "plan_review"
 type = "review"
 depends_on = ["plan"]
-review = "@plan.summary"
 output_type = { enum = ["approve", "revise"] }
 
   [step.loop]
@@ -83,6 +82,10 @@ output_type = { enum = ["approve", "revise"] }
   goto           = "plan"
   max_iterations = 3
   feedback       = "@plan_review"
+
+[[step.review]]
+source = "@plan.summary"
+label = "Plan summary"
 
 [[step]]
 id = "implement"
@@ -368,13 +371,16 @@ skill = "skills/build"
 id = "qa1"
 type = "review"
 depends_on = ["build"]
-review = "@build.summary"
 output_type = { enum = ["approve", "revise"] }
 
   [step.loop]
   when           = "qa1 == 'revise'"
   goto           = "build"
   max_iterations = 3
+
+[[step.review]]
+source = "@build.summary"
+label = "Build summary"
 
 [[step]]
 id = "qa2"

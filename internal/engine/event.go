@@ -2,6 +2,7 @@ package engine
 
 import (
 	"jig/internal/interaction"
+	"jig/internal/review"
 	"jig/internal/step"
 )
 
@@ -107,11 +108,23 @@ type LoopFired struct {
 // AllowMessage is true when the reviewed target is an agent step and the
 // per-gate message cap has not been exhausted — the TUI offers a [m] action.
 type ReviewRequest struct {
+	RunID     string
+	StepID    string
+	RoundID   string
+	Choices   []string
+	Documents []review.Document
+	DraftPath string
+	// Deprecated compatibility projections for the pre-workspace monitor.
+	Diff         string `json:"-"`
+	AllowMessage bool   `json:"-"`
+}
+
+type ReviewSubmitted struct {
 	RunID        string
 	StepID       string
-	Choices      []string
-	Diff         string
-	AllowMessage bool
+	RoundID      string
+	Verdict      string
+	CommentCount int
 }
 
 // InputRequest is emitted when an agent step's block_on condition evaluates to
@@ -230,6 +243,7 @@ func (StepMessage) isEvent()                {}
 func (GateResult) isEvent()                 {}
 func (LoopFired) isEvent()                  {}
 func (ReviewRequest) isEvent()              {}
+func (ReviewSubmitted) isEvent()            {}
 func (InputRequest) isEvent()               {}
 func (RunError) isEvent()                   {}
 func (RecoveryRequest) isEvent()            {}

@@ -41,7 +41,6 @@ allowed_tools = ["Read", "Edit", "Write", "Bash"]
 id = "approve"
 type = "review"
 depends_on = ["fix"]
-review = "diff"
 output_type = { enum = ["approve", "revise"] }
 
   [step.loop]
@@ -49,6 +48,10 @@ output_type = { enum = ["approve", "revise"] }
   goto = "fix"
   max_iterations = 3
   feedback = "@approve"
+
+[[step.review]]
+source = "diff"
+label = "Code changes"
 
 [[step]]
 id = "merge"
@@ -346,8 +349,10 @@ version = "1"
 [[step]]
 id = "a"
 type = "review"
-review = "diff"
 output_type = { enum = ["yes", "no"] }
+[[step.review]]
+source = "diff"
+label = "Code changes"
 [[step]]
 id = "b"
 type = "command"
@@ -365,12 +370,14 @@ version = "1"
 [[step]]
 id = "a"
 type = "review"
-review = "diff"
 output_type = { enum = ["ok", "redo"] }
 [step.loop]
 when = "a == 'redo'"
 goto = "a"
-max_iterations = 0`,
+max_iterations = 0
+[[step.review]]
+source = "diff"
+label = "Code changes"`,
 			want: "max_iterations must be >= 1",
 		},
 		{
@@ -395,7 +402,10 @@ version = "1"
 [[step]]
 id = "a"
 type = "review"
-review = "diff"`,
+[[step.review]]
+source = "diff"
+label = "Code changes"
+`,
 			want: "needs an output_type",
 		},
 		{
@@ -561,10 +571,12 @@ version = "1"
 [[step]]
 id = "a"
 type = "review"
-review = "diff"
+[[step.review]]
+source = "diff"
+label = "Code changes"
 max_messages = -1
 output_type = { enum = ["ok"] }`,
-			want: "max_messages must be >= 0",
+			want: "unknown key(s) in workflow",
 		},
 		{
 			name: "max_messages on agent step",
@@ -578,7 +590,7 @@ type = "agent"
 skill = "s"
 allowed_tools = ["Read"]
 max_messages = 5`,
-			want: "max_messages is only valid on review steps",
+			want: "unknown key(s) in workflow",
 		},
 		{
 			name: "max_messages on command step",
@@ -591,7 +603,7 @@ id = "a"
 type = "command"
 run = "true"
 max_messages = 3`,
-			want: "max_messages is only valid on review steps",
+			want: "unknown key(s) in workflow",
 		},
 		{
 			name: "inject_context on command step",
@@ -664,7 +676,7 @@ purpose = 5`,
 	}
 }
 
-func TestMaxMessagesValid(t *testing.T) {
+func TestMaxMessagesRejected(t *testing.T) {
 	toml := `
 [workflow]
 name = "x"
@@ -672,12 +684,13 @@ version = "1"
 [[step]]
 id = "a"
 type = "review"
-review = "diff"
-max_messages = 5
+[[step.review]]
+source = "diff"
+label = "Code changes"
 output_type = { enum = ["ok"] }
 `
-	if _, err := Decode(toml, ""); err != nil {
-		t.Fatalf("expected valid, got error: %v", err)
+	if _, err := Decode(toml, ""); err == nil || !strings.Contains(err.Error(), "unknown key") {
+		t.Fatalf("expected legacy max_messages to be rejected, got: %v", err)
 	}
 }
 
@@ -1246,9 +1259,11 @@ profile = "@interactive"
 [[step]]
 id = "a"
 type = "review"
-review = "diff"
 output_type = "bool"
 profile = "@interactive"
+[[step.review]]
+source = "diff"
+label = "Code changes"
 `,
 			want: "fields belonging to another step type",
 		},
