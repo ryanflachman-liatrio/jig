@@ -78,10 +78,11 @@ func validPermissionMode(s string) bool {
 }
 
 // Backend and transport name the agent vendor and how jig reaches it.
-// Selected in TOML only (never via env). Cursor always uses ACP transport.
+// Selected in TOML only (never via env). Cursor and Codex always use ACP.
 const (
 	BackendClaude = "claude"
 	BackendCursor = "cursor"
+	BackendCodex  = "codex"
 
 	TransportSDK = "sdk"
 	TransportACP = "acp"
@@ -89,7 +90,7 @@ const (
 
 func validBackend(s string) bool {
 	switch s {
-	case BackendClaude, BackendCursor:
+	case BackendClaude, BackendCursor, BackendCodex:
 		return true
 	}
 	return false

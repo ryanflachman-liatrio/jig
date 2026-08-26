@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"jig/internal/engine"
 	"jig/internal/transcript"
 )
@@ -156,6 +157,77 @@ func TestTranscriptSearchFindsFilteredLoadedBlocks(t *testing.T) {
 	}
 }
 
+func TestTranscriptSearchFiltersRenderedPageAndKeepsToolContext(t *testing.T) {
+	runDir := writeTranscript(t, "a", []transcript.Entry{
+		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+			{Type: transcript.BlockText, Text: "matching prose"},
+			{Type: transcript.BlockThinking, Text: "unrelated reasoning"},
+			{Type: transcript.BlockToolUse, ToolUseID: "t1", Name: "Read", Input: []byte(`{"file_path":"match.go"}`)},
+		}},
+		{Role: transcript.RoleUser, Blocks: []transcript.Block{
+			{Type: transcript.BlockToolResult, ToolUseID: "t1", Content: "unrelated tool result"},
+		}},
+		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+			{Type: transcript.BlockText, Text: "more unrelated prose"},
+		}},
+	})
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+
+	m.searchQuery = "MATCH"
+	m.rebuildLoadedChat(chatItem{})
+	m.rerunSearch()
+	body := ansiStrip(m.chatBody())
+	for _, hidden := range []string{"unrelated reasoning", "more unrelated prose"} {
+		if strings.Contains(body, hidden) {
+			t.Fatalf("search left non-matching content %q visible:\n%s", hidden, body)
+		}
+	}
+	if len(m.searchHits) != 2 {
+		t.Fatalf("search hits = %d, want 2", len(m.searchHits))
+	}
+	if len(m.chatGroupHeaders) != 1 || len(m.chatGroupHeaders[0].group.blocks) != 2 {
+		t.Fatalf("matching tool block lost its complete group: %+v", m.chatGroupHeaders)
+	}
+	m.chatGroupExpand[m.chatGroupHeaders[0].key] = true
+	m.rebuildActiveState(m.chatGroupHeaders[0])
+	body = ansiStrip(m.chatBody())
+	if !strings.Contains(body, "unrelated tool result") {
+		t.Fatalf("matching tool group lost result context:\n%s", body)
+	}
+}
+
+func TestTranscriptFilterDialogSpaceToggleRebuildsSearchView(t *testing.T) {
+	runDir := writeTranscript(t, "a", []transcript.Entry{{
+		Role: transcript.RoleAssistant,
+		Blocks: []transcript.Block{
+			{Type: transcript.BlockText, Text: "prose"},
+			{Type: transcript.BlockThinking, Text: "reasoning"},
+		},
+	}})
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+
+	m, _ = m.Update(key("F"))
+	if !m.filterOpen {
+		t.Fatal("F did not open transcript filters")
+	}
+	m, _ = m.Update(key("j"))
+	if m.filterCursor != 1 {
+		t.Fatalf("filter cursor = %d, want 1", m.filterCursor)
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace})
+	if !m.filters.tools {
+		t.Fatal("tea.KeySpace did not toggle selected filter")
+	}
+	m, _ = m.Update(key("enter"))
+	if body := ansiStrip(m.chatBody()); strings.Contains(body, "prose") || strings.Contains(body, "reasoning") {
+		t.Fatalf("tools filter did not reduce transcript content:\n%s", body)
+	}
+}
+
 func TestEntryFilterScopes(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -242,6 +314,7 @@ func TestSearchInputAndContextualNavigation(t *testing.T) {
 		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
 			{Type: transcript.BlockThinking, Text: "needle one"},
 			{Type: transcript.BlockThinking, Text: "needle two"},
+			{Type: transcript.BlockText, Text: "hidden prose"},
 		}},
 	})
 	m := newMonitorWithSteps(t)
@@ -261,6 +334,9 @@ func TestSearchInputAndContextualNavigation(t *testing.T) {
 	m, _ = m.Update(key("enter"))
 	if m.searchOpen || m.searchQuery != "needle" || len(m.searchHits) != 2 {
 		t.Fatalf("submitted search = open:%v query:%q hits:%d", m.searchOpen, m.searchQuery, len(m.searchHits))
+	}
+	if body := ansiStrip(m.chatBody()); strings.Contains(body, "hidden prose") {
+		t.Fatalf("submitted search did not filter rendered transcript:\n%s", body)
 	}
 	m, _ = m.Update(key("n"))
 	if m.searchHitCursor != 1 {
@@ -288,5 +364,8 @@ func TestSearchInputAndContextualNavigation(t *testing.T) {
 	m, _ = m.Update(key("c"))
 	if m.searchQuery != "" || m.filters.active() {
 		t.Fatal("c did not clear transcript view state")
+	}
+	if body := ansiStrip(m.chatBody()); !strings.Contains(body, "hidden prose") {
+		t.Fatalf("clearing search did not restore loaded transcript:\n%s", body)
 	}
 }

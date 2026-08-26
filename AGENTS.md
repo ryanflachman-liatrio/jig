@@ -44,10 +44,14 @@ Today’s code only implements **Claude**, two ways:
 
 - `ClaudeHarness` — direct Claude Agent SDK
 - `AcpHarness` — ACP → Claude via Zed’s `npx @zed-industries/claude-code-acp`
+- `CursorHarness` — native Cursor ACP via `cursor-agent acp`
+- `CodexHarness` — Codex via `npx -y @agentclientprotocol/codex-acp@1.6.2`
 
-`acp` is a **transport**, not Cursor. Cursor / Codex / Gemini are **not
-implemented yet**; Spec 12 deferred them. Do not invent TOML values for them
-until a real harness exists.
+`acp` is a **transport**, not a backend. Cursor has a native ACP harness;
+Codex uses the `@agentclientprotocol/codex-acp` stdio adapter, which drives the
+Codex App Server. Codex CLI does not expose native ACP, so do not use `codex
+exec` or Codex's MCP server as a substitute. The adapter reuses the operator's
+existing Codex login; do not add API keys or auth fields to workflow TOML.
 
 Planned author-facing fields (Spec 14):
 
@@ -63,9 +67,9 @@ backend   = "claude"
 transport = "acp"      # ACP→Claude for this step only
 ```
 
-When Cursor/Codex/Gemini land, they become new `backend` values (likely with
-their own default transport). Do **not** add a process-wide env override for
-any of them.
+Cursor and Codex use `transport = "acp"`. Gemini becomes a backend value only
+after a real harness exists. Do **not** add a process-wide env override for any
+of them.
 
 Plan: [`docs/specs/14-spec-per-step-harness/14-implementation-plan.md`](docs/specs/14-spec-per-step-harness/14-implementation-plan.md).
 
@@ -74,7 +78,7 @@ Plan: [`docs/specs/14-spec-per-step-harness/14-implementation-plan.md`](docs/spe
 - `internal/workflow` — schema, TOML load, validate
 - `internal/engine` — DAG scheduler (no SDK / harness imports)
 - `internal/runner` — `AgentExecutor` / `CommandExecutor`
-- `internal/harness` — `Harness` seam (`ClaudeHarness`, `AcpHarness`)
+- `internal/harness` — `Harness` seam (`ClaudeHarness`, `AcpHarness`, `CursorHarness`, `CodexHarness`)
 - `internal/transcript` — per-step `transcript.jsonl` (file is truth)
 - `internal/tui` — Bubble Tea UI (transcript-only; backend-agnostic)
 - `cmd/jig` — `validate` + TUI entry

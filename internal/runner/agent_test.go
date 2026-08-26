@@ -460,6 +460,36 @@ func TestCaptureStream_AssistantError(t *testing.T) {
 	}
 }
 
+func TestCaptureStream_CoalescesStreamingTextAndThinking(t *testing.T) {
+	dir := t.TempDir()
+	tPath := filepath.Join(dir, "transcript.jsonl")
+	req := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: tPath}
+
+	events := []harness.Event{
+		{Type: harness.EventThinking, Text: "let "},
+		{Type: harness.EventThinking, Text: "me think"},
+		{Type: harness.EventText, Text: "hello"},
+		{Type: harness.EventText, Text: ", world"},
+		{Type: harness.EventAssistantEnd},
+		{Type: harness.EventResult},
+	}
+	if _, err := captureStream(scriptChan(events...), req, &captureReporter{}, time.Now(), ""); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _ := transcript.Open(tPath)
+	entries, _ := r.Window(0, 0)
+	if len(entries) != 1 || len(entries[0].Blocks) != 2 {
+		t.Fatalf("entries = %+v, want one assistant entry with thinking and text", entries)
+	}
+	if got := entries[0].Blocks[0].Text; got != "let me think" {
+		t.Errorf("thinking = %q, want coalesced text", got)
+	}
+	if got := entries[0].Blocks[1].Text; got != "hello, world" {
+		t.Errorf("text = %q, want coalesced text", got)
+	}
+}
+
 // TestCaptureStream_Subtype verifies EventResult.Subtype lands on step.Result
 // for both the success and failure paths, and that policy-limit subtypes
 // produce descriptive human-readable error messages (computed upstream by the
@@ -563,6 +593,32 @@ func TestSessionIDCapturedAtStart(t *testing.T) {
 	}
 	if res.SessionID != "sess-early" {
 		t.Fatalf("SessionID = %q, want sess-early (captured at start, survives a stop)", res.SessionID)
+	}
+}
+
+func TestCaptureStream_ClosedStreamWritesTranscriptFailure(t *testing.T) {
+	dir := t.TempDir()
+	tPath := filepath.Join(dir, "transcript.jsonl")
+	res, err := captureStream(scriptChan(
+		harness.Event{Type: harness.EventText, Text: "partial"},
+	), engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: tPath}, &captureReporter{}, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Err != "agent connection closed unexpectedly" {
+		t.Fatalf("Err = %q", res.Err)
+	}
+
+	r, _ := transcript.Open(tPath)
+	entries, _ := r.Window(0, 0)
+	if len(entries) != 2 {
+		t.Fatalf("entries = %+v, want partial assistant turn and failure result", entries)
+	}
+	if entries[0].Role != transcript.RoleAssistant || entries[0].Blocks[0].Text != "partial" {
+		t.Errorf("partial entry = %+v", entries[0])
+	}
+	if entries[1].Role != transcript.RoleResult || entries[1].Blocks[0].Text != res.Err {
+		t.Errorf("failure entry = %+v", entries[1])
 	}
 }
 

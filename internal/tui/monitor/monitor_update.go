@@ -360,6 +360,7 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		case msg.String() == "enter":
 			m.searchQuery = strings.TrimSpace(m.searchInput.Value())
 			m.searchOpen = false
+			m.rebuildLoadedChat(chatItem{})
 			m.rerunSearch()
 			if len(m.searchHits) > 0 {
 				m.applyCurrentSearchHit()
@@ -382,7 +383,7 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			m.filterCursor = (m.filterCursor + 1) % len(filterLabels)
 		case msg.String() == "k" || msg.String() == "up":
 			m.filterCursor = (m.filterCursor - 1 + len(filterLabels)) % len(filterLabels)
-		case msg.String() == " ":
+		case msg.Code == tea.KeySpace:
 			m.toggleCurrentFilter()
 		}
 		m.refreshPanels()

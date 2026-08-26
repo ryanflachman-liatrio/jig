@@ -24,7 +24,8 @@ var filterLabels = [...]string{
 }
 
 func (m Model) filteredEntries() []transcript.Entry {
-	if !m.filters.active() {
+	query := strings.TrimSpace(m.searchQuery)
+	if !m.filters.active() && query == "" {
 		return m.chatEntries
 	}
 
@@ -38,7 +39,7 @@ func (m Model) filteredEntries() []transcript.Entry {
 		for _, ref := range pending {
 			e := m.chatEntries[ref.entry]
 			blk := e.Blocks[ref.block]
-			if entryMatchesScope(e, m.filters) && contentMatches(e.Role, blk, m.filters) {
+			if m.blockMatchesView(e, blk, query) {
 				matches = true
 				break
 			}
@@ -59,7 +60,7 @@ func (m Model) filteredEntries() []transcript.Entry {
 				pending = append(pending, blockRef{entry: ei, block: bi})
 			default:
 				flushTools()
-				if entryMatchesScope(e, m.filters) && contentMatches(e.Role, blk, m.filters) {
+				if m.blockMatchesView(e, blk, query) {
 					visible[blockKey{seq: e.Seq, block: bi}] = true
 				}
 			}
@@ -82,6 +83,13 @@ func (m Model) filteredEntries() []transcript.Entry {
 		filtered = append(filtered, copyEntry)
 	}
 	return filtered
+}
+
+func (m Model) blockMatchesView(e transcript.Entry, blk transcript.Block, query string) bool {
+	if !entryMatchesScope(e, m.filters) || !contentMatches(e.Role, blk, m.filters) {
+		return false
+	}
+	return query == "" || strings.Contains(strings.ToLower(searchableBlockText(blk)), strings.ToLower(query))
 }
 
 func entryMatchesScope(e transcript.Entry, filters transcriptFilters) bool {

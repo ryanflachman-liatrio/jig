@@ -29,9 +29,9 @@ version     = "1"
 description = "SDD Phase 1 — turn an idea into a validated spec under docs/specs/."
 
 [defaults]
-backend         = "claude"
-transport       = "sdk"
-model           = "claude-opus-4-8"
+backend         = "codex"
+transport       = "acp"
+model           = "gpt-5.6-luna"
 effort          = "high"
 permission_mode = "acceptEdits"
 max_parallel    = 5
@@ -48,9 +48,6 @@ run  = "mkdir -p docs/specs"
 [[step]]
 id              = "context_assess"
 type            = "agent"
-backend         = "cursor"
-transport       = "acp"
-model           = "claude-haiku-4-5-20251001"
 depends_on      = ["mkdir_spec"]
 skill           = "../skills/sdd-context-assess"
 output_template = "templates/context-assess.md"
@@ -76,7 +73,6 @@ isolation     = "none"
 [[step]]
 id            = "research_security"
 type          = "agent"
-model         = "claude-sonnet-4-6"
 depends_on    = ["context_assess"]
 skill         = "../skills/sdd-research-security"
 inputs        = ["@context_assess.summary", "@context_assess.technologies"]
@@ -93,7 +89,6 @@ isolation     = "none"
 [[step]]
 id            = "research_api_contracts"
 type          = "agent"
-model         = "claude-sonnet-4-6"
 depends_on    = ["context_assess"]
 skill         = "../skills/sdd-research-api-contracts"
 inputs        = ["@context_assess.summary", "@context_assess.technologies"]
@@ -110,7 +105,6 @@ isolation     = "none"
 [[step]]
 id            = "research_data_patterns"
 type          = "agent"
-model         = "claude-sonnet-4-6"
 depends_on    = ["context_assess"]
 skill         = "../skills/sdd-research-data-patterns"
 inputs        = ["@context_assess.summary", "@context_assess.technologies"]
@@ -127,7 +121,6 @@ isolation     = "none"
 [[step]]
 id            = "research_testing_standards"
 type          = "agent"
-model         = "claude-sonnet-4-6"
 depends_on    = ["context_assess"]
 skill         = "../skills/sdd-research-testing-standards"
 inputs        = ["@context_assess.summary", "@context_assess.technologies"]
@@ -144,7 +137,6 @@ isolation     = "none"
 [[step]]
 id            = "research_ecosystem"
 type          = "agent"
-model         = "claude-sonnet-4-6"
 depends_on    = ["context_assess"]
 skill         = "../skills/sdd-research-ecosystem"
 inputs        = ["@context_assess.summary", "@context_assess.technologies"]
@@ -166,7 +158,6 @@ isolation     = "none"
 [[step]]
 id            = "synthesize_research"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
 depends_on    = ["research_security", "research_api_contracts", "research_data_patterns", "research_testing_standards", "research_ecosystem"]
 skill         = "../skills/sdd-synthesize-research"
 inputs        = [
@@ -195,7 +186,6 @@ isolation     = "none"
 [[step]]
 id            = "scope_assess"
 type          = "agent"
-model         = "claude-haiku-4-5-20251001"
 depends_on    = ["context_assess", "synthesize_research"]
 skill         = "../skills/sdd-scope-assess"
 inputs        = ["@context_assess.summary", "@synthesize_research.summary"]

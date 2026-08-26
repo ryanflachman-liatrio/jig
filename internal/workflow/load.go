@@ -129,7 +129,11 @@ func (wf *Workflow) applyDefaults() {
 			s.Transport = wf.Defaults.Transport
 		}
 		if s.Transport == "" {
-			s.Transport = TransportSDK
+			if s.Backend == BackendCursor || s.Backend == BackendCodex {
+				s.Transport = TransportACP
+			} else {
+				s.Transport = TransportSDK
+			}
 		}
 
 		// inject_context resolves to a plain bool: an explicit per-step value

@@ -605,11 +605,43 @@ func (s *acpSession) onEvent(ev acp.Event) {
 		if ev.Input != "" {
 			tool.input = json.RawMessage(ev.Input)
 		}
-		s.events <- Event{Type: EventToolUse, ToolUseID: ev.ToolID, Name: tool.title, Input: tool.input}
+		name, input := normalizeACPToolCall(tool.title, tool.input)
+		s.events <- Event{Type: EventToolUse, ToolUseID: ev.ToolID, Name: name, Input: input}
 		s.events <- Event{Type: EventAssistantEnd}
 		s.events <- Event{Type: EventToolResult, ToolUseID: ev.ToolID, Content: ev.Status, IsError: ev.Status == "failed"}
 		s.events <- Event{Type: EventUserEnd}
 	}
+}
+
+// normalizeACPToolCall fills the transcript's structured tool-call contract
+// from an ACP title when an adapter supplies no raw input. Codex ACP currently
+// reports file reads as titles such as "Read file '/path/to/file'", while other
+// adapters often provide the same information in RawInput.
+func normalizeACPToolCall(title string, input json.RawMessage) (string, json.RawMessage) {
+	if len(input) != 0 {
+		return title, input
+	}
+
+	const readFilePrefix = "read file "
+	trimmed := strings.TrimSpace(title)
+	if !strings.HasPrefix(strings.ToLower(trimmed), readFilePrefix) {
+		return title, input
+	}
+	path := strings.TrimSpace(trimmed[len(readFilePrefix):])
+	if len(path) >= 2 {
+		if quote := path[0]; (quote == '\'' || quote == '"' || quote == '`') && path[len(path)-1] == quote {
+			path = path[1 : len(path)-1]
+		}
+	}
+	if path == "" {
+		return title, input
+	}
+
+	normalized, err := json.Marshal(map[string]string{"file_path": path})
+	if err != nil {
+		return title, input
+	}
+	return "Read", normalized
 }
 
 // toolCallName returns the human-readable tool name a permission decision is

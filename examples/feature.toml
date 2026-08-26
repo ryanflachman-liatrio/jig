@@ -27,6 +27,7 @@
 #   - three bounded loops: human revise loop on plan, automated QA loop on implement
 #   - deterministic gates ([step.validate]) and on_failure policies
 #   - inline inputs, worktree isolation, and [defaults] inheritance
+#   - backend / transport — Codex through its ACP adapter (intake)
 #   - inject_context — explicit per-step opt-out of the engine-assembled
 #     step-context preamble (research_frontend)
 #   - [step.context] — author-supplied purpose/notes supplementing that preamble;
@@ -124,6 +125,8 @@ skill          = "skills/intake"
 inputs         = ["request.md", { path = "conventions.md", inline = true }]
 schema_file    = "schemas/intake.json"
 allowed_tools  = ["Read", "Grep", "Glob"]
+backend        = "codex"
+transport      = "acp"
 effort         = "medium"      # override [defaults] "high" — triage is cheap
 max_budget_usd = 1.0           # tighter ceiling for this lightweight step
 block_on       = "intake.status == 'blocked'"  # pause and ask the user when the request is ambiguous

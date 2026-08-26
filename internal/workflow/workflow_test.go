@@ -169,6 +169,69 @@ allowed_tools = ["Read"]
 		}
 	})
 
+	t.Run("codex defaults to acp", func(t *testing.T) {
+		toml := `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "agent"
+skill = "skills/a"
+backend = "codex"
+allowed_tools = ["Read"]
+`
+		wf, err := Decode(toml, dir)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		a := wf.Steps[wf.index["a"]]
+		if a.Backend != BackendCodex || a.Transport != TransportACP {
+			t.Errorf("a = %s/%s, want codex/acp", a.Backend, a.Transport)
+		}
+	})
+
+	t.Run("cursor defaults to acp", func(t *testing.T) {
+		toml := `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "agent"
+skill = "skills/a"
+backend = "cursor"
+allowed_tools = ["Read"]
+`
+		wf, err := Decode(toml, dir)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		a := wf.Steps[wf.index["a"]]
+		if a.Backend != BackendCursor || a.Transport != TransportACP {
+			t.Errorf("a = %s/%s, want cursor/acp", a.Backend, a.Transport)
+		}
+	})
+
+	t.Run("codex sdk transport is invalid", func(t *testing.T) {
+		toml := `
+[workflow]
+name = "x"
+version = "1"
+[[step]]
+id = "a"
+type = "agent"
+skill = "skills/a"
+backend = "codex"
+transport = "sdk"
+allowed_tools = ["Read"]
+`
+		_, err := Decode(toml, dir)
+		if err == nil || !strings.Contains(err.Error(), "requires transport") {
+			t.Fatalf("error = %v, want invalid Codex transport", err)
+		}
+	})
+
 	t.Run("unknown backend", func(t *testing.T) {
 		toml := `
 [workflow]

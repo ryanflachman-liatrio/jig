@@ -41,7 +41,7 @@ max_thinking_tokens = 8000
 max_budget_usd      = 5.0            # per-step cost ceiling
 cwd                 = "."
 permission_mode     = "acceptEdits"
-backend             = "claude"       # agent vendor (claude today)
+backend             = "claude"       # agent vendor (claude or cursor today)
 transport           = "sdk"          # sdk | acp (how jig reaches the backend)
 max_parallel        = 4
 artifacts_dir       = ".jig/artifacts"   # run artifacts live outside the working tree
@@ -129,12 +129,18 @@ protocol) run it. Selection is TOML-only — there is no process-wide env var.
 
 | Field | Default | Values today | Notes |
 |---|---|---|---|
-| `backend` | `claude` | `claude` | Vendor. Cursor / Codex / Gemini are not implemented yet. |
-| `transport` | `sdk` | `sdk` \| `acp` | `sdk` = Claude Agent SDK; `acp` = ACP→Claude via `@agentclientprotocol/claude-agent-acp@0.70.0` |
+| `backend` | `claude` | `claude` \| `cursor` \| `codex` | Vendor. Gemini is not implemented yet. |
+| `transport` | backend-aware | `sdk` \| `acp` | Claude defaults to `sdk` and supports `sdk` or `acp`; Cursor and Codex use `acp`. ACP reaches Claude through `@agentclientprotocol/claude-agent-acp@0.70.0`, Cursor through native `cursor-agent acp`, and Codex through `@agentclientprotocol/codex-acp@1.6.2`. |
 
-Inheritance matches `model` / `effort`: step → `[defaults]` → engine default.
-Unknown values fail at `jig validate`. Capability mismatches (e.g. `transport =
-"acp"` with `[step.schema]`) fail closed at execute time.
+Inheritance matches `model` / `effort`: step → `[defaults]` → a backend-aware
+default (`claude` → `sdk`, `cursor` / `codex` → `acp`). Unknown values and invalid
+backend/transport pairs fail at `jig validate`. Capability mismatches (e.g.
+`transport = "acp"` with `[step.schema]`) fail closed at execute time.
+
+Codex's CLI has no native ACP server. `backend = "codex"` starts the
+`@agentclientprotocol/codex-acp` stdio adapter, which drives the Codex App
+Server using the operator's existing Codex login. Do not use `codex exec` or
+Codex's MCP server as a substitute; see [Codex ACP compatibility gate](research/codex-acp.md).
 
 Interactive steps may enable `AskUserQuestion` with either transport. The ACP
 path advertises form elicitation only and supports text, single-select, and
@@ -154,6 +160,12 @@ id        = "acp-spike"
 type      = "agent"
 transport = "acp"      # ACP→Claude for this step only
 skill     = "skills/…"
+```
+
+```toml
+[defaults]
+backend   = "codex"
+transport = "acp"
 ```
 
 ### Command step

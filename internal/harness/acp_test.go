@@ -279,6 +279,29 @@ func TestOnEvent_ToolCallUpdateEmitsToolUseAndResult(t *testing.T) {
 	}
 }
 
+func TestOnEvent_NormalizesTitleOnlyFileRead(t *testing.T) {
+	s := newTestSession()
+	const path = "/workspace/internal/tui/monitor/monitor_transcript.go"
+	s.onEvent(acp.Event{Kind: acp.EventToolCall, ToolID: "read-1", Title: "Read file '" + path + "'"})
+	drainEvents(s.events)
+
+	s.onEvent(acp.Event{Kind: acp.EventToolCallUpdate, ToolID: "read-1", Status: "completed"})
+	got := drainEvents(s.events)
+	if len(got) == 0 || got[0].Type != EventToolUse {
+		t.Fatalf("first event = %+v, want tool use", got)
+	}
+	if got[0].Name != "Read" {
+		t.Errorf("EventToolUse.Name = %q, want Read", got[0].Name)
+	}
+	var input map[string]string
+	if err := json.Unmarshal(got[0].Input, &input); err != nil {
+		t.Fatalf("EventToolUse.Input = %q, want JSON: %v", got[0].Input, err)
+	}
+	if input["file_path"] != path {
+		t.Errorf("EventToolUse.Input[file_path] = %q, want %q", input["file_path"], path)
+	}
+}
+
 func TestOnEvent_ToolCallUpdateFailed(t *testing.T) {
 	s := newTestSession()
 	s.onEvent(acp.Event{Kind: acp.EventToolCall, ToolID: "B", Title: "some tool"})

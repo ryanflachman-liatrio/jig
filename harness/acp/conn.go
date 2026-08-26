@@ -17,12 +17,15 @@ import (
 // receive session/update events as they arrive rather than waiting for a
 // whole turn to finish and reading them back afterward.
 type Conn struct {
-	cmd    *exec.Cmd
-	rpc    *acpsdk.ClientSideConnection
-	client *Client
+	cmd           *exec.Cmd
+	rpc           *acpsdk.ClientSideConnection
+	client        *Client
+	sessionConfig map[string][]acpsdk.SessionConfigOption
 
 	// ProtocolVersion is the version the adapter reported during Initialize.
 	ProtocolVersion int
+	// SupportsLoadSession is negotiated during Initialize.
+	SupportsLoadSession bool
 }
 
 // Connect spawns the adapter and performs the ACP Initialize handshake,
@@ -80,6 +83,54 @@ func Connect(ctx context.Context, decide Decider, onUpdate func(Event), elicit E
 	return &Conn{cmd: cmd, rpc: rpc, client: client, ProtocolVersion: int(initResp.ProtocolVersion)}, nil
 }
 
+// ConnectCodex spawns the Codex ACP adapter and performs the ACP Initialize
+// handshake. The adapter reads the operator's existing Codex CLI login; jig
+// deliberately does not provide credentials or select an authentication method.
+func ConnectCodex(ctx context.Context, decide Decider, onUpdate func(Event)) (*Conn, error) {
+	npxPath, err := exec.LookPath("npx")
+	if err != nil {
+		return nil, fmt.Errorf("npx not found on PATH: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, npxPath, "-y", "@agentclientprotocol/codex-acp@1.6.2")
+	var stderrBuf bytes.Buffer
+	cmd.Stderr = &stderrBuf
+	configureProcess(cmd)
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, fmt.Errorf("stdin pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("stdout pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start codex-acp: %w", err)
+	}
+
+	client := &Client{Decide: decide, OnUpdate: onUpdate}
+	rpc := acpsdk.NewClientSideConnection(client, stdin, stdout)
+	initResp, err := rpc.Initialize(ctx, acpsdk.InitializeRequest{
+		ProtocolVersion: acpsdk.ProtocolVersionNumber,
+	})
+	if err != nil {
+		_ = killProcess(cmd)
+		_ = cmd.Wait()
+		if msg := strings.TrimSpace(stderrBuf.String()); msg != "" {
+			return nil, fmt.Errorf("initialize: %w\nadapter output: %s", err, msg)
+		}
+		return nil, fmt.Errorf("initialize: %w", err)
+	}
+
+	return &Conn{
+		cmd:                 cmd,
+		rpc:                 rpc,
+		client:              client,
+		ProtocolVersion:     int(initResp.ProtocolVersion),
+		SupportsLoadSession: initResp.AgentCapabilities.LoadSession,
+	}, nil
+}
+
 func clientCapabilities(elicit Elicitor) acpsdk.ClientCapabilities {
 	caps := acpsdk.ClientCapabilities{}
 	if elicit != nil {
@@ -96,7 +147,126 @@ func (c *Conn) NewSession(ctx context.Context, cwd string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("new session: %w", err)
 	}
-	return string(resp.SessionId), nil
+	sessionID := string(resp.SessionId)
+	c.setSessionConfig(sessionID, resp.ConfigOptions)
+	return sessionID, nil
+}
+
+// LoadSession restores a previously-created ACP session into this connection.
+func (c *Conn) LoadSession(ctx context.Context, cwd, sessionID string) error {
+	if !c.SupportsLoadSession {
+		return fmt.Errorf("adapter did not advertise session/load")
+	}
+	resp, err := c.rpc.LoadSession(ctx, acpsdk.LoadSessionRequest{
+		Cwd:        cwd,
+		McpServers: []acpsdk.McpServer{},
+		SessionId:  acpsdk.SessionId(sessionID),
+	})
+	if err != nil {
+		return fmt.Errorf("load session: %w", err)
+	}
+	c.setSessionConfig(sessionID, resp.ConfigOptions)
+	return nil
+}
+
+// SetSelectConfig applies an advertised select configuration option by its
+// adapter-provided ID.
+func (c *Conn) SetSelectConfig(ctx context.Context, sessionID, configID, value string) error {
+	if value == "" {
+		return nil
+	}
+	options, ok := c.selectOptions(sessionID, configID)
+	if !ok {
+		return fmt.Errorf("adapter did not advertise session config option %q", configID)
+	}
+	if !containsConfigValue(options, value) {
+		return fmt.Errorf("%s %q is unavailable; adapter advertises %s", configID, value, strings.Join(options, ", "))
+	}
+
+	resp, err := c.rpc.SetSessionConfigOption(ctx, acpsdk.SetSessionConfigOptionRequest{
+		ValueId: &acpsdk.SetSessionConfigOptionValueId{
+			ConfigId:  acpsdk.SessionConfigId(configID),
+			SessionId: acpsdk.SessionId(sessionID),
+			Value:     acpsdk.SessionConfigValueId(value),
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("set %s %q: %w", configID, value, err)
+	}
+	c.setSessionConfig(sessionID, resp.ConfigOptions)
+	return nil
+}
+
+// SetSelectConfigByCategory applies a select option found by ACP's semantic
+// category. Categories are optional in ACP, so adapters that omit one fail
+// closed rather than being guessed from an adapter-specific option ID.
+func (c *Conn) SetSelectConfigByCategory(
+	ctx context.Context,
+	sessionID string,
+	category acpsdk.SessionConfigOptionCategory,
+	value string,
+) error {
+	if value == "" {
+		return nil
+	}
+	configID, ok := c.selectOptionIDByCategory(sessionID, category)
+	if !ok {
+		return fmt.Errorf("adapter did not advertise a %q session config option", category)
+	}
+	return c.SetSelectConfig(ctx, sessionID, configID, value)
+}
+
+func (c *Conn) setSessionConfig(sessionID string, options []acpsdk.SessionConfigOption) {
+	if c.sessionConfig == nil {
+		c.sessionConfig = make(map[string][]acpsdk.SessionConfigOption)
+	}
+	c.sessionConfig[sessionID] = options
+}
+
+func (c *Conn) selectOptions(sessionID, configID string) ([]string, bool) {
+	for _, option := range c.sessionConfig[sessionID] {
+		if option.Select == nil || string(option.Select.Id) != configID {
+			continue
+		}
+		return configOptionValues(option.Select.Options), true
+	}
+	return nil, false
+}
+
+func (c *Conn) selectOptionIDByCategory(sessionID string, category acpsdk.SessionConfigOptionCategory) (string, bool) {
+	for _, option := range c.sessionConfig[sessionID] {
+		if option.Select == nil || option.Select.Category == nil || *option.Select.Category != category {
+			continue
+		}
+		return string(option.Select.Id), true
+	}
+	return "", false
+}
+
+func configOptionValues(options acpsdk.SessionConfigSelectOptions) []string {
+	var values []string
+	if options.Ungrouped != nil {
+		for _, option := range *options.Ungrouped {
+			values = append(values, string(option.Value))
+		}
+	}
+	if options.Grouped != nil {
+		for _, group := range *options.Grouped {
+			for _, option := range group.Options {
+				values = append(values, string(option.Value))
+			}
+		}
+	}
+	return values
+}
+
+func containsConfigValue(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 // Prompt sends one user turn and blocks until the agent finishes responding,

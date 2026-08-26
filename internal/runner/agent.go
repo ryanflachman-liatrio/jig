@@ -256,10 +256,10 @@ func captureStream(
 		case harness.EventSessionID:
 			noteSession(ev.SessionID)
 		case harness.EventText:
-			buf = append(buf, transcript.Block{Type: transcript.BlockText, Text: ev.Text})
+			buf = appendStreamBlock(buf, transcript.Block{Type: transcript.BlockText, Text: ev.Text})
 		case harness.EventThinking:
 			// Thinking may be empty or redacted; capture whatever is present.
-			buf = append(buf, transcript.Block{Type: transcript.BlockThinking, Text: ev.Text})
+			buf = appendStreamBlock(buf, transcript.Block{Type: transcript.BlockThinking, Text: ev.Text})
 		case harness.EventToolUse:
 			buf = append(buf, transcript.Block{
 				Type:      transcript.BlockToolUse,
@@ -367,9 +367,28 @@ func captureStream(
 	// conversation; without an early EventSessionID the backend may not have
 	// surfaced one, in which case SessionID stays "" and resume degrades to a
 	// fresh restart.
-	res := failResult("agent connection closed unexpectedly", start)
+	if len(buf) > 0 {
+		appendEntry(transcript.RoleAssistant, guardBlocks(buf, req, rep, fw))
+	}
+	const errText = "agent connection closed unexpectedly"
+	appendEntry(transcript.RoleResult, []transcript.Block{{Type: transcript.BlockText, Text: errText}})
+	res := failResult(errText, start)
 	res.SessionID = sessionID
 	return res, nil
+}
+
+// appendStreamBlock joins adjacent text-like stream chunks. ACP adapters choose
+// their own chunk sizes; keeping that transport detail out of the transcript
+// gives all harnesses one stable rendering and persistence format.
+func appendStreamBlock(blocks []transcript.Block, next transcript.Block) []transcript.Block {
+	if len(blocks) > 0 {
+		last := &blocks[len(blocks)-1]
+		if last.Type == next.Type && (next.Type == transcript.BlockText || next.Type == transcript.BlockThinking) {
+			last.Text += next.Text
+			return blocks
+		}
+	}
+	return append(blocks, next)
 }
 
 // guardBlocks scans every tool_use block's input for policy violations when

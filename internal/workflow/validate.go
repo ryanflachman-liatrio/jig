@@ -142,10 +142,13 @@ func (v *validator) checkTuning(s *Step) {
 		v.errf("step %q max_budget_usd must be >= 0", s.ID)
 	}
 	if s.Backend != "" && !validBackend(s.Backend) {
-		v.errf("step %q has invalid backend %q (want %s|%s)", s.ID, s.Backend, BackendClaude, BackendCursor)
+		v.errf("step %q has invalid backend %q (want %s|%s|%s)", s.ID, s.Backend, BackendClaude, BackendCursor, BackendCodex)
 	}
 	if s.Transport != "" && !validTransport(s.Transport) {
 		v.errf("step %q has invalid transport %q (want %s|%s)", s.ID, s.Transport, TransportSDK, TransportACP)
+	}
+	if (s.Backend == BackendCursor || s.Backend == BackendCodex) && s.Transport != TransportACP {
+		v.errf("step %q backend %q requires transport %q", s.ID, s.Backend, TransportACP)
 	}
 }
 

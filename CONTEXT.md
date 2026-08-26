@@ -62,6 +62,42 @@ The single unboxed dim hint line rendered directly below a screen's panel(s),
 listing the keybindings available in the current state. Never enclosed in a panel.
 _Avoid_: Help line, status bar, keybind bar.
 
+**Transcript item**:
+One normalized, page-local unit of Monitor presentation derived from one or more
+durable transcript blocks. It is the unit of transcript rendering, search,
+navigation, expansion, and restored monitor state.
+_Avoid_: Entry, block, group, row.
+
+**Tool exchange**:
+A Transcript item representing one tool use and its matching tool result within
+the same generation, iteration, and attempt; it exposes both input and output
+through one disclosure.
+_Avoid_: Tool group, tool call group, result row.
+
+**Result-only tool item**:
+A Transcript item for a tool result whose matching use is not in the loaded
+page or is absent from the durable transcript. Its origin is unknown and it is
+not presented as user guidance.
+_Avoid_: Orphan result, successful tool exchange.
+
+**Use-only tool item**:
+A Transcript item for a tool use whose matching result is not in the loaded
+page or is absent from the durable transcript. It is pending only while its
+step is running; otherwise its outcome is unknown.
+_Avoid_: Completed tool, failed tool.
+
+**User guidance**:
+Human-authored transcript text represented by a `RoleUser` text block, including
+an initial instruction and later resume input. It is prose, distinct from a
+role-user tool result, and receives the user-message presentation.
+_Avoid_: Tool result, user entry.
+
+**Unsupported transcript item**:
+A quiet, inspectable Transcript item for durable transcript content whose role
+or block type the Monitor does not recognize. It preserves evidence and order
+without assigning an unsupported semantic meaning.
+_Avoid_: Dropped content, error.
+
 ## Execution & code integration
 
 The vocabulary of how jig carries code between steps and lets an operator rewind a
@@ -129,13 +165,17 @@ transport's lifecycle and normalizes its output into jig's transcript model.
 _Avoid_: Backend (reserve for the vendor/model being driven), adapter, driver.
 
 **Backend**:
-The vendor, CLI, or model a Harness talks to (Claude today; Cursor, Codex,
+The vendor, CLI, or model a Harness talks to (Claude, Cursor, and Codex today;
 Gemini later) — the *target*, not the jig code that talks to it. Selected in
 the workflow TOML (`backend` / `transport` on `[defaults]` / `[[step]]`), never
 via `JIG_HARNESS`. One Harness could in principle target more than one backend
 (an ACP Harness could drive Cursor as well as Claude via the same transport).
 Today `AcpHarness` reaches **Claude** only (Zed’s `claude-code-acp` adapter),
-not Cursor.
+while `CursorHarness` uses Cursor's native `cursor-agent acp` server. Codex is
+reached through `CodexHarness`, which starts the `@agentclientprotocol/codex-acp`
+stdio adapter. The adapter drives Codex's App Server and reuses the operator's
+existing Codex login; neither `codex exec` nor its MCP server is an ACP
+substitute. See [`docs/research/codex-acp.md`](docs/research/codex-acp.md).
 _Avoid_: Harness (a backend is who you're talking to; a Harness is the code
 that talks).
 

@@ -19,6 +19,9 @@ func TestFor(t *testing.T) {
 		{name: "claude acp", backend: "claude", transport: "acp", wantName: "acp"},
 		{name: "cursor uses cursor harness", backend: "cursor", transport: "acp", wantName: "cursor"},
 		{name: "cursor no transport uses cursor harness", backend: "cursor", wantName: "cursor"},
+		{name: "codex uses codex harness", backend: "codex", transport: "acp", wantName: "codex"},
+		{name: "codex no transport uses codex harness", backend: "codex", wantName: "codex"},
+		{name: "codex rejects sdk", backend: "codex", transport: "sdk", wantErr: true},
 		{name: "unknown backend", backend: "unknown", transport: "acp", wantErr: true},
 		{name: "unknown transport", backend: "claude", transport: "grpc", wantErr: true},
 	}
