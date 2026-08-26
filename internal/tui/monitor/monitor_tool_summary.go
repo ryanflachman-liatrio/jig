@@ -5,12 +5,16 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"jig/internal/transcript"
 	"jig/internal/tui/shared"
 )
 
 type toolCallSummary struct {
+	icon    string
+	action  string
+	detail  string
 	label   string
 	preview string
 }
@@ -61,7 +65,10 @@ func summarizeToolCall(blk transcript.Block) toolCallSummary {
 }
 
 func toolSummary(icon, action, detail string) toolCallSummary {
-	s := toolCallSummary{label: strings.TrimSpace(icon + " " + action)}
+	icon = sanitizeToolSummary(icon)
+	action = sanitizeToolSummary(action)
+	detail = sanitizeToolSummary(detail)
+	s := toolCallSummary{icon: icon, action: action, detail: detail, label: strings.TrimSpace(icon + " " + action)}
 	if detail != "" {
 		s.preview = "· " + detail
 	}
@@ -153,7 +160,19 @@ func displayToolName(name string) string {
 	if i := strings.LastIndex(name, "__"); i >= 0 {
 		name = name[i+2:]
 	}
-	return strings.TrimSpace(name)
+	return sanitizeToolSummary(name)
+}
+
+// sanitizeToolSummary keeps collapsed activity rows terminal-safe. Raw tool
+// names and inputs remain available only in expanded, verbatim detail views.
+func sanitizeToolSummary(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
+	return strings.Join(strings.Fields(s), " ")
 }
 
 func stringArg(args map[string]json.RawMessage, keys ...string) string {

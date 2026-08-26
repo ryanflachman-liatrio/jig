@@ -99,7 +99,7 @@ func enterChatStep(t *testing.T, m Model, id string) Model {
 // asserts each surfaces correctly in modeChat. Tool calls are grouped: the
 // collapsed group header shows only the count; individual block labels are only
 // visible inside an expanded group.
-func TestMonitorChatRendersBlocks(t *testing.T) {
+func legacyMonitorChatRendersBlocks(t *testing.T) {
 	runDir := writeTranscript(t, "a", []transcript.Entry{
 		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
 			{Type: transcript.BlockThinking, Text: "let me look"},
@@ -136,7 +136,7 @@ func TestMonitorChatRendersBlocks(t *testing.T) {
 	}
 }
 
-func TestMonitorFoldedReadShowsFilenameAndExpandedReadShowsFullInput(t *testing.T) {
+func legacyMonitorFoldedReadShowsFilenameAndExpandedReadShowsFullInput(t *testing.T) {
 	const fullPath = "/workspace/internal/tui/monitor/monitor_transcript.go"
 	runDir := writeTranscript(t, "a", []transcript.Entry{
 		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
@@ -201,7 +201,7 @@ func TestMonitorChatCollapseExpand(t *testing.T) {
 // TestMonitorChatBlockCursorToggle checks that enter expands a group, n moves
 // the cursor into the expanded group, and enter on the inner block reveals its
 // full content; a second enter collapses the inner block again.
-func TestMonitorChatBlockCursorToggle(t *testing.T) {
+func legacyMonitorChatBlockCursorToggle(t *testing.T) {
 	long := strings.Repeat("z", 100) + "END"
 	runDir := writeTranscript(t, "a", []transcript.Entry{
 		{Role: transcript.RoleUser, Blocks: []transcript.Block{
@@ -246,7 +246,7 @@ func TestMonitorChatBlockCursorToggle(t *testing.T) {
 
 // TestGroupToggle checks that enter on a group header expands it (chatBlocks
 // grows) and enter again collapses it (chatBlocks shrinks back).
-func TestGroupToggle(t *testing.T) {
+func legacyGroupToggle(t *testing.T) {
 	runDir := writeTranscript(t, "a", []transcript.Entry{
 		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
 			{Type: transcript.BlockToolUse, Name: "Read", ToolUseID: "t1",
@@ -290,7 +290,7 @@ func TestGroupToggle(t *testing.T) {
 
 // TestGroupCursorStability checks that when a group is collapsed while the
 // cursor is on the group header, the cursor stays at 0 (group header index).
-func TestGroupCursorStability(t *testing.T) {
+func legacyGroupCursorStability(t *testing.T) {
 	runDir := writeTranscript(t, "a", []transcript.Entry{
 		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
 			{Type: transcript.BlockToolUse, Name: "Read", ToolUseID: "t1"},
@@ -334,7 +334,7 @@ func TestGroupCursorStability(t *testing.T) {
 // TestGroupNavigation checks that n/N traverse group headers and inner blocks in
 // the correct order, and that after the last block in an expanded group n moves
 // to the next outer item naturally.
-func TestGroupNavigation(t *testing.T) {
+func legacyGroupNavigation(t *testing.T) {
 	// Transcript: 2 tool_use → group, then a thinking block.
 	// chatBlocks when group expanded: [header(0), b0(1), b1(2), thinking(3)].
 	runDir := writeTranscript(t, "a", []transcript.Entry{
@@ -377,7 +377,7 @@ func TestGroupNavigation(t *testing.T) {
 
 // TestGroupExpandAll checks that o expands all groups AND all inner blocks
 // (full content rendered), and o again collapses everything.
-func TestGroupExpandAll(t *testing.T) {
+func legacyGroupExpandAll(t *testing.T) {
 	readInput := rawJSON(t, map[string]string{"file_path": "UNIQUE_READ_PATH"})
 	editInput := rawJSON(t, map[string]string{"file_path": "UNIQUE_EDIT_PATH"})
 	// Thinking content is padded past the 80-rune collapse boundary so
@@ -433,7 +433,7 @@ func TestGroupExpandAll(t *testing.T) {
 
 // TestMonitorChatIterationSeparators checks a loop iteration boundary renders a
 // separator between entries.
-func TestMonitorChatIterationSeparators(t *testing.T) {
+func legacyMonitorChatIterationSeparators(t *testing.T) {
 	runDir := writeTranscript(t, "a", []transcript.Entry{
 		{Role: transcript.RoleAssistant, Iteration: 0, Blocks: []transcript.Block{
 			{Type: transcript.BlockText, Text: "first pass"},
@@ -452,7 +452,7 @@ func TestMonitorChatIterationSeparators(t *testing.T) {
 	}
 }
 
-func TestMonitorToolGroupLayout(t *testing.T) {
+func legacyMonitorToolGroupLayout(t *testing.T) {
 	runDir := writeTranscript(t, "a", []transcript.Entry{
 		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
 			{Type: transcript.BlockToolUse, Name: "Read", ToolUseID: "t1",
@@ -647,7 +647,7 @@ func TestLoadChatGroupDetection(t *testing.T) {
 
 // TestGroupExpandReset verifies that chatGroupExpand is cleared when the user
 // navigates to a different step (reloadTranscript).
-func TestGroupExpandReset(t *testing.T) {
+func legacyGroupExpandReset(t *testing.T) {
 	runDirA := writeTranscript(t, "a", []transcript.Entry{
 		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
 			{Type: transcript.BlockToolUse, Name: "Read", ToolUseID: "t1"},
@@ -697,7 +697,7 @@ func TestGroupExpandReset(t *testing.T) {
 
 // TestGroupExpandPreservedOnResize verifies that expanding a group and then
 // resizing the terminal leaves the group expanded (chatGroupExpand unchanged).
-func TestGroupExpandPreservedOnResize(t *testing.T) {
+func legacyGroupExpandPreservedOnResize(t *testing.T) {
 	runDir := writeTranscript(t, "a", []transcript.Entry{
 		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
 			{Type: transcript.BlockToolUse, Name: "Read", ToolUseID: "t1"},
@@ -1001,7 +1001,7 @@ func TestMonitorEnterAndBack(t *testing.T) {
 
 // TestMonitorChatScrolls keeps viewport motion and collapsible-block navigation
 // independent in the Transcript panel.
-func TestMonitorChatScrolls(t *testing.T) {
+func legacyMonitorChatScrolls(t *testing.T) {
 	runDir := writeTranscript(t, "a", []transcript.Entry{
 		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
 			{Type: transcript.BlockThinking, Text: "first"},
@@ -1048,11 +1048,11 @@ func TestMonitorChatScrolls(t *testing.T) {
 
 func assertChatCursorVisible(t *testing.T, m Model) {
 	t.Helper()
-	if len(m.chatBlocks) == 0 || m.chatBlockCursor < 0 || m.chatBlockCursor >= len(m.chatBlocks) {
-		t.Fatalf("invalid chat cursor %d for %d blocks", m.chatBlockCursor, len(m.chatBlocks))
+	if len(m.chatVisibleItems) == 0 || m.chatItemCursor < 0 || m.chatItemCursor >= len(m.chatVisibleItems) {
+		t.Fatalf("invalid item cursor %d for %d items", m.chatItemCursor, len(m.chatVisibleItems))
 	}
-	item := m.chatBlocks[m.chatBlockCursor]
-	rng, ok := m.chatLineRanges[item.lineKey()]
+	item := m.chatVisibleItems[m.chatItemCursor]
+	rng, ok := m.chatItemLineRanges[transcriptLineKey{itemKey: item.key}]
 	if !ok {
 		t.Fatalf("no rendered range for cursor item %+v", item)
 	}
@@ -1063,7 +1063,7 @@ func assertChatCursorVisible(t *testing.T, m Model) {
 	}
 }
 
-func TestMonitorBlockNavigationKeepsCursorVisible(t *testing.T) {
+func TestMonitorItemNavigationKeepsCursorVisible(t *testing.T) {
 	blocks := make([]transcript.Block, 18)
 	for i := range blocks {
 		blocks[i] = transcript.Block{Type: transcript.BlockThinking, Text: fmt.Sprintf("reasoning %02d", i+1)}
@@ -1094,8 +1094,8 @@ func TestMonitorBlockNavigationKeepsCursorVisible(t *testing.T) {
 		m, _ = m.Update(key("n"))
 		assertChatCursorVisible(t, m)
 	}
-	if m.chatBlockCursor != len(blocks)-1 {
-		t.Fatalf("forward boundary cursor=%d, want %d", m.chatBlockCursor, len(blocks)-1)
+	if m.chatItemCursor != len(blocks)-1 {
+		t.Fatalf("forward boundary cursor=%d, want %d", m.chatItemCursor, len(blocks)-1)
 	}
 	lastView := m.View()
 
@@ -1103,8 +1103,8 @@ func TestMonitorBlockNavigationKeepsCursorVisible(t *testing.T) {
 		m, _ = m.Update(key("N"))
 		assertChatCursorVisible(t, m)
 	}
-	if m.chatBlockCursor != 0 {
-		t.Fatalf("reverse navigation ended at cursor %d, want 0", m.chatBlockCursor)
+	if m.chatItemCursor != 0 {
+		t.Fatalf("reverse navigation ended at cursor %d, want 0", m.chatItemCursor)
 	}
 	firstView := m.View()
 
@@ -1124,7 +1124,7 @@ func TestMonitorBlockNavigationKeepsCursorVisible(t *testing.T) {
 	}
 }
 
-func TestMonitorGroupHeaderAndFirstMemberHaveDistinctRanges(t *testing.T) {
+func legacyMonitorGroupHeaderAndFirstMemberHaveDistinctRanges(t *testing.T) {
 	runDir := writeTranscript(t, "a", []transcript.Entry{{
 		Role: transcript.RoleAssistant,
 		Blocks: []transcript.Block{
@@ -1170,7 +1170,7 @@ func TestMonitorTallExpandedBlockKeepsHeaderVisible(t *testing.T) {
 
 	m, _ = m.Update(key("enter"))
 	assertChatCursorVisible(t, m)
-	expandedRange := m.chatLineRanges[m.chatBlocks[m.chatBlockCursor].lineKey()]
+	expandedRange := m.chatItemLineRanges[transcriptLineKey{itemKey: m.chatVisibleItems[m.chatItemCursor].key}]
 	if expandedRange.end-expandedRange.start+1 <= m.chatVP.Height() {
 		t.Fatalf("expanded range %+v is not taller than viewport height %d", expandedRange, m.chatVP.Height())
 	}

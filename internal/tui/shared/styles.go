@@ -67,13 +67,25 @@ type Styles struct {
 		BlurredBorder color.Color
 	}
 	Chat struct {
-		Thinking    lipgloss.Style
-		ToolCall    lipgloss.Style
-		ToolResult  lipgloss.Style
-		Hint        lipgloss.Style
-		BlockCursor lipgloss.Style
-		CodeBlock   lipgloss.Style
-		CodeText    lipgloss.Style
+		// UserGuidance distinguishes operator-authored Markdown from assistant prose
+		// without introducing monitor-local colors.
+		UserGuidance lipgloss.Style
+		Thinking     lipgloss.Style
+		ToolCall     lipgloss.Style
+		ToolResult   lipgloss.Style
+		Hint         lipgloss.Style
+		BlockCursor  lipgloss.Style
+		CodeBlock    lipgloss.Style
+		CodeText     lipgloss.Style
+
+		// TranscriptActivity and TranscriptDetail form the quiet, one-level
+		// disclosure hierarchy used by the run monitor. They intentionally do
+		// not encode activity kind with a full-width bar or cursor background.
+		TranscriptActivity lipgloss.Style
+		TranscriptSelected lipgloss.Style
+		TranscriptDetail   lipgloss.Style
+		TranscriptLabel    lipgloss.Style
+		TranscriptError    lipgloss.Style
 
 		// Left thick-bar accents ("▌") coloring each chat block by role. Crush's
 		// signature block affordance; see withBar in monitor.go.
@@ -213,6 +225,7 @@ func DefaultTheme() Styles {
 	s.Textarea.BlurredBorder = lipgloss.Color(hexIron)
 
 	s.Chat.Thinking = lipgloss.NewStyle().Italic(true).Foreground(fgDim)
+	s.Chat.UserGuidance = lipgloss.NewStyle().Foreground(fgMuted).PaddingLeft(1)
 	s.Chat.ToolCall = lipgloss.NewStyle().Foreground(primary)
 	s.Chat.ToolResult = lipgloss.NewStyle().Foreground(accent)
 	s.Chat.Hint = lipgloss.NewStyle().Foreground(fgDim)
@@ -223,6 +236,11 @@ func DefaultTheme() Styles {
 		Background(bgLeast).
 		Padding(0, 1)
 	s.Chat.CodeText = lipgloss.NewStyle().Background(bgLeast)
+	s.Chat.TranscriptActivity = lipgloss.NewStyle().Foreground(fgBase)
+	s.Chat.TranscriptSelected = lipgloss.NewStyle().Bold(true).Foreground(primary)
+	s.Chat.TranscriptDetail = lipgloss.NewStyle().Foreground(fgMuted)
+	s.Chat.TranscriptLabel = lipgloss.NewStyle().Bold(true).Foreground(fgMuted)
+	s.Chat.TranscriptError = lipgloss.NewStyle().Foreground(danger).Bold(true)
 
 	s.Chat.BarThinking = lipgloss.NewStyle().Foreground(fgDim)
 	s.Chat.BarToolCall = lipgloss.NewStyle().Foreground(primary)

@@ -152,7 +152,7 @@ func (m *Model) toggleCurrentFilter() {
 	case 7:
 		m.filters.result = !m.filters.result
 	}
-	m.rebuildLoadedChat(chatItem{})
+	m.rebuildTranscriptItemState(m.selectedTranscriptItemKey())
 	m.rerunSearch()
 }
 
@@ -196,10 +196,11 @@ func (m *Model) clearTranscriptView() {
 	m.searchHitCursor = 0
 	m.filterOpen = false
 	m.filters = transcriptFilters{}
-	m.rebuildLoadedChat(chatItem{})
+	m.rebuildTranscriptItemState(transcriptItemKey{})
 }
 
 func (m *Model) rerunSearch() {
+	m.rebuildTranscriptItemState(m.selectedTranscriptItemKey())
 	query := strings.TrimSpace(m.searchQuery)
 	m.searchHits = nil
 	m.searchHitCursor = 0
@@ -208,14 +209,12 @@ func (m *Model) rerunSearch() {
 	}
 
 	needle := strings.ToLower(query)
-	for _, e := range m.filteredEntries() {
-		for bi, blk := range e.Blocks {
-			text := searchableBlockText(blk)
+	for _, item := range m.chatVisibleItems {
+		for _, ref := range itemMembers(item) {
+			text := searchableBlockText(m.chatEntries[ref.entryIdx].Blocks[ref.blockIdx])
 			if strings.Contains(strings.ToLower(text), needle) {
-				m.searchHits = append(m.searchHits, searchHit{
-					key:     blockKey{seq: e.Seq, block: bi},
-					preview: searchPreview(text, needle),
-				})
+				m.searchHits = append(m.searchHits, searchHit{key: ref.key, preview: searchPreview(text, needle)})
+				break
 			}
 		}
 	}
@@ -266,15 +265,19 @@ func (m Model) currentSearchHit() (searchHit, bool) {
 }
 
 func (m *Model) applyCurrentSearchHit() {
-	hit, ok := m.currentSearchHit()
-	if !ok {
+	hit, found := m.currentSearchHit()
+	if !found {
 		return
 	}
-	if group, grouped := m.chatGroupForBlock[hit.key]; grouped {
-		m.chatGroupExpand[group] = true
+	for i, item := range m.chatVisibleItems {
+		for _, ref := range itemMembers(item) {
+			if ref.key == hit.key {
+				m.chatItemCursor = i
+				m.chatItemExpand[item.key] = true
+				break
+			}
+		}
 	}
-	m.chatExpand[hit.key] = true
-	m.rebuildActiveState(chatItem{key: hit.key})
 	m.chatAutoScroll = false
 	m.refreshPanels()
 	m.ensureCurrentSearchHitVisible()
@@ -292,15 +295,31 @@ func (m *Model) ensureCurrentSearchHitVisible() {
 	if !m.ready {
 		return
 	}
-	hit, ok := m.currentSearchHit()
-	if !ok {
+	hit, found := m.currentSearchHit()
+	if !found {
 		return
 	}
-	rng, ok := m.chatLineRanges[chatLineKey{blockKey: hit.key}]
+	var rng lineRange
+	var ok bool
+	for _, item := range m.chatVisibleItems {
+		for _, ref := range itemMembers(item) {
+			if ref.key == hit.key {
+				rng, ok = m.chatItemLineRanges[transcriptLineKey{itemKey: item.key}]
+				break
+			}
+		}
+	}
 	if !ok {
 		return
 	}
 	m.ensureTranscriptRangeVisible(rng)
+}
+
+func (m Model) selectedTranscriptItemKey() transcriptItemKey {
+	if m.chatItemCursor >= 0 && m.chatItemCursor < len(m.chatVisibleItems) {
+		return m.chatVisibleItems[m.chatItemCursor].key
+	}
+	return transcriptItemKey{}
 }
 
 func (m Model) searchStatus() string {

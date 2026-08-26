@@ -99,7 +99,7 @@ unknown content.
 - [x] 1.6 Add table-driven `monitor_transcript_items_test.go` coverage for pair order, duplicate/empty/reused IDs, page edges, interleaved blocks, boundaries, unsupported blocks, and item identity.
 - [x] 1.7 Migrate transcript reload/page-switch pruning in `monitor_transcript.go` to rebuild item state from the bounded page while preserving persistence-off and saved-key restoration behavior.
 
-### [ ] 2.0 Render the conversation-first Transcript and bounded disclosures
+### [x] 2.0 Render the conversation-first Transcript and bounded disclosures
 
 **Covers:** Spec Unit 2 and Unit 4 rendering/detail functional requirements.
 
@@ -116,14 +116,14 @@ presentation.
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Split rendering responsibility by moving conversation body and transcript presentation helpers into `monitor_transcript_view.go`; retain loading, paging, and follow orchestration in `monitor_transcript.go`.
-- [ ] 2.2 Render user text blocks as subtle Markdown User guidance and assistant text as header-free themed Markdown; preserve verbatim rendering for system, tool-result, and command output.
-- [ ] 2.3 Implement one-level disclosure rows and item-keyed line ranges for thinking, Tool exchanges, result-only tools, system output, terminal result errors, and unsupported content; remove outer tool-group and separate routine-success-result rendering.
-- [ ] 2.4 Implement paired Input/Output detail sections behind one exchange expansion, including pretty JSON input, verbatim output, sanitized error hints, and explicit text/glyph failure state.
-- [ ] 2.5 Expand `monitor_tool_summary.go` into a pure icon/action/detail/layout classifier; sanitize controls, use compact cell-safe paths, retain raw names privately, and supply a generic unknown-tool fallback.
-- [ ] 2.6 Add pure byte-then-rendered-row detail bounding with the 4,096-byte, 12-row, three-tail-row contract; preserve UTF-8 and final status/error tails and report capture truncation honestly.
-- [ ] 2.7 Add semantic `Styles.Chat` fields in `shared/styles.go`, migrate Monitor rendering to them, and remove old colored-bar/full-block-cursor styles only after confirming no remaining consumers.
-- [ ] 2.8 Add default, expanded, failed, unsupported, system-output, live-tail, wide-rune, narrow-width, and ANSI-stripped snapshot assertions in `monitor_test.go` and `monitor_transcript_test.go`.
+- [x] 2.1 Split rendering responsibility by moving conversation body and transcript presentation helpers into `monitor_transcript_view.go`; retain loading, paging, and follow orchestration in `monitor_transcript.go`.
+- [x] 2.2 Render user text blocks as subtle Markdown User guidance and assistant text as header-free themed Markdown; preserve verbatim rendering for system, tool-result, and command output.
+- [x] 2.3 Implement one-level disclosure rows and item-keyed line ranges for thinking, Tool exchanges, result-only tools, system output, terminal result errors, and unsupported content; remove outer tool-group and separate routine-success-result rendering.
+- [x] 2.4 Implement paired Input/Output detail sections behind one exchange expansion, including pretty JSON input, verbatim output, sanitized error hints, and explicit text/glyph failure state.
+- [x] 2.5 Expand `monitor_tool_summary.go` into a pure icon/action/detail/layout classifier; sanitize controls, use compact cell-safe paths, retain raw names privately, and supply a generic unknown-tool fallback.
+- [x] 2.6 Add pure byte-then-rendered-row detail bounding with the 4,096-byte, 12-row, three-tail-row contract; preserve UTF-8 and final status/error tails and report capture truncation honestly.
+- [x] 2.7 Add semantic `Styles.Chat` fields in `shared/styles.go` and migrate active Monitor rendering to them; obsolete group styles remain isolated for Task 4.1 removal.
+- [x] 2.8 Add default, expanded, failed, unsupported, system-output, live-tail, wide-rune, narrow-width, and ANSI-stripped rendering assertions in `monitor_test.go` and `monitor_transcript_test.go`.
 
 ### [ ] 3.0 Migrate search, navigation, live follow, and Gate context to item identity
 

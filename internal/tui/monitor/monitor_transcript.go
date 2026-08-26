@@ -175,7 +175,7 @@ func (m *Model) setChatPage(page transcript.Page, saved chatItem) {
 // navigation source. Filtering will later replace the visible slice while
 // retaining this same stable-key restoration behavior.
 func (m *Model) rebuildTranscriptItemState(saved transcriptItemKey) {
-	m.chatVisibleItems = m.chatItems
+	m.chatVisibleItems = m.filteredTranscriptItems()
 	if len(m.chatVisibleItems) == 0 {
 		m.chatItemCursor = 0
 		return
@@ -187,6 +187,28 @@ func (m *Model) rebuildTranscriptItemState(saved transcriptItemKey) {
 			return
 		}
 	}
+}
+
+// filteredTranscriptItems retains a complete conversation unit whenever one
+// of its members matches. In particular, a tool input or output hit never
+// splits the exchange into two independently visible rows.
+func (m Model) filteredTranscriptItems() []transcriptItem {
+	query := strings.TrimSpace(strings.ToLower(m.searchQuery))
+	if query == "" && !m.filters.active() {
+		return m.chatItems
+	}
+	visible := make([]transcriptItem, 0, len(m.chatItems))
+	for _, item := range m.chatItems {
+		for _, ref := range itemMembers(item) {
+			entry := m.chatEntries[ref.entryIdx]
+			block := entry.Blocks[ref.blockIdx]
+			if m.blockMatchesView(entry, block, query) {
+				visible = append(visible, item)
+				break
+			}
+		}
+	}
+	return visible
 }
 
 func (m Model) currentChatStepRunning() bool {
@@ -251,6 +273,9 @@ func (m *Model) rebuildLoadedChat(saved chatItem) {
 	flush()
 
 	m.rebuildActiveState(saved)
+	// Keep legacy callers that still rebuild the old render plan from exposing a
+	// stale item view while the migration removes that plan.
+	m.rebuildTranscriptItemState(m.selectedTranscriptItemKey())
 }
 
 func (m *Model) loadOlderChat() {
@@ -624,6 +649,9 @@ func (m *Model) chatBody() string {
 	if m.selKind == "file" && m.selFile != "" {
 		return m.fileBody()
 	}
+	if len(m.chatItems) > 0 {
+		return m.itemTranscriptBody()
+	}
 
 	var b strings.Builder
 
@@ -844,6 +872,10 @@ func (m Model) writeGroupHeader(b *strings.Builder, item renderItem, expanded, c
 func (m Model) writeBlock(b *strings.Builder, key blockKey, blk transcript.Block, role transcript.Role) {
 	switch blk.Type {
 	case transcript.BlockText:
+		if role == transcript.RoleUser {
+			m.writeUserGuidance(b, key, blk.Text)
+			return
+		}
 		if role == transcript.RoleSystem {
 			writeVerbatim(b, blk.Text)
 			return

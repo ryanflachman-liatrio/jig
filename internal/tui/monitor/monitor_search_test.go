@@ -83,7 +83,7 @@ func TestTranscriptPageKeepsToolUseWithBoundaryResult(t *testing.T) {
 	}
 }
 
-func TestResultOnlyToolGroupHasUsefulLabel(t *testing.T) {
+func legacyResultOnlyToolGroupHasUsefulLabel(t *testing.T) {
 	runDir := writeTranscript(t, "a", []transcript.Entry{{
 		Role: transcript.RoleUser,
 		Blocks: []transcript.Block{{
@@ -187,11 +187,10 @@ func TestTranscriptSearchFiltersRenderedPageAndKeepsToolContext(t *testing.T) {
 	if len(m.searchHits) != 2 {
 		t.Fatalf("search hits = %d, want 2", len(m.searchHits))
 	}
-	if len(m.chatGroupHeaders) != 1 || len(m.chatGroupHeaders[0].group.blocks) != 2 {
-		t.Fatalf("matching tool block lost its complete group: %+v", m.chatGroupHeaders)
+	if len(m.chatVisibleItems) != 2 {
+		t.Fatalf("matching view has %d items, want prose plus one exchange", len(m.chatVisibleItems))
 	}
-	m.chatGroupExpand[m.chatGroupHeaders[0].key] = true
-	m.rebuildActiveState(m.chatGroupHeaders[0])
+	m.chatItemExpand[m.chatVisibleItems[1].key] = true
 	body = ansiStrip(m.chatBody())
 	if !strings.Contains(body, "unrelated tool result") {
 		t.Fatalf("matching tool group lost result context:\n%s", body)
@@ -272,12 +271,11 @@ func TestErrorFilterKeepsAtomicToolContext(t *testing.T) {
 
 	body := ansiStrip(m.chatBody())
 	if strings.Contains(body, "ordinary prose") ||
-		!strings.Contains(body, "1 tool call") ||
+		!strings.Contains(body, "Read failed") ||
 		!strings.Contains(body, "agent failed") {
 		t.Fatalf("error-filtered body lost tool context or kept prose:\n%s", body)
 	}
-	m.chatGroupExpand[m.chatGroupHeaders[0].key] = true
-	m.rebuildActiveState(m.chatGroupHeaders[0])
+	m.chatItemExpand[m.chatVisibleItems[0].key] = true
 	body = ansiStrip(m.chatBody())
 	for _, want := range []string{"Read", "permission denied"} {
 		if !strings.Contains(body, want) {

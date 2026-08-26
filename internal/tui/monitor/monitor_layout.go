@@ -282,6 +282,16 @@ func (m *Model) ensureChatCursorVisible() {
 	m.ensureTranscriptRangeVisible(rng)
 }
 
+func (m *Model) ensureTranscriptItemCursorVisible() {
+	if m.chatItemCursor < 0 || m.chatItemCursor >= len(m.chatVisibleItems) {
+		return
+	}
+	rng, ok := m.chatItemLineRanges[transcriptLineKey{itemKey: m.chatVisibleItems[m.chatItemCursor].key}]
+	if ok {
+		m.ensureTranscriptRangeVisible(rng)
+	}
+}
+
 func (m *Model) ensureTranscriptRangeVisible(rng lineRange) {
 	if !m.ready || m.chatVP.Height() <= 0 {
 		return

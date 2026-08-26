@@ -8,6 +8,14 @@ func cloneBlockState(src map[blockKey]bool) map[blockKey]bool {
 	return dst
 }
 
+func cloneTranscriptItemState(src map[transcriptItemKey]bool) map[transcriptItemKey]bool {
+	dst := make(map[transcriptItemKey]bool, len(src))
+	for key, expanded := range src {
+		dst[key] = expanded
+	}
+	return dst
+}
+
 func (m Model) stepRowIndex(stepID string) (int, bool) {
 	for i, row := range m.visibleRows() {
 		if row.isStepRow() && row.stepID == stepID {
@@ -40,9 +48,10 @@ func (m *Model) saveGateContext(targetStep string) {
 		chatOffset:     m.chatVP.YOffset(),
 		chatAutoScroll: m.chatAutoScroll,
 		chatSeenSeq:    m.chatSeenSeq,
-		chatExpand:     cloneBlockState(m.chatExpand),
-		groupExpand:    cloneBlockState(m.chatGroupExpand),
-		chatExpandAll:  m.chatExpandAll,
+		chatItemExpand: cloneTranscriptItemState(m.chatItemExpand),
+		chatExpandAll:  m.chatItemExpandAll,
+		legacyExpand:   cloneBlockState(m.chatExpand),
+		legacyGroups:   cloneBlockState(m.chatGroupExpand),
 		chatPageEnd:    m.chatPage.End,
 		searchQuery:    m.searchQuery,
 		filters:        m.filters,
@@ -56,9 +65,7 @@ func (m *Model) saveGateContext(targetStep string) {
 			snapshot.filePath = row.file.path
 		}
 	}
-	if len(m.chatBlocks) > 0 && m.chatBlockCursor >= 0 && m.chatBlockCursor < len(m.chatBlocks) {
-		snapshot.chatBlock = m.chatBlocks[m.chatBlockCursor]
-	}
+	snapshot.chatItem = m.selectedTranscriptItemKey()
 	m.gateContext = snapshot
 }
 
@@ -110,12 +117,12 @@ func (m *Model) restoreGateContext() {
 	}
 	m.filters = snapshot.filters
 	m.searchQuery = snapshot.searchQuery
-	m.rebuildLoadedChat(snapshot.chatBlock)
+	m.rebuildTranscriptItemState(snapshot.chatItem)
 	m.rerunSearch()
-	m.chatExpand = cloneBlockState(snapshot.chatExpand)
-	m.chatGroupExpand = cloneBlockState(snapshot.groupExpand)
-	m.chatExpandAll = snapshot.chatExpandAll
-	m.rebuildActiveState(snapshot.chatBlock)
+	m.chatItemExpand = cloneTranscriptItemState(snapshot.chatItemExpand)
+	m.chatItemExpandAll = snapshot.chatExpandAll
+	m.chatExpand = cloneBlockState(snapshot.legacyExpand)
+	m.chatGroupExpand = cloneBlockState(snapshot.legacyGroups)
 	m.chatAutoScroll = snapshot.chatAutoScroll
 	m.chatSeenSeq = snapshot.chatSeenSeq
 	if m.hasGate() {

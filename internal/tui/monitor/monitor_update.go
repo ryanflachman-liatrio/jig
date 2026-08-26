@@ -360,7 +360,7 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		case msg.String() == "enter":
 			m.searchQuery = strings.TrimSpace(m.searchInput.Value())
 			m.searchOpen = false
-			m.rebuildLoadedChat(chatItem{})
+			m.rebuildTranscriptItemState(m.selectedTranscriptItemKey())
 			m.rerunSearch()
 			if len(m.searchHits) > 0 {
 				m.applyCurrentSearchHit()
@@ -461,42 +461,31 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if n := len(m.chatBlocks); n > 0 {
+		if n := len(m.chatVisibleItems); n > 0 {
 			if msg.String() == "n" {
-				m.chatBlockCursor = min(m.chatBlockCursor+1, n-1)
+				m.chatItemCursor = min(m.chatItemCursor+1, n-1)
 			} else {
-				m.chatBlockCursor = max(m.chatBlockCursor-1, 0)
+				m.chatItemCursor = max(m.chatItemCursor-1, 0)
 			}
 			m.chatAutoScroll = false
 			m.refreshPanels()
-			m.ensureChatCursorVisible()
+			m.ensureTranscriptItemCursorVisible()
 		}
 		return m, nil
 	case keybind.Matches(msg, m.keys.Toggle):
-		if n := len(m.chatBlocks); n > 0 && m.chatBlockCursor < n {
-			item := m.chatBlocks[m.chatBlockCursor]
-			saved := item
-			if item.isGroup {
-				m.chatGroupExpand[item.key] = !m.chatGroupExpand[item.key]
-			} else {
-				m.chatExpand[item.key] = !m.chatExpand[item.key]
-			}
-			m.rebuildActiveState(saved)
+		if n := len(m.chatVisibleItems); n > 0 && m.chatItemCursor < n {
+			item := m.chatVisibleItems[m.chatItemCursor]
+			m.chatItemExpand[item.key] = !m.chatItemExpand[item.key]
 			m.chatAutoScroll = false
 			m.refreshPanels()
-			m.ensureChatCursorVisible()
+			m.ensureTranscriptItemCursorVisible()
 		}
 		return m, nil
 	case keybind.Matches(msg, m.keys.ExpandAll):
-		saved := chatItem{}
-		if len(m.chatBlocks) > 0 {
-			saved = m.chatBlocks[m.chatBlockCursor]
-		}
-		m.chatExpandAll = !m.chatExpandAll
-		m.rebuildActiveState(saved)
+		m.chatItemExpandAll = !m.chatItemExpandAll
 		m.chatAutoScroll = false
 		m.refreshPanels()
-		m.ensureChatCursorVisible()
+		m.ensureTranscriptItemCursorVisible()
 		return m, nil
 	case keybind.Matches(msg, m.keys.Scroll):
 		var cmd tea.Cmd

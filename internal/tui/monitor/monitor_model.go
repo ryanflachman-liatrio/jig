@@ -94,10 +94,11 @@ type gateContextSnapshot struct {
 	chatOffset     int
 	chatAutoScroll bool
 	chatSeenSeq    int
-	chatBlock      chatItem
-	chatExpand     map[blockKey]bool
-	groupExpand    map[blockKey]bool
+	chatItem       transcriptItemKey
+	chatItemExpand map[transcriptItemKey]bool
 	chatExpandAll  bool
+	legacyExpand   map[blockKey]bool
+	legacyGroups   map[blockKey]bool
 	chatPageEnd    int64
 	searchQuery    string
 	filters        transcriptFilters
