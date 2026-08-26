@@ -125,7 +125,7 @@ presentation.
 - [x] 2.7 Add semantic `Styles.Chat` fields in `shared/styles.go` and migrate active Monitor rendering to them; obsolete group styles remain isolated for Task 4.1 removal.
 - [x] 2.8 Add default, expanded, failed, unsupported, system-output, live-tail, wide-rune, narrow-width, and ANSI-stripped rendering assertions in `monitor_test.go` and `monitor_transcript_test.go`.
 
-### [ ] 3.0 Migrate search, navigation, live follow, and Gate context to item identity
+### [x] 3.0 Migrate search, navigation, live follow, and Gate context to item identity
 
 **Covers:** Spec Unit 3 — all functional requirements.
 
@@ -141,13 +141,13 @@ page-local bounds and deterministic fallback behavior.
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Replace raw-entry/consecutive-group filtering in `monitor_search.go` with normalized-item visibility, member-aware query matching, item-keyed hits, and matching-surface metadata.
-- [ ] 3.2 Preserve atomic Tool exchanges for input/output/name/role/error/retry matches, including `role:user` matches through role-user results; ensure filtered visible-coordinate dividers are neither fabricated nor duplicated.
-- [ ] 3.3 Replace group/block cursor and toggle branches in `monitor_update.go` with one-level item navigation, item expansion, expand-all override, saved-key restoration, and deterministic nearest-visible fallback.
-- [ ] 3.4 Preserve existing manual-navigation follow pause, same-step stream reload, page switching, and live-tail coalescing while migrating those paths to stable item keys.
-- [ ] 3.5 Migrate `monitor_gate_context.go` snapshots to selected item keys and a deep-cloned one-level expansion map; restore search, filters, scroll, follow, page position, and seen sequence safely.
-- [ ] 3.6 Update `monitor_layout.go`, `monitor_view.go`, and `keys.go` for thin-guide inset widths, surface-aware cache invalidation, compact selected-step chrome, and activity/detail help terminology.
-- [ ] 3.7 Add search/filter, navigation, resize, reload, follow, and Gate-context regression tests in their existing package-local test files, including cache-key collision and missing-saved-key cases.
+- [x] 3.1 Replace raw-entry/consecutive-group filtering in `monitor_search.go` with normalized-item visibility, member-aware query matching, item-keyed hits, and matching-surface metadata.
+- [x] 3.2 Preserve atomic Tool exchanges for input/output/name/role/error/retry matches, including `role:user` matches through role-user results; ensure filtered visible-coordinate dividers are neither fabricated nor duplicated.
+- [x] 3.3 Replace group/block cursor and toggle branches in `monitor_update.go` with one-level item navigation, item expansion, expand-all override, saved-key restoration, and deterministic nearest-visible fallback.
+- [x] 3.4 Preserve existing manual-navigation follow pause, same-step stream reload, page switching, and live-tail coalescing while migrating those paths to stable item keys.
+- [x] 3.5 Migrate `monitor_gate_context.go` snapshots to selected item keys and a deep-cloned one-level expansion map; restore search, filters, scroll, follow, page position, and seen sequence safely.
+- [x] 3.6 Update `monitor_layout.go`, `monitor_view.go`, and `keys.go` for thin-guide inset widths, surface-aware cache invalidation, compact selected-step chrome, and activity/detail help terminology.
+- [x] 3.7 Add search/filter, navigation, resize, reload, follow, and Gate-context regression tests in their existing package-local test files, including cache-key collision and missing-saved-key cases.
 
 ### [ ] 4.0 Complete migration cleanup and verify the Monitor end to end
 
