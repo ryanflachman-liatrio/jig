@@ -25,6 +25,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	m.error = ""
 	if keybind.Matches(k, m.keys.Cancel) {
 		if m.mode == ModeBrowse {
 			return m, nil
@@ -44,9 +45,19 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	} else if keybind.Matches(k, m.keys.Down) {
 		m.move(1)
 	} else if keybind.Matches(k, m.keys.First) {
-		m.cursor = 1
+		if m.activeDocumentMode() == DocumentPreview {
+			m.previewBlock = 0
+			m.move(0)
+		} else {
+			m.cursor = 1
+		}
 	} else if keybind.Matches(k, m.keys.Last) {
-		m.cursor = len(m.docs[m.active].lines)
+		if m.activeDocumentMode() == DocumentPreview {
+			m.previewBlock = len(m.previews[m.active].blocks) - 1
+			m.move(0)
+		} else {
+			m.cursor = len(m.docs[m.active].lines)
+		}
 	} else if keybind.Matches(k, m.keys.PrevDoc) {
 		m.changeDoc(-1)
 	} else if keybind.Matches(k, m.keys.NextDoc) {
@@ -58,6 +69,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.reviewed[id] = !m.reviewed[id]
 		return m, draftCmd(m)
 	} else if keybind.Matches(k, m.keys.Select) {
+		if m.activeDocumentMode() == DocumentPreview {
+			m.error = "preview comments use the active block; press c to comment"
+			return m, nil
+		}
 		m.rangeEnd = m.cursor
 		m.mode = ModeSelectRange
 	} else if keybind.Matches(k, m.keys.Comment) {
@@ -194,7 +209,7 @@ func (m Model) updateSummary(k tea.KeyPressMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 func (m *Model) move(delta int) {
-	if m.documentMode == DocumentPreview && len(m.previews[m.active].blocks) > 0 {
+	if m.activeDocumentMode() == DocumentPreview && len(m.previews[m.active].blocks) > 0 {
 		m.previewBlock += delta
 		if m.previewBlock < 0 {
 			m.previewBlock = 0
@@ -213,27 +228,45 @@ func (m *Model) changeDoc(delta int) {
 	if len(m.docs) == 0 {
 		return
 	}
-	m.active = (m.active + delta + len(m.docs)) % len(m.docs)
+	m.activateDocument((m.active + delta + len(m.docs)) % len(m.docs))
+}
+
+func (m *Model) activateDocument(index int) {
+	m.active = index
 	m.cursor = 1
 	m.previewBlock = 0
 	m.rangeEnd = 0
 	m.activeComment = ""
+	if m.activeDocumentMode() == DocumentPreview && len(m.previews[m.active].blocks) > 0 {
+		block := m.previews[m.active].blocks[0]
+		m.cursor, m.rangeEnd = block.startLine, block.endLine
+	}
 }
 
 func (m *Model) toggleDocumentMode() {
-	if m.documentMode == DocumentSource {
+	if m.activeDocumentMode() == DocumentSource {
+		if m.docs[m.active].meta.Format != "markdown" {
+			m.error = "preview is available for Markdown"
+			return
+		}
 		preview := &m.previews[m.active]
-		if preview.parseErr != nil {
+		if preview.parseErr != nil || len(preview.blocks) == 0 {
+			if preview.parseErr == nil {
+				preview.parseErr = fmt.Errorf("markdown contains no source-addressable blocks")
+			}
 			m.error = "preview unavailable: " + preview.parseErr.Error()
 			return
 		}
-		m.documentMode = DocumentPreview
+		m.documentModes[m.active] = DocumentPreview
 		m.previewBlock = m.blockForLine(m.cursor)
+		block := preview.blocks[m.previewBlock]
+		m.cursor, m.rangeEnd = block.startLine, block.endLine
 		return
 	}
-	m.documentMode = DocumentSource
+	m.documentModes[m.active] = DocumentSource
 	if len(m.previews[m.active].blocks) > 0 {
 		m.cursor = m.previews[m.active].blocks[m.previewBlock].startLine
+		m.rangeEnd = m.cursor
 	}
 }
 
@@ -242,15 +275,17 @@ func (m *Model) blockForLine(line int) int {
 		if line >= block.startLine && line <= block.endLine {
 			return i
 		}
+		if line < block.startLine {
+			return max(i-1, 0)
+		}
 	}
-	return 0
+	return max(len(m.previews[m.active].blocks)-1, 0)
 }
 func (m *Model) nextUnreviewed() {
 	for i := 1; i <= len(m.docs); i++ {
 		idx := (m.active + i) % len(m.docs)
 		if !m.reviewed[m.docs[idx].meta.ID] {
-			m.active = idx
-			m.cursor = 1
+			m.activateDocument(idx)
 			return
 		}
 	}
@@ -275,7 +310,7 @@ func (m *Model) openComposer(edit bool) {
 	if m.rangeEnd < 1 {
 		m.rangeEnd = m.cursor
 	}
-	if m.documentMode == DocumentPreview && len(m.previews[m.active].blocks) > 0 {
+	if m.activeDocumentMode() == DocumentPreview && len(m.previews[m.active].blocks) > 0 {
 		block := m.previews[m.active].blocks[m.previewBlock]
 		m.cursor, m.rangeEnd = block.startLine, block.endLine
 	}
@@ -291,15 +326,38 @@ func (m *Model) deleteActive() {
 	}
 }
 func (m *Model) nextComment(reverse bool) {
-	if len(m.comments) == 0 {
+	documentID := m.ActiveDocument().ID
+	indices := make([]int, 0, len(m.comments))
+	for i, c := range m.comments {
+		if c.Anchor.DocumentID == documentID {
+			indices = append(indices, i)
+		}
+	}
+	if len(indices) == 0 {
 		return
 	}
-	for _, c := range m.comments {
-		if c.Anchor.DocumentID == m.ActiveDocument().ID && ((reverse && c.Anchor.StartLine < m.cursor) || (!reverse && c.Anchor.StartLine > m.cursor)) {
-			m.activeComment = c.ID
-			m.cursor = c.Anchor.StartLine
-			return
+	selected := -1
+	for pos, index := range indices {
+		if m.comments[index].ID == m.activeComment {
+			selected = pos
+			break
 		}
+	}
+	if reverse {
+		if selected < 0 {
+			selected = 0
+		}
+		selected = (selected - 1 + len(indices)) % len(indices)
+	} else {
+		selected = (selected + 1) % len(indices)
+	}
+	c := m.comments[indices[selected]]
+	m.activeComment = c.ID
+	m.cursor, m.rangeEnd = c.Anchor.StartLine, c.Anchor.EndLine
+	if m.activeDocumentMode() == DocumentPreview {
+		m.previewBlock = m.blockForLine(c.Anchor.StartLine)
+		block := m.previews[m.active].blocks[m.previewBlock]
+		m.cursor, m.rangeEnd = block.startLine, block.endLine
 	}
 }
 func (m *Model) resize() {

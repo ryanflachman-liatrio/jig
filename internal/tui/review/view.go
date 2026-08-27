@@ -74,35 +74,35 @@ func (m *Model) documentList() string {
 func (m *Model) documentView() string {
 	d := m.docs[m.active]
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("%s · %s", d.meta.Label, strings.ToUpper(formatMode(m.documentMode))))
-	if m.documentMode == DocumentPreview {
+	b.WriteString(m.documentHeader(d))
+	if m.activeDocumentMode() == DocumentPreview {
 		b.WriteByte('\n')
 		preview := &m.previews[m.active]
 		if preview.parseErr != nil {
-			b.WriteString(shared.Theme.Error.Render("Preview unavailable: " + preview.parseErr.Error()))
-		} else if len(preview.blocks) == 0 {
-			b.WriteString("(empty document)")
-		} else {
-			for i := range preview.blocks {
-				rendered, err := preview.render(i, d.meta.Content, max(m.width-listWidth(m.width)-6, 20))
-				if err != nil {
-					b.WriteString(shared.Theme.Error.Render("Preview unavailable: " + err.Error()))
-					break
-				}
-				marker := "  "
-				if i == m.previewBlock {
-					marker = "▌ "
-				}
-				b.WriteString(marker + fmt.Sprintf("L%d–%d\n", preview.blocks[i].startLine, preview.blocks[i].endLine))
-				b.WriteString(rendered + "\n")
-			}
+			m.documentModes[m.active] = DocumentSource
+			m.error = "preview unavailable: " + preview.parseErr.Error()
+			return m.documentView()
 		}
+		for i, block := range preview.blocks {
+			rendered, err := preview.render(i, d.meta.Content, m.previewContentWidth())
+			if err != nil {
+				m.documentModes[m.active] = DocumentSource
+				m.error = "preview unavailable: " + err.Error()
+				return m.documentView()
+			}
+			m.writePreviewBlock(&b, i, block, rendered)
+		}
+		m.writeCommentsAndComposer(&b, d)
 		return shared.Panel(d.meta.Label, b.String(), documentPanelWidth(m.width), max(12, m.height-2), m.mode != ModeSummary)
 	}
 	if m.mode == ModeSelectRange {
 		b.WriteString(fmt.Sprintf(" · L%d–%d", min(m.cursor, m.rangeEnd), max(m.cursor, m.rangeEnd)))
 	}
 	b.WriteByte('\n')
+	if strings.HasPrefix(m.error, "preview unavailable:") {
+		b.WriteString(shared.Theme.Error.Render(m.error))
+		b.WriteByte('\n')
+	}
 	start := m.cursor - 8
 	if start < 1 {
 		start = 1
@@ -125,15 +125,114 @@ func (m *Model) documentView() string {
 		}
 		b.WriteString(fmt.Sprintf("%s%4d %s\n", prefix, i, d.lines[i-1]))
 	}
-	if len(m.comments) > 0 {
+	m.writeCommentsAndComposer(&b, d)
+	return shared.Panel(d.meta.Label, b.String(), documentPanelWidth(m.width), max(12, m.height-2), m.mode != ModeSummary)
+}
+
+func (m *Model) documentHeader(d document) string {
+	var b strings.Builder
+	b.WriteString(d.meta.Label)
+	b.WriteString("    ")
+	if d.meta.Format == "markdown" {
+		preview := shared.Theme.Review.ModeInactive.Render(" PREVIEW ")
+		source := shared.Theme.Review.ModeInactive.Render(" SOURCE ")
+		if m.activeDocumentMode() == DocumentPreview {
+			preview = shared.Theme.Review.ModeActive.Render("[ PREVIEW ]")
+		} else {
+			source = shared.Theme.Review.ModeActive.Render("[ SOURCE ]")
+		}
+		b.WriteString(preview)
+		b.WriteString("  ")
+		b.WriteString(source)
+		b.WriteString("     Markdown")
+		return b.String()
+	}
+	b.WriteString(shared.Theme.Review.ModeActive.Render("[ SOURCE ]"))
+	if d.meta.Format == "diff" {
+		b.WriteString("     Diff")
+	} else {
+		b.WriteString("     Plain text")
+	}
+	return b.String()
+}
+
+func (m *Model) previewContentWidth() int {
+	hFrame, _ := shared.PanelFrame()
+	return max(documentPanelWidth(m.width)-hFrame-2, 20)
+}
+
+func (m *Model) writePreviewBlock(b *strings.Builder, index int, block previewBlock, rendered string) {
+	active := index == m.previewBlock
+	rail, railStyle := "│", shared.Theme.Review.BlockRailInactive
+	metaStyle := shared.Theme.Review.BlockMetaInactive
+	if active {
+		rail, railStyle = "▌", shared.Theme.Review.BlockRailActive
+		metaStyle = shared.Theme.Review.BlockMetaActive
+	}
+
+	b.WriteString(railStyle.Render(rail))
+	b.WriteByte(' ')
+	b.WriteString(metaStyle.Render(formatLineRange(block.startLine, block.endLine)))
+	comments := m.commentsForRange(m.docs[m.active].meta.ID, block.startLine, block.endLine)
+	if activeID := m.activeCommentForRange(comments); activeID != "" {
+		b.WriteString("  ")
+		b.WriteString(shared.Theme.Review.ActiveComment.Render("● " + activeID + " active"))
+	} else if len(comments) > 0 {
+		label := "comment"
+		if len(comments) != 1 {
+			label = "comments"
+		}
+		b.WriteString("  ")
+		b.WriteString(shared.Theme.Review.CommentMarker.Render(fmt.Sprintf("● %d %s", len(comments), label)))
+	}
+	b.WriteByte('\n')
+	for _, row := range strings.Split(rendered, "\n") {
+		b.WriteString(railStyle.Render(rail))
+		b.WriteByte(' ')
+		b.WriteString(row)
+		b.WriteByte('\n')
+	}
+}
+
+func (m *Model) commentsForRange(documentID string, start, end int) []domain.Comment {
+	comments := make([]domain.Comment, 0)
+	for _, c := range m.comments {
+		if c.Anchor.DocumentID == documentID && c.Anchor.StartLine <= end && c.Anchor.EndLine >= start {
+			comments = append(comments, c)
+		}
+	}
+	return comments
+}
+
+func (m *Model) activeCommentForRange(comments []domain.Comment) string {
+	for _, c := range comments {
+		if c.ID == m.activeComment {
+			return c.ID
+		}
+	}
+	return ""
+}
+
+func formatLineRange(start, end int) string {
+	if start == end {
+		return fmt.Sprintf("L%d", start)
+	}
+	return fmt.Sprintf("L%d–L%d", start, end)
+}
+
+func (m *Model) writeCommentsAndComposer(b *strings.Builder, d document) {
+	comments := m.commentsForRange(d.meta.ID, 1, len(d.lines))
+	if len(comments) > 0 {
 		b.WriteString("\n")
 		b.WriteString(shared.Theme.StatusLine.Render("Comments"))
 		b.WriteByte('\n')
-		for _, c := range m.comments {
-			if c.Anchor.DocumentID == d.meta.ID {
-				b.WriteString(fmt.Sprintf("%s · %s · lines %d–%d\n", c.ID, c.Kind, c.Anchor.StartLine, c.Anchor.EndLine))
-				b.WriteString("  " + strings.ReplaceAll(c.Body, "\n", " ") + "\n")
+		for _, c := range comments {
+			metadata := fmt.Sprintf("%s · %s · lines %d–%d", c.ID, c.Kind, c.Anchor.StartLine, c.Anchor.EndLine)
+			if c.ID == m.activeComment {
+				metadata = shared.Theme.Review.ActiveComment.Render(metadata + " · active")
 			}
+			b.WriteString(metadata + "\n")
+			b.WriteString("  " + strings.ReplaceAll(c.Body, "\n", " ") + "\n")
 		}
 	}
 	if m.mode == ModeComposeComment || m.mode == ModeEditComment {
@@ -150,7 +249,6 @@ func (m *Model) documentView() string {
 			b.WriteString(m.replacement.View())
 		}
 	}
-	return shared.Panel(d.meta.Label, b.String(), documentPanelWidth(m.width), max(12, m.height-2), m.mode != ModeSummary)
 }
 
 func (m *Model) summaryView() string {
@@ -189,13 +287,11 @@ func (m *Model) footer() string {
 	if m.mode == ModeComposeComment || m.mode == ModeEditComment {
 		return "enter save comment · esc cancel comment · tab change comment kind"
 	}
-	return "S finish review · j/k move · {/} document · c comment · r reviewed · esc close"
-}
-func formatMode(mode DocumentMode) string {
-	if mode == DocumentPreview {
-		return "preview"
+	view := ""
+	if m.docs[m.active].meta.Format == "markdown" {
+		view = " · s view"
 	}
-	return "source"
+	return "S finish review · j/k move · {/} document · c comment · r reviewed" + view + " · esc close"
 }
 func listWidth(width int) int {
 	if width > 0 && width < 90 {

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"charm.land/glamour/v2"
+	"charm.land/glamour/v2/ansi"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/text"
@@ -22,6 +23,7 @@ type previewBlock struct {
 type previewState struct {
 	blocks    []previewBlock
 	cache     map[int]string
+	renderer  *glamour.TermRenderer
 	width     int
 	parseErr  error
 	renderErr error
@@ -37,7 +39,7 @@ func buildPreview(content string) previewState {
 			state.blocks = append(state.blocks, previewBlock{startLine: start, endLine: end})
 		}
 	}
-	if len(state.blocks) == 0 && strings.TrimSpace(content) != "" {
+	if len(state.blocks) == 0 {
 		state.parseErr = fmt.Errorf("markdown contains no source-addressable blocks")
 	}
 	return state
@@ -100,12 +102,15 @@ func (p *previewState) render(index int, content string, width int) (string, err
 	if index < 0 || index >= len(p.blocks) {
 		return "", fmt.Errorf("preview block %d is out of range", index)
 	}
+	width = max(width, 20)
 	if p.width != width {
 		p.width = width
 		p.cache = make(map[int]string)
+		p.renderer = nil
+		p.renderErr = nil
 	}
 	if rendered, ok := p.cache[index]; ok {
-		return rendered, p.renderErr
+		return rendered, nil
 	}
 	block := p.blocks[index]
 	lines := strings.Split(content, "\n")
@@ -113,19 +118,48 @@ func (p *previewState) render(index int, content string, width int) (string, err
 		return "", fmt.Errorf("preview block source range is invalid")
 	}
 	raw := strings.Join(lines[block.startLine-1:block.endLine], "\n")
-	renderer, err := glamour.NewTermRenderer(glamour.WithStyles(shared.Theme.Markdown), glamour.WithWordWrap(max(width, 20)))
-	if err != nil {
-		p.renderErr = err
-		return "", err
+	if p.renderer == nil {
+		renderer, err := newPreviewRenderer(width)
+		if err != nil {
+			p.renderErr = err
+			return "", err
+		}
+		p.renderer = renderer
 	}
-	rendered, err := renderer.Render(raw)
+	rendered, err := p.renderer.Render(raw)
 	if err != nil {
 		p.renderErr = err
 		return "", err
 	}
 	rendered = strings.TrimSpace(rendered)
+	p.renderErr = nil
 	p.cache[index] = rendered
 	return rendered, nil
+}
+
+func newPreviewRenderer(width int) (*glamour.TermRenderer, error) {
+	style := shared.Theme.Markdown
+	return glamour.NewTermRenderer(
+		glamour.WithStyles(style),
+		glamour.WithWordWrap(width),
+		glamour.WithChromaFormatter(shared.CodeBlockFormatter(previewCodeWidth(style, width))),
+	)
+}
+
+func previewCodeWidth(style ansi.StyleConfig, width int) int {
+	if style.Document.Indent != nil {
+		width -= int(*style.Document.Indent)
+	}
+	if style.Document.Margin != nil {
+		width -= 2 * int(*style.Document.Margin)
+	}
+	if style.CodeBlock.Indent != nil {
+		width -= int(*style.CodeBlock.Indent)
+	}
+	if style.CodeBlock.Margin != nil {
+		width -= int(*style.CodeBlock.Margin)
+	}
+	return width
 }
 
 func (p previewState) anchor(index int, d domain.Document) domain.Anchor {

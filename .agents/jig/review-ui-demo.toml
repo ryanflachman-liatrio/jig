@@ -1,0 +1,25 @@
+[workflow]
+name        = "review-ui-demo"
+version     = "1"
+description = "Deterministic visual fixture for the document review workspace."
+
+[[step]]
+id          = "review_ui"
+type        = "review"
+output_type = { enum = ["accept", "revise"] }
+
+[[step.review]]
+source = "../../docs/ARCHITECTURE.md"
+label  = "Markdown architecture document"
+
+[[step.review]]
+source = "../../internal/tui/review/view.go"
+label  = "Go source"
+
+[[step.review]]
+source = "../../go.mod"
+label  = "Plain text / module file"
+
+[[step.review]]
+source = "fixtures/review-ui-demo.diff"
+label  = "Unified diff fixture"

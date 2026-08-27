@@ -36,8 +36,12 @@ func TestPreviewRenderCacheInvalidatesOnlyOnWidthChange(t *testing.T) {
 	if len(p.cache) != 1 {
 		t.Fatalf("cache size = %d, want 1", len(p.cache))
 	}
+	renderer := p.renderer
 	if _, err := p.render(1, content, 40); err != nil {
 		t.Fatal(err)
+	}
+	if p.renderer != renderer {
+		t.Fatal("renderer was rebuilt without a width change")
 	}
 	if len(p.cache) != 2 {
 		t.Fatalf("cache size = %d, want 2", len(p.cache))
@@ -48,6 +52,56 @@ func TestPreviewRenderCacheInvalidatesOnlyOnWidthChange(t *testing.T) {
 	if len(p.cache) != 1 {
 		t.Fatalf("width change did not invalidate cache: %d", len(p.cache))
 	}
+	if p.renderer == renderer {
+		t.Fatal("width change did not rebuild renderer")
+	}
+}
+
+func TestPreviewUsesSharedFormatterForFencedCode(t *testing.T) {
+	content := "```go\nfunc café() string { return \"世界\" }\n```\n"
+	p := buildPreview(content)
+	rendered, err := p.render(0, content, 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rendered, "café") || !strings.Contains(rendered, "世界") || !strings.Contains(rendered, "╭") || !strings.Contains(rendered, "\x1b[") {
+		t.Fatalf("fenced code did not use themed formatter:\n%q", rendered)
+	}
+}
+
+func TestEmptyMarkdownHasNoSourceAddressablePreview(t *testing.T) {
+	p := buildPreview("\n")
+	if p.parseErr == nil || len(p.blocks) != 0 {
+		t.Fatalf("empty preview = %#v, want unavailable", p)
+	}
+	content := "\n"
+	m, err := New(domain.Session{StepID: "review", Documents: []domain.Document{{
+		ID: "empty", Label: "Empty", Source: "empty.md", Format: "markdown", Content: content, SHA256: domain.Digest(content),
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.activeDocumentMode() != DocumentSource {
+		t.Fatal("empty Markdown did not fall back to source")
+	}
+	m = update(m, "s")
+	if !strings.Contains(m.error, "preview unavailable") {
+		t.Fatalf("empty Markdown preview error = %q", m.error)
+	}
+}
+
+func TestPreviewConstructionIsMarkdownOnly(t *testing.T) {
+	content := "# looks like Markdown"
+	session := domain.Session{StepID: "review", Documents: []domain.Document{{
+		ID: "text", Label: "Text", Source: "file.txt", Format: "text", Content: content, SHA256: domain.Digest(content),
+	}}}
+	m, err := New(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.previews[0].blocks) != 0 || m.previewAvailable() {
+		t.Fatalf("non-Markdown preview was constructed: %#v", m.previews[0])
+	}
 }
 
 func TestPreviewToggleAnchorsCommentToWholeBlock(t *testing.T) {
@@ -56,11 +110,21 @@ func TestPreviewToggleAnchorsCommentToWholeBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.active = 1
-	m.documentMode = DocumentPreview
+	m.documentModes[m.active] = DocumentPreview
 	m.previewBlock = 1
 	m.move(0)
 	m.openComposer(false)
 	if m.cursor != 3 || m.rangeEnd != 3 {
 		t.Fatalf("preview selection = %d-%d, want 3-3", m.cursor, m.rangeEnd)
+	}
+	m.composer.SetValue("Comment on the complete block")
+	m = update(m, "enter")
+	if len(m.comments) != 1 {
+		t.Fatalf("comments = %d, want 1", len(m.comments))
+	}
+	comment := m.comments[0]
+	if comment.Anchor.DocumentID != "02-notes" || comment.Anchor.SHA256 != m.docs[1].meta.SHA256 ||
+		comment.Anchor.StartLine != 3 || comment.Anchor.EndLine != 3 || comment.Anchor.Quote != "body" || comment.Anchor.Prefix != "" {
+		t.Fatalf("preview comment changed source anchor: %#v", comment.Anchor)
 	}
 }

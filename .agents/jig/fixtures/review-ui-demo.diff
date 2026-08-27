@@ -1,0 +1,14 @@
+diff --git a/example.txt b/example.txt
+index 1111111..2222222 100644
+--- a/example.txt
++++ b/example.txt
+@@ -1,4 +1,5 @@
+ context before
+-old line
++new line
++another line
+ context after
+@@ -12,2 +13,2 @@ second hunk
+-final old line
++final new line
+\ No newline at end of file

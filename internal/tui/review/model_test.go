@@ -1,11 +1,13 @@
 package review
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	domain "jig/internal/review"
 )
 
@@ -40,13 +42,14 @@ func TestModelNavigationAndRestoration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.ActiveDocument().ID != "02-notes" || m.CursorLine() != 2 || !m.Reviewed("01-plan") {
+	if m.ActiveDocument().ID != "02-notes" || m.activeDocumentMode() != DocumentPreview || !m.Reviewed("01-plan") {
 		t.Fatalf("draft was not restored: %#v", m)
 	}
 	m = update(m, "{")
-	if m.ActiveDocument().ID != "01-plan" {
+	if m.ActiveDocument().ID != "01-plan" || m.activeDocumentMode() != DocumentPreview {
 		t.Fatalf("previous document: %s", m.ActiveDocument().ID)
 	}
+	m = update(m, "s")
 	m = update(m, "j")
 	if m.CursorLine() != 2 {
 		t.Fatalf("cursor line = %d, want 2", m.CursorLine())
@@ -62,6 +65,7 @@ func TestModelRangeAnchorAndDraftLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	m = update(m, "s")
 	m = update(m, "j")
 	m = update(m, "v")
 	m = update(m, "j")
@@ -84,6 +88,161 @@ func TestModelRangeAnchorAndDraftLifecycle(t *testing.T) {
 	draft := m.Draft()
 	if len(draft.Comments) != 1 || draft.View.CursorLine != 3 {
 		t.Fatalf("draft did not retain workspace state: %#v", draft)
+	}
+}
+
+func TestDocumentModesDefaultByFormatAndRestorePerDocument(t *testing.T) {
+	markdown := "# Title\n\nBody"
+	plain := "plain\ntext"
+	diff := "--- a/file\n+++ b/file"
+	session := domain.Session{StepID: "review", Documents: []domain.Document{
+		{ID: "md", Label: "Markdown", Source: "doc.md", Format: "markdown", Content: markdown, SHA256: domain.Digest(markdown)},
+		{ID: "text", Label: "Text", Source: "doc.txt", Format: "text", Content: plain, SHA256: domain.Digest(plain)},
+		{ID: "diff", Label: "Diff", Source: "change.diff", Format: "diff", Content: diff, SHA256: domain.Digest(diff)},
+	}}
+	m, err := New(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.activeDocumentMode(); got != DocumentPreview {
+		t.Fatalf("Markdown mode = %v, want preview", got)
+	}
+	m = update(m, "s")
+	if got := m.activeDocumentMode(); got != DocumentSource {
+		t.Fatalf("toggled Markdown mode = %v, want source", got)
+	}
+	m = update(m, "}")
+	if got := m.activeDocumentMode(); got != DocumentSource {
+		t.Fatalf("text mode = %v, want source", got)
+	}
+	m = update(m, "s")
+	if got := m.error; got != "preview is available for Markdown" {
+		t.Fatalf("text preview error = %q", got)
+	}
+	m = update(m, "}")
+	if got := m.activeDocumentMode(); got != DocumentSource {
+		t.Fatalf("diff mode = %v, want source", got)
+	}
+	m = update(m, "}")
+	if got := m.activeDocumentMode(); got != DocumentSource {
+		t.Fatalf("Markdown mode was not restored: %v", got)
+	}
+}
+
+func TestPreviewToggleMapsCursorAndBlockRanges(t *testing.T) {
+	m, err := New(testSession())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = update(m, "}")
+	if m.activeDocumentMode() != DocumentPreview {
+		t.Fatal("Markdown did not open in preview")
+	}
+	m = update(m, "j")
+	if m.CursorLine() != 3 || m.rangeEnd != 3 {
+		t.Fatalf("preview block range = %d-%d, want 3-3", m.CursorLine(), m.rangeEnd)
+	}
+	m = update(m, "s")
+	if m.activeDocumentMode() != DocumentSource || m.CursorLine() != 3 || m.rangeEnd != 3 {
+		t.Fatalf("source mapping = mode %v, range %d-%d", m.activeDocumentMode(), m.CursorLine(), m.rangeEnd)
+	}
+	m.cursor = 1
+	m = update(m, "s")
+	if m.activeDocumentMode() != DocumentPreview || m.PreviewBlock() != 0 {
+		t.Fatalf("preview mapping = mode %v, block %d", m.activeDocumentMode(), m.PreviewBlock())
+	}
+}
+
+func TestPreviewRangeSelectionIsNotAdvertisedOrEntered(t *testing.T) {
+	m, err := New(testSession())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = update(m, "v")
+	if m.Mode() != ModeBrowse || !strings.Contains(m.error, "press c") {
+		t.Fatalf("preview range selection changed state: mode=%v error=%q", m.Mode(), m.error)
+	}
+	for _, help := range m.Help() {
+		if help.Key == "v" {
+			t.Fatal("preview help advertises source range selection")
+		}
+	}
+}
+
+func TestPreviewDecoratesOverlappingAndActiveComments(t *testing.T) {
+	m, err := New(testSession())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.active = 1
+	m.previewBlock = 1
+	m.cursor, m.rangeEnd = 3, 3
+	m.comments = []domain.Comment{
+		{ID: "C001", Anchor: domain.Anchor{DocumentID: "02-notes", StartLine: 2, EndLine: 3}, Body: "overlaps"},
+		{ID: "C002", Anchor: domain.Anchor{DocumentID: "02-notes", StartLine: 3, EndLine: 3}, Body: "active"},
+	}
+	m.activeComment = "C002"
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	view := lipgloss.NewStyle().Render(m.documentView())
+	plain := ansi.Strip(view)
+	for _, want := range []string{"L3", "C002 active", "Comments", "C001", "C002"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("preview missing %q:\n%s", want, plain)
+		}
+	}
+	if got := lipgloss.Width(m.documentView()); got > 80 {
+		t.Fatalf("narrow preview width = %d, want <= 80", got)
+	}
+	m.activeComment = ""
+	if plain := ansi.Strip(m.documentView()); !strings.Contains(plain, "● 2 comments") {
+		t.Fatalf("preview missing overlapping comment count:\n%s", plain)
+	}
+}
+
+func TestPreviewHelpUsesCompactAndFullModeLabels(t *testing.T) {
+	m, err := New(testSession())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.keys.ToggleMode.Help().Desc; got != "toggle source/preview" {
+		t.Fatalf("full mode help = %q", got)
+	}
+	found := false
+	for _, item := range m.Help() {
+		if item.Key == "s" && item.Description == "view" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("compact preview help is missing s view")
+	}
+}
+
+func TestPreviewCommentNavigationSelectsContainingBlock(t *testing.T) {
+	m, err := New(testSession())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.active = 1
+	m.comments = []domain.Comment{{
+		ID: "C001", Anchor: domain.Anchor{DocumentID: "02-notes", StartLine: 3, EndLine: 3}, Body: "body",
+	}}
+	m.nextComment(false)
+	if m.activeComment != "C001" || m.previewBlock != 1 || m.cursor != 3 || m.rangeEnd != 3 {
+		t.Fatalf("comment navigation = id %q block %d range %d-%d", m.activeComment, m.previewBlock, m.cursor, m.rangeEnd)
+	}
+}
+
+func TestPreviewFailureFallsBackToSourceWithVisibleError(t *testing.T) {
+	m, err := New(testSession())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.previews[0].parseErr = fmt.Errorf("renderer failed")
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	view := ansi.Strip(m.documentView())
+	if m.activeDocumentMode() != DocumentSource || !strings.Contains(m.error, "renderer failed") || !strings.Contains(view, "[ SOURCE ]") || !strings.Contains(view, "preview unavailable: renderer failed") {
+		t.Fatalf("fallback = mode %v error %q view:\n%s", m.activeDocumentMode(), m.error, view)
 	}
 }
 
@@ -116,16 +275,18 @@ func TestSuggestionRequiresReplacementAndDeletedIDsAreNotReused(t *testing.T) {
 }
 
 func TestCommentComposerFitsDocumentPanel(t *testing.T) {
-	m, err := New(testSession())
-	if err != nil {
-		t.Fatal(err)
-	}
-	m, _ = m.Update(tea.WindowSizeMsg{Width: 180, Height: 38})
-	m = update(m, "c")
+	for _, size := range []tea.WindowSizeMsg{{Width: 80, Height: 24}, {Width: 120, Height: 40}, {Width: 180, Height: 38}} {
+		m, err := New(testSession())
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, _ = m.Update(size)
+		m = update(m, "c")
 
-	wantWidth := documentPanelWidth(m.width)
-	if got := lipgloss.Width(m.documentView()); got != wantWidth {
-		t.Fatalf("comment document panel width = %d, want %d", got, wantWidth)
+		wantWidth := documentPanelWidth(m.width)
+		if got := lipgloss.Width(m.documentView()); got != wantWidth {
+			t.Fatalf("%dx%d comment document panel width = %d, want %d", size.Width, size.Height, got, wantWidth)
+		}
 	}
 }
 

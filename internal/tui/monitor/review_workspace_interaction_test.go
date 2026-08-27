@@ -42,7 +42,7 @@ func monitorWithReviewWorkspace(t *testing.T) Model {
 func TestReviewWorkspaceComposerReceivesGateKeysAndIsVisible(t *testing.T) {
 	m := monitorWithReviewWorkspace(t)
 	m, _ = m.Update(key("enter"))
-	if footer := ansiStrip(m.footerView()); !strings.Contains(footer, "j/k move line") || !strings.Contains(footer, "S finish review") || strings.Contains(footer, "1-9 decision") {
+	if footer := ansiStrip(m.footerView()); !strings.Contains(footer, "j/k move block") || !strings.Contains(footer, "s view") || !strings.Contains(footer, "S finish review") || strings.Contains(footer, "1-9 decision") {
 		t.Fatalf("workspace footer exposes the wrong controls: %q", footer)
 	}
 	if view := ansiStrip(m.View()); strings.Count(view, "Review required") != 1 || strings.Contains(view, "Documents\n") && strings.Contains(view, "Steps") {
@@ -85,7 +85,7 @@ func TestReviewWorkspaceEscapeCancelsEditorBeforeBlurringGate(t *testing.T) {
 		t.Fatalf("editor escape left mode %v, want browse", got)
 	}
 	m, _ = m.Update(key("esc"))
-	if m.focus != focusGate || strings.Contains(ansiStrip(m.gateOverlay()), "Scope assessment · SOURCE") {
+	if m.focus != focusGate || strings.Contains(ansiStrip(m.gateOverlay()), "[ PREVIEW ]") {
 		t.Fatalf("browse escape should return to the compact gate: focus=%v", m.focus)
 	}
 }
@@ -149,7 +149,7 @@ func TestReviewWorkspaceStartsCompactAndReplacesMonitorBodyWhenOpened(t *testing
 
 	m, _ = m.Update(key("enter"))
 	view := ansiStrip(m.View())
-	if !strings.Contains(view, "Scope assessment · SOURCE") {
+	if !strings.Contains(view, "Scope assessment") || !strings.Contains(view, "[ PREVIEW ]") {
 		t.Fatalf("dedicated workspace did not open:\n%s", view)
 	}
 	if strings.Contains(view, "Transcript") || strings.Count(view, "Review required") != 1 {
@@ -157,6 +157,35 @@ func TestReviewWorkspaceStartsCompactAndReplacesMonitorBodyWhenOpened(t *testing
 	}
 	if width, height := lipgloss.Width(m.View()), lipgloss.Height(m.View()); width > 180 || height > 45 {
 		t.Fatalf("workspace exceeds terminal: got %dx%d, max 180x45", width, height)
+	}
+}
+
+func TestReviewWorkspaceRoutesViewToggleAndFitsTargetSizes(t *testing.T) {
+	for _, size := range []tea.WindowSizeMsg{{Width: 120, Height: 40}, {Width: 80, Height: 24}} {
+		m := monitorWithReviewWorkspace(t)
+		m, _ = m.Update(size)
+		m, _ = m.Update(key("enter"))
+		if view := ansiStrip(m.View()); !strings.Contains(view, "[ PREVIEW ]") {
+			t.Fatalf("%dx%d workspace did not default to preview:\n%s", size.Width, size.Height, view)
+		}
+		m, _ = m.Update(key("s"))
+		if view := ansiStrip(m.View()); !strings.Contains(view, "[ SOURCE ]") {
+			t.Fatalf("%dx%d s did not reach child workspace:\n%s", size.Width, size.Height, view)
+		}
+		section := m.gateHelpSection()
+		foundView := false
+		for _, binding := range section.Bindings {
+			help := binding.Help()
+			if help.Key == "s" && help.Desc == "view" {
+				foundView = true
+			}
+		}
+		if !foundView {
+			t.Fatalf("%dx%d global help does not reflect child view binding", size.Width, size.Height)
+		}
+		if width, height := lipgloss.Width(m.View()), lipgloss.Height(m.View()); width > size.Width || height > size.Height {
+			t.Fatalf("workspace exceeds %dx%d: got %dx%d", size.Width, size.Height, width, height)
+		}
 	}
 }
 

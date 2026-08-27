@@ -117,6 +117,23 @@ A Bubble Tea (Elm-architecture) app: one `model`, `Update`, `View`.
   resize.
 - `styles.go` — Lipgloss styles, adaptive to light/dark terminal background.
 
+### Document review workspace
+
+The Monitor opens `internal/tui/review.Model` as a child workspace for queued
+review gates. Each immutable document keeps its own transient presentation
+mode: source-addressable Markdown opens in rendered preview, while diffs and
+plain text always open as verbatim source. Switching documents restores that
+document's presentation choice for the lifetime of the workspace; presentation
+state is not persisted in the review draft.
+
+Markdown preview is presentation only. Goldmark maps each top-level block to an
+inclusive range of logical source lines, Glamour renders the block, and the TUI
+decorates it with its source range and overlapping comment state. Cursor
+movement, comments, anchors, draft projection, and submission continue to use
+the immutable source document and one-based logical lines—rendered terminal
+rows never become review identity. Non-Markdown content is never passed through
+Glamour.
+
 Message flow for one exchange: user submits (`ctrl+s`) → append a `turn`, set
 `streaming` → `submitPromptCmd` sends on the persistent client →
 `waitForClaudeMessageCmd` drains the channel → each `claudeDeltaMsg` appends to

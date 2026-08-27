@@ -21,7 +21,7 @@ func defaultKeyMap() keyMap {
 		PrevDoc: b([]string{"{"}, "previous document"), NextDoc: b([]string{"}"}, "next document"),
 		NextOpen: b([]string{"u"}, "next unreviewed"), Select: b([]string{"v"}, "select range"),
 		Comment: b([]string{"c"}, "comment"), Reviewed: b([]string{"r"}, "mark reviewed"),
-		ToggleMode: b([]string{"s"}, "source/preview"), NextComment: b([]string{"n", "N"}, "next comment"),
+		ToggleMode: b([]string{"s"}, "toggle source/preview"), NextComment: b([]string{"n", "N"}, "next comment"),
 		Edit: b([]string{"e"}, "edit comment"), Delete: b([]string{"x"}, "delete comment"),
 		Summary: b([]string{"S"}, "finish review"), Confirm: b([]string{"enter"}, "confirm"),
 		Cancel: b([]string{"esc"}, "cancel"), NextKind: b([]string{"tab"}, "next kind"),
@@ -45,13 +45,22 @@ func (m Model) Help() []KeyHelp {
 			{Key: "esc", Description: "cancel comment"},
 		}
 	}
-	return []KeyHelp{
-		{Key: "S", Description: "finish review"},
-		{Key: "j/k", Description: "move line"}, {Key: "{/}", Description: "change document"},
-		{Key: "v", Description: "select range"}, {Key: "c", Description: "comment"},
-		{Key: "r", Description: "mark reviewed"}, {Key: "s", Description: "source/preview"},
-		{Key: "esc", Description: "close/cancel"},
+	move := "move line"
+	if m.activeDocumentMode() == DocumentPreview {
+		move = "move block"
 	}
+	help := []KeyHelp{
+		{Key: "S", Description: "finish review"},
+		{Key: "j/k", Description: move}, {Key: "{/}", Description: "change document"},
+	}
+	if m.activeDocumentMode() == DocumentSource {
+		help = append(help, KeyHelp{Key: "v", Description: "select range"})
+	}
+	help = append(help, KeyHelp{Key: "c", Description: "comment"}, KeyHelp{Key: "r", Description: "mark reviewed"})
+	if m.docs[m.active].meta.Format == "markdown" {
+		help = append(help, KeyHelp{Key: "s", Description: "view"})
+	}
+	return append(help, KeyHelp{Key: "esc", Description: "close/cancel"})
 }
 
 type KeyHelp struct{ Key, Description string }

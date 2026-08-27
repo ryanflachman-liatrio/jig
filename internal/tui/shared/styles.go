@@ -110,6 +110,16 @@ type Styles struct {
 		Remove lipgloss.Style
 		Hunk   lipgloss.Style
 	}
+	Review struct {
+		ModeActive        lipgloss.Style
+		ModeInactive      lipgloss.Style
+		BlockRailActive   lipgloss.Style
+		BlockRailInactive lipgloss.Style
+		BlockMetaActive   lipgloss.Style
+		BlockMetaInactive lipgloss.Style
+		CommentMarker     lipgloss.Style
+		ActiveComment     lipgloss.Style
+	}
 	Step struct {
 		ID    lipgloss.Style
 		Types map[string]lipgloss.Style
@@ -258,6 +268,15 @@ func DefaultTheme() Styles {
 	s.Diff.Add = lipgloss.NewStyle().Foreground(success)
 	s.Diff.Remove = lipgloss.NewStyle().Foreground(danger)
 	s.Diff.Hunk = lipgloss.NewStyle().Foreground(info)
+
+	s.Review.ModeActive = lipgloss.NewStyle().Bold(true).Foreground(onPrimary).Background(primary)
+	s.Review.ModeInactive = lipgloss.NewStyle().Foreground(fgMuted)
+	s.Review.BlockRailActive = lipgloss.NewStyle().Bold(true).Foreground(primary)
+	s.Review.BlockRailInactive = lipgloss.NewStyle().Foreground(fgDim)
+	s.Review.BlockMetaActive = lipgloss.NewStyle().Bold(true).Foreground(primary)
+	s.Review.BlockMetaInactive = lipgloss.NewStyle().Foreground(fgDim)
+	s.Review.CommentMarker = lipgloss.NewStyle().Foreground(warning)
+	s.Review.ActiveComment = lipgloss.NewStyle().Bold(true).Foreground(secondary)
 
 	s.Step.ID = lipgloss.NewStyle().Foreground(fgBase)
 	s.Step.Types = map[string]lipgloss.Style{

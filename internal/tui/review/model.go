@@ -36,7 +36,7 @@ type Model struct {
 	docs                           []document
 	active, cursor, rangeEnd       int
 	mode                           Mode
-	documentMode                   DocumentMode
+	documentModes                  []DocumentMode
 	reviewed                       map[string]bool
 	comments                       []domain.Comment
 	nextID                         int
@@ -62,8 +62,15 @@ func NewWithDraft(session domain.Session, draft domain.Draft) (Model, error) {
 	}
 	m := Model{session: session, docs: docs, reviewed: map[string]bool{}, mode: ModeBrowse, commentKind: domain.KindNote, keys: defaultKeyMap(), nextID: 1}
 	m.previews = make([]previewState, len(docs))
+	m.documentModes = make([]DocumentMode, len(docs))
 	for i, d := range docs {
+		if d.meta.Format != "markdown" {
+			continue
+		}
 		m.previews[i] = buildPreview(d.meta.Content)
+		if m.previews[i].parseErr == nil && len(m.previews[i].blocks) > 0 {
+			m.documentModes[i] = DocumentPreview
+		}
 	}
 	for _, id := range draft.Reviewed {
 		m.reviewed[id] = true
@@ -80,6 +87,11 @@ func NewWithDraft(session domain.Session, draft domain.Draft) (Model, error) {
 	}
 	m.clampCursor()
 	m.rangeEnd = draft.View.RangeEndLine
+	if m.activeDocumentMode() == DocumentPreview {
+		m.previewBlock = m.blockForLine(m.cursor)
+		block := m.previews[m.active].blocks[m.previewBlock]
+		m.cursor, m.rangeEnd = block.startLine, block.endLine
+	}
 	m.activeComment = draft.View.ActiveCommentID
 	m.commentKind = draft.View.CommentKind
 	if m.commentKind == "" {
@@ -141,6 +153,19 @@ func (m Model) CapturesText() bool {
 }
 
 func (m Model) PreviewBlock() int { return m.previewBlock }
+
+func (m Model) activeDocumentMode() DocumentMode {
+	if m.active < 0 || m.active >= len(m.documentModes) {
+		return DocumentSource
+	}
+	return m.documentModes[m.active]
+}
+
+func (m Model) previewAvailable() bool {
+	return m.active >= 0 && m.active < len(m.docs) &&
+		m.docs[m.active].meta.Format == "markdown" &&
+		m.previews[m.active].parseErr == nil && len(m.previews[m.active].blocks) > 0
+}
 
 // SetVerdict is used by a parent surface when verdict choices are rendered as
 // buttons or a compact selector rather than raw digit key presses.
