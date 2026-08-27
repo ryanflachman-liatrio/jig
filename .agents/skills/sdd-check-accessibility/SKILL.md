@@ -1,5 +1,6 @@
 ---
 name: sdd-check-accessibility
+disable-model-invocation: true
 description: SDD Phase 5 — review changed UI files against WCAG 2.1 AA criteria using static analysis.
 ---
 

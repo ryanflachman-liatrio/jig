@@ -1,5 +1,6 @@
 ---
 name: sdd-tech-research
+disable-model-invocation: true
 description: SDD Phase 1 Step 2b — web-search current best practices for the technologies identified in context assessment.
 ---
 

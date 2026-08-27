@@ -1,5 +1,6 @@
 ---
 name: sdd-scope-assess
+disable-model-invocation: true
 description: SDD Phase 1 Step 3 — judge whether the feature is appropriately sized for a single spec-driven workflow, using both codebase context and tech research findings.
 ---
 

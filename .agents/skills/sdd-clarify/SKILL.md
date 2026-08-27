@@ -1,5 +1,6 @@
 ---
 name: sdd-clarify
+disable-model-invocation: true
 description: SDD Phase 1 clarification gate — decide whether context is sufficient to write a high-quality spec, or block for a round of clarifying questions.
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: sdd-gen-changelog
+disable-model-invocation: true
 description: SDD — produce a well-structured CHANGELOG.md entry for a completed implementation and prepend it to the file.
 ---
 

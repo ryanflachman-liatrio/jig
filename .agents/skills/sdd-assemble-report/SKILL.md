@@ -1,5 +1,6 @@
 ---
 name: sdd-assemble-report
+disable-model-invocation: true
 description: SDD Phase 4 — synthesise coverage matrix, compliance findings, and proof file check into the gated validation report.
 ---
 

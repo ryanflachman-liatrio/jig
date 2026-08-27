@@ -1,5 +1,6 @@
 ---
 name: research_backend
+disable-model-invocation: true
 description: Research backend concerns for a jig feature — engine scheduling, runner execution, workflow schema, datastore persistence, and transcript storage.
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: sdd-validate
+disable-model-invocation: true
 description: SDD Phase 4 — evaluate the implementation against spec requirements and write a gated validation report.
 ---
 

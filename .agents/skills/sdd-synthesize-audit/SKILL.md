@@ -1,5 +1,6 @@
 ---
 name: sdd-synthesize-audit
+disable-model-invocation: true
 description: SDD Phase 2 — merge parallel audit gate findings into the final audit report and write it to disk; apply task file remediation on loop runs.
 ---
 

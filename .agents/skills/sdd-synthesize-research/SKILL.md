@@ -1,5 +1,6 @@
 ---
 name: sdd-synthesize-research
+disable-model-invocation: true
 description: SDD Phase 1 — synthesize findings from five parallel domain researchers into a unified technical research report.
 ---
 

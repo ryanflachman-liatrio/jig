@@ -1,5 +1,6 @@
 ---
 name: sdd-synthesize-spec-analysis
+disable-model-invocation: true
 description: SDD Phase 2 — merge parallel spec requirements extraction and repo standards discovery into a unified analysis for task generation.
 ---
 

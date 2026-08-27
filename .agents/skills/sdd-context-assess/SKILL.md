@@ -1,5 +1,6 @@
 ---
 name: sdd-context-assess
+disable-model-invocation: true
 description: SDD Phase 1 Step 2a — review the codebase and existing docs to ground the spec in the project's real architecture, conventions, and constraints.
 ---
 

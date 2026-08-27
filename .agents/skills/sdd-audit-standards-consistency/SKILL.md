@@ -1,5 +1,6 @@
 ---
 name: sdd-audit-standards-consistency
+disable-model-invocation: true
 description: SDD Phase 2 audit — Gate 3: verify the task file respects all identified repository standards.
 ---
 

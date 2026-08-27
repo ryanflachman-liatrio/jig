@@ -1,5 +1,6 @@
 ---
 name: qa
+disable-model-invocation: true
 description: QA agent for the jig feature pipeline — validates implementation quality and decides whether to loop back to implement or pass to final review.
 ---
 

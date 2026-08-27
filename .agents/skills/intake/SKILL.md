@@ -1,5 +1,6 @@
 ---
 name: intake
+disable-model-invocation: true
 description: Intake step for the feature pipeline — converts a raw user request into a concrete, actionable feature spec with targeted research areas.
 ---
 

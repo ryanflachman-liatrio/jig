@@ -1,5 +1,6 @@
 ---
 name: sdd-check-scope-integrity
+disable-model-invocation: true
 description: SDD Phase 4 — Gate D1: detect core source file changes not mapped to any task in the task file.
 ---
 

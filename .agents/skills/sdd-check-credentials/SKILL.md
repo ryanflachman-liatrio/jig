@@ -1,5 +1,6 @@
 ---
 name: sdd-check-credentials
+disable-model-invocation: true
 description: SDD Phase 4 — Gate F: scan proof artifact files for credential patterns that must not be committed.
 ---
 

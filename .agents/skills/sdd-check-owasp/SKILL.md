@@ -1,5 +1,6 @@
 ---
 name: sdd-check-owasp
+disable-model-invocation: true
 description: SDD Phase 5 — review changed source files against OWASP Top 10 (2021) using static analysis.
 ---
 

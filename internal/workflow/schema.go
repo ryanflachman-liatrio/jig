@@ -311,8 +311,8 @@ type Step struct {
 	outputTemplateBody string // resolved body, populated at load time
 
 	// AppendSystemPrompt is injected after the skill/agent-file prompt for
-	// per-step constraints. agentPrompt holds the body of a resolved AgentFile
-	// (the agent's system prompt); it is populated at load time, not decoded.
+	// per-step constraints. agentPrompt holds the resolved instruction body; it
+	// is populated at load time, not decoded.
 	AppendSystemPrompt string `toml:"append_system_prompt"`
 	agentPrompt        string
 
@@ -353,8 +353,7 @@ func (r ReviewTarget) ResolvedPath() string {
 	return r.resolvedPath
 }
 
-// AgentPrompt returns the body of the resolved agent file for this step, or ""
-// if none was set. The field is populated at load time by resolveAgentFiles.
+// AgentPrompt returns the resolved skill or agent-file instruction body.
 // The getter exists so runner.AgentExecutor can access it without importing
 // the workflow package's unexported fields directly.
 func (s *Step) AgentPrompt() string { return s.agentPrompt }

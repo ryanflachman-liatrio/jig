@@ -1,5 +1,6 @@
 ---
 name: sdd-check-data-privacy
+disable-model-invocation: true
 description: SDD Phase 5 — review implementation for GDPR, CCPA, and HIPAA compliance using static analysis.
 ---
 

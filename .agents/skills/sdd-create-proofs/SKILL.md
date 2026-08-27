@@ -1,5 +1,6 @@
 ---
 name: sdd-create-proofs
+disable-model-invocation: true
 description: SDD Phase 3 — write the reviewer-first proof artifact file for a completed parent task, incorporating test and lint results.
 ---
 

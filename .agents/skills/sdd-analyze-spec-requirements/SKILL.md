@@ -1,5 +1,6 @@
 ---
 name: sdd-analyze-spec-requirements
+disable-model-invocation: true
 description: SDD Phase 2 — read the spec and extract all functional requirements, demoable units, non-goals, and technical considerations.
 ---
 

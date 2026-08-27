@@ -1,5 +1,6 @@
 ---
 name: sdd-audit-open-questions
+disable-model-invocation: true
 description: SDD Phase 2 audit — Gate 4 + Flags 5/6: check for unresolved ambiguity, regression-risk blind spots, and non-goal leakage.
 ---
 

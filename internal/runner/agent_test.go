@@ -82,14 +82,37 @@ func TestExecuteDerivesDiagnosticsDirOnlyWithTranscript(t *testing.T) {
 func TestExecuteWritesAssembledPromptToInputArtifact(t *testing.T) {
 	dir := t.TempDir()
 	tPath := filepath.Join(dir, "transcript.jsonl")
+	skillDir := filepath.Join(dir, "skills", "review")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(`---
+name: review
+description: Review supplied material
+---
+Inspect the evidence before reaching a conclusion.`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wf, err := workflow.Decode(`
+[workflow]
+name = "x"
+version = "1"
+
+[[step]]
+id = "review"
+type = "agent"
+skill = "skills/review"
+append_system_prompt = "Perform the requested review."
+`, dir)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
 	h := &harness.FakeHarness{
 		NameVal: "fake",
 		Sess:    harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}}),
 	}
 	req := engine.StepRequest{
-		Step: &workflow.Step{
-			AppendSystemPrompt: "Perform the requested review.",
-		},
+		Step: &wf.Steps[0],
 		Inputs: []engine.ResolvedInput{{
 			Ref:   workflow.Input{Path: "notes.md", Inline: true},
 			Value: "untrusted input contents",
@@ -98,7 +121,7 @@ func TestExecuteWritesAssembledPromptToInputArtifact(t *testing.T) {
 		TranscriptPath:  tPath,
 	}
 
-	_, err := NewAgentExecutorFixed(h).Execute(context.Background(), req, &captureReporter{})
+	_, err = NewAgentExecutorFixed(h).Execute(context.Background(), req, &captureReporter{})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -109,7 +132,7 @@ func TestExecuteWritesAssembledPromptToInputArtifact(t *testing.T) {
 	if string(got) != h.OpenSpec.Prompt {
 		t.Errorf("input.md does not match harness prompt\ninput.md:\n%s\n\nharness prompt:\n%s", got, h.OpenSpec.Prompt)
 	}
-	for _, want := range []string{"Workflow context", "Perform the requested review.", "untrusted input contents"} {
+	for _, want := range []string{"Workflow context", "Inspect the evidence before reaching a conclusion.", "Perform the requested review.", "untrusted input contents"} {
 		if !strings.Contains(string(got), want) {
 			t.Errorf("input.md missing %q", want)
 		}

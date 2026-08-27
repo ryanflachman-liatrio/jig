@@ -1,5 +1,6 @@
 ---
 name: sdd-check-git-traceability
+disable-model-invocation: true
 description: SDD Phase 4 — R4: verify git commits reference specific tasks or requirements and tell a coherent implementation story.
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: sdd-implement-code
+disable-model-invocation: true
 description: SDD Phase 3 — implement all sub-tasks for one parent task, following repository patterns and updating the task file.
 ---
 

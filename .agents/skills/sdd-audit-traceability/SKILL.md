@@ -1,5 +1,6 @@
 ---
 name: sdd-audit-traceability
+disable-model-invocation: true
 description: SDD Phase 2 audit — Gate 1: verify every functional requirement has at least one planned test artifact in the task file.
 ---
 

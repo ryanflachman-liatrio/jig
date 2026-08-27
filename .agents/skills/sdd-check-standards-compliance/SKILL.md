@@ -1,5 +1,6 @@
 ---
 name: sdd-check-standards-compliance
+disable-model-invocation: true
 description: SDD Phase 4 — Gate E: verify changed files follow the repository's naming, organization, and test pattern standards.
 ---
 

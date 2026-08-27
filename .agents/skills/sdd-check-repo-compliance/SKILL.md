@@ -1,5 +1,6 @@
 ---
 name: sdd-check-repo-compliance
+disable-model-invocation: true
 description: SDD Phase 4 — verify repository standards compliance, git traceability, and detect out-of-scope core file changes.
 ---
 

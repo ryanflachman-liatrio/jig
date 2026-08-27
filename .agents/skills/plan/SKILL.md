@@ -1,5 +1,6 @@
 ---
 name: plan
+disable-model-invocation: true
 description: Plan step for the jig feature pipeline — produces a concrete implementation plan from research findings, ready for human review.
 ---
 

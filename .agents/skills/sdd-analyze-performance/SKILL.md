@@ -1,5 +1,6 @@
 ---
 name: sdd-analyze-performance
+disable-model-invocation: true
 description: SDD — static review of changed source files for performance anti-patterns against the spec's non-functional requirements.
 ---
 

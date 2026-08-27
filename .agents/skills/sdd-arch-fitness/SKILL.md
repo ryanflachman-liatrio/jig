@@ -1,5 +1,6 @@
 ---
 name: sdd-arch-fitness
+disable-model-invocation: true
 description: SDD — review a proposed spec against existing ADRs, layering rules, and documented architecture constraints.
 ---
 

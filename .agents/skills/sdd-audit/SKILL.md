@@ -1,5 +1,6 @@
 ---
 name: sdd-audit
+disable-model-invocation: true
 description: SDD Phase 2 Step 4 — run all planning audit gates and write the audit report; apply remediation on loop runs.
 ---
 

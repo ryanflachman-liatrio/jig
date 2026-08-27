@@ -1,5 +1,6 @@
 ---
 name: sdd-analyze-repo-standards
+disable-model-invocation: true
 description: SDD Phase 2 — discover repository standards from project config files, CI, lint, and contributing guides.
 ---
 

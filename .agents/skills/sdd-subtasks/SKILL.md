@@ -1,5 +1,6 @@
 ---
 name: sdd-subtasks
+disable-model-invocation: true
 description: SDD Phase 2 Step 3 — expand parent tasks into actionable sub-tasks and add a Relevant Files table.
 ---
 

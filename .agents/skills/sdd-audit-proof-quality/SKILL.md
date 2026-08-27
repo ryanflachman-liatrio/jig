@@ -1,5 +1,6 @@
 ---
 name: sdd-audit-proof-quality
+disable-model-invocation: true
 description: SDD Phase 2 audit — Gate 2: verify every proof artifact in the task file is observable and reproducible.
 ---
 

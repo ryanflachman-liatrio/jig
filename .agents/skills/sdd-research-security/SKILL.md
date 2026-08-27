@@ -1,5 +1,6 @@
 ---
 name: sdd-research-security
+disable-model-invocation: true
 description: SDD Phase 1 — research current security standards, auth patterns, and CVE landscape for the identified tech stack.
 ---
 

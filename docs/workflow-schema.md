@@ -110,9 +110,14 @@ Claude agent file** (exactly one of `skill` / `agent_file`).
 | `backend` / `transport` | string   | Override `[defaults]`. See [Agent backend](#agent-backend-backend--transport). |
 
 **`SKILL.md` contract.** Agent Skills convention: YAML frontmatter (`name`,
-`description`) + instruction body. At runtime the engine builds the prompt from
-`SKILL.md` and injects the resolved input paths and the required `output` path
-(when one is declared). Keeps prose out of the TOML and makes skills reusable.
+`description`, `disable-model-invocation: true`) + instruction body. The
+invocation flag prevents backends with native skill discovery from separately
+loading instructions that jig already supplies. At load time jig validates the
+standard frontmatter and snapshots the instruction body into the step's
+effective prompt; the agent does not need to locate or reread `SKILL.md`. The
+body is therefore visible in the persisted `input.md` alongside the resolved
+inputs and output instructions. This keeps prose out of the TOML and makes
+skills reusable.
 
 **`agent_file` contract.** A Claude Code agent file: YAML frontmatter (`name`,
 `description`, optional `tools`, optional `model`) + a system-prompt body. It is

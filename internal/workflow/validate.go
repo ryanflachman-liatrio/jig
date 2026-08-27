@@ -260,8 +260,8 @@ func (v *validator) checkAgent(s *Step) {
 			v.errf("agent step %q: %s/SKILL.md not found", s.ID, s.Skill)
 		}
 	}
-	// AgentFile and OutputTemplate are already read by resolveAgentFiles /
-	// resolveOutputTemplates; any error there aborts the load before we get here.
+	// Prompt and output-template files are already read by their resolvers; any
+	// error there aborts the load before we get here.
 	if s.OutputTemplate != "" && v.baseDir != "" {
 		if _, err := os.Stat(filepath.Join(v.baseDir, s.OutputTemplate)); err != nil {
 			v.errf("agent step %q: output_template %q not found", s.ID, s.OutputTemplate)

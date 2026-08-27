@@ -64,7 +64,7 @@ run = "git merge --no-ff jig/bugfix/fix"
 func TestDecodeValid(t *testing.T) {
 	dir := t.TempDir()
 	for _, skill := range []string{"skills/triage", "skills/fix"} {
-		mustWrite(t, filepath.Join(dir, skill, "SKILL.md"), "# skill\n")
+		mustWriteSkill(t, filepath.Join(dir, skill, "SKILL.md"), "# Skill")
 	}
 
 	wf, err := Decode(validBugfix, dir)
@@ -112,7 +112,7 @@ func TestDecodeValid(t *testing.T) {
 
 func TestDecodeBackendTransport(t *testing.T) {
 	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, "skills/a", "SKILL.md"), "# skill\n")
+	mustWriteSkill(t, filepath.Join(dir, "skills/a", "SKILL.md"), "# Skill")
 
 	t.Run("defaults inherit and per-step override", func(t *testing.T) {
 		toml := `
@@ -719,7 +719,7 @@ block_on = "chat.needs_input == 'true'"
   needs_input = { enum = ["true", "false"] }
 `
 	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, "skills/ask", "SKILL.md"), "# ask\n")
+	mustWriteSkill(t, filepath.Join(dir, "skills/ask", "SKILL.md"), "# Ask")
 	if _, err := Decode(toml, dir); err != nil {
 		t.Fatalf("expected valid, got error: %v", err)
 	}
@@ -865,7 +865,7 @@ allowed_tools = ["Read"]
 func TestDecodeProducerSchema(t *testing.T) {
 	dir := t.TempDir()
 	for _, skill := range []string{"skills/research", "skills/report"} {
-		mustWrite(t, filepath.Join(dir, skill, "SKILL.md"), "# skill\n")
+		mustWriteSkill(t, filepath.Join(dir, skill, "SKILL.md"), "# Skill")
 	}
 
 	wf, err := Decode(validProducer, dir)
@@ -930,8 +930,8 @@ func TestDecodeProducerSchema(t *testing.T) {
 // same Field model, so field-ref checks work against it too.
 func TestDecodeSchemaFile(t *testing.T) {
 	dir := t.TempDir()
-	mustWrite(t, filepath.Join(dir, "skills/triage/SKILL.md"), "# skill\n")
-	mustWrite(t, filepath.Join(dir, "skills/route/SKILL.md"), "# skill\n")
+	mustWriteSkill(t, filepath.Join(dir, "skills/triage/SKILL.md"), "# Triage")
+	mustWriteSkill(t, filepath.Join(dir, "skills/route/SKILL.md"), "# Route")
 	mustWrite(t, filepath.Join(dir, "schemas/triage.json"), `{
 	  "type": "object",
 	  "properties": {
@@ -1042,6 +1042,66 @@ effort     = "low"
 	}
 }
 
+func TestDecodeSkillPrompt(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "skills/research/SKILL.md"), `---
+name: research
+description: Research the requested topic
+---
+Follow the evidence and cite every conclusion.`)
+
+	wf, err := Decode(`
+[workflow]
+name = "x"
+version = "1"
+
+[[step]]
+id = "research"
+type = "agent"
+skill = "skills/research"
+`, dir)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+
+	if got, want := wf.Steps[wf.index["research"]].AgentPrompt(), "Follow the evidence and cite every conclusion."; got != want {
+		t.Errorf("AgentPrompt = %q, want %q", got, want)
+	}
+}
+
+func TestDecodeSkillPromptRejectsInvalidSkillFile(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{name: "missing frontmatter", content: "Do the work.", want: "missing YAML frontmatter"},
+		{name: "missing name", content: "---\ndescription: Test skill\n---\nDo the work.", want: "field `name` is required"},
+		{name: "missing description", content: "---\nname: test\n---\nDo the work.", want: "field `description` is required"},
+		{name: "missing body", content: "---\nname: test\ndescription: Test skill\n---\n", want: "instruction body is required"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			mustWrite(t, filepath.Join(dir, "skills/test/SKILL.md"), tc.content)
+			_, err := Decode(`
+[workflow]
+name = "x"
+version = "1"
+
+[[step]]
+id = "test"
+type = "agent"
+skill = "skills/test"
+`, dir)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want substring %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestDecodeProfileValid(t *testing.T) {
 	// minAgent is the smallest valid agent-step TOML, minus any profile.
 	const hdr = `
@@ -1125,7 +1185,7 @@ disallowed_tools = ["Bash"]
 	if err := os.MkdirAll(filepath.Join(dir, "s"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	mustWrite(t, filepath.Join(dir, "s", "SKILL.md"), "# skill")
+	mustWriteSkill(t, filepath.Join(dir, "s", "SKILL.md"), "# Skill")
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1393,4 +1453,10 @@ func mustWrite(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func mustWriteSkill(t *testing.T, path, body string) {
+	t.Helper()
+	name := filepath.Base(filepath.Dir(path))
+	mustWrite(t, path, "---\nname: "+name+"\ndescription: Test skill fixture\n---\n"+body+"\n")
 }

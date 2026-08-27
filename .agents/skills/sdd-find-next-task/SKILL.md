@@ -1,5 +1,6 @@
 ---
 name: sdd-find-next-task
+disable-model-invocation: true
 description: SDD Phase 3 — read the task file and identify the next incomplete parent task, or confirm all tasks are done.
 ---
 

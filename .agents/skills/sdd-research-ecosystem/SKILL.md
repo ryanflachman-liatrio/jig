@@ -1,5 +1,6 @@
 ---
 name: sdd-research-ecosystem
+disable-model-invocation: true
 description: SDD Phase 1 — research current library versions, deprecations, ecosystem health, and dependency direction for the identified tech stack.
 ---
 

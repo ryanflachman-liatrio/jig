@@ -1,5 +1,6 @@
 ---
 name: sdd-research-api-contracts
+disable-model-invocation: true
 description: SDD Phase 1 — research current API design standards, versioning strategies, and contract patterns for the identified tech stack.
 ---
 

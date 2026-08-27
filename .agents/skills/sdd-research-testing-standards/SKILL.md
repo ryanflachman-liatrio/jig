@@ -1,5 +1,6 @@
 ---
 name: sdd-research-testing-standards
+disable-model-invocation: true
 description: SDD Phase 1 — research current testing frameworks, coverage standards, and contract testing patterns for the identified tech stack.
 ---
 

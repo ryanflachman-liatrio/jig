@@ -1,5 +1,6 @@
 ---
 name: sdd-write-epic
+disable-model-invocation: true
 description: SDD Phase 1 terminal branch — turn an approved too-large scope assessment and its research into one detailed epic of independently specifiable slices.
 ---
 

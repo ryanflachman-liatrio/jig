@@ -1,5 +1,6 @@
 ---
 name: sdd-write-spec
+disable-model-invocation: true
 description: SDD Phase 1 spec generation — write the comprehensive specification document using the exact required structure.
 ---
 

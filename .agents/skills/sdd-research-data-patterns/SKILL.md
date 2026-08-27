@@ -1,5 +1,6 @@
 ---
 name: sdd-research-data-patterns
+disable-model-invocation: true
 description: SDD Phase 1 — research current data modeling, ORM, migration, and caching patterns for the identified tech stack.
 ---
 

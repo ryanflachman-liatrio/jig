@@ -1,5 +1,6 @@
 ---
 name: research_frontend
+disable-model-invocation: true
 description: Research TUI/user-surface concerns for a jig feature — Bubble Tea models, styles, key handling, review gates, and monitor rendering.
 ---
 

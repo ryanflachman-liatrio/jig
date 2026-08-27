@@ -1,5 +1,6 @@
 ---
 name: sdd-assemble-compliance
+disable-model-invocation: true
 description: SDD Phase 5 — synthesise all compliance findings into the final compliance report and apply gate logic.
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: implement
+disable-model-invocation: true
 description: Implementation agent for the jig feature pipeline — applies a concrete plan to the jig codebase in a git worktree.
 ---
 

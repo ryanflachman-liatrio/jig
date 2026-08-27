@@ -1,5 +1,6 @@
 ---
 name: sdd-build-coverage-matrix
+disable-model-invocation: true
 description: SDD Phase 4 — map every functional requirement to its proof evidence and record Verified/Failed/Unknown.
 ---
 

@@ -1,5 +1,6 @@
 ---
 name: sdd-check-pci
+disable-model-invocation: true
 description: SDD Phase 5 — review payment flow implementation against PCI DSS 4.0 requirements using static analysis.
 ---
 

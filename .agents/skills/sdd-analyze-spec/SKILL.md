@@ -1,5 +1,6 @@
 ---
 name: sdd-analyze-spec
+disable-model-invocation: true
 description: SDD Phase 2 Step 1 — read the existing spec and discover repository standards to ground task generation.
 ---
 

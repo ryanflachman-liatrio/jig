@@ -1,5 +1,6 @@
 ---
 name: sdd-implement
+disable-model-invocation: true
 description: SDD Phase 3 — implement the next incomplete parent task, create proof artifacts, commit, and signal checkpoint progress.
 ---
 

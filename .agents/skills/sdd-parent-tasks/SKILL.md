@@ -1,5 +1,6 @@
 ---
 name: sdd-parent-tasks
+disable-model-invocation: true
 description: SDD Phase 2 Step 2 — generate parent tasks with proof artifacts and write the task file.
 ---
 

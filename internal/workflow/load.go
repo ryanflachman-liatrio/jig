@@ -53,8 +53,11 @@ func Decode(data, baseDir string) (*Workflow, error) {
 		return nil, fmt.Errorf("unknown key(s) in workflow: %s", formatKeys(keys))
 	}
 
-	// Resolve agent files before profiles/defaults so file-derived tools/model
-	// feed into worktree-isolation and [defaults] inheritance.
+	// Resolve prompt-bearing files before profiles/defaults so file-derived
+	// tools/model feed into worktree-isolation and [defaults] inheritance.
+	if err := wf.resolveSkills(baseDir); err != nil {
+		return nil, err
+	}
 	if err := wf.resolveAgentFiles(baseDir); err != nil {
 		return nil, err
 	}

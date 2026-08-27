@@ -1,5 +1,6 @@
 ---
 name: sdd-discover-artifacts
+disable-model-invocation: true
 description: SDD Phase 4 Step 1 — locate all SDD artifacts and collect git history for the parallel analysis steps.
 ---
 

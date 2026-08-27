@@ -1,5 +1,6 @@
 ---
 name: sdd-compliance-scope
+disable-model-invocation: true
 description: SDD Phase 5 — detect which compliance frameworks apply to the implementation based on spec content and changed files.
 ---
 
