@@ -1,1 +1,0 @@
-Project conventions go here.

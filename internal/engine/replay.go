@@ -3,8 +3,10 @@ package engine
 import (
 	"bufio"
 	"os"
+	"path/filepath"
 
 	"jig/internal/datastore"
+	"jig/internal/review"
 	"jig/internal/step"
 )
 
@@ -24,21 +26,74 @@ const interruptedSDKSessionErr = "agent SDK session terminated abruptly before r
 // schema, still leaves every decodable event intact. The caller therefore always
 // gets the best reconstruction the journal supports.
 func ReplayJournal(runDir string) ([]Event, error) {
+	_, events, err := readJournal(runDir)
+	if err != nil {
+		return nil, err
+	}
+	events = hydrateReviewDocuments(runDir, events)
+	return reconcileInterruptedRun(events), nil
+}
+
+// ReplayJournalRaw returns only events durably written by the original
+// scheduler. Ownership views use it to distinguish an unfinished paused run
+// from a terminal run without adding display-only crash reconciliation events.
+func ReplayJournalRaw(runDir string) ([]Event, error) {
+	_, events, err := readJournal(runDir)
+	return events, err
+}
+
+func hydrateReviewDocuments(runDir string, events []Event) []Event {
+	hydrated := append([]Event(nil), events...)
+	for i, event := range hydrated {
+		req, ok := event.(ReviewRequest)
+		if !ok {
+			continue
+		}
+		req.Documents = append([]review.Document(nil), req.Documents...)
+		for j := range req.Documents {
+			path := req.Documents[j].SnapshotPath
+			data, err := os.ReadFile(path)
+			if err != nil {
+				path = filepath.Join(datastore.ReviewDocumentsDir(runDir, req.StepID, req.RoundID), req.Documents[j].ID+reviewExtension(req.Documents[j].Format))
+				data, err = os.ReadFile(path)
+			}
+			if err != nil || review.Digest(string(data)) != req.Documents[j].SHA256 {
+				continue
+			}
+			req.Documents[j].SnapshotPath = path
+			req.Documents[j].Content = string(data)
+			if req.Documents[j].Format == "diff" {
+				req.Diff = string(data)
+			}
+		}
+		hydrated[i] = req
+	}
+	return hydrated
+}
+
+// readJournal returns only durable events. Resume must not consume the virtual
+// failure events ReplayJournal adds for display, because those events were never
+// committed and would incorrectly make an interrupted run terminal.
+func readJournal(runDir string) (int, []Event, error) {
 	f, err := os.Open(datastore.JournalPath(runDir))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			return 0, nil, nil
 		}
-		return nil, err
+		return 0, nil, err
 	}
 	defer f.Close()
 
 	var events []Event
+	lastSeq := 0
 	br := bufio.NewReader(f)
 	for {
 		line, readErr := br.ReadString('\n')
 		if len(line) > 0 {
-			if _, e, err := UnmarshalEnvelope([]byte(line)); err == nil && e != nil {
+			if env, e, err := UnmarshalEnvelope([]byte(line)); err == nil && e != nil {
+				if env.Seq > lastSeq {
+					lastSeq = env.Seq
+				}
 				events = append(events, e)
 			}
 		}
@@ -46,7 +101,7 @@ func ReplayJournal(runDir string) ([]Event, error) {
 			break // io.EOF or a read error; either way, stop with what we have.
 		}
 	}
-	return reconcileInterruptedRun(events), nil
+	return lastSeq, events, nil
 }
 
 // reconcileInterruptedRun supplies terminal events that could not be journaled

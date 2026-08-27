@@ -41,7 +41,7 @@ Key invariants the plan must respect (from CLAUDE.md):
 - **Persistence-off is a first-class path.** Every new writer must no-op when the run dir is empty string.
 - **No comments that explain what code does** — only comments that explain a non-obvious why.
 - **New schema fields must be parsed, defaulted, validated, and tested** — a schema addition without a validation rule and a test is incomplete.
-- **`examples/feature.toml` must stay valid** after the change — include a task to update and re-validate it if the schema changes.
+- **`.agents/jig/feature.toml` must stay valid** after the change — include a task to update and re-validate it if the schema changes.
 - **TUI styles go in `internal/tui/styles.go`** — never a bare `lipgloss.NewStyle()` elsewhere.
 
 ## If you cannot plan

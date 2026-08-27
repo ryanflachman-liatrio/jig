@@ -135,6 +135,18 @@ type Workflow struct {
 	// profileIndex maps profile id (e.g. "@interactive") -> AgentProfile,
 	// populated at load time from built-ins and .agents/jig/profiles/*.toml.
 	profileIndex map[string]*AgentProfile
+
+	sourcePath string
+	sourceTOML string
+}
+
+// Source returns the workflow file and TOML used to construct this resolved
+// workflow. Decode-created workflows have TOML but no source path.
+func (wf *Workflow) Source() (path, toml string) {
+	if wf == nil {
+		return "", ""
+	}
+	return wf.sourcePath, wf.sourceTOML
 }
 
 // AgentProfile is a reusable bundle of agent configuration. Profiles let

@@ -11,14 +11,14 @@
 │                              ││                                              │
 ╭─ Review required ────────────────────────────────────────────────────────────╮
 │ [1 / 1]  Step: a                                                             │
-│   Required: Choose a verdict or send a message  ·  [ctrl+o] view diff        │
+│   Required: Choose a decision  ·  [ctrl+o] view diff                         │
 │     [1] approve                                                              │
 │     [2] reject                                                               │
-│     [m] message                                                              │
 │                                                                              │
 │     [ctrl+o] view diff                                                       │
 │                                                                              │
 │                                                                              │
+│                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
   Review required  ·  Step: a  ·  1 pending  ·  esc to blur
-  awaiting review  ·  1-9 verdict  •  m message  •  esc blur  •  ? more
+  awaiting review  ·  1-9 decision  •  ctrl+o view context  •  ? more

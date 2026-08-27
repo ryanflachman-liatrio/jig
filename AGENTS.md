@@ -19,7 +19,7 @@ are repeatable and inspectable.
 jig is **not at v1**. Prefer the correct long-term design over compatibility
 shims. Do not preserve deprecated env vars, dual code paths, or migration
 wrappers “just in case.” When replacing a mechanism, delete the old one in
-the same change and update docs/examples/tests to match.
+the same change and update workflow/docs/tests to match.
 
 ## Backend selection (TOML only — no env)
 

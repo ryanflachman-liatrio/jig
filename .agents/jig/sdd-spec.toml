@@ -2,8 +2,8 @@
 # SDD Phase 1 (sdd-1) as a jig workflow.
 #
 # Replicates the Liatrio Spec-Driven Development "Generate Specification" phase:
-#   idea → context assessment → tech research → scope check → clarification gate
-#   (with question rounds) → write spec → review-and-refine — as an inspectable DAG.
+#   idea → context assessment → tech research → scope routing → either a terminal
+#   epic or clarification → write spec → review-and-refine — as an inspectable DAG.
 #
 # Step mapping to sdd-1:
 #   mkdir_spec            → Step 1: Create spec directory
@@ -15,7 +15,8 @@
 #   research_ecosystem    → Step 2b: Ecosystem health research [Sonnet, parallel]
 #   synthesize_research   → Step 2c: Merge parallel research findings [Haiku]
 #   scope_assess          → Step 3: Initial scope assessment [Haiku]
-#   scope_gate            → Step 3: "ALWAYS pause" human gate (fires only when off-size)
+#   scope_gate            → Step 3: human scope-routing gate
+#   write_epic            → terminal branch for a request that needs multiple specs
 #   clarify               → Step 4: Clarification sufficiency check + question rounds [Opus]
 #   write_spec            → Step 5: Spec generation [Opus]
 #   spec_review           → Step 6: Review and refinement loop
@@ -26,7 +27,7 @@
 [workflow]
 name        = "sdd-spec"
 version     = "1"
-description = "SDD Phase 1 — turn an idea into a validated spec under docs/specs/."
+description = "SDD Phase 1 — turn an idea into a validated spec or a terminal multi-spec epic."
 
 [defaults]
 backend         = "codex"
@@ -193,18 +194,26 @@ allowed_tools = ["Read", "Grep", "Glob"]
 isolation     = "none"
 
   [step.schema]
-  sizing    = { enum = ["too_large", "too_small", "just_right"] }
-  rationale = "text"
+  sizing        = { enum = ["too_large", "too_small", "just_right"] }
+  rationale     = "text"
+  decomposition = "text"
 
-# ─── 4. Scope gate — fires ONLY when sizing is off (sdd-1 "ALWAYS pause") ──────
+# ─── 4. Scope routing gate ────────────────────────────────────────────────────
+# Every request pauses here so the human can continue toward one spec, ask for
+# narrower boundaries, or end this run with a detailed epic.
 [[step]]
 id           = "scope_gate"
 type         = "review"
 depends_on   = ["scope_assess"]
-when         = "scope_assess.sizing != 'just_right'"
-review       = "@scope_assess.summary"
-output_type  = { enum = ["proceed", "narrow"] }
-max_messages = 5
+output_type  = { enum = ["proceed", "narrow", "generate_epic"] }
+
+[[step.review]]
+source       = "@scope_assess.summary"
+label        = "Scope assessment"
+
+[[step.review]]
+source       = "@scope_assess.decomposition"
+label        = "Proposed decomposition"
 
   [step.loop]
   when           = "scope_gate == 'narrow'"
@@ -212,11 +221,31 @@ max_messages = 5
   max_iterations = 3
   feedback       = "@scope_gate"
 
-# ─── 5. Clarification gate + question rounds (sdd-1 Step 4) ───────────────────
+# ─── 5a. Generate a terminal epic when requested ─────────────────────────────
+[[step]]
+id            = "write_epic"
+type          = "agent"
+depends_on    = ["context_assess", "research_security", "research_api_contracts", "research_data_patterns", "research_testing_standards", "research_ecosystem", "synthesize_research", "scope_assess", "scope_gate"]
+when          = "scope_gate == 'generate_epic'"
+skill         = "../skills/sdd-write-epic"
+inputs        = ["@context_assess", "@research_security", "@research_api_contracts", "@research_data_patterns", "@research_testing_standards", "@research_ecosystem", "@synthesize_research", "@scope_assess", "@scope_gate", "@context_assess.spec_name"]
+allowed_tools = ["Read", "Grep", "Glob", "Write", "Bash"]
+isolation     = "none"
+
+  [step.schema]
+  epic_path    = "text"
+  epic_content = "text"
+  slice_ids    = { list = "text" }
+
+  [step.validate]
+  command = "find docs/epics -name '*.md' | xargs grep -l '## Slice Breakdown' | xargs grep -l '## Dependency and Delivery Order' | grep -q ."
+
+# ─── 5b. Clarification gate + question rounds (sdd-1 Step 4) ──────────────────
 [[step]]
 id            = "clarify"
 type          = "agent"
 depends_on    = ["context_assess", "synthesize_research", "scope_assess", "scope_gate"]
+when          = "scope_gate != 'generate_epic'"
 skill         = "../skills/sdd-clarify"
 inputs        = ["@context_assess.summary", "@synthesize_research.summary", "@scope_assess.summary", "@context_assess.spec_name"]
 allowed_tools = ["Read", "Grep", "Glob", "Write", "Bash"]
@@ -249,9 +278,11 @@ isolation     = "none"
 id           = "spec_review"
 type         = "review"
 depends_on   = ["write_spec"]
-review       = "@write_spec.spec_content"
 output_type  = { enum = ["approve", "revise"] }
-max_messages = 10
+
+[[step.review]]
+source       = "@write_spec.spec_content"
+label        = "Specification"
 
   [step.loop]
   when           = "spec_review == 'revise'"

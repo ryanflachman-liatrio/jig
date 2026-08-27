@@ -11,6 +11,12 @@ type ShowMonitorMsg struct{ RunID string }
 // StartRunMsg is emitted when the user presses r to start another run.
 type StartRunMsg struct{ Wf *workflow.Workflow }
 
+// ResumeRunMsg asks root to restore the selected historical run's scheduler.
+type ResumeRunMsg struct {
+	RunID    string
+	Workflow string
+}
+
 // RequestDeleteMsg is emitted when the user presses d to delete a run.
 // Root receives it, sets the confirm overlay, and handles the actual deletion.
 type RequestDeleteMsg struct{ RunID string }

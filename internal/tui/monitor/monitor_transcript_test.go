@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"jig/internal/transcript"
@@ -82,6 +83,29 @@ func TestDenseTranscriptFixtureCharacterizesNormalizationCases(t *testing.T) {
 	}
 	if entries[3].Generation != 0 || entries[3].Iteration != 1 || entries[3].Attempt != 1 {
 		t.Fatal("fixture no longer characterizes an execution boundary")
+	}
+}
+
+func TestTranscriptScrollHotkeysUseConfiguredRowCounts(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	m.focus = focusTranscript
+	m.chatVP.SetContent(strings.Repeat("line\n", 100))
+	m.chatVP.GotoTop()
+	m.chatAutoScroll = false
+
+	for _, tc := range []struct {
+		key  string
+		want int
+	}{
+		{key: "j", want: 2},
+		{key: "J", want: 12},
+		{key: "k", want: 10},
+		{key: "K", want: 0},
+	} {
+		m, _ = m.Update(key(tc.key))
+		if got := m.chatVP.YOffset(); got != tc.want {
+			t.Fatalf("after %q offset = %d, want %d", tc.key, got, tc.want)
+		}
 	}
 }
 

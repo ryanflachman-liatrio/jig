@@ -158,11 +158,13 @@ script     = ".agents/jig/scripts/commit-task.sh"
 [[step]]
 id           = "task_checkpoint"
 type         = "review"
-depends_on   = ["commit_task", "find_next_task"]
+depends_on   = ["commit_task", "find_next_task", "create_proofs"]
 when         = "find_next_task.progress == 'continue'"
-review       = "@create_proofs.proof_path"
 output_type  = { enum = ["continue", "redo"] }
-max_messages = 5
+
+[[step.review]]
+source       = "@create_proofs.proof_path"
+label        = "Task proof"
 
   [step.loop]
   when           = "find_next_task.progress == 'continue'"
@@ -178,9 +180,11 @@ max_messages = 5
 id           = "final_review"
 type         = "review"
 depends_on   = ["task_checkpoint", "find_next_task"]
-review       = "@find_next_task.completion_summary"
 output_type  = { enum = ["approve", "flag_issues"] }
-max_messages = 10
+
+[[step.review]]
+source       = "@find_next_task.completion_summary"
+label        = "Completion summary"
 
   [step.loop]
   when           = "final_review == 'flag_issues'"

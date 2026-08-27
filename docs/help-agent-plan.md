@@ -46,7 +46,6 @@ This plan adds a **workflow help agent** — a Claude-backed chat modal that ope
 | `stop_step(step_id)` | → `monitor.StopStepMsg` |
 | `resume_step(step_id, message)` | → `monitor.ResumeStepMsg` |
 | `resolve_review(step_id, verdict)` | → `monitor.ReviewVerdictMsg` |
-| `send_message_to_step(step_id, text)` | → `monitor.ReviewMessageMsg` |
 
 **Special case — `resolve_review` on final-merge gate**: The tool handler detects if `step_id` matches the final-merge step, then blocks on a rendezvous channel until the operator confirms via a TUI gate strip entry. Claude receives `"awaiting operator confirmation"` as the tool result and waits for the next turn.
 

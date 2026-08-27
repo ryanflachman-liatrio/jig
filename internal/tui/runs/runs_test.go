@@ -124,11 +124,17 @@ func TestRunsHydrate(t *testing.T) {
 			engine.StepStatus{RunID: "past-1", StepID: "b", To: step.StatusFailed},
 			engine.RunFinished{RunID: "past-1", Failed: true},
 		},
+		// An unfinished run from a previous jig process has no scheduler owner.
+		{
+			engine.RunStarted{RunID: "paused-1", Workflow: "wf", Steps: []string{"a", "gate"}},
+			engine.StepStatus{RunID: "paused-1", StepID: "a", To: step.StatusSucceeded},
+			engine.StepStatus{RunID: "paused-1", StepID: "gate", To: step.StatusAwaitingReview},
+		},
 	}
 	m = m.Hydrate(past)
 
-	if len(m.rows) != 2 {
-		t.Fatalf("rows: want 2 (live + past), got %d", len(m.rows))
+	if len(m.rows) != 3 {
+		t.Fatalf("rows: want 3 (live + finished + paused), got %d", len(m.rows))
 	}
 
 	// The live run must not have been marked done/failed by the duplicate group.
@@ -147,5 +153,26 @@ func TestRunsHydrate(t *testing.T) {
 	}
 	if got := runRowStatus(pr); !strings.Contains(got, "failed") {
 		t.Errorf("past run status render: want failed, got %q", got)
+	}
+
+	paused := m.rows[m.index["paused-1"]]
+	if !paused.paused || paused.done {
+		t.Fatalf("historical unfinished run: paused=%v done=%v", paused.paused, paused.done)
+	}
+	if got := runRowStatus(paused); !strings.Contains(got, "paused") {
+		t.Errorf("paused run status render: want paused, got %q", got)
+	}
+	m.cursor = m.index["paused-1"]
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'R', Text: "R"})
+	if cmd == nil {
+		t.Fatal("R on paused run produced no resume command")
+	}
+	msg, ok := cmd().(ResumeRunMsg)
+	if !ok || msg.RunID != "paused-1" || msg.Workflow != "wf" {
+		t.Fatalf("resume message = %#v", msg)
+	}
+	m = m.MarkLive("paused-1")
+	if got := runRowStatus(m.rows[m.index["paused-1"]]); !strings.Contains(got, "running") {
+		t.Errorf("resumed run status: want running, got %q", got)
 	}
 }

@@ -31,6 +31,7 @@ type monitorKeys struct {
 	TransToSteps keybind.Binding // matched (esc/h → Steps)
 	TransLeave   keybind.Binding // matched (q → runs list)
 	Scroll       keybind.Binding // matched (j/k — scroll viewport)
+	ScrollFast   keybind.Binding // matched (J/K — scroll viewport by 10 rows)
 	BlockNav     keybind.Binding // matched (n/N — next/previous collapsible block)
 	Toggle       keybind.Binding // matched (enter/space → expand)
 	ExpandAll    keybind.Binding // matched (o)
@@ -49,8 +50,8 @@ type monitorKeys struct {
 	GateBlur     keybind.Binding // matched (esc: blurs a top-level gate → Steps)
 	GateContext  keybind.Binding // matched (ctrl+o: view/return from the active gate's step context)
 	GateEntryNav keybind.Binding // matched ([/] — previous/next entry, multi-entry queue)
-	Message      keybind.Binding // matched (m, review gate)
-	Verdict      keybind.Binding // display-only ("1-9 verdict")
+	ReviewOpen   keybind.Binding // matched (enter: open a document review workspace)
+	Verdict      keybind.Binding // display-only ("1-9 decision")
 
 	RecoverRetry keybind.Binding // matched (r, recovery gate: re-run fresh)
 	RecoverGuide keybind.Binding // matched (g, recovery gate: compose guidance + resume session)
@@ -92,7 +93,8 @@ func defaultMonitorKeys() monitorKeys {
 
 		TransToSteps: keybind.NewBinding(keybind.WithKeys("esc", "h"), keybind.WithHelp("esc", "steps")),
 		TransLeave:   keybind.NewBinding(keybind.WithKeys("q"), keybind.WithHelp("q", "runs list")),
-		Scroll:       keybind.NewBinding(keybind.WithKeys("j", "k"), keybind.WithHelp("j/k", "scroll")),
+		Scroll:       keybind.NewBinding(keybind.WithKeys("j", "k"), keybind.WithHelp("j/k", "scroll 2")),
+		ScrollFast:   keybind.NewBinding(keybind.WithKeys("J", "K"), keybind.WithHelp("J/K", "scroll 10")),
 		BlockNav:     keybind.NewBinding(keybind.WithKeys("n", "N"), keybind.WithHelp("n/N", "block")),
 		Toggle:       keybind.NewBinding(keybind.WithKeys("enter", " "), keybind.WithHelp("enter", "expand")),
 		ExpandAll:    keybind.NewBinding(keybind.WithKeys("o"), keybind.WithHelp("o", "all")),
@@ -110,8 +112,8 @@ func defaultMonitorKeys() monitorKeys {
 		GateBlur:     keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "blur")),
 		GateContext:  keybind.NewBinding(keybind.WithKeys("ctrl+o"), keybind.WithHelp("ctrl+o", "view context")),
 		GateEntryNav: keybind.NewBinding(keybind.WithKeys("[", "]"), keybind.WithHelp("[/]", "entries")),
-		Message:      keybind.NewBinding(keybind.WithKeys("m"), keybind.WithHelp("m", "message")),
-		Verdict:      keybind.NewBinding(keybind.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"), keybind.WithHelp("1-9", "verdict")),
+		ReviewOpen:   keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "open review")),
+		Verdict:      keybind.NewBinding(keybind.WithKeys("1", "2", "3", "4", "5", "6", "7", "8", "9"), keybind.WithHelp("1-9", "decision")),
 
 		RecoverRetry: keybind.NewBinding(keybind.WithKeys("r"), keybind.WithHelp("r", "retry")),
 		RecoverGuide: keybind.NewBinding(keybind.WithKeys("g"), keybind.WithHelp("g", "guide+retry")),

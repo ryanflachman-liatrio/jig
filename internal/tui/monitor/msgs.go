@@ -41,14 +41,6 @@ type UserInputResponseMsg struct {
 	Text   string
 }
 
-// ReviewMessageMsg is emitted by the monitor when the user submits a free-text
-// message to the reviewed agent step. The root delivers it via Run.Message.
-type ReviewMessageMsg struct {
-	RunID  string
-	StepID string
-	Text   string
-}
-
 // AgentInputMsg is emitted by the monitor when the user submits a response to
 // an agent step blocked by block_on. The root delivers it via Run.SendInput.
 type AgentInputMsg struct {

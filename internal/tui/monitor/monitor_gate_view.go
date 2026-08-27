@@ -47,9 +47,18 @@ func (m Model) inputBarView() string {
 	subject := shared.Theme.Marker.Render(presentation.subjectLabel + ": " + presentation.subject)
 	count := fmt.Sprintf("%d pending", len(m.inputQueue))
 	action := "tab to open"
-	if m.focus == focusGate {
-		escape := m.gateEscapeBinding(entry).Help()
-		action = escape.Key + " to " + escape.Desc
+	if m.historical {
+		action = "paused · press R in Runs to resume"
+	} else if m.focus == focusGate {
+		switch {
+		case m.reviewOpen:
+			action = "esc to close"
+		case entry != nil && entry.workspace != nil:
+			action = "enter to open"
+		default:
+			escape := m.gateEscapeBinding(entry).Help()
+			action = escape.Key + " to " + escape.Desc
+		}
 	}
 	return "  " + label + "  ·  " + subject + "  ·  " + shared.Theme.Marker.Render(count) +
 		shared.Theme.Chat.Hint.Render("  ·  "+action)
@@ -65,11 +74,6 @@ func (m Model) gateOverlay() string {
 	entry, _ := m.activeEntry()
 	_, vFrame := shared.PanelFrame()
 	fixedH := m.gateBodyHeight() + vFrame
-	if entry != nil && entry.workspace != nil {
-		// The review workspace is a full inspection surface, so it gets the
-		// available monitor height instead of the compact gate's fixed height.
-		fixedH = max(m.height-vFrame, 1)
-	}
 	var b strings.Builder
 	presentation := presentationForGate(entry)
 
@@ -88,6 +92,11 @@ func (m Model) gateOverlay() string {
 			action += "  ·  [ctrl+o] view " + presentation.contextName
 		}
 		b.WriteString("  " + shared.Theme.Chat.Hint.Render(action) + "\n")
+		if m.historical {
+			b.WriteString("\n  This workflow is paused because its original jig scheduler is no longer live.\n")
+			b.WriteString("  Return to Runs and press R to resume it.\n")
+			return shared.Panel(presentation.title, b.String(), m.width, fixedH, true)
+		}
 		switch entry.kind {
 		case inputKindRequest:
 			m.renderGateRequest(&b, entry)
@@ -128,23 +137,23 @@ func (m Model) renderGatePrompt(b *strings.Builder, entry *pendingInputEntry) {
 
 func (m Model) renderGateReview(b *strings.Builder, entry *pendingInputEntry) {
 	if entry.workspace != nil {
-		b.WriteString(entry.workspace.View())
+		reviewed := 0
+		for _, document := range entry.workspace.Documents() {
+			if entry.workspace.Reviewed(document.ID) {
+				reviewed++
+			}
+		}
+		b.WriteString(fmt.Sprintf("  %d / %d documents reviewed · %d comments\n\n", reviewed, len(entry.workspace.Documents()), len(entry.workspace.Comments())))
+		b.WriteString("    [enter] open review workspace\n")
 		if errText := m.reviewDraftErrors[entry.stepID]; errText != "" {
 			b.WriteString("\n  " + shared.Theme.Error.Render("draft not saved: "+errText))
 		}
 		return
 	}
-	if entry.composing {
-		b.WriteString(m.promptTextarea.View())
-	} else {
-		for i, ch := range entry.review.Choices {
-			b.WriteString(fmt.Sprintf("    [%d] %s\n", i+1, ch))
-		}
-		if entry.review.AllowMessage {
-			b.WriteString("    [m] message\n")
-		}
-		b.WriteString("\n    " + shared.Theme.Chat.Hint.Render("[ctrl+o] view diff") + "\n")
+	for i, ch := range entry.review.Choices {
+		b.WriteString(fmt.Sprintf("    [%d] %s\n", i+1, ch))
 	}
+	b.WriteString("\n    " + shared.Theme.Chat.Hint.Render("[ctrl+o] view diff") + "\n")
 }
 
 func (m Model) renderGateRecovery(b *strings.Builder, entry *pendingInputEntry) {

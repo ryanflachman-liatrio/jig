@@ -36,6 +36,7 @@
 #   synthesize_research     → NEW Phase 1 Step 2c (replaces tech_research)
 #   scope_assess            → sdd-spec.toml  (Phase 1, Step 3)
 #   scope_gate              → sdd-spec.toml  (Phase 1, Step 4 gate)
+#   write_epic              → sdd-spec.toml  (Phase 1 terminal epic branch)
 #   clarify                 → sdd-spec.toml  (Phase 1, Step 5 block_on loop)
 #   write_spec              → sdd-spec.toml  (Phase 1, Step 6)
 #   spec_review             → sdd-spec.toml  (Phase 1, Step 7 review)
@@ -83,7 +84,7 @@
 [workflow]
 name        = "sdd"
 version     = "1"
-description = "SDD end-to-end — idea to changelog in one graph: spec, tasks, implement, validate, compliance."
+description = "SDD end-to-end — idea to changelog, or a terminal epic when the request needs multiple specs."
 
 [defaults]
 backend         = "codex"
@@ -264,20 +265,26 @@ allowed_tools = ["Read", "Grep", "Glob"]
 isolation     = "none"
 
   [step.schema]
-  sizing    = { enum = ["too_large", "too_small", "just_right"] }
-  rationale = "text"
+  sizing        = { enum = ["too_large", "too_small", "just_right"] }
+  rationale     = "text"
+  decomposition = "text"
 
-# ─── 4. Scope gate — fires ONLY when sizing is off (sdd-1 "ALWAYS pause") ─────
-# just_right skips this node and flows straight on. Otherwise a human decides
-# whether to proceed or narrow; "narrow" loops back to re-assess with feedback.
+# ─── 4. Scope routing gate ────────────────────────────────────────────────────
+# Every request pauses here so the human can continue toward one spec, ask for
+# narrower boundaries, or end this run with a detailed epic.
 [[step]]
 id           = "scope_gate"
 type         = "review"
 depends_on   = ["scope_assess"]
-when         = "scope_assess.sizing != 'just_right'"
-review       = "@scope_assess.summary"
-output_type  = { enum = ["proceed", "narrow"] }
-max_messages = 5
+output_type  = { enum = ["proceed", "narrow", "generate_epic"] }
+
+[[step.review]]
+source       = "@scope_assess.summary"
+label        = "Scope assessment"
+
+[[step.review]]
+source       = "@scope_assess.decomposition"
+label        = "Proposed decomposition"
 
   [step.loop]
   when           = "scope_gate == 'narrow'"
@@ -285,18 +292,41 @@ max_messages = 5
   max_iterations = 3
   feedback       = "@scope_gate"
 
-# ─── 5. Clarification gate + question rounds (sdd-1 Step 4) ───────────────────
+# ─── 5a. Generate a terminal epic when requested ─────────────────────────────
+[[step]]
+id            = "write_epic"
+type          = "agent"
+model         = "gpt-5.6-luna"
+depends_on    = ["context_assess", "research_security", "research_api_contracts", "research_data_patterns", "research_testing_standards", "research_ecosystem", "synthesize_research", "scope_assess", "scope_gate"]
+when          = "scope_gate == 'generate_epic'"
+skill         = "../skills/sdd-write-epic"
+inputs        = ["@context_assess", "@research_security", "@research_api_contracts", "@research_data_patterns", "@research_testing_standards", "@research_ecosystem", "@synthesize_research", "@scope_assess", "@scope_gate", "@context_assess.spec_name"]
+allowed_tools = ["Read", "Grep", "Glob", "Write", "Bash"]
+isolation     = "none"
+
+  [step.context]
+  purpose = "synthesize the approved scope decomposition and all prior research into a terminal epic artifact"
+
+  [step.schema]
+  epic_path    = "text"
+  epic_content = "text"
+  slice_ids    = { list = "text" }
+
+  [step.validate]
+  command = "find docs/epics -name '*.md' | xargs grep -l '## Slice Breakdown' | xargs grep -l '## Dependency and Delivery Order' | grep -q ."
+
+# ─── 5b. Clarification gate + question rounds (sdd-1 Step 4) ──────────────────
 # block_on parks the step whenever the agent declares itself insufficient; the
 # TUI opens a compose box, the human answers, and the agent resumes the SAME
 # session and re-runs the sufficiency check. Bounded by the engine's 20-round cap.
 #
-# depends_on includes scope_gate for sequencing — prevents racing with the scope
-# loop when sizing is off. When scope_gate is guard-skipped (just_right), the
-# engine treats it as transparent.
+# depends_on includes scope_gate for sequencing and the guard makes the epic
+# branch terminal by skipping the spec-writing path.
 [[step]]
 id            = "clarify"
 type          = "agent"
 depends_on    = ["context_assess", "synthesize_research", "scope_assess", "scope_gate"]
+when          = "scope_gate != 'generate_epic'"
 skill         = "../skills/sdd-clarify"
 inputs        = ["@context_assess.summary", "@synthesize_research.summary", "@scope_assess.summary", "@context_assess.spec_name"]
 allowed_tools = ["Read", "Grep", "Glob", "Write", "Bash"]
@@ -335,9 +365,11 @@ isolation     = "none"
 id           = "spec_review"
 type         = "review"
 depends_on   = ["write_spec"]
-review       = "@write_spec.spec_content"
 output_type  = { enum = ["approve", "revise"] }
-max_messages = 10
+
+[[step.review]]
+source       = "@write_spec.spec_content"
+label        = "Specification"
 
   [step.loop]
   when           = "spec_review == 'revise'"
@@ -385,9 +417,11 @@ id           = "arch_gate"
 type         = "review"
 depends_on   = ["arch_fitness"]
 when         = "arch_fitness.arch_result == 'flag'"
-review       = "@arch_fitness.arch_summary"
 output_type  = { enum = ["override", "redesign"] }
-max_messages = 5
+
+[[step.review]]
+source       = "@arch_fitness.arch_summary"
+label        = "Architecture assessment"
 
   [step.loop]
   when           = "arch_gate == 'redesign'"
@@ -498,9 +532,11 @@ isolation     = "none"
 id           = "parent_tasks_review"
 type         = "review"
 depends_on   = ["gen_parent_tasks"]
-review       = "@gen_parent_tasks.task_summary"
 output_type  = { enum = ["approve", "revise"] }
-max_messages = 5
+
+[[step.review]]
+source       = "@gen_parent_tasks.task_summary"
+label        = "Parent task summary"
 
   [step.loop]
   when           = "parent_tasks_review == 'revise'"
@@ -640,9 +676,11 @@ isolation     = "none"
 id           = "audit_review"
 type         = "review"
 depends_on   = ["synthesize_audit"]
-review       = "@synthesize_audit.findings_summary"
 output_type  = { enum = ["approve", "remediate"] }
-max_messages = 10
+
+[[step.review]]
+source       = "@synthesize_audit.findings_summary"
+label        = "Audit findings"
 
   [step.loop]
   when           = "audit_review == 'remediate'"
@@ -777,11 +815,13 @@ script     = ".agents/jig/scripts/commit-task.sh"
 [[step]]
 id           = "task_checkpoint"
 type         = "review"
-depends_on   = ["commit_task", "find_next_task"]
+depends_on   = ["commit_task", "find_next_task", "create_proofs"]
 when         = "find_next_task.progress == 'continue'"
-review       = "@create_proofs.proof_path"
 output_type  = { enum = ["continue", "redo"] }
-max_messages = 5
+
+[[step.review]]
+source       = "@create_proofs.proof_path"
+label        = "Task proof"
 
   [step.loop]
   when           = "find_next_task.progress == 'continue'"
@@ -797,9 +837,11 @@ max_messages = 5
 id           = "final_review"
 type         = "review"
 depends_on   = ["task_checkpoint", "find_next_task"]
-review       = "@find_next_task.completion_summary"
 output_type  = { enum = ["approve", "flag_issues"] }
-max_messages = 10
+
+[[step.review]]
+source       = "@find_next_task.completion_summary"
+label        = "Completion summary"
 
   [step.loop]
   when           = "final_review == 'flag_issues'"
@@ -1020,9 +1062,11 @@ isolation     = "none"
 id           = "validation_review"
 type         = "review"
 depends_on   = ["assemble_report"]
-review       = "@assemble_report.report_content"
 output_type  = { enum = ["approve", "flag"] }
-max_messages = 10
+
+[[step.review]]
+source       = "@assemble_report.report_content"
+label        = "Validation report"
 
   [step.loop]
   when           = "validation_review == 'flag'"
@@ -1176,9 +1220,11 @@ isolation     = "none"
 id           = "compliance_review"
 type         = "review"
 depends_on   = ["assemble_compliance_report"]
-review       = "@assemble_compliance_report.report_content"
 output_type  = { enum = ["approve", "flag"] }
-max_messages = 10
+
+[[step.review]]
+source       = "@assemble_compliance_report.report_content"
+label        = "Compliance report"
 
   [step.loop]
   when           = "compliance_review == 'flag'"

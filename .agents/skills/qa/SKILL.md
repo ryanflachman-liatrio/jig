@@ -30,7 +30,7 @@ Using `Grep` and `Read`, verify that the implementation followed the required co
 - **No bare `lipgloss.NewStyle()` outside `styles.go`** — grep for it: `grep -r "lipgloss.NewStyle()" internal/tui/ --include="*.go"` and flag anything not in `styles.go`
 - **No hardcoded hex colors** — grep for `"#` in `internal/tui/` (outside `styles.go`)
 - **Schema additions validated** — if a new field was added to the workflow schema, grep for its name in `internal/workflow/validate.go` to confirm a validation rule exists
-- **`examples/feature.toml` still validates** — run `go run ./cmd/jig validate examples/feature.toml` and check for errors
+- **`.agents/jig/feature.toml` still validates** — run `go run ./cmd/jig validate .agents/jig/feature.toml` and check for errors
 - **Persistence-off** — if any new file paths are constructed, grep for `TranscriptPath\|ArtifactDir\|runDir` near the change and confirm empty-string no-ops
 
 ### 4. Test coverage spot-check
@@ -45,7 +45,7 @@ Using `Grep` and `Read`, verify that the implementation followed the required co
 ### `qa_findings` (list of `{severity, detail}`)
 One entry per distinct issue. Be specific: name the file, the function, and the rule violated. Do not list the same issue twice with different wording.
 
-- `high` — blocks ship: failing test, build error, ignored error on write, missing validation rule for a new schema field, `examples/feature.toml` fails validate
+- `high` — blocks ship: failing test, build error, ignored error on write, missing validation rule for a new schema field, `.agents/jig/feature.toml` fails validate
 - `low` — advisory: lint warning, missing test for a non-critical helper, style nit
 
 ### `summary` (base field — always populate)

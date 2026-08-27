@@ -82,7 +82,7 @@ type pendingInputEntry struct {
 	// recovery guidance), preserved across navigation.
 	draft string
 
-	// composing is true while composing a message on a review entry, or guidance
+	// composing is true while composing recovery guidance.
 	// on a recovery entry.
 	composing bool
 }
@@ -127,14 +127,15 @@ func (r visibleRow) isFileRow() bool {
 // updated as engine events arrive. The user can press esc to return to the
 // runs list.
 type Model struct {
-	RunID    string
-	RunDir   string
-	workflow string
-	keys     monitorKeys
-	steps    []monitorStep
-	index    map[string]int // stepID → steps position
-	done     bool
-	failed   bool
+	RunID      string
+	RunDir     string
+	workflow   string
+	keys       monitorKeys
+	steps      []monitorStep
+	index      map[string]int // stepID → steps position
+	done       bool
+	failed     bool
+	historical bool
 	// runErr is an engine-level failure (worktree setup, max_iterations) that is
 	// not attributable to a single step. Set by the engine.RunError event.
 	runErr string
@@ -220,6 +221,7 @@ type Model struct {
 	// len(inputQueue) > 0; an empty queue leaves only the compact, inert input bar.
 	inputQueue     []pendingInputEntry
 	activeInputIdx int
+	reviewOpen     bool
 	gateContext    *gateContextSnapshot
 
 	// reviews retains the last ReviewRequest seen per step so the Transcript panel
@@ -551,6 +553,7 @@ func New(runID string) Model {
 // leave unset for journal-replayed runs (ctrl+h shows a static unavailable message).
 func (m *Model) SetRun(run *engine.Run) {
 	m.run = run
+	m.historical = false
 }
 
 // WithSnapshot initialises the monitor from a RunSnapshot so the user sees
@@ -644,9 +647,10 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 // Any gate entries a finished run's journal contains (a review or recovery
 // prompt) are cleared by the resolving step transition that follows them, so a
 // cleanly finished run folds down to an empty queue. A run that died while parked
-// keeps its historical prompt, but the root guards every gate action on a live
-// handle, so a recovered prompt is inert.
+// keeps its historical prompt for inspection, but marks every gate action
+// read-only because no scheduler exists to receive a response.
 func (m Model) WithJournal(evs []engine.Event) Model {
+	m.historical = true
 	for _, e := range evs {
 		m, _ = m.handleEngineEvent(e)
 	}
@@ -666,7 +670,7 @@ func (m Model) HelpSections() []shared.HelpSection {
 		var bindings []keybind.Binding
 		if m.selKind == "file" {
 			bindings = []keybind.Binding{
-				m.keys.Scroll, m.keys.GotoTop, m.keys.TransToSteps, m.keys.TransLeave,
+				m.keys.Scroll, m.keys.GotoTop, m.keys.ScrollFast, m.keys.TransToSteps, m.keys.TransLeave,
 			}
 		} else {
 			blockNav := m.keys.BlockNav
@@ -680,7 +684,7 @@ func (m Model) HelpSections() []shared.HelpSection {
 			clearView := m.keys.ClearView
 			clearView.SetEnabled(m.searchQuery != "" || m.filters.active())
 			bindings = []keybind.Binding{
-				m.keys.Scroll, m.keys.Follow, blockNav, m.keys.Toggle,
+				m.keys.Scroll, m.keys.Follow, blockNav, m.keys.Toggle, m.keys.ScrollFast,
 				m.keys.GotoTop, pageOlder, pageNewer,
 				m.keys.Search, m.keys.Filters, clearView, m.keys.ExpandAll,
 				m.keys.TransToSteps, m.keys.TransLeave,
@@ -753,6 +757,10 @@ func (m Model) gateHelpSection() shared.HelpSection {
 	escapeKey := m.gateEscapeBinding(entry)
 
 	sec := shared.HelpSection{Title: "Gate"}
+	if m.historical {
+		sec.Bindings = []keybind.Binding{entryNav, escapeKey}
+		return sec
+	}
 	switch entry.kind {
 	case inputKindRequest:
 		sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, contextKey, entryNav, escapeKey}
@@ -763,11 +771,22 @@ func (m Model) gateHelpSection() shared.HelpSection {
 			sec.Bindings = append(sec.Bindings, escapeKey)
 		}
 	case inputKindReview:
+		if entry.workspace != nil && m.reviewOpen {
+			for _, item := range entry.workspace.Help() {
+				sec.Bindings = append(sec.Bindings, keybind.NewBinding(
+					keybind.WithKeys(item.Key),
+					keybind.WithHelp(item.Key, item.Description),
+				))
+			}
+			break
+		}
+		if entry.workspace != nil {
+			sec.Bindings = []keybind.Binding{m.keys.ReviewOpen, entryNav, escapeKey}
+			break
+		}
 		switch {
 		case entry.composing:
 			sec.Bindings = []keybind.Binding{m.keys.Submit, m.keys.Newline, contextKey, escapeKey}
-		case entry.review != nil && entry.review.AllowMessage:
-			sec.Bindings = []keybind.Binding{m.keys.Verdict, m.keys.Message, contextKey, entryNav, escapeKey}
 		default:
 			sec.Bindings = []keybind.Binding{m.keys.Verdict, contextKey, entryNav, escapeKey}
 		}

@@ -152,11 +152,22 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, hCmd
 		}
 
+		// A dedicated review workspace replaces the Monitor body and owns every
+		// key until browse-mode escape closes it back to the compact Gate.
+		if m.focus == focusGate && m.reviewOpen {
+			return m.updateGate(msg)
+		}
+
 		// Context inspection is deliberately separate from queue navigation:
 		// ctrl+o is the only path that temporarily re-points the Steps and
 		// Transcript panels.
 		if keybind.Matches(msg, m.keys.GateContext) &&
 			(m.focus == focusGate || m.gateContext != nil) {
+			if m.focus == focusGate {
+				if entry, ok := m.activeEntry(); ok && entry.workspace != nil {
+					return m.updateGate(tea.KeyPressMsg{Code: tea.KeyEnter})
+				}
+			}
 			m.toggleGateContext()
 			return m, nil
 		}
@@ -220,14 +231,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	}
 
 	// Route non-key messages to the textarea (blink timer, focus events) for entry
-	// kinds that use the textarea (request, prompt, or a composing review entry).
+	// kinds that use the shared textarea.
 	if m.searchOpen {
 		var searchCmd tea.Cmd
 		m.searchInput, searchCmd = m.searchInput.Update(msg)
 		m.refreshPanels()
 		return m, searchCmd
 	}
-	if entry, ok := m.activeEntry(); ok && entry.workspace != nil {
+	if entry, ok := m.activeEntry(); ok && entry.workspace != nil && m.reviewOpen {
 		workspace, workspaceCmd := entry.workspace.Update(msg)
 		m.inputQueue[m.activeInputIdx].workspace = &workspace
 		m.refreshPanels()
@@ -235,7 +246,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	}
 	if entry, ok := m.activeEntry(); ok &&
 		(entry.kind == inputKindRequest || entry.kind == inputKindPrompt ||
-			((entry.kind == inputKindReview || entry.kind == inputKindRecovery) && entry.composing)) {
+			(entry.kind == inputKindRecovery && entry.composing)) {
 		var taCmd tea.Cmd
 		m.promptTextarea, taCmd = m.promptTextarea.Update(msg)
 		m.refreshPanels()
@@ -271,7 +282,7 @@ func (m Model) textareaActive() bool {
 		return false
 	}
 	if entry.workspace != nil {
-		return entry.workspace.CapturesText()
+		return m.reviewOpen && entry.workspace.CapturesText()
 	}
 	switch entry.kind {
 	case inputKindRequest, inputKindPrompt:
@@ -529,11 +540,20 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.refreshPanels()
 		m.ensureTranscriptItemCursorVisible()
 		return m, nil
+	case keybind.Matches(msg, m.keys.ScrollFast):
+		if msg.String() == "J" {
+			m.scrollTranscript(transcriptFastScrollRows)
+		} else {
+			m.scrollTranscript(-transcriptFastScrollRows)
+		}
+		return m, nil
 	case keybind.Matches(msg, m.keys.Scroll):
-		var cmd tea.Cmd
-		m.chatVP, cmd = m.chatVP.Update(msg)
-		m.updateTranscriptFollow(m.chatVP.AtBottom())
-		return m, cmd
+		if msg.String() == "j" {
+			m.scrollTranscript(transcriptScrollRows)
+		} else {
+			m.scrollTranscript(-transcriptScrollRows)
+		}
+		return m, nil
 	}
 	// Arrow keys and ctrl+d/u/pgup/pgdn fall through to the viewport.
 	var cmd tea.Cmd
@@ -643,8 +663,6 @@ func (m Model) dispatchHelpAction(msg helpchat.DispatchedMsg) tea.Cmd {
 		innerCmd = func() tea.Msg {
 			return ReviewVerdictMsg{RunID: m.RunID, StepID: a.StepID, Verdict: a.Verdict}
 		}
-	case helpchat.ReviewMessage:
-		innerCmd = func() tea.Msg { return ReviewMessageMsg{RunID: m.RunID, StepID: a.StepID, Text: a.Text} }
 	}
 	if innerCmd != nil {
 		return tea.Batch(innerCmd, drainCmd)

@@ -5,8 +5,7 @@
 #   - all three step types: agent / command / review
 #   - parallelism (fan-out) and joins (fan-in), derived purely from depends_on
 #   - producer agents with structured output, two ways:
-#       * schema_file  -> a raw JSON Schema  (intake)
-#       * [step.schema] -> TOML-native schema (research_*, plan, qa)
+#       * [step.schema] -> TOML-native schemas
 #     covering text / number / bool / enum / list / list-of-object / nested enum
 #   - scalar output_type verdicts on review steps
 #   - field references: @step.field inputs, and step.field guards
@@ -41,11 +40,14 @@ type          = "agent"
 skill         = "../skills/intake"
 inputs        = [
   { from = "user", label = "Describe the feature you want to build:", as = "feature_request" },
-  { path = "../../examples/conventions.md", inline = true },
+  { path = "templates/context-assess.md", inline = true },
 ]
-schema_file   = "../../examples/schemas/intake.json"
 allowed_tools = ["Read", "Grep", "Glob"]
 block_on      = "intake.status == 'blocked'"
+
+  [step.schema]
+  areas      = { list = "text" }
+  complexity = { enum = ["small", "medium", "large"] }
 
 # -----------------------------------------------------------------------------
 # 2. Research — TWO producer agents fan out in parallel (both depend only on
@@ -148,7 +150,7 @@ run        = "go build ./..."
 id          = "unit_test"
 type        = "command"
 depends_on  = ["implement"]
-script      = "./examples/scripts/test.sh"
+script      = ".agents/jig/scripts/run-tests.sh"
 output      = "test-report.txt"
 on_failure  = "retry"
 max_retries = 2
@@ -204,7 +206,7 @@ id         = "ship"
 type       = "command"
 depends_on = ["final_review"]
 when       = "final_review == 'ship'"
-script     = "./examples/scripts/ship.sh"
+run        = "echo 'shipped'"
 
 [[step]]
 id         = "notify"

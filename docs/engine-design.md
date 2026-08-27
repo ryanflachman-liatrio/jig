@@ -568,12 +568,12 @@ watch its text stream live in the step pane; the review step renders
 
 Build: run-branch creation, per-step worktree branched off run HEAD, branch
 naming (`jig/<workflow>/<step-id>`), squash-merge back into run branch on step
-completion, validate-inside-worktree · diff rendering for `review = "diff"` ·
+completion, validate-inside-worktree · immutable review workspace snapshots ·
 integration-conflict gate (parallel steps that touch the same files) ·
 cancellation hardening (worktree cleanup on abort) · final human-gated merge at
 run end.
 
-**UI test:** the full `examples/feature.toml` kitchen sink — mutating fix step
+**UI test:** the full `.agents/jig/feature.toml` kitchen sink — mutating fix step
 in its own worktree, gate runs `go test` inside it, human reviews the actual
 diff, `revise` loops with feedback, `approve` triggers the final merge gate.
 

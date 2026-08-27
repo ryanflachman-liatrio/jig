@@ -212,9 +212,11 @@ isolation     = "none"
 id           = "validation_review"
 type         = "review"
 depends_on   = ["assemble_report"]
-review       = "@assemble_report.report_content"
 output_type  = { enum = ["approve", "flag"] }
-max_messages = 10
+
+[[step.review]]
+source       = "@assemble_report.report_content"
+label        = "Validation report"
 
   [step.loop]
   when           = "validation_review == 'flag'"

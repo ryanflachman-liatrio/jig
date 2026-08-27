@@ -31,7 +31,7 @@ func (m Model) View() string {
 // navigation and actions plus the global chord.
 func (m Model) HelpSections() []shared.HelpSection {
 	return []shared.HelpSection{
-		{Title: "Runs", Bindings: []keybind.Binding{m.keys.Up, m.keys.Down, m.keys.Open, m.keys.NewRun, m.keys.Delete, m.keys.Back}},
+		{Title: "Runs", Bindings: []keybind.Binding{m.keys.Up, m.keys.Down, m.keys.Open, m.keys.NewRun, m.keys.Resume, m.keys.Delete, m.keys.Back}},
 		{Title: "Global", Bindings: shared.GlobalHelpBindings(m.CapturesText())},
 	}
 }
@@ -39,7 +39,11 @@ func (m Model) HelpSections() []shared.HelpSection {
 func (m Model) CapturesText() bool { return false }
 
 func (m Model) footerView() string {
-	return shared.Theme.Footer.Render("  " + shared.HintString(m.keys.NewRun, m.keys.Open, m.keys.Delete, m.keys.Back, shared.KeyHelp, shared.KeyQuit))
+	footer := shared.Theme.Footer.Render("  " + shared.HintString(m.keys.NewRun, m.keys.Resume, m.keys.Open, m.keys.Delete, m.keys.Back, shared.KeyHelp, shared.KeyQuit))
+	if m.notice != "" {
+		return shared.Theme.Error.Render("  "+m.notice) + "\n" + footer
+	}
+	return footer
 }
 
 const (
@@ -83,6 +87,9 @@ func runRowStatus(row runRow) string {
 	}
 	if row.done {
 		return shared.Theme.Valid.Render("done")
+	}
+	if row.paused {
+		return shared.Theme.Question.Render("paused")
 	}
 	return shared.Theme.Running.Render("running")
 }

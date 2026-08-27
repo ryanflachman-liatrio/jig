@@ -61,6 +61,9 @@ func (m *Model) removeEntryAt(i int) {
 	if i < 0 || i >= len(m.inputQueue) {
 		return
 	}
+	if m.reviewOpen && i == m.activeInputIdx {
+		m.reviewOpen = false
+	}
 	// A decision can be submitted after inspecting its related transcript.
 	// Restore the operator's prior selection before dropping the return target.
 	if m.gateContext != nil {
@@ -89,7 +92,7 @@ func (m *Model) syncActiveTextarea() {
 	switch entry.kind {
 	case inputKindRequest, inputKindPrompt:
 		entry.draft = m.promptTextarea.Value()
-	case inputKindReview, inputKindRecovery:
+	case inputKindRecovery:
 		if entry.composing {
 			entry.draft = m.promptTextarea.Value()
 		}
@@ -118,14 +121,6 @@ func (m *Model) loadActiveTextarea() {
 		ta := shared.NewInputTextarea(label, m.gateInnerWidth(), gateTextareaRows, shared.WithoutBorder())
 		ta.SetValue(entry.draft)
 		m.promptTextarea = ta
-	case inputKindReview:
-		if entry.composing {
-			ta := shared.NewInputTextarea("Message to agent…", m.gateInnerWidth(), gateTextareaRows, shared.WithoutBorder())
-			ta.SetValue(entry.draft)
-			m.promptTextarea = ta
-		} else {
-			m.promptTextarea = textarea.Model{}
-		}
 	case inputKindRecovery:
 		if entry.composing {
 			ta := shared.NewInputTextarea("Guidance for the retry (optional)…", m.gateInnerWidth(), gateTextareaRows, shared.WithoutBorder())
@@ -171,8 +166,14 @@ func presentationForGate(entry *pendingInputEntry) gatePresentation {
 		p.action = "Provide input to continue"
 	case inputKindReview:
 		p.title = "Review required"
-		p.action = "Choose a verdict or send a message"
-		p.contextName = "diff"
+		if entry.workspace != nil {
+			p.action = "Review documents and submit feedback"
+			p.contextStep = ""
+			p.contextName = ""
+		} else {
+			p.action = "Choose a decision"
+			p.contextName = "diff"
+		}
 	case inputKindRecovery:
 		p.title = "Recovery action"
 		p.action = "Retry, guide, skip, or abort"
@@ -213,7 +214,7 @@ func (m Model) gateHasInnerBack(entry *pendingInputEntry) bool {
 		return false
 	}
 	if entry.composing {
-		return entry.kind == inputKindReview || entry.kind == inputKindRecovery
+		return entry.kind == inputKindRecovery
 	}
 	return entry.kind == inputKindQuestion && entry.question.HasInnerBack()
 }
@@ -251,6 +252,41 @@ func (m Model) updateGate(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	if m.historical {
+		if keybind.Matches(msg, m.keys.GateBlur) {
+			return m.updateGateEscape(msg, entry)
+		}
+		return m, nil
+	}
+
+	if entry.kind == inputKindReview && entry.workspace != nil {
+		if !m.reviewOpen {
+			if keybind.Matches(msg, m.keys.ReviewOpen) {
+				m.reviewOpen = true
+				workspace, _ := entry.workspace.Update(tea.WindowSizeMsg{Width: m.width, Height: m.reviewWorkspaceBodyHeight()})
+				m.inputQueue[m.activeInputIdx].workspace = &workspace
+				m.refreshPanels()
+				return m, nil
+			}
+			if keybind.Matches(msg, m.keys.GateBlur) {
+				return m.updateGateEscape(msg, entry)
+			}
+			return m, nil
+		}
+
+		// An open review workspace owns editor escape and all local keys. A
+		// browse-mode escape closes only the workspace, returning to the Gate.
+		if keybind.Matches(msg, m.keys.GateBlur) && entry.workspace.Mode() == reviewworkspace.ModeBrowse {
+			m.reviewOpen = false
+			m.refreshPanels()
+			return m, nil
+		}
+		workspace, cmd := entry.workspace.Update(msg)
+		m.inputQueue[m.activeInputIdx].workspace = &workspace
+		m.refreshPanels()
+		persist := func() tea.Msg { return reviewworkspace.DraftChangedMsg{Draft: workspace.Draft()} }
+		return m, tea.Batch(cmd, persist)
+	}
 
 	if keybind.Matches(msg, m.keys.GateBlur) {
 		return m.updateGateEscape(msg, entry)
@@ -264,18 +300,6 @@ func (m Model) updateGate(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	case inputKindPrompt:
 		return m.updateGatePrompt(msg, entry)
 	case inputKindReview:
-		if entry.workspace != nil {
-			if keybind.Matches(msg, m.keys.GateBlur) && entry.workspace.Mode() == reviewworkspace.ModeBrowse {
-				m.focus = focusSteps
-				m.refreshPanels()
-				return m, nil
-			}
-			workspace, cmd := entry.workspace.Update(msg)
-			m.inputQueue[m.activeInputIdx].workspace = &workspace
-			m.refreshPanels()
-			persist := func() tea.Msg { return reviewworkspace.DraftChangedMsg{Draft: workspace.Draft()} }
-			return m, tea.Batch(cmd, persist)
-		}
 		return m.updateGateReview(msg, entry)
 	case inputKindRecovery:
 		return m.updateGateRecovery(msg, entry)
@@ -356,30 +380,6 @@ func (m Model) updateGatePrompt(msg tea.KeyPressMsg, entry *pendingInputEntry) (
 }
 
 func (m Model) updateGateReview(msg tea.KeyPressMsg, entry *pendingInputEntry) (Model, tea.Cmd) {
-	if entry.composing {
-		if keybind.Matches(msg, m.keys.Submit) {
-			text := m.promptTextarea.Value()
-			if text == "" {
-				return m, nil
-			}
-			rev := entry.review
-			m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
-			m.refreshPanels()
-			return m, func() tea.Msg {
-				return ReviewMessageMsg{RunID: rev.RunID, StepID: rev.StepID, Text: text}
-			}
-		}
-		var taCmd tea.Cmd
-		m.promptTextarea, taCmd = m.promptTextarea.Update(msg)
-		m.refreshPanels()
-		return m, taCmd
-	}
-	if entry.review.AllowMessage && keybind.Matches(msg, m.keys.Message) {
-		m.inputQueue[m.activeInputIdx].composing = true
-		m.loadActiveTextarea() // review-composing branch builds the message textarea
-		m.refreshPanels()
-		return m, textarea.Blink
-	}
 	for i, ch := range entry.review.Choices {
 		if msg.String() == fmt.Sprintf("%d", i+1) {
 			rev := entry.review

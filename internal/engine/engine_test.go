@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"jig/internal/datastore"
+	domainreview "jig/internal/review"
 	"jig/internal/step"
 	"jig/internal/workflow"
 )
@@ -54,6 +55,21 @@ type inputCapturingStructuredExec struct {
 	structuredExec
 	mu     sync.Mutex
 	inputs map[string][]ResolvedInput
+}
+
+type feedbackCapturingStructuredExec struct {
+	structuredExec
+	mu       sync.Mutex
+	feedback []string
+}
+
+func (e *feedbackCapturingStructuredExec) Execute(ctx context.Context, req StepRequest, rep Reporter) (*step.Result, error) {
+	if req.Step.ID == "scope" {
+		e.mu.Lock()
+		e.feedback = append(e.feedback, req.Feedback)
+		e.mu.Unlock()
+	}
+	return e.structuredExec.Execute(ctx, req, rep)
 }
 
 func (e *inputCapturingStructuredExec) Execute(ctx context.Context, req StepRequest, rep Reporter) (*step.Result, error) {
@@ -1385,6 +1401,99 @@ done:
 	rf, ok := last.(RunFinished)
 	if !ok || rf.Failed {
 		t.Errorf("want RunFinished{Failed:false}, got %v", last)
+	}
+}
+
+func TestDocumentReviewNarrowLoopsWithCommentFeedback(t *testing.T) {
+	const toml = `
+[workflow]
+name = "review-loop-feedback"
+version = "1"
+
+[[step]]
+id = "scope"
+type = "agent"
+skill = "scope-assess"
+  [step.schema]
+  rationale = "text"
+
+[[step]]
+id = "gate"
+type = "review"
+depends_on = ["scope"]
+output_type = { enum = ["proceed", "narrow"] }
+[[step.review]]
+source = "@scope.rationale"
+label = "Scope assessment"
+  [step.loop]
+  when = "gate == 'narrow'"
+  goto = "scope"
+  max_iterations = 2
+  feedback = "@gate"
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &feedbackCapturingStructuredExec{structuredExec: structuredExec{
+		testExec:  testExec{outcomes: map[string]testOutcome{"scope": {delay: time.Millisecond}}},
+		stepID:    "scope",
+		responses: []string{`{"rationale":"Initial scope assessment"}`},
+	}}
+	mgr := NewManager(exec, "")
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first := waitForReviewEvent(t, ch, "gate", 5*time.Second)
+	doc := first.Documents[0]
+	commentBody := "Limit the first spec to local execution."
+	run.ResolveReview("gate", domainreview.Submission{
+		StepID:    "gate",
+		RoundID:   first.RoundID,
+		Verdict:   "narrow",
+		Documents: []domainreview.DocumentRecord{doc.Record()},
+		Reviewed:  []string{doc.ID},
+		Comments: []domainreview.Comment{{
+			ID:   "C001",
+			Kind: domainreview.KindNote,
+			Anchor: domainreview.Anchor{
+				DocumentID: doc.ID,
+				SHA256:     doc.SHA256,
+				StartLine:  1,
+				EndLine:    1,
+				Quote:      doc.Content,
+			},
+			Body: commentBody,
+		}},
+	})
+	waitForReviewEvent(t, ch, "gate", 5*time.Second)
+
+	exec.mu.Lock()
+	feedback := append([]string(nil), exec.feedback...)
+	exec.mu.Unlock()
+	if len(feedback) != 2 {
+		t.Fatalf("scope executions = %d, want 2", len(feedback))
+	}
+	if !strings.Contains(feedback[1], commentBody) {
+		t.Fatalf("loop feedback dropped review comment: %q", feedback[1])
+	}
+}
+
+func waitForReviewEvent(t *testing.T, ch <-chan Event, stepID string, timeout time.Duration) ReviewRequest {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case event := <-ch:
+			if request, ok := event.(ReviewRequest); ok && request.StepID == stepID {
+				return request
+			}
+		case <-deadline:
+			t.Fatalf("timeout waiting for review request %q", stepID)
+		}
 	}
 }
 

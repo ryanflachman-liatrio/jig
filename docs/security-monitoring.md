@@ -60,14 +60,15 @@ asynchronous and its budget exhaustion degrades gracefully.
 
 ## Monitor roster
 
-Three tools-off, Haiku classifier agents live under
-`examples/agents/monitors/`:
+The monitor behavior is implemented by the sentinel package under
+`internal/sentinel/`; it is configured and exercised through the executable
+workflows under `.agents/jig/`:
 
 | Monitor | What it watches | Prefilter |
 |---------|-----------------|-----------|
-| `prompt-injection.md` | `tool_result` blocks for injected commands | none (always dispatched) |
-| `stuck-loop.md` | Repeated identical tool calls or error streaks | `StuckLoopPrefilter`: ≥ 3 repeated calls or ≥ 3 consecutive errors |
-| `exfil-pattern.md` | Secret-read entry followed by an outbound `WebFetch`/curl | `ExfilPrefilter`: reuses guard entropy/pattern detector |
+| Prompt-injection rules | `tool_result` blocks for injected commands | none (always dispatched) |
+| Stuck-loop prefilter | Repeated identical tool calls or error streaks | `StuckLoopPrefilter`: ≥ 3 repeated calls or ≥ 3 consecutive errors |
+| Exfiltration prefilter | Secret-read entry followed by an outbound `WebFetch`/curl | `ExfilPrefilter`: reuses guard entropy/pattern detector |
 
 Each monitor emits structured output (`flagged`, `severity`, `detail`). The
 supervisor converts a `flagged = true` response into a `Finding` and appends

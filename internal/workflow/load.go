@@ -24,7 +24,17 @@ func Load(path string) (*Workflow, error) {
 	if err != nil {
 		return nil, err
 	}
-	return Decode(string(data), filepath.Dir(path))
+	wf, err := Decode(string(data), filepath.Dir(path))
+	if err != nil {
+		return nil, err
+	}
+	abs, absErr := filepath.Abs(path)
+	if absErr == nil {
+		wf.sourcePath = abs
+	} else {
+		wf.sourcePath = path
+	}
+	return wf, nil
 }
 
 // Decode parses and validates a workflow from TOML text. baseDir is the root
@@ -70,6 +80,7 @@ func Decode(data, baseDir string) (*Workflow, error) {
 	if err := wf.validate(baseDir); err != nil {
 		return nil, err
 	}
+	wf.sourceTOML = data
 	return &wf, nil
 }
 

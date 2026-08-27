@@ -29,7 +29,6 @@ You have full access to step transcripts, results, and output artifacts. Use the
 - stop_step(step_id) — stop a currently running step
 - resume_step(step_id, message) — resume a stopped step, passing an optional message
 - resolve_review(step_id, verdict) — resolve a review step; verdict is "approved" or "rejected"
-- send_message_to_step(step_id, text) — send a message to a step waiting for input
 
 **Final merge**: When all steps have succeeded and the workflow uses git worktrees, a final merge gate may be pending.
 To approve or reject it, call resolve_review with step_id="final_merge" and verdict="approved" or "rejected".

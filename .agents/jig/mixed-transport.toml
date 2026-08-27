@@ -24,7 +24,7 @@ id            = "sdk-read"
 type          = "agent"
 skill         = "../skills/intake"
 allowed_tools = ["Read", "Grep", "Glob"]
-inputs        = [{ path = "../../examples/conventions.md", inline = true }]
+inputs        = [{ path = "templates/context-assess.md", inline = true }]
 
 [[step]]
 id            = "acp-read"
@@ -32,4 +32,4 @@ type          = "agent"
 skill         = "../skills/intake"
 transport     = "acp"
 allowed_tools = ["Read", "Grep", "Glob"]
-inputs        = [{ path = "../../examples/conventions.md", inline = true }]
+inputs        = [{ path = "templates/context-assess.md", inline = true }]

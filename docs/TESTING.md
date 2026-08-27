@@ -20,7 +20,9 @@ validator — the examples are executable documentation:
 
 ```bash
 gofmt -l -w . && go vet ./...
-go run ./cmd/jig validate examples/feature.toml   # and the other examples/*.toml
+for workflow in .agents/jig/*.toml; do
+  go run ./cmd/jig validate "$workflow" || exit 1
+done
 ```
 
 ## Where the tests are

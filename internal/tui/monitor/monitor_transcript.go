@@ -15,6 +15,20 @@ import (
 	"jig/internal/tui/shared"
 )
 
+const (
+	transcriptScrollRows     = 2
+	transcriptFastScrollRows = 10
+)
+
+func (m *Model) scrollTranscript(rows int) {
+	if rows > 0 {
+		m.chatVP.ScrollDown(rows)
+	} else {
+		m.chatVP.ScrollUp(-rows)
+	}
+	m.updateTranscriptFollow(m.chatVP.AtBottom())
+}
+
 // reloadTranscript re-points the Transcript panel at the cursor's step and reads
 // its transcript eagerly (Resolved Decision 10), resetting per-step view state so
 // block-cursor/expand toggles never carry over between steps (seq keys are only

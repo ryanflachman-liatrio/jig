@@ -12,17 +12,16 @@ permission_mode = "acceptEdits"
 [[step]]
 id            = "research"
 type          = "agent"
-skill         = "../../examples/skills/research"
+skill         = "../skills/research_backend"
 inputs        = [
-  "../../examples/question.md",
+  "templates/context-assess.md",
   { from = "user", label = "Any additional context or focus areas for the review?", as = "user_context" },
 ]
 allowed_tools = ["Read", "Grep", "Glob", "WebSearch"]
 
   [step.schema]
-  summary    = "text"                                   # human-facing markdown, always present
-  status     = { enum = ["complete", "partial", "blocked"] }
-  confidence = "number"
+  state      = { enum = ["complete", "partial", "blocked"] }
+  certainty  = "number"
   findings   = { list = "text" }
   sources    = { list = { url = "text", relevance = "number" } }
 
@@ -31,9 +30,9 @@ allowed_tools = ["Read", "Grep", "Glob", "WebSearch"]
 id            = "report"
 type          = "agent"
 depends_on    = ["research"]
-skill         = "../../examples/skills/report"
+skill         = "../skills/research_frontend"
 inputs        = ["@research.summary", { ref = "@research.findings", inline = true }]
-when          = "research.status == 'complete'"
+when          = "research.state == 'complete'"
 output        = ".jig/artifacts/report.md"
 allowed_tools = ["Read"]
 
@@ -42,6 +41,8 @@ allowed_tools = ["Read"]
 id          = "escalate"
 type        = "review"
 depends_on  = ["research"]
-when        = "research.status == 'blocked'"
-review      = "@research.summary"
+when        = "research.state == 'blocked'"
 output_type = { enum = ["retry", "abandon"] }
+[[step.review]]
+source      = "@research.summary"
+label       = "Research summary"

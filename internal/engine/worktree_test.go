@@ -171,7 +171,7 @@ skill = "skills/mutate"
 	}
 }
 
-// TestScheduler_ReviewDiff verifies that a review step with review = "diff"
+// TestScheduler_ReviewDiff verifies that a review step with a diff target
 // receives a non-empty Diff in its ReviewRequest when a predecessor made changes
 // in its worktree.
 func TestScheduler_ReviewDiff(t *testing.T) {

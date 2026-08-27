@@ -85,7 +85,8 @@ type Input struct {
 
 `"@intake.areas"` parses to `Input{Ref:"intake", RefField:["areas"]}`.
 `"@intake"` parses to `Input{Ref:"intake"}` (no RefField).
-`"../../examples/request.md"` parses to `Input{Path:"../../examples/request.md"}`.
+`".agents/jig/templates/context-assess.md"` parses to
+`Input{Path:".agents/jig/templates/context-assess.md"}`.
 
 ### Fix: add `resolveAllInputs` and `buildRequest` to `dispatch()`
 
@@ -373,7 +374,7 @@ case stepDoneMsg:
 
 The `block_on` field already supports self-referencing conditions — `intake` uses `block_on = "intake.status == 'needs_info'"` to check its own output. The same pattern applies to the research steps.
 
-In **`examples/feature.toml`** and **`.agents/jig/feature.toml`**, add `block_on` to `research_backend` and `research_frontend`:
+In **`.agents/jig/feature.toml`**, add `block_on` to `research_backend` and `research_frontend`:
 
 ```toml
 [[step]]
@@ -381,7 +382,7 @@ id            = "research_backend"
 type          = "agent"
 depends_on    = ["intake"]
 when          = "intake.status == 'ready'"
-skill         = "../../examples/skills/research"
+skill         = "../skills/research_backend"
 inputs        = ["@intake.areas"]
 allowed_tools = ["Read", "Grep", "Glob", "WebSearch"]
 block_on      = "research_backend.status == 'blocked'"   # ← add this
@@ -391,7 +392,7 @@ id            = "research_frontend"
 type          = "agent"
 depends_on    = ["intake"]
 when          = "intake.status == 'ready'"
-skill         = "../../examples/skills/research"
+skill         = "../skills/research_frontend"
 inputs        = ["@intake.areas"]
 allowed_tools = ["Read", "Grep", "Glob", "WebSearch"]
 block_on      = "research_frontend.status == 'blocked'"  # ← add this
@@ -501,7 +502,6 @@ Inject `Result.Structured = []byte(`{"status":"blocked"}`)` into the scheduler s
 | `internal/engine/engine.go` | Modify | Add `postExecDecision` type, `postExecHandler` type; add `postExecChain []postExecHandler` to `scheduler` struct; initialize chain in `newScheduler()`; add `resolveAllInputs()` and `buildRequest()` methods; call them in `dispatch()`; replace `handle(stepDoneMsg)` body with chain-driven version |
 | `internal/engine/handlers.go` | **Create new** | `phCaptureWorktreeDiff`, `phRunValidateGate`, `phCheckBlockOn` |
 | `internal/engine/engine_test.go` | Modify | Add `capturingExec`, `TestScheduler_RefFieldInput`, `TestScheduler_PathInput`, `TestScheduler_BareRefInput`, `TestPostExecHandler_ValidateGate`, `TestPostExecHandler_BlockOn` |
-| `examples/feature.toml` | Modify | Add `block_on` to `research_backend` and `research_frontend` steps |
 | `.agents/jig/feature.toml` | Modify | Same as above |
 
 ---
@@ -516,7 +516,6 @@ go test ./internal/engine/... -v
 go test ./...
 
 # Validate updated workflow files
-go run ./cmd/jig validate examples/feature.toml
 go run ./cmd/jig validate .agents/jig/feature.toml
 
 # Format and vet
@@ -532,7 +531,7 @@ go vet ./...
 
 2. **User inputs + non-user inputs coexist** — When a step has both `from="user"` and `@ref` inputs, user inputs land in `preResolvedInputs` after the prompt flow completes (via `handle(userInputMsg)` line 824). `resolveAllInputs` is then called in `dispatch()` and APPENDS the non-user inputs to the same slice. The `from="user"` skip in `resolveAllInputs` prevents double-adding user inputs.
 
-3. **`@ref.field` for lists/objects → inline JSON** — when a field's value is a list or object (e.g., `areas: ["backend","frontend"]`), `resolveAllInputs` JSON-encodes it and the agent receives the JSON string in its prompt. The agent is expected to parse it. This matches the expectation of the skill prompts in `examples/`.
+3. **`@ref.field` for lists/objects → inline JSON** — when a field's value is a list or object (e.g., `areas: ["backend","frontend"]`), `resolveAllInputs` JSON-encodes it and the agent receives the JSON string in its prompt. The agent is expected to parse it. This matches the expectation of the skill prompts in `.agents/skills/`.
 
 4. **`block_on` → `StatusNeedsInput`, not `StatusFailed`** — this means the run pauses and waits for human input to resume. If the intent is to hard-fail (abort the run when research is blocked), use `on_failure = "abort"` on a downstream command step that checks the condition, or add a future `fail_when` field. The current fix uses `block_on` to match existing patterns.
 

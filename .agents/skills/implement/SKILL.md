@@ -39,7 +39,7 @@ These come from CLAUDE.md and are enforced by the QA step:
 1. Add parsing/defaulting in `internal/workflow/workflow.go` (or the relevant file)
 2. Add validation in `internal/workflow/validate.go`
 3. Add a test case in `internal/workflow/workflow_test.go` for both valid and invalid paths
-4. Update `examples/feature.toml` to exercise the new field and re-run `go run ./cmd/jig validate examples/feature.toml`
+4. Update `.agents/jig/feature.toml` to exercise the new field and re-run `go run ./cmd/jig validate .agents/jig/feature.toml`
 
 **TUI styling:** All styles live in `internal/tui/styles.go` via the `Styles` struct and `DefaultTheme()`. Never add a bare `lipgloss.NewStyle()` call at a call site. Add the field to the appropriate sub-struct, set it in `DefaultTheme()` using existing color tokens, then reference it as `theme.X`.
 

@@ -44,7 +44,7 @@ func (m Model) helpOverlay(base string) string {
 }
 
 func (m Model) gateOverlayView(base string, layout verticalLayout) string {
-	if m.focus != focusGate || !m.hasGate() {
+	if m.focus != focusGate || !m.hasGate() || m.reviewOpen {
 		return base
 	}
 
@@ -165,9 +165,6 @@ func (m Model) statusLabel() string {
 	case inputKindPrompt:
 		return shared.Theme.Marker.Render("awaiting user input" + queueSuffix)
 	case inputKindReview:
-		if entry.composing {
-			return shared.Theme.Marker.Render("composing message")
-		}
 		return shared.Theme.Marker.Render("awaiting review")
 	case inputKindRecovery:
 		if entry.composing {
@@ -322,6 +319,17 @@ func (m Model) View() string {
 	layout := m.verticalLayout()
 	footer := fitBlock(m.footerView(), m.width, layout.footerH)
 	inputBar := fitBlock(m.inputBarView(), m.width, layout.inputH)
+	if m.reviewOpen {
+		entry, ok := m.activeEntry()
+		if ok && entry.workspace != nil {
+			workspace := fitBlock(entry.workspace.EmbeddedView(), m.width, layout.panelH+layout.securityH)
+			base := fitBlock(joinVertical(workspace, inputBar, footer), m.width, m.height)
+			if m.helpOpen {
+				return m.helpOverlay(base)
+			}
+			return base
+		}
+	}
 
 	leftTitle := m.stepsPanelTitleParts()
 	rightTitle := m.transcriptPanelTitleParts()

@@ -2,9 +2,11 @@ package engine
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"jig/internal/datastore"
+	"jig/internal/review"
 	"jig/internal/step"
 )
 
@@ -109,6 +111,56 @@ func TestReplayJournal_RecoversRunningStepWithoutTerminalEvent(t *testing.T) {
 	finished, ok := got[3].(RunFinished)
 	if !ok || !finished.Failed {
 		t.Errorf("event[3] = %#v, want failed RunFinished", got[3])
+	}
+}
+
+func TestReplayJournalRawLeavesInterruptedRunUnfinished(t *testing.T) {
+	runDir := t.TempDir()
+	writeJournal(t, runDir, []Event{
+		RunStarted{RunID: "r1", Workflow: "feature", Steps: []string{"agent"}},
+		StepStatus{RunID: "r1", StepID: "agent", From: step.StatusPending, To: step.StatusRunning},
+	})
+
+	got, err := ReplayJournalRaw(runDir)
+	if err != nil {
+		t.Fatalf("ReplayJournalRaw: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("raw event count = %d, want 2 durable events", len(got))
+	}
+	for _, event := range got {
+		if _, ok := event.(RunFinished); ok {
+			t.Fatal("raw replay invented a terminal event")
+		}
+	}
+}
+
+func TestReplayJournalHydratesReviewDocumentSnapshot(t *testing.T) {
+	runDir := t.TempDir()
+	docDir := datastore.ReviewDocumentsDir(runDir, "gate", "g000-i000")
+	if err := os.MkdirAll(docDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "Persisted review content"
+	path := filepath.Join(docDir, "01-scope.md")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeJournal(t, runDir, []Event{
+		RunStarted{RunID: "r1", Workflow: "wf", Steps: []string{"gate"}},
+		StepStatus{RunID: "r1", StepID: "gate", From: step.StatusPending, To: step.StatusAwaitingReview},
+		ReviewRequest{RunID: "r1", StepID: "gate", RoundID: "g000-i000", Documents: []review.Document{{
+			ID: "01-scope", Format: "markdown", SnapshotPath: path, SHA256: review.Digest(content), LineCount: 1,
+		}}},
+	})
+
+	events, err := ReplayJournal(runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, ok := events[2].(ReviewRequest)
+	if !ok || len(req.Documents) != 1 || req.Documents[0].Content != content {
+		t.Fatalf("hydrated review request = %#v", events[2])
 	}
 }
 

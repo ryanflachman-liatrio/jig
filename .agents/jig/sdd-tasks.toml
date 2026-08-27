@@ -126,9 +126,11 @@ isolation     = "none"
 id           = "parent_tasks_review"
 type         = "review"
 depends_on   = ["gen_parent_tasks"]
-review       = "@gen_parent_tasks.task_summary"
 output_type  = { enum = ["approve", "revise"] }
-max_messages = 5
+
+[[step.review]]
+source       = "@gen_parent_tasks.task_summary"
+label        = "Parent task summary"
 
   [step.loop]
   when           = "parent_tasks_review == 'revise'"
@@ -265,9 +267,11 @@ isolation     = "none"
 id           = "audit_review"
 type         = "review"
 depends_on   = ["synthesize_audit"]
-review       = "@synthesize_audit.findings_summary"
 output_type  = { enum = ["approve", "remediate"] }
-max_messages = 10
+
+[[step.review]]
+source       = "@synthesize_audit.findings_summary"
+label        = "Audit findings"
 
   [step.loop]
   when           = "audit_review == 'remediate'"

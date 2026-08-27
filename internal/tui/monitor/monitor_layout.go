@@ -42,6 +42,11 @@ func (m Model) verticalLayout() verticalLayout {
 	}
 }
 
+func (m Model) reviewWorkspaceBodyHeight() int {
+	layout := m.verticalLayout()
+	return max(layout.panelH+layout.securityH, 1)
+}
+
 // panelSplit computes the two panels' outer widths for the given total width per
 // Resolved Decision 11: Steps = max(32, width/3), clamped so the Transcript keeps
 // an inner width of at least ~40; the Transcript takes the remainder. narrow
@@ -108,7 +113,7 @@ func (m *Model) resize() {
 	}
 	if entry, ok := m.activeEntry(); ok &&
 		(entry.kind == inputKindRequest || entry.kind == inputKindPrompt ||
-			((entry.kind == inputKindReview || entry.kind == inputKindRecovery) && entry.composing)) {
+			(entry.kind == inputKindRecovery && entry.composing)) {
 		m.promptTextarea.SetWidth(m.gateInnerWidth())
 	}
 	if m.searchOpen {
@@ -116,7 +121,7 @@ func (m *Model) resize() {
 	}
 	for i := range m.inputQueue {
 		if m.inputQueue[i].workspace != nil {
-			workspace, _ := m.inputQueue[i].workspace.Update(tea.WindowSizeMsg{Width: m.width, Height: max(m.height-6, 1)})
+			workspace, _ := m.inputQueue[i].workspace.Update(tea.WindowSizeMsg{Width: m.width, Height: m.reviewWorkspaceBodyHeight()})
 			m.inputQueue[i].workspace = &workspace
 		}
 		if m.inputQueue[i].kind == inputKindQuestion {

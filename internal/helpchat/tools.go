@@ -45,7 +45,6 @@ func BuildMcpServer(
 		buildStopStep(run, dispatch),
 		buildResumeStep(run, dispatch),
 		buildResolveReview(run, dispatch, gateReq, gateAns),
-		buildSendMessageToStep(run, dispatch),
 		buildAskUser(dispatch),
 	)
 }
@@ -319,31 +318,6 @@ func buildResolveReview(run *engine.Run, dispatch DispatchFunc, gateReq chan<- s
 
 			dispatch(ReviewVerdict{StepID: stepID, Verdict: verdict})
 			return okResult(fmt.Sprintf("verdict %q enqueued for step %q; call workflow_snapshot to verify", verdict, stepID)), nil
-		},
-	)
-}
-
-func buildSendMessageToStep(run *engine.Run, dispatch DispatchFunc) *claudecode.McpTool {
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"step_id": map[string]any{"type": "string", "description": "Step ID to send a message to"},
-			"text":    map[string]any{"type": "string", "description": "Message text to send to the step"},
-		},
-		"required": []any{"step_id", "text"},
-	}
-	return claudecode.NewTool(
-		"send_message_to_step",
-		"Send a free-text message to a step waiting for reviewer input.",
-		schema,
-		func(_ context.Context, args map[string]any) (*claudecode.McpToolResult, error) {
-			stepID, _ := args["step_id"].(string)
-			text, _ := args["text"].(string)
-			if stepID == "" || text == "" {
-				return errResult("step_id and text are required"), nil
-			}
-			dispatch(ReviewMessage{StepID: stepID, Text: text})
-			return okResult(fmt.Sprintf("message enqueued for step %q", stepID)), nil
 		},
 	)
 }

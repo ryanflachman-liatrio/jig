@@ -31,6 +31,11 @@ that touches three security-sensitive layers), that affects sizing.
   suitable for a human to read at a review gate.
 - `rationale` — why you chose that sizing, and (when `too_large`/`too_small`)
   the concrete alternative: how to split it, or that it should be done directly.
+- `decomposition` — when `too_large`, a detailed Markdown breakdown of the
+  proposed slices. Give every slice a stable kebab-case ID, bounded outcome,
+  in-scope and out-of-scope responsibilities, dependencies, acceptance evidence,
+  and unresolved decisions. Order the slices by dependency. For `too_small` or
+  `just_right`, emit `Not applicable.`.
 
 When `sizing` is not `just_right`, a human review gate will fire. Make `summary`
 and `rationale` specific enough for that decision.
@@ -38,4 +43,6 @@ and `rationale` specific enough for that decision.
 ## What not to do
 
 - Do not begin writing the specification or clarifying questions.
+- Do not write an epic. Describe candidate slices so a later epic-writing step
+  can turn an approved decomposition into the durable epic artifact.
 - Do not silently proceed on an inappropriate scope — the verdict is the gate.

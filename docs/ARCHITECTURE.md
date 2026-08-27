@@ -49,7 +49,8 @@ internal/
   transcript/       per-step transcript.jsonl store (writer + reader)   [DONE]
   manifest/         journal.jsonl writer + per-step result.json         [DONE]
   datastore/        run-dir layout, path helpers, retention under .jig/ [DONE]
-examples/           worked workflows, skills, agent files, JSON schemas
+.agents/jig/        executable workflows, scripts, and workflow templates
+.agents/skills/     reusable agent skills used by those workflows
 docs/               this file, TESTING.md, workflow-schema.md
 ```
 

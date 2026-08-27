@@ -103,10 +103,6 @@ type LoopFired struct {
 }
 
 // ReviewRequest asks the human to pick from Choices for a review step.
-// Diff is non-empty when the step declares review = "diff"; it contains the
-// full git diff of mutating steps reachable through the dependency chain.
-// AllowMessage is true when the reviewed target is an agent step and the
-// per-gate message cap has not been exhausted — the TUI offers a [m] action.
 type ReviewRequest struct {
 	RunID     string
 	StepID    string
@@ -114,9 +110,7 @@ type ReviewRequest struct {
 	Choices   []string
 	Documents []review.Document
 	DraftPath string
-	// Deprecated compatibility projections for the pre-workspace monitor.
-	Diff         string `json:"-"`
-	AllowMessage bool   `json:"-"`
+	Diff      string `json:"-"`
 }
 
 type ReviewSubmitted struct {

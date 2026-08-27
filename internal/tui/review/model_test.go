@@ -1,9 +1,11 @@
 package review
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	domain "jig/internal/review"
 )
 
@@ -113,6 +115,20 @@ func TestSuggestionRequiresReplacementAndDeletedIDsAreNotReused(t *testing.T) {
 	}
 }
 
+func TestCommentComposerFitsDocumentPanel(t *testing.T) {
+	m, err := New(testSession())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 180, Height: 38})
+	m = update(m, "c")
+
+	wantWidth := documentPanelWidth(m.width)
+	if got := lipgloss.Width(m.documentView()); got != wantWidth {
+		t.Fatalf("comment document panel width = %d, want %d", got, wantWidth)
+	}
+}
+
 func TestSummaryProducesStructuredSubmission(t *testing.T) {
 	m, err := New(testSession())
 	if err != nil {
@@ -132,5 +148,21 @@ func TestSummaryProducesStructuredSubmission(t *testing.T) {
 	sub, ok := msg.(SubmissionMsg)
 	if !ok || sub.Submission.Verdict != "revise" || sub.Submission.Summary == "" || len(sub.Submission.Documents) != 2 {
 		t.Fatalf("bad submission: %#v", msg)
+	}
+}
+
+func TestSummaryDisplaysNumberedVerdictChoices(t *testing.T) {
+	m, err := New(testSession())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.SetChoices([]string{"approve", "revise"})
+	m = update(m, "S")
+
+	view := m.View()
+	for _, want := range []string{"Decision", "[1] approve", "[2] revise", "1-9 choose decision", "enter submit review"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("summary view missing %q:\n%s", want, view)
+		}
 	}
 }

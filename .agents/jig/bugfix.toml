@@ -10,8 +10,8 @@ permission_mode = "acceptEdits"
 [[step]]
 id            = "triage"
 type          = "agent"
-skill         = "../../examples/skills/triage"
-inputs        = ["reports/bug-1234.md"]
+skill         = "../skills/intake"
+inputs        = ["templates/context-assess.md"]
 output        = ".jig/artifacts/triage.md"
 allowed_tools = ["Read", "Grep", "Glob"]
 
@@ -19,7 +19,7 @@ allowed_tools = ["Read", "Grep", "Glob"]
 id            = "fix"
 type          = "agent"
 depends_on    = ["triage"]
-skill         = "../../examples/skills/fix"
+skill         = "../skills/implement"
 inputs        = ["@triage"]
 allowed_tools = ["Read", "Edit", "Write", "Bash"]
 
@@ -30,8 +30,10 @@ allowed_tools = ["Read", "Edit", "Write", "Bash"]
 id          = "approve"
 type        = "review"
 depends_on  = ["fix"]
-review      = "diff"
 output_type = { enum = ["approve", "revise"] }
+[[step.review]]
+source      = "diff"
+label       = "Code changes"
 
   [step.loop]
   when           = "approve == 'revise'"

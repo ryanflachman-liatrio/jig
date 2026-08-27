@@ -121,7 +121,6 @@ func TestMcpServerToolSchemas(t *testing.T) {
 		"stop_step",
 		"resume_step",
 		"resolve_review",
-		"send_message_to_step",
 		"ask_user",
 	}
 

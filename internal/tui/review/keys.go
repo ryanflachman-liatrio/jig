@@ -23,7 +23,7 @@ func defaultKeyMap() keyMap {
 		Comment: b([]string{"c"}, "comment"), Reviewed: b([]string{"r"}, "mark reviewed"),
 		ToggleMode: b([]string{"s"}, "source/preview"), NextComment: b([]string{"n", "N"}, "next comment"),
 		Edit: b([]string{"e"}, "edit comment"), Delete: b([]string{"x"}, "delete comment"),
-		Summary: b([]string{"S"}, "summary"), Confirm: b([]string{"enter"}, "confirm"),
+		Summary: b([]string{"S"}, "finish review"), Confirm: b([]string{"enter"}, "confirm"),
 		Cancel: b([]string{"esc"}, "cancel"), NextKind: b([]string{"tab"}, "next kind"),
 	}
 }
@@ -31,11 +31,26 @@ func defaultKeyMap() keyMap {
 // Help returns the workspace-local shortcuts. It is intentionally generated
 // from the bindings so the help surface cannot drift from behavior.
 func (m Model) Help() []KeyHelp {
+	if m.mode == ModeSummary {
+		return []KeyHelp{
+			{Key: "1-9", Description: "choose decision"},
+			{Key: "enter", Description: "submit review"},
+			{Key: "esc", Description: "return to documents"},
+		}
+	}
+	if m.mode == ModeComposeComment || m.mode == ModeEditComment {
+		return []KeyHelp{
+			{Key: "enter", Description: "save comment"},
+			{Key: "tab", Description: "change comment kind"},
+			{Key: "esc", Description: "cancel comment"},
+		}
+	}
 	return []KeyHelp{
+		{Key: "S", Description: "finish review"},
 		{Key: "j/k", Description: "move line"}, {Key: "{/}", Description: "change document"},
 		{Key: "v", Description: "select range"}, {Key: "c", Description: "comment"},
 		{Key: "r", Description: "mark reviewed"}, {Key: "s", Description: "source/preview"},
-		{Key: "S", Description: "summary"}, {Key: "esc", Description: "close/cancel"},
+		{Key: "esc", Description: "close/cancel"},
 	}
 }
 

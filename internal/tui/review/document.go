@@ -27,6 +27,7 @@ func loadDocuments(session domain.Session) ([]document, error) {
 		if domain.Digest(content) != meta.SHA256 {
 			return nil, fmt.Errorf("review document %q digest mismatch", meta.ID)
 		}
+		meta.Content = content
 		docs[i] = document{meta: meta, lines: strings.Split(content, "\n")}
 	}
 	return docs, nil

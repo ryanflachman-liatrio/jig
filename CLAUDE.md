@@ -88,7 +88,7 @@ go build ./cmd/jig                 # produces ./jig
 go run ./cmd/jig
 
 # Validate a workflow file
-go run ./cmd/jig validate examples/feature.toml
+go run ./cmd/jig validate .agents/jig/feature.toml
 
 # Test (workflow, engine, runner, transcript, datastore, tui are covered)
 go test ./...
@@ -118,9 +118,9 @@ declares `go 1.25`. The TUI is built on the Charm **v2** stack
   validation rule and a test is incomplete.
 - **Table-driven tests** with `testdata`-style inline TOML strings; see
   `internal/workflow/workflow_test.go`.
-- **Examples are documentation.** `examples/feature.toml` is the kitchen-sink
+- **Workflows are documentation.** `.agents/jig/feature.toml` is the kitchen-sink
   reference exercising every construct — keep it valid (`go run ./cmd/jig
-  validate examples/feature.toml`) when changing the schema.
+  validate .agents/jig/feature.toml`) when changing the schema.
 
 ## TUI styling
 

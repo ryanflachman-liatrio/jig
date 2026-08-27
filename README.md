@@ -36,7 +36,7 @@ Requires Go 1.25 (see [`mise.toml`](mise.toml)).
 go build ./cmd/jig            # build ./jig
 
 go run ./cmd/jig                                  # launch the TUI
-go run ./cmd/jig validate examples/feature.toml   # validate a workflow
+go run ./cmd/jig validate .agents/jig/feature.toml   # validate a workflow
 ```
 
 ## A workflow, briefly
@@ -63,7 +63,9 @@ allowed_tools = ["Read", "Edit", "Write", "Bash"]   # mutating -> runs in a git 
 id          = "approve"
 type        = "review"                              # human-in-the-loop
 depends_on  = ["fix"]
-review      = "diff"
+[[step.review]]
+source      = "diff"
+label       = "Code changes"
 output_type = { enum = ["approve", "revise"] }
 
   [step.loop]
@@ -75,7 +77,7 @@ output_type = { enum = ["approve", "revise"] }
 Three step types — `agent`, `command`, `review` — wired into a DAG by
 `depends_on`, with typed guards (`when`), schema-enforced producer output,
 deterministic gates, and bounded loops. See
-[`examples/feature.toml`](examples/feature.toml) for a kitchen-sink workflow
+[`.agents/jig/feature.toml`](.agents/jig/feature.toml) for a kitchen-sink workflow
 that exercises every construct.
 
 ## Documentation

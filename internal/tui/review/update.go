@@ -7,6 +7,7 @@ import (
 	keybind "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"jig/internal/review"
+	"jig/internal/tui/shared"
 )
 
 func (m Model) Init() tea.Cmd { return nil }
@@ -65,7 +66,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.mode = ModeSummary
 		m.summary.Focus()
 	} else if keybind.Matches(k, m.keys.ToggleMode) {
-		m.documentMode = (m.documentMode + 1) % 2
+		m.toggleDocumentMode()
 	} else if keybind.Matches(k, m.keys.Edit) {
 		if m.activeComment != "" {
 			m.openComposer(true)
@@ -98,7 +99,7 @@ func (m Model) updateEditor(msg tea.Msg) (Model, tea.Cmd) {
 	if isKey && keybind.Matches(k, m.keys.Confirm) {
 		if m.mode == ModeSummary {
 			if strings.TrimSpace(m.verdict) == "" {
-				m.error = "choose a verdict"
+				m.error = "choose a decision"
 				return m, nil
 			}
 			m.mode = ModeBrowse
@@ -175,7 +176,7 @@ func (m Model) updateSummary(k tea.KeyPressMsg) (Model, tea.Cmd) {
 	}
 	if keybind.Matches(k, m.keys.Confirm) {
 		if strings.TrimSpace(m.verdict) == "" {
-			m.error = "choose a verdict"
+			m.error = "choose a decision"
 			return m, nil
 		}
 		m.mode = ModeBrowse
@@ -192,15 +193,57 @@ func (m Model) updateSummary(k tea.KeyPressMsg) (Model, tea.Cmd) {
 	}
 	return m, nil
 }
-func (m *Model) move(delta int) { m.cursor += delta; m.clampCursor() }
+func (m *Model) move(delta int) {
+	if m.documentMode == DocumentPreview && len(m.previews[m.active].blocks) > 0 {
+		m.previewBlock += delta
+		if m.previewBlock < 0 {
+			m.previewBlock = 0
+		}
+		if m.previewBlock >= len(m.previews[m.active].blocks) {
+			m.previewBlock = len(m.previews[m.active].blocks) - 1
+		}
+		m.cursor = m.previews[m.active].blocks[m.previewBlock].startLine
+		m.rangeEnd = m.previews[m.active].blocks[m.previewBlock].endLine
+		return
+	}
+	m.cursor += delta
+	m.clampCursor()
+}
 func (m *Model) changeDoc(delta int) {
 	if len(m.docs) == 0 {
 		return
 	}
 	m.active = (m.active + delta + len(m.docs)) % len(m.docs)
 	m.cursor = 1
+	m.previewBlock = 0
 	m.rangeEnd = 0
 	m.activeComment = ""
+}
+
+func (m *Model) toggleDocumentMode() {
+	if m.documentMode == DocumentSource {
+		preview := &m.previews[m.active]
+		if preview.parseErr != nil {
+			m.error = "preview unavailable: " + preview.parseErr.Error()
+			return
+		}
+		m.documentMode = DocumentPreview
+		m.previewBlock = m.blockForLine(m.cursor)
+		return
+	}
+	m.documentMode = DocumentSource
+	if len(m.previews[m.active].blocks) > 0 {
+		m.cursor = m.previews[m.active].blocks[m.previewBlock].startLine
+	}
+}
+
+func (m *Model) blockForLine(line int) int {
+	for i, block := range m.previews[m.active].blocks {
+		if line >= block.startLine && line <= block.endLine {
+			return i
+		}
+	}
+	return 0
 }
 func (m *Model) nextUnreviewed() {
 	for i := 1; i <= len(m.docs); i++ {
@@ -232,6 +275,10 @@ func (m *Model) openComposer(edit bool) {
 	if m.rangeEnd < 1 {
 		m.rangeEnd = m.cursor
 	}
+	if m.documentMode == DocumentPreview && len(m.previews[m.active].blocks) > 0 {
+		block := m.previews[m.active].blocks[m.previewBlock]
+		m.cursor, m.rangeEnd = block.startLine, block.endLine
+	}
 	m.composer.Focus()
 }
 func (m *Model) deleteActive() {
@@ -257,9 +304,12 @@ func (m *Model) nextComment(reverse bool) {
 }
 func (m *Model) resize() {
 	if m.width > 0 {
-		m.summary.SetWidth(m.width)
-		m.composer.SetWidth(m.width)
-		m.replacement.SetWidth(m.width)
+		hFrame, _ := shared.PanelFrame()
+		documentWidth := max(1, documentPanelWidth(m.width)-hFrame)
+		summaryWidth := max(1, max(42, m.width-2)-hFrame)
+		m.summary.SetWidth(summaryWidth)
+		m.composer.SetWidth(documentWidth)
+		m.replacement.SetWidth(documentWidth)
 	}
 }
 func nextKind(k review.Kind) review.Kind {

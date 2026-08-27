@@ -49,6 +49,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				wf := m.wf
 				return m, func() tea.Msg { return StartRunMsg{Wf: wf} }
 			}
+		case keybind.Matches(msg, m.keys.Resume):
+			if m.cursor < len(m.rows) && m.rows[m.cursor].paused {
+				row := m.rows[m.cursor]
+				m.notice = ""
+				return m, func() tea.Msg { return ResumeRunMsg{RunID: row.id, Workflow: row.workflow} }
+			}
 		case keybind.Matches(msg, m.keys.Delete):
 			if m.cursor < len(m.rows) {
 				id := m.rows[m.cursor].id
@@ -82,7 +88,7 @@ func (m Model) DeleteRun(runID string) Model {
 }
 
 // Hydrate folds runs recovered from disk into the list — one grouped,
-// seq-ordered event slice per run, oldest run first (see engine.ReplayJournal).
+// seq-ordered durable event slice per run, oldest run first.
 // It reuses handleEngineEvent so a replayed run folds exactly as a live one did.
 //
 // A run already tracked in the index is skipped wholesale: a live row owns its
@@ -101,6 +107,11 @@ func (m Model) Hydrate(runs [][]engine.Event) Model {
 		}
 		for _, e := range evs {
 			m = m.handleEngineEvent(e)
+		}
+		if rs, ok := evs[0].(engine.RunStarted); ok {
+			if i, exists := m.index[rs.RunID]; exists && !m.rows[i].done {
+				m.rows[i].paused = true
+			}
 		}
 	}
 	m = m.syncViewport()
@@ -147,7 +158,23 @@ func (m Model) handleEngineEvent(e engine.Event) Model {
 		}
 		m.rows[i].done = true
 		m.rows[i].failed = ev.Failed
+		m.rows[i].paused = false
 	}
+	return m
+}
+
+// MarkLive flips a successfully resumed row back to the live scheduler state.
+func (m Model) MarkLive(runID string) Model {
+	if i, ok := m.index[runID]; ok {
+		m.rows[i].paused = false
+	}
+	m.notice = ""
+	return m.syncViewport()
+}
+
+// SetNotice surfaces an asynchronous resume failure without replacing the list.
+func (m Model) SetNotice(message string) Model {
+	m.notice = message
 	return m
 }
 

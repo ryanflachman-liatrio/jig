@@ -304,7 +304,7 @@ completion checklist in this phase — there is no second pass.
 ```markdown
 [ ] Full test suite: the repo's command (`go test ./...`; add `-race` for concurrency work)
 [ ] Quality gates: formatter, `go vet ./...`, linters, pre-commit hooks
-[ ] Any repo-specific invariant the task list names (e.g. `go run ./cmd/jig validate examples/feature.toml` exits 0)
+[ ] Any repo-specific invariant the task list names (e.g. `go run ./cmd/jig validate .agents/jig/feature.toml` exits 0)
 [ ] Write the proof file (see below) — before the commit, not after
 [ ] Stage explicit paths — never `git add .`:
     `git add internal/sentinel/ docs/specs/[NN]-spec-[feature]/`

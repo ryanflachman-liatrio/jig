@@ -158,16 +158,6 @@ func TestGateComposeEscapeBackPreservesDraft(t *testing.T) {
 		openKey string
 	}{
 		{
-			name: "review message",
-			enqueue: func(m Model) Model {
-				m, _ = m.Update(EngineEventMsg{Event: engine.ReviewRequest{
-					RunID: "run-1", StepID: "a", Choices: []string{"approve", "reject"}, AllowMessage: true,
-				}})
-				return m
-			},
-			openKey: "m",
-		},
-		{
 			name: "recovery guidance",
 			enqueue: func(m Model) Model {
 				m, _ = m.Update(EngineEventMsg{Event: engine.RecoveryRequest{

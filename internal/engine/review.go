@@ -157,13 +157,6 @@ func reviewExtension(format string) string {
 	}
 	return ".txt"
 }
-func reviewSource(st *workflow.Step) string {
-	if st == nil || len(st.Review) == 0 {
-		return ""
-	}
-	return st.Review[0].Source
-}
-
 func (s *scheduler) finalizeReview(id string, sub review.Submission) {
 	sess, ok := s.reviewSessions[id]
 	if !ok {
@@ -209,6 +202,6 @@ func (s *scheduler) finalizeReview(id string, sub review.Submission) {
 	s.transition(id, step.StatusAwaitingReview, step.StatusSucceeded)
 	delete(s.reviewSessions, id)
 	if st.Loop != nil {
-		s.recordLoopIntent(id, st)
+		s.recordLoopIntentWithFeedback(id, st, feedback)
 	}
 }

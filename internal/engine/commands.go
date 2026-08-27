@@ -163,7 +163,6 @@ func (m reviewSubmissionMsg) execute(s *scheduler) {
 	s.finalizeReview(m.stepID, m.submission)
 }
 
-func (m humanMessageMsg) execute(s *scheduler)       { s.handleHumanMessage(m) }
 func (m agentInputMsg) execute(s *scheduler)         { s.handleAgentInput(m) }
 func (m recoverMsg) execute(s *scheduler)            { s.handleRecover(m) }
 func (m resolveIntegrationMsg) execute(s *scheduler) { s.handleResolveIntegration(m) }

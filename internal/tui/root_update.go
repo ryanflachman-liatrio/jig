@@ -61,6 +61,21 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.runs = m.runs.Hydrate(msg.runs)
 		return m, nil
 
+	case runResumedMsg:
+		if msg.err != nil {
+			m.runs = m.runs.SetNotice(msg.err.Error())
+			return m, nil
+		}
+		m.handles[msg.runID] = msg.run
+		m.runs = m.runs.MarkLive(msg.runID)
+		m.monitor = monitor.New(msg.runID)
+		m.monitor.RunDir = m.manager.RunDir(msg.runID)
+		m.monitor = m.monitor.WithJournal(msg.events)
+		m.monitor.SetRun(msg.run)
+		m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		m.active = screenMonitor
+		return m, m.monitor.EnsureFrame()
+
 	case runs.ShowMonitorMsg:
 		return m.openMonitor(msg.RunID)
 
@@ -74,12 +89,6 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case monitor.ReviewSubmissionMsg:
 		if run, ok := m.handles[msg.RunID]; ok {
 			run.ResolveReview(msg.StepID, msg.Submission)
-		}
-		return m, nil
-
-	case monitor.ReviewMessageMsg:
-		if run, ok := m.handles[msg.RunID]; ok {
-			run.Message(msg.StepID, msg.Text)
 		}
 		return m, nil
 
@@ -150,6 +159,9 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case runs.StartRunMsg:
 		return m.startRun(msg.Wf)
+
+	case runs.ResumeRunMsg:
+		return m, resumeRunCmd(m.manager, msg.RunID, msg.Workflow)
 	}
 
 	// All other messages go to the active screen.

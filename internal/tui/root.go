@@ -35,6 +35,13 @@ const (
 // sessions instead of an empty list.
 type runsHydratedMsg struct{ runs [][]engine.Event }
 
+type runResumedMsg struct {
+	runID  string
+	run    *engine.Run
+	events []engine.Event
+	err    error
+}
+
 // ── root model ───────────────────────────────────────────────────────────────
 
 type rootModel struct {

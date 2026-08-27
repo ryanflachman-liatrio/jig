@@ -111,6 +111,19 @@ func FindingsPath(runDir string) string {
 	return filepath.Join(runDir, "findings.jsonl")
 }
 
+// WorkflowSnapshotPath returns the immutable workflow definition captured when
+// a run starts. Historical resume uses it instead of whichever version happens
+// to be present in the working tree later.
+func WorkflowSnapshotPath(runDir string) string {
+	return filepath.Join(runDir, "workflow.json")
+}
+
+// SchedulerLockPath names the advisory lock held for the lifetime of a live
+// scheduler, preventing two jig processes from resuming the same run.
+func SchedulerLockPath(runDir string) string {
+	return filepath.Join(runDir, "scheduler.lock")
+}
+
 // OutputPath returns the canonical path to output.md for a step inside runDir.
 // Content is the agent's raw_result base-schema field — the clean prose answer
 // written by the agent as its primary deliverable.

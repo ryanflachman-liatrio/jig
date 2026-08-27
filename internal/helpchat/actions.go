@@ -28,8 +28,3 @@ type ReviewVerdict struct {
 	StepID  string
 	Verdict string
 }
-
-type ReviewMessage struct {
-	StepID string
-	Text   string
-}

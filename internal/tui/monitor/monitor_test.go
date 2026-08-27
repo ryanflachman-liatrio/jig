@@ -2351,51 +2351,6 @@ func TestQuestionCancel(t *testing.T) {
 	}
 }
 
-// TestReviewComposeIsolation verifies that composing a message on one review
-// entry does not affect another entry's composing state or draft.
-func TestReviewComposeIsolation(t *testing.T) {
-	m := newMonitorWithSteps(t)
-
-	// Enqueue two ReviewRequests from distinct steps.
-	m, _ = m.Update(EngineEventMsg{Event: engine.ReviewRequest{
-		RunID:        "run-1",
-		StepID:       "a",
-		Choices:      []string{"approve", "reject"},
-		AllowMessage: true,
-	}})
-	m, _ = m.Update(EngineEventMsg{Event: engine.ReviewRequest{
-		RunID:        "run-1",
-		StepID:       "b",
-		Choices:      []string{"approve", "reject"},
-		AllowMessage: true,
-	}})
-
-	if len(m.inputQueue) != 2 {
-		t.Fatalf("expected 2 queue entries, got %d", len(m.inputQueue))
-	}
-
-	// Focus gate on entry 0 (step "a") and start composing.
-	m.focus = focusGate
-	m, _ = m.Update(key("m")) // press [m] to start compose
-	if !m.inputQueue[0].composing {
-		t.Fatal("expected composing=true on entry 0 after [m]")
-	}
-
-	// ] moves to entry 1 (step "b").
-	m, _ = m.Update(key("]"))
-	if m.activeInputIdx != 1 {
-		t.Fatalf("expected activeInputIdx 1, got %d", m.activeInputIdx)
-	}
-	// Entry 1 must not be composing.
-	if m.inputQueue[1].composing {
-		t.Fatal("queue navigation must not carry over composing state")
-	}
-	// Entry 1's draft must be empty.
-	if m.inputQueue[1].draft != "" {
-		t.Fatalf("entry 1 draft should be empty, got %q", m.inputQueue[1].draft)
-	}
-}
-
 // TestReviewDiffInTranscript verifies that selecting a review step shows its diff
 // in the Transcript panel (chatBody) while activeInputIdx is unaffected.
 func TestReviewDiffInTranscript(t *testing.T) {
@@ -2548,11 +2503,10 @@ func TestCaptureUnit5ReviewDiff(t *testing.T) {
 	const artifactPath = "../../../docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit5-review-diff.txt"
 	m := newMonitorWithSteps(t)
 	m, _ = m.Update(EngineEventMsg{Event: engine.ReviewRequest{
-		RunID:        "run-1",
-		StepID:       "a",
-		Diff:         "@@ -1,3 +1,3 @@\n context\n-old line\n+new line\n context",
-		Choices:      []string{"approve", "reject"},
-		AllowMessage: true,
+		RunID:   "run-1",
+		StepID:  "a",
+		Diff:    "@@ -1,3 +1,3 @@\n context\n-old line\n+new line\n context",
+		Choices: []string{"approve", "reject"},
 	}})
 	// Select the review step so Transcript shows the diff.
 	m = enterChatStep(t, m, "a")
@@ -3298,7 +3252,7 @@ func TestMonitorHelpSections(t *testing.T) {
 			transcriptKeys = append(transcriptKeys, binding.Help().Key)
 		}
 	}
-	for _, want := range []string{"j/k", "n/N", "f/G"} {
+	for _, want := range []string{"j/k", "J/K", "n/N", "f/G"} {
 		if !slices.Contains(transcriptKeys, want) {
 			t.Errorf("transcript help missing %q; got %v", want, transcriptKeys)
 		}

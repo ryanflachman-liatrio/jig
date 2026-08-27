@@ -23,6 +23,7 @@ type Model struct {
 
 	width  int
 	height int
+	notice string
 }
 
 type runRow struct {
@@ -32,6 +33,7 @@ type runRow struct {
 	total    int
 	done     bool
 	failed   bool
+	paused   bool
 	started  time.Time
 }
 

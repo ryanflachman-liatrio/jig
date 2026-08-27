@@ -49,12 +49,11 @@ between regions.
 _Avoid_: Stack, list (reserve "list" for the Steps list), backlog.
 
 **Input entry** (or **entry**):
-One item in the input queue: a review verdict, a `block_on` agent-input box, an
-AskUserQuestion option list, or a `from="user"` text prompt. An entry carries the
-step ID (and tool-use ID for a question) that routes its response, plus any draft
-text the user has typed, preserved as they navigate away and back. A review
-entry's diff is not shown in the entry — it renders in the Transcript panel when
-its step is selected.
+One item in the input queue: a review workspace, a `block_on` agent-input box, an
+AskUserQuestion option list, or a `from="user"` text prompt. A review entry owns
+its immutable round descriptors, source/preview cursor, comments, and draft; it
+is submitted as one atomic verdict batch. Other entries carry the step ID (and
+tool-use ID for a question) that routes their response.
 _Avoid_: Request, item, gate (a gate is the strip; an entry is what it displays).
 
 **Footer**:

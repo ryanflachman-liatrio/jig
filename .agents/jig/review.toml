@@ -7,7 +7,7 @@
 #   - the model/reasoning knobs: effort, fallback_model, max_thinking_tokens,
 #     max_budget_usd, plus a disallowed_tools denylist and append_system_prompt
 #
-# Validate it with:  jig validate examples/review.toml
+# Validate it with:  jig validate .agents/jig/review.toml
 # =============================================================================
 
 [workflow]
@@ -31,10 +31,10 @@ permission_mode     = "acceptEdits"
 [[step]]
 id                   = "review"
 type                 = "agent"
-agent_file           = "../../examples/agents/security-reviewer.md"
+skill                = "../skills/research_backend"
 profile              = "@interactive"
 inputs               = [
-  "../../examples/request.md",
+  "templates/context-assess.md",
   { from = "user", label = "Any additional context or focus areas for the review?", as = "user_context" },
 ]
 disallowed_tools     = ["Bash"]
@@ -43,9 +43,7 @@ effort               = "max"
 max_budget_usd       = 2.0
 
   [step.schema]
-  summary = "text"
   passed  = "bool"
-  issues  = { list = { severity = { enum = ["high", "critical"] }, detail = "text" } }
 
 # Human gate on the verdict.
 [[step]]
@@ -53,5 +51,7 @@ id          = "sign_off"
 type        = "review"
 depends_on  = ["review"]
 when        = "review.passed == 'false'"
-review      = "@review.summary"
 output_type = { enum = ["waive", "block"] }
+[[step.review]]
+source      = "@review.summary"
+label       = "Security review summary"

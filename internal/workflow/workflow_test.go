@@ -563,49 +563,6 @@ append_system_prompt = "be terse"`,
 			want: "belonging to another step type",
 		},
 		{
-			name: "max_messages negative",
-			toml: `
-[workflow]
-name = "x"
-version = "1"
-[[step]]
-id = "a"
-type = "review"
-[[step.review]]
-source = "diff"
-label = "Code changes"
-max_messages = -1
-output_type = { enum = ["ok"] }`,
-			want: "unknown key(s) in workflow",
-		},
-		{
-			name: "max_messages on agent step",
-			toml: `
-[workflow]
-name = "x"
-version = "1"
-[[step]]
-id = "a"
-type = "agent"
-skill = "s"
-allowed_tools = ["Read"]
-max_messages = 5`,
-			want: "unknown key(s) in workflow",
-		},
-		{
-			name: "max_messages on command step",
-			toml: `
-[workflow]
-name = "x"
-version = "1"
-[[step]]
-id = "a"
-type = "command"
-run = "true"
-max_messages = 3`,
-			want: "unknown key(s) in workflow",
-		},
-		{
 			name: "inject_context on command step",
 			toml: `
 [workflow]
@@ -673,24 +630,6 @@ purpose = 5`,
 				t.Fatalf("error = %q, want substring %q", err.Error(), tc.want)
 			}
 		})
-	}
-}
-
-func TestMaxMessagesRejected(t *testing.T) {
-	toml := `
-[workflow]
-name = "x"
-version = "1"
-[[step]]
-id = "a"
-type = "review"
-[[step.review]]
-source = "diff"
-label = "Code changes"
-output_type = { enum = ["ok"] }
-`
-	if _, err := Decode(toml, ""); err == nil || !strings.Contains(err.Error(), "unknown key") {
-		t.Fatalf("expected legacy max_messages to be rejected, got: %v", err)
 	}
 }
 

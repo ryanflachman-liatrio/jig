@@ -112,7 +112,7 @@ func neighborKind(t workflow.StepType) string {
 
 // consumedFields returns the field name(s) of producerID that consumer reads, in
 // the consumer's declaration order: from its @producerID.field inputs, plus —
-// for a review consumer — its review = "@producerID.field" target. A bare
+// for a review consumer — its @producerID.field target. A bare
 // reference (no field) contributes nothing, leaving the slice empty so the
 // renderer emits the literal "output".
 func consumedFields(consumer *workflow.Step, producerID string) []string {

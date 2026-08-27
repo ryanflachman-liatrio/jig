@@ -79,6 +79,29 @@ run = "echo hi"
 	}
 }
 
+func TestFindWorkflowByNameLoadsHistoricalDefinition(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "different-filename.toml")
+	if err := os.WriteFile(path, []byte(`
+[workflow]
+name = "historical-name"
+version = "1"
+[[step]]
+id = "done"
+type = "command"
+run = "true"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wf, err := findWorkflowByName(dir, "historical-name")
+	if err != nil {
+		t.Fatalf("findWorkflowByName: %v", err)
+	}
+	if wf.Meta.Name != "historical-name" || len(wf.Steps) != 1 {
+		t.Fatalf("loaded workflow = %+v", wf)
+	}
+}
+
 // TestHelpOverlayGlobal drives the real root model: "?" opens a modal on the
 // selector, it renders the selector's sections plus Global, an unrelated key is
 // swallowed (no navigation behind it), and "?"/esc dismiss it.

@@ -49,6 +49,8 @@ type Model struct {
 	width, height                  int
 	keys                           keyMap
 	error                          string
+	previews                       []previewState
+	previewBlock                   int
 }
 
 func New(session domain.Session) (Model, error) { return NewWithDraft(session, domain.Draft{}) }
@@ -59,6 +61,10 @@ func NewWithDraft(session domain.Session, draft domain.Draft) (Model, error) {
 		return Model{}, err
 	}
 	m := Model{session: session, docs: docs, reviewed: map[string]bool{}, mode: ModeBrowse, commentKind: domain.KindNote, keys: defaultKeyMap(), nextID: 1}
+	m.previews = make([]previewState, len(docs))
+	for i, d := range docs {
+		m.previews[i] = buildPreview(d.meta.Content)
+	}
 	for _, id := range draft.Reviewed {
 		m.reviewed[id] = true
 	}
@@ -133,6 +139,8 @@ func (m Model) Comments() []domain.Comment { return append([]domain.Comment(nil)
 func (m Model) CapturesText() bool {
 	return m.mode == ModeComposeComment || m.mode == ModeEditComment || m.mode == ModeSummary
 }
+
+func (m Model) PreviewBlock() int { return m.previewBlock }
 
 // SetVerdict is used by a parent surface when verdict choices are rendered as
 // buttons or a compact selector rather than raw digit key presses.

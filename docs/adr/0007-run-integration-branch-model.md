@@ -5,7 +5,7 @@ Status: proposed.
 Historically each mutating step ran in its own worktree branched off the **repo-root
 HEAD**, and a step's changes reached the rest of the workflow only two ways: as
 structured `@ref` outputs, or via an explicit `merge` command step an author wired by
-hand (e.g. `examples/bugfix.toml`). Steps therefore could not build on each other's
+hand (e.g. `.agents/jig/bugfix.toml`). Steps therefore could not build on each other's
 *code* — only on each other's declared output — and the integrated result was assembled
 by hand.
 

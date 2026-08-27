@@ -26,8 +26,6 @@ import (
 	"jig/internal/workflow"
 )
 
-const defaultReviewMaxMessages = 10
-
 // sub holds a subscriber's two event channels: live for high-volume droppable
 // signals (StepOutput, StepToolCall, StepMessage) and ctrl for critical
 // low-volume events that must not be lost (RunFinished, ReviewRequest, etc.).
@@ -141,6 +139,16 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	if m.root != "" {
 		if rd, err := datastore.RunDir(m.root, runID); err == nil {
 			runDir = rd
+			_ = persistWorkflowSnapshot(runDir, wf)
+			if lock, lockErr := acquireRunLock(runDir); lockErr == nil {
+				run.runLock = lock
+			} else {
+				m.mu.Lock()
+				delete(m.runs, runID)
+				m.mu.Unlock()
+				cancel()
+				return nil, fmt.Errorf("engine: lock run: %w", lockErr)
+			}
 			if mw, err := manifest.NewWriter(runDir); err == nil {
 				w = mw
 			}
@@ -156,6 +164,8 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	// happens-before requirement so Snapshot() reads are lock-free.
 	onDone := func(snap RunSnapshot) {
 		run.finalSnap = snap
+		releaseRunLock(run.runLock)
+		run.runLock = nil
 		close(run.done)
 	}
 	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir, m.root, repoRoot, onDone)
@@ -283,9 +293,10 @@ func (m *Manager) Runs() []*Run {
 
 // Run is the caller's handle to a live scheduler goroutine.
 type Run struct {
-	ID     string
-	cancel context.CancelFunc
-	inbox  chan schedMsg
+	ID      string
+	cancel  context.CancelFunc
+	inbox   chan schedMsg
+	runLock *os.File
 	// done is closed by the scheduler goroutine before it exits.
 	// finalSnap is written before done is closed; reads after observing
 	// done closed see the written value (Go memory model, channel close).
@@ -360,10 +371,6 @@ func (r *Run) ProvideUserInput(stepID, as, text string) {
 // Message delivers a free-text human message to an awaiting_review gate, which
 // routes it to the reviewed agent step for continued processing. The agent
 // resumes its SDK session, re-runs, and the gate re-fires when done.
-func (r *Run) Message(reviewStepID, text string) {
-	r.inbox <- humanMessageMsg{stepID: reviewStepID, text: text}
-}
-
 // SendInput delivers a human response to an agent step that is blocked by
 // block_on. The agent resumes its session with the response as the query.
 func (r *Run) SendInput(stepID, text string) {
@@ -474,11 +481,6 @@ type closureReqMsg struct {
 	reply  chan<- []string
 }
 
-type humanMessageMsg struct {
-	stepID string // review step ID receiving the message
-	text   string
-}
-
 type agentInputMsg struct {
 	stepID string // agent step blocked by block_on
 	text   string
@@ -559,7 +561,6 @@ func (reviewSubmissionMsg) isSchedMsg()     {}
 func (userInputMsg) isSchedMsg()            {}
 func (snapshotReqMsg) isSchedMsg()          {}
 func (closureReqMsg) isSchedMsg()           {}
-func (humanMessageMsg) isSchedMsg()         {}
 func (agentInputMsg) isSchedMsg()           {}
 func (agentQuestionRequestMsg) isSchedMsg() {}
 func (agentQuestionAnswerMsg) isSchedMsg()  {}
@@ -696,11 +697,9 @@ type scheduler struct {
 
 	// review-gate messaging: a human can send free-text to the reviewed agent
 	// step, which resumes the agent's SDK session and re-runs it before a
-	// terminal verdict is chosen. The cap (max_messages) bounds the round-trips.
 	resumeSessions map[string]string // stepID → SDK session ID for next dispatch
 	stepMessage    map[string]string // stepID → human message for resumed query
 	reviewSessions map[string]review.Session
-	reviewMessages map[string]int // retained for old monitor message routing until the workspace is integrated
 
 	// block_on: tracks how many times a human has provided input to a blocked step.
 	stepInputCount map[string]int // stepID → input rounds delivered so far
@@ -795,7 +794,6 @@ func newScheduler(
 		resumeSessions:      make(map[string]string),
 		stepMessage:         make(map[string]string),
 		reviewSessions:      make(map[string]review.Session),
-		reviewMessages:      make(map[string]int),
 		stepInputCount:      make(map[string]int),
 		recoverCount:        make(map[string]int),
 		seenEscalations:     make(map[string]bool),
@@ -828,9 +826,16 @@ func (s *scheduler) run(ctx context.Context) {
 	if err := s.setupRunBranch(); err != nil {
 		s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("setup run branch: %v", err)})
 		s.emit(RunFinished{RunID: s.runID, Failed: true})
+		s.onDone(s.snapshot())
+		if s.writer != nil {
+			_ = s.writer.Close()
+		}
 		return
 	}
+	s.runLoop(ctx)
+}
 
+func (s *scheduler) runLoop(ctx context.Context) {
 	maxPar := s.wf.Defaults.MaxParallel
 	if maxPar <= 0 {
 		maxPar = 4
@@ -2044,52 +2049,6 @@ func (s *scheduler) dispatchUserPrompt(st *workflow.Step) {
 	})
 }
 
-// handleHumanMessage processes a free-text message addressed to a review gate.
-// It finds the reviewed agent step, checks the message cap, then resets the
-// target + review steps to pending so the agent re-runs and the gate re-fires.
-func (s *scheduler) handleHumanMessage(m humanMessageMsg) {
-	state := s.states[m.stepID]
-	if state.Status != step.StatusAwaitingReview {
-		return // stale
-	}
-	wfStep := s.stepByID(m.stepID)
-	if wfStep == nil {
-		return
-	}
-
-	// Resolve "@stepid" or "@stepid.field" → bare step ID.
-	targetID := strings.TrimPrefix(reviewSource(wfStep), "@")
-	if dot := strings.Index(targetID, "."); dot >= 0 {
-		targetID = targetID[:dot]
-	}
-	targetState := s.states[targetID]
-	if targetState == nil || targetState.Result == nil || targetState.Result.SessionID == "" {
-		return // no resumable session
-	}
-
-	// Cap enforcement.
-	s.reviewMessages[m.stepID]++
-	if s.reviewMessages[m.stepID] > defaultReviewMaxMessages {
-		s.emit(RunError{
-			RunID: s.runID,
-			Err:   fmt.Sprintf("step %q: review message limit %d reached", m.stepID, defaultReviewMaxMessages),
-		})
-		// Roll back the increment so the gate stays and the count stays at cap.
-		s.reviewMessages[m.stepID]--
-		return
-	}
-
-	// Stash resume info for the target's next dispatch.
-	s.resumeSessions[targetID] = targetState.Result.SessionID
-	s.stepMessage[targetID] = m.text
-
-	// Reset the loop body (target → review) to pending so both re-run.
-	for _, id := range s.loopBody(targetID, m.stepID) {
-		st := s.states[id]
-		s.transition(id, st.Status, step.StatusPending)
-	}
-}
-
 // evalBlockOn evaluates the step's block_on condition against its own output.
 func (s *scheduler) evalBlockOn(stepID string, wfStep *workflow.Step) bool {
 	cond, err := workflow.ParseCondition(wfStep.BlockOn)
@@ -2189,6 +2148,10 @@ type loopContribution struct {
 // deterministic. The cap is still checked here (at the moment the looper fires),
 // so an over-cap loop aborts the run exactly as before.
 func (s *scheduler) recordLoopIntent(stepID string, wfStep *workflow.Step) {
+	s.recordLoopIntentWithFeedback(stepID, wfStep, "")
+}
+
+func (s *scheduler) recordLoopIntentWithFeedback(stepID string, wfStep *workflow.Step, submittedFeedback string) {
 	loop := wfStep.Loop
 	state := s.states[stepID]
 
@@ -2211,16 +2174,18 @@ func (s *scheduler) recordLoopIntent(stepID string, wfStep *workflow.Step) {
 		return
 	}
 
-	// Resolve the feedback @ref to actual content (verdict for review steps,
-	// output file text for agent/command steps) now, while the source step's
-	// result is current.
+	// Resolve the feedback now, while the source step's result is current. A
+	// document review supplies its rendered submission directly so comments are
+	// preserved even when persistence is off and there is no output file to read.
 	var content string
 	if loop.Feedback != "" {
 		feedbackID := strings.TrimPrefix(loop.Feedback, "@")
 		if dot := strings.Index(feedbackID, "."); dot >= 0 {
 			feedbackID = feedbackID[:dot]
 		}
-		if fs := s.states[feedbackID]; fs != nil && fs.Result != nil {
+		if feedbackID == stepID && submittedFeedback != "" {
+			content = submittedFeedback
+		} else if fs := s.states[feedbackID]; fs != nil && fs.Result != nil {
 			if fs.Result.Verdict != "" {
 				content = fs.Result.Verdict
 			} else if fs.Result.OutputPath != "" {
