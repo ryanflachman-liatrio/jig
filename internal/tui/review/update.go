@@ -183,7 +183,12 @@ func (m Model) updateSummary(k tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m, submitCmd(m)
 	}
 	if len(k.Text) == 1 && k.Text[0] >= '0' && k.Text[0] <= '9' {
-		m.verdict = k.Text
+		idx := int(k.Text[0] - '1')
+		if idx >= 0 && idx < len(m.choices) {
+			m.verdict = m.choices[idx]
+		} else {
+			m.verdict = k.Text
+		}
 	}
 	return m, nil
 }

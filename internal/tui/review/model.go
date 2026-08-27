@@ -45,6 +45,7 @@ type Model struct {
 	composer, replacement, summary textarea.Model
 	editing                        string
 	verdict                        string
+	choices                        []string
 	width, height                  int
 	keys                           keyMap
 	error                          string
@@ -136,6 +137,8 @@ func (m Model) CapturesText() bool {
 // SetVerdict is used by a parent surface when verdict choices are rendered as
 // buttons or a compact selector rather than raw digit key presses.
 func (m *Model) SetVerdict(verdict string) { m.verdict = verdict }
+
+func (m *Model) SetChoices(choices []string) { m.choices = append([]string(nil), choices...) }
 
 func (m Model) Verdict() string { return m.verdict }
 

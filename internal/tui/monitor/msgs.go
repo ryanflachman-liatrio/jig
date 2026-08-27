@@ -5,6 +5,7 @@ import (
 
 	"jig/internal/engine"
 	"jig/internal/interaction"
+	"jig/internal/review"
 )
 
 // ShowRunsMsg asks the root to switch to the runs list.
@@ -16,6 +17,19 @@ type ReviewVerdictMsg struct {
 	RunID   string
 	StepID  string
 	Verdict string
+}
+
+// ReviewSubmissionMsg carries the complete immutable-round review response.
+// The root delivers it atomically to the live run.
+type ReviewSubmissionMsg struct {
+	RunID      string
+	StepID     string
+	Submission review.Submission
+}
+
+type ReviewDraftErrorMsg struct {
+	StepID string
+	Err    error
 }
 
 // UserInputResponseMsg is emitted by the monitor when the user submits text

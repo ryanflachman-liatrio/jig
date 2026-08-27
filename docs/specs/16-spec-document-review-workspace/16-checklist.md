@@ -88,13 +88,13 @@ Use this as a phase-by-phase execution list for context-window-sized work.
 
 ## Phase 4 — Monitor integration and routing
 
-- [ ] Add per-entry review model storage in `internal/tui/monitor/monitor_model.go`
-- [ ] Handle review events in `internal/tui/monitor/monitor_events.go`
-- [ ] Route keys/text to open child workspace in `internal/tui/monitor/monitor_update.go`
-- [ ] Replace gate behavior in `internal/tui/monitor/monitor_gate.go` and `internal/tui/monitor/monitor_gate_view.go`
-- [ ] Compose review workspace in monitor views (`monitor_view.go`, `monitor_layout.go`)
-- [ ] Add review styles in `internal/tui/shared/styles.go`
-- [ ] Wire `ReviewSubmissionMsg` path
+- [x] Add per-entry review model storage in `internal/tui/monitor/monitor_model.go`
+- [x] Handle review events in `internal/tui/monitor/monitor_events.go`
+- [x] Route keys/text to open child workspace in `internal/tui/monitor/monitor_update.go`
+- [x] Replace gate behavior in `internal/tui/monitor/monitor_gate.go` and `internal/tui/monitor/monitor_gate_view.go`
+- [x] Compose review workspace in monitor views (`monitor_view.go`, `monitor_layout.go`)
+- [x] Reuse shared review/TUI theme styles in `internal/tui/shared/styles.go`
+- [x] Wire `ReviewSubmissionMsg` path
   - `internal/tui/monitor/msgs.go`
   - `internal/tui/root_update.go`
 - [ ] Add monitor tests for:
@@ -103,7 +103,7 @@ Use this as a phase-by-phase execution list for context-window-sized work.
   - draft persistence errors
   - restore after queue navigation
   - replay state
-- [ ] Proofs
+- [x] Proofs
   - `go test ./internal/tui/monitor ./internal/tui/shared -count=1`
   - `go test ./internal/tui/... -race -count=1`
 

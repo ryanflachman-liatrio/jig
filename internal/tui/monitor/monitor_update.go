@@ -8,6 +8,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"jig/internal/helpchat"
+	domainreview "jig/internal/review"
+	reviewworkspace "jig/internal/tui/review"
 	"jig/internal/tui/shared"
 )
 
@@ -102,6 +104,37 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.refreshPanels()
 		return m, nil
 
+	case reviewworkspace.DraftChangedMsg:
+		stepID := msg.Draft.StepID
+		for i := range m.inputQueue {
+			entry := &m.inputQueue[i]
+			if entry.kind != inputKindReview || entry.review == nil || entry.review.StepID != stepID {
+				continue
+			}
+			path := entry.review.DraftPath
+			return m, func() tea.Msg {
+				if err := domainreview.WriteDraft(path, msg.Draft); err != nil {
+					return ReviewDraftErrorMsg{StepID: stepID, Err: err}
+				}
+				return nil
+			}
+		}
+		return m, nil
+
+	case reviewworkspace.SubmissionMsg:
+		for i := range m.inputQueue {
+			entry := &m.inputQueue[i]
+			if entry.kind == inputKindReview && entry.stepID == msg.Submission.StepID {
+				runID := m.RunID
+				m.removeEntryAt(i)
+				m.refreshPanels()
+				return m, func() tea.Msg {
+					return ReviewSubmissionMsg{RunID: runID, StepID: msg.Submission.StepID, Submission: msg.Submission}
+				}
+			}
+		}
+		return m, nil
+
 	case tea.KeyPressMsg:
 		// ctrl+\ toggles the help agent modal from any focus region.
 		if keybind.Matches(msg, m.keys.ToggleHelp) {
@@ -194,6 +227,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.refreshPanels()
 		return m, searchCmd
 	}
+	if entry, ok := m.activeEntry(); ok && entry.workspace != nil {
+		workspace, workspaceCmd := entry.workspace.Update(msg)
+		m.inputQueue[m.activeInputIdx].workspace = &workspace
+		m.refreshPanels()
+		return m, workspaceCmd
+	}
 	if entry, ok := m.activeEntry(); ok &&
 		(entry.kind == inputKindRequest || entry.kind == inputKindPrompt ||
 			((entry.kind == inputKindReview || entry.kind == inputKindRecovery) && entry.composing)) {
@@ -230,6 +269,9 @@ func (m Model) textareaActive() bool {
 	entry, ok := m.activeEntry()
 	if !ok {
 		return false
+	}
+	if entry.workspace != nil {
+		return entry.workspace.CapturesText()
 	}
 	switch entry.kind {
 	case inputKindRequest, inputKindPrompt:

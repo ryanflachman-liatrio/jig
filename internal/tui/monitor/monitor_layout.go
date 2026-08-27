@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 	"charm.land/glamour/v2/ansi"
 	"charm.land/lipgloss/v2"
@@ -114,6 +115,10 @@ func (m *Model) resize() {
 		m.searchInput.SetWidth(max(1, m.transcriptInnerW-6))
 	}
 	for i := range m.inputQueue {
+		if m.inputQueue[i].workspace != nil {
+			workspace, _ := m.inputQueue[i].workspace.Update(tea.WindowSizeMsg{Width: m.width, Height: max(m.height-6, 1)})
+			m.inputQueue[i].workspace = &workspace
+		}
 		if m.inputQueue[i].kind == inputKindQuestion {
 			m.inputQueue[i].question = m.inputQueue[i].question.Resize(
 				m.gateInnerWidth(),

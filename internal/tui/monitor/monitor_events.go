@@ -9,9 +9,11 @@ import (
 
 	"jig/internal/datastore"
 	"jig/internal/engine"
+	domainreview "jig/internal/review"
 	"jig/internal/sentinel"
 	"jig/internal/step"
 	questionpanel "jig/internal/tui/question"
+	reviewworkspace "jig/internal/tui/review"
 )
 
 func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
@@ -88,11 +90,23 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		m.reviews[ev.StepID] = ev
 		// Append a queue entry. Decision 6: no focus steal on arrival.
 		evCopy := ev
-		m.inputQueue = append(m.inputQueue, pendingInputEntry{
+		entry := pendingInputEntry{
 			kind:   inputKindReview,
 			stepID: ev.StepID,
 			review: &evCopy,
-		})
+		}
+		if len(ev.Documents) > 0 {
+			session := domainreview.Session{StepID: ev.StepID, RoundID: ev.RoundID, Documents: ev.Documents}
+			var draft domainreview.Draft
+			if ev.DraftPath != "" {
+				_ = domainreview.LoadDraft(ev.DraftPath, &draft)
+			}
+			if workspace, err := reviewworkspace.NewWithDraft(session, draft); err == nil {
+				workspace.SetChoices(ev.Choices)
+				entry.workspace = &workspace
+			}
+		}
+		m.inputQueue = append(m.inputQueue, entry)
 
 	case engine.RecoveryRequest:
 		if ev.RunID != m.RunID {

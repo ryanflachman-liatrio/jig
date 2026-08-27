@@ -15,6 +15,7 @@ import (
 	"jig/internal/step"
 	"jig/internal/transcript"
 	questionpanel "jig/internal/tui/question"
+	reviewworkspace "jig/internal/tui/review"
 	"jig/internal/tui/shared"
 )
 
@@ -71,6 +72,7 @@ type pendingInputEntry struct {
 	question     questionpanel.Model
 	prompt       *engine.PromptRequest
 	review       *engine.ReviewRequest
+	workspace    *reviewworkspace.Model
 	recovery     *engine.RecoveryRequest
 	integration  *engine.IntegrationConflictRequest
 	finalMerge   *engine.FinalMergeRequest
@@ -224,6 +226,10 @@ type Model struct {
 	// can show the diff when a review step is selected — review steps have no
 	// transcript. Kept after the queue entry is removed (Unit 5).
 	reviews map[string]engine.ReviewRequest
+
+	// reviewDraftErrors is kept per queue entry so a failed draft write is
+	// visible without disturbing another queued review.
+	reviewDraftErrors map[string]string
 
 	// promptTextarea is the active textarea, rebuilt from the current entry's draft
 	// via shared.NewInputTextarea on every entry switch (request/prompt/review-compose kinds).
@@ -533,6 +539,7 @@ func New(runID string) Model {
 		chatItemRendered:   make(map[transcriptRenderKey]string),
 		chatItemLineRanges: make(map[transcriptLineKey]lineRange),
 		reviews:            make(map[string]engine.ReviewRequest),
+		reviewDraftErrors:  make(map[string]string),
 		chatAutoScroll:     true,
 		expanded:           make(map[string]bool),
 		stepFiles:          make(map[string][]outputFile),
@@ -588,6 +595,9 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 	}
 	if m.reviews == nil {
 		m.reviews = make(map[string]engine.ReviewRequest)
+	}
+	if m.reviewDraftErrors == nil {
+		m.reviewDraftErrors = make(map[string]string)
 	}
 	if m.expanded == nil {
 		m.expanded = make(map[string]bool)

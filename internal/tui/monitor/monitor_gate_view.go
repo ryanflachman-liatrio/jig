@@ -62,10 +62,14 @@ func (m Model) gateOverlay() string {
 		return ""
 	}
 
+	entry, _ := m.activeEntry()
 	_, vFrame := shared.PanelFrame()
 	fixedH := m.gateBodyHeight() + vFrame
-
-	entry, _ := m.activeEntry()
+	if entry != nil && entry.workspace != nil {
+		// The review workspace is a full inspection surface, so it gets the
+		// available monitor height instead of the compact gate's fixed height.
+		fixedH = max(m.height-vFrame, 1)
+	}
 	var b strings.Builder
 	presentation := presentationForGate(entry)
 
@@ -123,6 +127,13 @@ func (m Model) renderGatePrompt(b *strings.Builder, entry *pendingInputEntry) {
 }
 
 func (m Model) renderGateReview(b *strings.Builder, entry *pendingInputEntry) {
+	if entry.workspace != nil {
+		b.WriteString(entry.workspace.View())
+		if errText := m.reviewDraftErrors[entry.stepID]; errText != "" {
+			b.WriteString("\n  " + shared.Theme.Error.Render("draft not saved: "+errText))
+		}
+		return
+	}
 	if entry.composing {
 		b.WriteString(m.promptTextarea.View())
 	} else {

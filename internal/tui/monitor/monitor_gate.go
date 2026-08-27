@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"jig/internal/engine"
+	reviewworkspace "jig/internal/tui/review"
 	"jig/internal/tui/shared"
 )
 
@@ -263,6 +264,18 @@ func (m Model) updateGate(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	case inputKindPrompt:
 		return m.updateGatePrompt(msg, entry)
 	case inputKindReview:
+		if entry.workspace != nil {
+			if keybind.Matches(msg, m.keys.GateBlur) && entry.workspace.Mode() == reviewworkspace.ModeBrowse {
+				m.focus = focusSteps
+				m.refreshPanels()
+				return m, nil
+			}
+			workspace, cmd := entry.workspace.Update(msg)
+			m.inputQueue[m.activeInputIdx].workspace = &workspace
+			m.refreshPanels()
+			persist := func() tea.Msg { return reviewworkspace.DraftChangedMsg{Draft: workspace.Draft()} }
+			return m, tea.Batch(cmd, persist)
+		}
 		return m.updateGateReview(msg, entry)
 	case inputKindRecovery:
 		return m.updateGateRecovery(msg, entry)

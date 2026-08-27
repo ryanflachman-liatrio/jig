@@ -71,6 +71,12 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case monitor.ReviewSubmissionMsg:
+		if run, ok := m.handles[msg.RunID]; ok {
+			run.ResolveReview(msg.StepID, msg.Submission)
+		}
+		return m, nil
+
 	case monitor.ReviewMessageMsg:
 		if run, ok := m.handles[msg.RunID]; ok {
 			run.Message(msg.StepID, msg.Text)
