@@ -370,6 +370,45 @@ func TestSourceViewPansStyledContentWithoutMovingGutter(t *testing.T) {
 	}
 }
 
+func TestMarkdownPreviewFollowsActiveBlock(t *testing.T) {
+	content := strings.Join([]string{
+		"# Section 1", "", "Body 1", "",
+		"# Section 2", "", "Body 2", "",
+		"# Section 3", "", "Body 3", "",
+		"# Section 4", "", "Body 4", "",
+		"# Section 5", "", "Body 5",
+	}, "\n")
+	session := domain.Session{StepID: "preview-scroll", Documents: []domain.Document{{
+		ID: "md", Label: "Markdown", Source: "sections.md", Format: "markdown", Content: content, SHA256: domain.Digest(content),
+	}}}
+	m, err := New(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 16})
+
+	for m.previewBlock < len(m.previews[0].blocks)-1 {
+		m = update(m, "j")
+		plain := ansi.Strip(m.documentView())
+		activeRange := formatLineRange(m.cursor, m.rangeEnd)
+		if !strings.Contains(plain, "▌ "+activeRange) {
+			t.Fatalf("active block %d (%s) scrolled out of view:\n%s", m.previewBlock, activeRange, plain)
+		}
+	}
+	bottom := ansi.Strip(m.documentView())
+	if !strings.Contains(bottom, "Section 5") || strings.Contains(bottom, "Section 1") {
+		t.Fatalf("preview did not follow navigation to the final section:\n%s", bottom)
+	}
+
+	for m.previewBlock > 0 {
+		m = update(m, "k")
+	}
+	top := ansi.Strip(m.documentView())
+	if !strings.Contains(top, "Section 1") {
+		t.Fatalf("preview did not follow navigation back to the first section:\n%s", top)
+	}
+}
+
 func TestSourceOffsetsArePerDocumentAndEditorsCapturePanKeys(t *testing.T) {
 	long := strings.Repeat("abcdefghij", 12)
 	session := domain.Session{StepID: "source", Documents: []domain.Document{

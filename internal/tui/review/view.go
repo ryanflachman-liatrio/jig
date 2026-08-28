@@ -84,6 +84,8 @@ func (m *Model) documentView() string {
 			m.error = "preview unavailable: " + preview.parseErr.Error()
 			return m.documentView()
 		}
+		rows := make([]string, 0, len(preview.blocks)*2)
+		activeStart, activeEnd := 0, 0
 		for i, block := range preview.blocks {
 			rendered, err := preview.render(i, d.meta.Content, m.previewContentWidth())
 			if err != nil {
@@ -91,8 +93,18 @@ func (m *Model) documentView() string {
 				m.error = "preview unavailable: " + err.Error()
 				return m.documentView()
 			}
-			m.writePreviewBlock(&b, i, block, rendered)
+			var blockView strings.Builder
+			m.writePreviewBlock(&blockView, i, block, rendered)
+			blockRows := strings.Split(strings.TrimSuffix(blockView.String(), "\n"), "\n")
+			if i == m.previewBlock {
+				activeStart = len(rows)
+				activeEnd = activeStart + len(blockRows) - 1
+			}
+			rows = append(rows, blockRows...)
 		}
+		rows = previewWindow(rows, activeStart, activeEnd, m.previewRowBudget())
+		b.WriteString(strings.Join(rows, "\n"))
+		b.WriteByte('\n')
 		m.writeCommentsAndComposer(&b, d)
 		return shared.Panel(d.meta.Label, b.String(), documentPanelWidth(m.width), max(12, m.height-2), m.mode != ModeSummary)
 	}
@@ -257,6 +269,33 @@ func (m *Model) clampSourceOffset() {
 func (m *Model) previewContentWidth() int {
 	hFrame, _ := shared.PanelFrame()
 	return max(documentPanelWidth(m.width)-hFrame-2, 20)
+}
+
+func (m *Model) previewRowBudget() int {
+	if m.height <= 0 {
+		return 0
+	}
+	rows := max(1, m.height-10)
+	if m.mode == ModeComposeComment || m.mode == ModeEditComment {
+		rows = max(1, rows-7)
+	}
+	return rows
+}
+
+func previewWindow(rows []string, activeStart, activeEnd, limit int) []string {
+	if limit <= 0 || len(rows) <= limit {
+		return rows
+	}
+
+	start := max(0, activeStart-3)
+	activeHeight := activeEnd - activeStart + 1
+	if activeHeight > limit {
+		start = activeStart
+	} else if activeEnd >= start+limit {
+		start = activeEnd - limit + 1
+	}
+	start = min(start, len(rows)-limit)
+	return rows[start : start+limit]
 }
 
 func (m *Model) writePreviewBlock(b *strings.Builder, index int, block previewBlock, rendered string) {
