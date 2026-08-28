@@ -78,6 +78,10 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.mode = ModeSelectRange
 	} else if keybind.Matches(k, m.keys.Comment) {
 		m.openComposer(false)
+	} else if keybind.Matches(k, m.keys.Confirm) {
+		if !m.openSelectedComment() {
+			m.error = "no comment on the active selection"
+		}
 	} else if keybind.Matches(k, m.keys.Summary) {
 		m.mode = ModeSummary
 		m.summary.Focus()
@@ -179,8 +183,12 @@ func (m Model) updateSelection(k tea.KeyPressMsg) (Model, tea.Cmd) {
 	} else if keybind.Matches(k, m.keys.Down) {
 		m.move(1)
 	} else if m.handleSourcePan(k) {
-	} else if keybind.Matches(k, m.keys.Comment) || keybind.Matches(k, m.keys.Confirm) {
+	} else if keybind.Matches(k, m.keys.Comment) {
 		m.openComposer(false)
+	} else if keybind.Matches(k, m.keys.Confirm) {
+		if !m.openSelectedComment() {
+			m.error = "no comment on the active selection"
+		}
 	}
 	return m, nil
 }
@@ -336,6 +344,34 @@ func (m *Model) openComposer(edit bool) {
 	}
 	m.composer.Focus()
 }
+
+func (m *Model) openSelectedComment() bool {
+	start, end := m.cursor, m.cursor
+	if m.mode == ModeSelectRange || m.activeDocumentMode() == DocumentPreview {
+		start, end = min(m.cursor, m.rangeEnd), max(m.cursor, m.rangeEnd)
+	}
+
+	selected := -1
+	for i, c := range m.comments {
+		if c.Anchor.DocumentID != m.ActiveDocument().ID || c.Anchor.StartLine > end || c.Anchor.EndLine < start {
+			continue
+		}
+		if c.ID == m.activeComment {
+			selected = i
+			break
+		}
+		if selected < 0 || c.Anchor.StartLine == start && c.Anchor.EndLine == end {
+			selected = i
+		}
+	}
+	if selected < 0 {
+		return false
+	}
+
+	m.activeComment = m.comments[selected].ID
+	m.openComposer(true)
+	return true
+}
 func (m *Model) deleteActive() {
 	for i, c := range m.comments {
 		if c.ID == m.activeComment {
@@ -383,13 +419,20 @@ func (m *Model) nextComment(reverse bool) {
 func (m *Model) resize() {
 	if m.width > 0 {
 		hFrame, _ := shared.PanelFrame()
-		documentWidth := max(1, documentPanelWidth(m.width)-hFrame)
 		summaryWidth := max(1, max(42, m.width-2)-hFrame)
 		m.summary.SetWidth(summaryWidth)
-		m.composer.SetWidth(documentWidth)
-		m.replacement.SetWidth(documentWidth)
+		m.resizeCommentEditors()
 	}
 	m.clampSourceOffset()
+}
+
+func (m *Model) resizeCommentEditors() {
+	if m.width <= 0 {
+		return
+	}
+	innerWidth := max(1, commentModalWidth(m.width)-shared.Theme.Review.CommentModal.GetHorizontalFrameSize())
+	m.composer.SetWidth(innerWidth)
+	m.replacement.SetWidth(innerWidth)
 }
 func nextKind(k review.Kind) review.Kind {
 	kinds := []review.Kind{review.KindNote, review.KindQuestion, review.KindConcern, review.KindBlocker, review.KindSuggestion, review.KindPraise}

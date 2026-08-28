@@ -134,6 +134,7 @@ func (m *Model) rebuildComposer() {
 	m.replacement = shared.NewInputTextarea("Replacement (suggestions only)", 0, 3)
 	m.composer.Blur()
 	m.replacement.Blur()
+	m.resizeCommentEditors()
 }
 
 func (m Model) Session() domain.Session { return m.session }

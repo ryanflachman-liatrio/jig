@@ -38,10 +38,16 @@ func (m *Model) view(withFooter bool) string {
 	if withFooter {
 		footer = "\n" + m.footer()
 	}
+	var base string
 	if m.width > 0 && m.width < 90 {
-		return strings.Join([]string{header, left, right}, "\n") + footer
+		base = strings.Join([]string{header, left, right}, "\n") + footer
+	} else {
+		base = lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right) + footer
 	}
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right) + footer
+	if m.mode == ModeComposeComment || m.mode == ModeEditComment {
+		return m.commentOverlay(base)
+	}
+	return base
 }
 
 func (m *Model) documentList() string {
@@ -105,7 +111,6 @@ func (m *Model) documentView() string {
 		rows = previewWindow(rows, activeStart, activeEnd, m.previewRowBudget())
 		b.WriteString(strings.Join(rows, "\n"))
 		b.WriteByte('\n')
-		m.writeCommentsAndComposer(&b, d)
 		return shared.Panel(d.meta.Label, b.String(), documentPanelWidth(m.width), max(12, m.height-2), m.mode != ModeSummary)
 	}
 	if m.mode == ModeSelectRange {
@@ -129,9 +134,6 @@ func (m *Model) documentView() string {
 		start = 1
 	}
 	sourceRows := max(1, m.height-10)
-	if m.mode == ModeComposeComment || m.mode == ModeEditComment {
-		sourceRows = max(1, sourceRows-7)
-	}
 	end := start + sourceRows - 1
 	if end > len(d.lines) {
 		end = len(d.lines)
@@ -139,7 +141,6 @@ func (m *Model) documentView() string {
 	for i := start; i <= end; i++ {
 		m.writeSourceRow(&b, i)
 	}
-	m.writeCommentsAndComposer(&b, d)
 	return shared.Panel(d.meta.Label, b.String(), documentPanelWidth(m.width), max(12, m.height-2), m.mode != ModeSummary)
 }
 
@@ -275,11 +276,7 @@ func (m *Model) previewRowBudget() int {
 	if m.height <= 0 {
 		return 0
 	}
-	rows := max(1, m.height-10)
-	if m.mode == ModeComposeComment || m.mode == ModeEditComment {
-		rows = max(1, rows-7)
-	}
-	return rows
+	return max(1, m.height-10)
 }
 
 func previewWindow(rows []string, activeStart, activeEnd, limit int) []string {
@@ -357,35 +354,52 @@ func formatLineRange(start, end int) string {
 	return fmt.Sprintf("L%d–L%d", start, end)
 }
 
-func (m *Model) writeCommentsAndComposer(b *strings.Builder, d document) {
-	comments := m.commentsForRange(d.meta.ID, 1, len(d.lines))
-	if len(comments) > 0 {
-		b.WriteString("\n")
-		b.WriteString(shared.Theme.StatusLine.Render("Comments"))
-		b.WriteByte('\n')
-		for _, c := range comments {
-			metadata := fmt.Sprintf("%s · %s · lines %d–%d", c.ID, c.Kind, c.Anchor.StartLine, c.Anchor.EndLine)
-			if c.ID == m.activeComment {
-				metadata = shared.Theme.Review.ActiveComment.Render(metadata + " · active")
-			}
-			b.WriteString(metadata + "\n")
-			b.WriteString("  " + strings.ReplaceAll(c.Body, "\n", " ") + "\n")
-		}
+func commentModalWidth(width int) int {
+	return min(72, max(width-4, 1))
+}
+
+func (m *Model) commentOverlay(base string) string {
+	width, height := m.width, m.height
+	if width <= 0 {
+		width = max(lipgloss.Width(base), 1)
 	}
-	if m.mode == ModeComposeComment || m.mode == ModeEditComment {
-		b.WriteString("\n")
-		label := "New comment"
-		if m.mode == ModeEditComment {
-			label = "Edit comment"
-		}
-		b.WriteString(shared.Theme.StatusLine.Render(fmt.Sprintf("%s · %s", label, m.commentKind)))
-		b.WriteString("\n")
-		b.WriteString(m.composer.View())
-		if m.commentKind == domain.KindSuggestion {
-			b.WriteString("\n")
-			b.WriteString(m.replacement.View())
-		}
+	if height <= 0 {
+		height = max(lipgloss.Height(base), 1)
 	}
+
+	title := "New comment"
+	metadata := formatLineRange(min(m.cursor, m.rangeEnd), max(m.cursor, m.rangeEnd))
+	if m.mode == ModeEditComment {
+		title = "Edit comment"
+		metadata = m.editing + " · " + metadata
+	}
+	var content strings.Builder
+	content.WriteString(shared.Theme.Review.CommentModalTitle.Render(title + " · " + string(m.commentKind)))
+	content.WriteByte('\n')
+	content.WriteString(shared.Theme.Review.CommentModalMeta.Render(metadata))
+	if m.error != "" {
+		content.WriteByte('\n')
+		content.WriteString(shared.Theme.Error.Render(m.error))
+	}
+	content.WriteByte('\n')
+	content.WriteString(m.composer.View())
+	if m.commentKind == domain.KindSuggestion {
+		content.WriteByte('\n')
+		content.WriteString(shared.Theme.Review.CommentModalMeta.Render("Replacement"))
+		content.WriteByte('\n')
+		content.WriteString(m.replacement.View())
+	}
+	content.WriteByte('\n')
+	content.WriteString(shared.Theme.Review.CommentModalHint.Render("enter save · tab change kind · esc close"))
+
+	box := shared.Theme.Review.CommentModal.Width(commentModalWidth(width)).Render(content.String())
+	x := max((width-lipgloss.Width(box))/2, 0)
+	y := max((height-lipgloss.Height(box))/2, 0)
+	comp := lipgloss.NewCompositor(
+		lipgloss.NewLayer(base),
+		lipgloss.NewLayer(box).X(x).Y(y).Z(1),
+	)
+	return lipgloss.NewCanvas(width, height).Compose(comp).Render()
 }
 
 func (m *Model) summaryView() string {
@@ -432,7 +446,7 @@ func (m *Model) footer() string {
 	if m.activeDocumentMode() == DocumentSource {
 		pan = " · h/l pan · 0 first col"
 	}
-	return "S finish review · j/k move · {/} document · c comment · r reviewed" + view + pan + " · esc close"
+	return "S finish review · j/k move · {/} document · c new comment · enter open comment · r reviewed" + view + pan + " · esc close"
 }
 func listWidth(width int) int {
 	if width > 0 && width < 90 {

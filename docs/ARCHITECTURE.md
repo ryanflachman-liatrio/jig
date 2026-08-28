@@ -134,6 +134,13 @@ the immutable source document and one-based logical lines—rendered terminal
 rows never become review identity. Non-Markdown content is never passed through
 Glamour.
 
+Comment bodies are transient disclosure rather than part of the document
+layout. The review surface keeps only line/block markers visible; `c` opens a
+centered modal for a new comment, while `enter` on a marked line, block, or
+selected range opens the intersecting comment in the same modal for editing.
+Closing the modal restores the unchanged document viewport, so accumulated
+comments cannot push the editor or active source content outside the workspace.
+
 Source presentation follows a separate, width-independent path. Literal
 `.diff` and `.patch` documents use semantic diff styles; Markdown source uses
 the Markdown lexer; other literal files select Chroma only from the source

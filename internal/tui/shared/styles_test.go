@@ -30,6 +30,9 @@ func TestReviewStylesBelongToThemeAndPreserveVisibleWidth(t *testing.T) {
 		{name: "active source comment", style: theme.Review.ActiveCommentMarker, text: "●2"},
 		{name: "language", style: theme.Review.Language, text: "Go"},
 		{name: "horizontal hint", style: theme.Review.HorizontalHint, text: "← col 5 →"},
+		{name: "comment modal title", style: theme.Review.CommentModalTitle, text: "Edit comment"},
+		{name: "comment modal metadata", style: theme.Review.CommentModalMeta, text: "C003 · L12–L18"},
+		{name: "comment modal hint", style: theme.Review.CommentModalHint, text: "esc close"},
 		{name: "syntax base", style: theme.Review.SyntaxBase, text: "plain source"},
 	}
 
@@ -46,6 +49,9 @@ func TestReviewStylesBelongToThemeAndPreserveVisibleWidth(t *testing.T) {
 
 	if theme.Review.ModeActive.GetForeground() == theme.Review.ModeInactive.GetForeground() {
 		t.Fatal("active and inactive modes are not visually distinct")
+	}
+	if theme.Review.CommentModal.GetBorderLeftForeground() == nil {
+		t.Fatal("comment modal has no themed border")
 	}
 
 	for _, token := range []chroma.TokenType{

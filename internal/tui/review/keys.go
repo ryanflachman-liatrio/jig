@@ -60,7 +60,11 @@ func (m Model) Help() []KeyHelp {
 		help = append(help, KeyHelp{Key: "v", Description: "select range"})
 		help = append(help, KeyHelp{Key: "h/l", Description: "pan source"}, KeyHelp{Key: "0", Description: "first column"})
 	}
-	help = append(help, KeyHelp{Key: "c", Description: "comment"}, KeyHelp{Key: "r", Description: "mark reviewed"})
+	help = append(help,
+		KeyHelp{Key: "c", Description: "new comment"},
+		KeyHelp{Key: "enter", Description: "open comment"},
+		KeyHelp{Key: "r", Description: "mark reviewed"},
+	)
 	if m.docs[m.active].meta.Format == "markdown" {
 		help = append(help, KeyHelp{Key: "s", Description: "view"})
 	}

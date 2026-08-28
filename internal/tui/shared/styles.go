@@ -128,6 +128,10 @@ type Styles struct {
 		ActiveCommentMarker lipgloss.Style
 		Language            lipgloss.Style
 		HorizontalHint      lipgloss.Style
+		CommentModal        lipgloss.Style
+		CommentModalTitle   lipgloss.Style
+		CommentModalMeta    lipgloss.Style
+		CommentModalHint    lipgloss.Style
 		SyntaxBase          lipgloss.Style
 		Syntax              *chroma.Style
 	}
@@ -296,6 +300,13 @@ func DefaultTheme() Styles {
 	s.Review.ActiveCommentMarker = lipgloss.NewStyle().Bold(true).Foreground(primary)
 	s.Review.Language = lipgloss.NewStyle().Foreground(fgMuted)
 	s.Review.HorizontalHint = lipgloss.NewStyle().Foreground(fgDim).Italic(true)
+	s.Review.CommentModal = lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(primary).
+		Padding(0, 2)
+	s.Review.CommentModalTitle = lipgloss.NewStyle().Bold(true).Foreground(primary)
+	s.Review.CommentModalMeta = lipgloss.NewStyle().Foreground(fgMuted)
+	s.Review.CommentModalHint = lipgloss.NewStyle().Foreground(fgDim)
 	s.Review.SyntaxBase = lipgloss.NewStyle().Foreground(fgBase)
 	s.Review.Syntax = chroma.MustNewStyle("jig-charmtone", chroma.StyleEntries{
 		chroma.Text:                hexSash,

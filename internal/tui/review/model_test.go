@@ -185,9 +185,14 @@ func TestPreviewDecoratesOverlappingAndActiveComments(t *testing.T) {
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	view := lipgloss.NewStyle().Render(m.documentView())
 	plain := ansi.Strip(view)
-	for _, want := range []string{"L3", "C002 active", "Comments", "C001", "C002"} {
+	for _, want := range []string{"L3", "C002 active"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("preview missing %q:\n%s", want, plain)
+		}
+	}
+	for _, hidden := range []string{"Comments", "C001", "overlaps"} {
+		if strings.Contains(plain, hidden) {
+			t.Fatalf("preview retained persistent comment detail %q:\n%s", hidden, plain)
 		}
 	}
 	if got := lipgloss.Width(m.documentView()); got > 80 {
@@ -274,7 +279,7 @@ func TestSuggestionRequiresReplacementAndDeletedIDsAreNotReused(t *testing.T) {
 	}
 }
 
-func TestCommentComposerFitsDocumentPanel(t *testing.T) {
+func TestCommentModalIsCenteredAndUnaffectedByCommentCount(t *testing.T) {
 	for _, size := range []tea.WindowSizeMsg{{Width: 80, Height: 24}, {Width: 120, Height: 40}, {Width: 180, Height: 38}} {
 		m, err := New(testSession())
 		if err != nil {
@@ -282,12 +287,67 @@ func TestCommentComposerFitsDocumentPanel(t *testing.T) {
 		}
 		m, _ = m.Update(size)
 		m = update(m, "c")
+		view := ansi.Strip(m.View())
+		modalRow := rowContaining(view, "New comment")
+		if modalRow < size.Height/4 || modalRow > 3*size.Height/4 {
+			t.Fatalf("%dx%d modal row = %d, want centered:\n%s", size.Width, size.Height, modalRow, view)
+		}
+		if width, height := lipgloss.Width(m.View()), lipgloss.Height(m.View()); width > size.Width || height > size.Height {
+			t.Fatalf("%dx%d modal view = %dx%d", size.Width, size.Height, width, height)
+		}
 
-		wantWidth := documentPanelWidth(m.width)
-		if got := lipgloss.Width(m.documentView()); got != wantWidth {
-			t.Fatalf("%dx%d comment document panel width = %d, want %d", size.Width, size.Height, got, wantWidth)
+		for i := range 20 {
+			m.comments = append(m.comments, domain.Comment{
+				ID: fmt.Sprintf("C%03d", i+1), Anchor: domain.Anchor{DocumentID: m.ActiveDocument().ID, StartLine: 1, EndLine: 1}, Body: "hidden detail",
+			})
+		}
+		crowded := ansi.Strip(m.View())
+		if got := rowContaining(crowded, "New comment"); got != modalRow {
+			t.Fatalf("%dx%d comment count moved modal from row %d to %d", size.Width, size.Height, modalRow, got)
+		}
+		if strings.Contains(crowded, "hidden detail") {
+			t.Fatalf("%dx%d persistent comment body remained visible:\n%s", size.Width, size.Height, crowded)
 		}
 	}
+}
+
+func TestEnterOpensCommentOnActiveLineOrRange(t *testing.T) {
+	m, err := New(testSession())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = update(m, "s")
+	m.comments = []domain.Comment{{
+		ID: "C001", Kind: domain.KindConcern,
+		Anchor: domain.Anchor{DocumentID: "01-plan", StartLine: 2, EndLine: 3},
+		Body:   "Please revise these lines",
+	}}
+	m.cursor, m.rangeEnd = 2, 2
+	m = update(m, "enter")
+	if m.mode != ModeEditComment || m.editing != "C001" || m.composer.Value() != "Please revise these lines" {
+		t.Fatalf("line did not open comment modal: mode=%v editing=%q body=%q", m.mode, m.editing, m.composer.Value())
+	}
+	m = update(m, "esc")
+	if m.mode != ModeBrowse || strings.Contains(ansi.Strip(m.View()), "Please revise these lines") {
+		t.Fatalf("closing modal left comment detail visible:\n%s", ansi.Strip(m.View()))
+	}
+
+	m.cursor, m.rangeEnd = 2, 2
+	m = update(m, "v")
+	m = update(m, "j")
+	m = update(m, "enter")
+	if m.mode != ModeEditComment || m.editing != "C001" {
+		t.Fatalf("selected range did not reopen comment: mode=%v editing=%q", m.mode, m.editing)
+	}
+}
+
+func rowContaining(view, needle string) int {
+	for i, row := range strings.Split(view, "\n") {
+		if strings.Contains(row, needle) {
+			return i
+		}
+	}
+	return -1
 }
 
 func TestSummaryProducesStructuredSubmission(t *testing.T) {
