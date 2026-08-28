@@ -13,8 +13,10 @@ import (
 	"jig/internal/engine"
 	"jig/internal/runner"
 	"jig/internal/tui/detail"
+	"jig/internal/tui/monitor"
 	"jig/internal/tui/selector"
 	"jig/internal/tui/shared"
+	"jig/internal/workflow"
 )
 
 // TestSelectToDetailFlow drives the root model without a terminal: discover a
@@ -76,6 +78,29 @@ run = "echo hi"
 	m, _ = m.Update(detail.BackMsg{})
 	if view := m.View().Content; !strings.Contains(view, "mini") {
 		t.Fatalf("did not return to selector:\n%s", view)
+	}
+}
+
+func TestRunsScreenShowsOnlySelectedWorkflow(t *testing.T) {
+	exec := runner.NewFakeExecutor(nil, runner.FakeOutcome{})
+	mgr := engine.NewManager(exec, "")
+	var m tea.Model = New(context.Background(), mgr)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	for _, started := range []engine.RunStarted{
+		{RunID: "alpha-run", Workflow: "alpha", Steps: []string{"step"}},
+		{RunID: "beta-run", Workflow: "beta", Steps: []string{"step"}},
+	} {
+		m, _ = m.Update(monitor.EngineEventMsg{Event: started})
+	}
+
+	wf := &workflow.Workflow{Meta: workflow.Meta{Name: "alpha"}}
+	m, _ = m.Update(detail.ShowRunsMsg{Workflow: "alpha", Wf: wf})
+	view := m.View().Content
+	if !strings.Contains(view, "alpha-run") {
+		t.Fatalf("runs screen missing selected workflow run:\n%s", view)
+	}
+	if strings.Contains(view, "beta-run") {
+		t.Fatalf("runs screen included another workflow's run:\n%s", view)
 	}
 }
 

@@ -208,7 +208,7 @@ depends_on   = ["scope_assess"]
 output_type  = { enum = ["proceed", "narrow", "generate_epic"] }
 
 [[step.review]]
-source       = "@scope_assess.summary"
+source       = "@scope_assess"
 label        = "Scope assessment"
 
 [[step.review]]

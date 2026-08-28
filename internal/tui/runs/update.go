@@ -28,6 +28,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
+		rows := m.visibleRows()
 		switch {
 		case keybind.Matches(msg, m.keys.Up):
 			if m.cursor > 0 {
@@ -35,13 +36,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m = m.syncViewport()
 			}
 		case keybind.Matches(msg, m.keys.Down):
-			if m.cursor < len(m.rows)-1 {
+			if m.cursor < len(rows)-1 {
 				m.cursor++
 				m = m.syncViewport()
 			}
 		case keybind.Matches(msg, m.keys.Open):
-			if m.cursor < len(m.rows) {
-				id := m.rows[m.cursor].id
+			if m.cursor < len(rows) {
+				id := rows[m.cursor].id
 				return m, func() tea.Msg { return ShowMonitorMsg{RunID: id} }
 			}
 		case keybind.Matches(msg, m.keys.NewRun):
@@ -50,14 +51,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				return m, func() tea.Msg { return StartRunMsg{Wf: wf} }
 			}
 		case keybind.Matches(msg, m.keys.Resume):
-			if m.cursor < len(m.rows) && m.rows[m.cursor].paused {
-				row := m.rows[m.cursor]
+			if m.cursor < len(rows) && rows[m.cursor].paused {
+				row := rows[m.cursor]
 				m.notice = ""
 				return m, func() tea.Msg { return ResumeRunMsg{RunID: row.id, Workflow: row.workflow} }
 			}
 		case keybind.Matches(msg, m.keys.Delete):
-			if m.cursor < len(m.rows) {
-				id := m.rows[m.cursor].id
+			if m.cursor < len(rows) {
+				id := rows[m.cursor].id
 				return m, func() tea.Msg { return RequestDeleteMsg{RunID: id} }
 			}
 		case keybind.Matches(msg, m.keys.Back):
@@ -81,8 +82,9 @@ func (m Model) DeleteRun(runID string) Model {
 	for i, row := range m.rows {
 		m.index[row.id] = i
 	}
-	if m.cursor >= len(m.rows) && m.cursor > 0 {
-		m.cursor = len(m.rows) - 1
+	visible := m.visibleRows()
+	if m.cursor >= len(visible) && m.cursor > 0 {
+		m.cursor = len(visible) - 1
 	}
 	return m.syncViewport()
 }
@@ -125,8 +127,9 @@ func (m Model) Hydrate(runs [][]engine.Event) Model {
 // selection.
 func (m Model) sortRows() Model {
 	var selectedID string
-	if m.cursor >= 0 && m.cursor < len(m.rows) {
-		selectedID = m.rows[m.cursor].id
+	visible := m.visibleRows()
+	if m.cursor >= 0 && m.cursor < len(visible) {
+		selectedID = visible[m.cursor].id
 	}
 	sort.Slice(m.rows, func(i, j int) bool {
 		return m.rows[i].id > m.rows[j].id
@@ -135,8 +138,13 @@ func (m Model) sortRows() Model {
 	for i := range m.rows {
 		m.index[m.rows[i].id] = i
 	}
-	if pos, ok := m.index[selectedID]; ok {
-		m.cursor = pos
+	if selectedID != "" {
+		for pos, row := range m.visibleRows() {
+			if row.id == selectedID {
+				m.cursor = pos
+				break
+			}
+		}
 	}
 	return m
 }
@@ -245,6 +253,10 @@ func (m Model) syncViewport() Model {
 // title), so the cursor index maps directly to a viewport row.
 func (m Model) ensureCursorVisible() Model {
 	if !m.ready {
+		return m
+	}
+	if len(m.visibleRows()) == 0 {
+		m.vp.GotoTop()
 		return m
 	}
 	row := m.cursor

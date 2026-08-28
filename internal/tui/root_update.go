@@ -44,6 +44,11 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.active = screenSelector
 		return m, nil
 
+	case detail.ShowRunsMsg:
+		m.runs = m.runs.WithWorkflowContext(msg.Workflow, msg.Wf)
+		m.active = screenRuns
+		return m, nil
+
 	case runs.BackMsg:
 		// Go back to whatever workflow's detail we came from; if none, selector.
 		if m.detail.Loaded {

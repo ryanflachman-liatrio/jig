@@ -12,7 +12,7 @@ import (
 )
 
 func (m Model) View() string {
-	if len(m.rows) == 0 {
+	if len(m.visibleRows()) == 0 {
 		return "\n  " + shared.Theme.Title.Render("No runs yet") + "\n\n" +
 			shared.Theme.Question.Render("  Press r in a workflow detail to start a run.") + "\n\n" +
 			shared.Theme.Footer.Render("  "+shared.HintString(m.keys.Back, shared.KeyQuit)) + "\n"
@@ -56,7 +56,7 @@ const (
 // panel wraps it and the viewport scrolls it.
 func (m Model) rowsBody() string {
 	var b strings.Builder
-	for i, row := range m.rows {
+	for i, row := range m.visibleRows() {
 		cursor := "  "
 		if i == m.cursor {
 			cursor = shared.Theme.SelectedBar.Render(shared.CursorBar) + " "

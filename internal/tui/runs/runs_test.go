@@ -10,6 +10,7 @@ import (
 	"jig/internal/engine"
 	"jig/internal/step"
 	"jig/internal/tui/monitor"
+	"jig/internal/workflow"
 )
 
 // TestRuns verifies the runs screen renders inside a "Runs" panel and that
@@ -174,5 +175,50 @@ func TestRunsHydrate(t *testing.T) {
 	m = m.MarkLive("paused-1")
 	if got := runRowStatus(m.rows[m.index["paused-1"]]); !strings.Contains(got, "running") {
 		t.Errorf("resumed run status: want running, got %q", got)
+	}
+}
+
+func TestRunsFiltersBySelectedWorkflow(t *testing.T) {
+	m := NewModel()
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	for _, run := range []struct {
+		id       string
+		workflow string
+	}{
+		{id: "20260828-120000-alpha", workflow: "alpha"},
+		{id: "20260828-110000-beta", workflow: "beta"},
+		{id: "20260828-100000-alpha", workflow: "alpha"},
+	} {
+		m, _ = m.Update(monitor.EngineEventMsg{Event: engine.RunStarted{
+			RunID: run.id, Workflow: run.workflow, Steps: []string{"step"},
+		}})
+	}
+
+	alpha := &workflow.Workflow{Meta: workflow.Meta{Name: "alpha"}}
+	m = m.WithWorkflow(alpha)
+	if got := len(m.visibleRows()); got != 2 {
+		t.Fatalf("visible alpha rows = %d, want 2", got)
+	}
+	if view := m.View(); strings.Contains(view, "20260828-110000-beta") {
+		t.Fatalf("alpha runs view included beta run:\n%s", view)
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("opening filtered run produced no command")
+	}
+	open, ok := cmd().(ShowMonitorMsg)
+	if !ok || open.RunID != "20260828-100000-alpha" {
+		t.Fatalf("open message = %#v, want older alpha run", open)
+	}
+
+	beta := &workflow.Workflow{Meta: workflow.Meta{Name: "beta"}}
+	m = m.WithWorkflow(beta)
+	if got := len(m.visibleRows()); got != 1 || m.visibleRows()[0].id != "20260828-110000-beta" {
+		t.Fatalf("visible beta rows = %#v", m.visibleRows())
+	}
+	if m.cursor != 0 {
+		t.Fatalf("cursor after workflow switch = %d, want 0", m.cursor)
 	}
 }

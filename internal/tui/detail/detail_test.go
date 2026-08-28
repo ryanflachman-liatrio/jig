@@ -41,6 +41,24 @@ func TestDetailFooterTracksRunAvailability(t *testing.T) {
 	}
 }
 
+func TestDetailRunsCarriesWorkflowContext(t *testing.T) {
+	wf := &workflow.Workflow{Meta: workflow.Meta{Name: "feature"}}
+	m := New("feature.toml")
+	m, _ = m.Update(workflowLoadedMsg{meta: wf.Meta, wf: wf})
+
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter produced no runs command")
+	}
+	msg, ok := cmd().(ShowRunsMsg)
+	if !ok {
+		t.Fatalf("enter produced %T, want ShowRunsMsg", cmd())
+	}
+	if msg.Workflow != "feature" || msg.Wf != wf {
+		t.Fatalf("runs context = %#v, want workflow feature", msg)
+	}
+}
+
 // ansiStrip removes SGR sequences so index math over visible text is meaningful.
 func ansiStrip(s string) string {
 	var b []byte

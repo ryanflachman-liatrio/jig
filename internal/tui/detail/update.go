@@ -6,7 +6,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"jig/internal/tui/monitor"
 	"jig/internal/tui/shared"
 	"jig/internal/workflow"
 )
@@ -45,7 +44,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		switch {
 		case keybind.Matches(msg, m.keys.Runs):
-			return m, func() tea.Msg { return monitor.ShowRunsMsg{} }
+			name, wf := m.meta.Name, m.wf
+			return m, func() tea.Msg { return ShowRunsMsg{Workflow: name, Wf: wf} }
 		case keybind.Matches(msg, m.keys.Toggle):
 			return m.handleToggle()
 		case keybind.Matches(msg, m.keys.Back):
