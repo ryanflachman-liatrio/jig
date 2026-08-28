@@ -38,6 +38,7 @@ func main() {
 	// via harness.For (TOML only — no process-wide env selection).
 	mux := runner.NewMux()
 	mux.Register(workflow.StepCommand, runner.NewCommandExecutor(""))
+	mux.Register(workflow.StepCheck, runner.NewCheckExecutor(""))
 	mux.Register(workflow.StepAgent, runner.NewAgentExecutor(harness.For))
 	mux.Register(workflow.StepReview, runner.NewFakeExecutor(nil, runner.FakeOutcome{}))
 	mgr := engine.NewManager(mux, ".jig")

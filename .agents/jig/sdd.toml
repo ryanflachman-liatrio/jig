@@ -92,7 +92,8 @@ transport       = "acp"
 model         = "gpt-5.6-luna"
 effort          = "high"
 permission_mode = "acceptEdits"
-max_parallel    = 1
+max_parallel    = 5
+resource_limits = { research = 5, mutation = 1, checks = 3 }
 
 # ════════════════════════════════════════════════════════════════════════
 # PHASE 1 — SPEC  (mkdir_spec → context_assess → … → spec_review)
@@ -286,7 +287,7 @@ label        = "Scope assessment"
 source       = "@scope_assess.decomposition"
 label        = "Proposed decomposition"
 
-  [step.loop]
+[[step.route]]
   when           = "scope_gate == 'narrow'"
   goto           = "scope_assess"
   max_iterations = 3
@@ -302,7 +303,8 @@ when          = "scope_gate == 'generate_epic'"
 skill         = "../skills/sdd-write-epic"
 inputs        = ["@context_assess", "@research_security", "@research_api_contracts", "@research_data_patterns", "@research_testing_standards", "@research_ecosystem", "@synthesize_research", "@scope_assess", "@scope_gate", "@context_assess.spec_name"]
 allowed_tools = ["Read", "Grep", "Glob", "Write", "Bash"]
-isolation     = "none"
+isolation     = "worktree"
+resource_class = "mutation"
 
   [step.context]
   purpose = "synthesize the approved scope decomposition and all prior research into a terminal epic artifact"
@@ -331,7 +333,8 @@ skill         = "../skills/sdd-clarify"
 inputs        = ["@context_assess.summary", "@synthesize_research.summary", "@scope_assess.summary", "@context_assess.spec_name"]
 allowed_tools = ["Read", "Grep", "Glob", "Write", "Bash"]
 block_on      = "clarify.sufficiency == 'insufficient'"
-isolation     = "none"
+isolation     = "worktree"
+resource_class = "mutation"
 
   [step.schema]
   sufficiency = { enum = ["sufficient", "insufficient"] }
@@ -348,7 +351,8 @@ depends_on    = ["context_assess", "synthesize_research", "clarify"]
 skill         = "../skills/sdd-write-spec"
 inputs        = ["@context_assess.summary", "@synthesize_research.summary", "@clarify.summary", "@context_assess.spec_name"]
 allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit", "Bash"]
-isolation     = "none"
+isolation     = "worktree"
+resource_class = "mutation"
 
   [step.schema]
   spec_path    = "text"   # canonical path written (e.g. docs/specs/foo/foo.md)
@@ -371,7 +375,7 @@ output_type  = { enum = ["approve", "revise"] }
 source       = "@write_spec.spec_content"
 label        = "Specification"
 
-  [step.loop]
+[[step.route]]
   when           = "spec_review == 'revise'"
   goto           = "write_spec"
   max_iterations = 5
@@ -423,7 +427,7 @@ output_type  = { enum = ["override", "redesign"] }
 source       = "@arch_fitness.arch_summary"
 label        = "Architecture assessment"
 
-  [step.loop]
+[[step.route]]
   when           = "arch_gate == 'redesign'"
   goto           = "write_spec"
   max_iterations = 3
@@ -515,7 +519,8 @@ depends_on    = ["synthesize_spec_analysis"]
 skill         = "../skills/sdd-parent-tasks"
 inputs        = ["@synthesize_spec_analysis.spec_name", "@synthesize_spec_analysis.spec_path", "@synthesize_spec_analysis.analysis_notes", "@synthesize_spec_analysis.standards_evidence"]
 allowed_tools = ["Read", "Grep", "Glob", "Write"]
-isolation     = "none"
+isolation     = "worktree"
+resource_class = "mutation"
 
   [step.context]
   purpose = "generate 4-6 demoable parent tasks with proof artifacts and write the task file"
@@ -538,7 +543,7 @@ output_type  = { enum = ["approve", "revise"] }
 source       = "@gen_parent_tasks.task_summary"
 label        = "Parent task summary"
 
-  [step.loop]
+[[step.route]]
   when           = "parent_tasks_review == 'revise'"
   goto           = "gen_parent_tasks"
   max_iterations = 3
@@ -554,7 +559,8 @@ when          = "parent_tasks_review == 'approve'"
 skill         = "../skills/sdd-subtasks"
 inputs        = ["@synthesize_spec_analysis.spec_path", "@synthesize_spec_analysis.spec_name", "@gen_parent_tasks.task_path"]
 allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit"]
-isolation     = "none"
+isolation     = "worktree"
+resource_class = "mutation"
 
   [step.context]
   purpose = "expand each parent task into actionable sub-tasks and add a relevant-files table"
@@ -658,7 +664,8 @@ inputs        = [
   "@gen_subtasks.task_path",
 ]
 allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit", "Bash"]
-isolation     = "none"
+isolation     = "worktree"
+resource_class = "mutation"
 
   [step.context]
   purpose = "merge all audit gate findings into the audit report; apply approved task file remediation on loop runs"
@@ -682,7 +689,7 @@ output_type  = { enum = ["approve", "remediate"] }
 source       = "@synthesize_audit.findings_summary"
 label        = "Audit findings"
 
-  [step.loop]
+[[step.route]]
   when           = "audit_review == 'remediate'"
   goto           = "synthesize_audit"
   max_iterations = 3
@@ -707,7 +714,7 @@ when          = "audit_review == 'approve'"
 skill         = "../skills/sdd-find-next-task"
 inputs        = [
   "@context_assess.spec_name",
-  { from = "user", label = "Checkpoint mode (task | batch — default: task):", as = "checkpoint_mode" },
+  { from = "user", label = "Checkpoint mode (task | batch — default: task):", as = "checkpoint_mode", once = true },
 ]
 allowed_tools = ["Read", "Grep", "Glob"]
 isolation     = "none"
@@ -734,7 +741,8 @@ when          = "find_next_task.progress == 'continue'"
 skill         = "../skills/sdd-implement-code"
 inputs        = ["@find_next_task.task_path", "@find_next_task.spec_name", "@find_next_task.task_title", "@find_next_task.parent_task_num"]
 allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit", "Bash"]
-isolation     = "none"
+isolation     = "worktree"
+resource_class = "mutation"
 
   [step.context]
   purpose = "implement every sub-task for the identified parent task, marking each complete in the task file"
@@ -745,24 +753,26 @@ isolation     = "none"
 # on_failure = "continue" lets the cycle complete so proofs capture failing output.
 [[step]]
 id         = "run_tests"
-type       = "command"
+type       = "check"
 depends_on = ["implement_code", "find_next_task"]
-when       = "find_next_task.progress == 'continue'"
-on_failure = "continue"
-output     = ".jig/test-output.txt"
-script     = ".agents/jig/scripts/run-tests.sh"
+applies_when = "find_next_task.progress == 'continue'"
+resource_class = "checks"
+isolation = "worktree"
+output_type = { enum = ["pass", "fail", "skip", "error"] }
+run = "go test -coverprofile=.jig/coverage.out ./..."
 
 # ─── 16b. Run lint and format checks ─────────────────────────────────────────
 # Parallel with run_tests. The when guard prevents this from running on the
 # final 'done' iteration (find_next_task added to depends_on for that guard).
 [[step]]
 id         = "run_lint"
-type       = "command"
+type       = "check"
 depends_on = ["implement_code", "find_next_task"]
-when       = "find_next_task.progress == 'continue'"
-on_failure = "continue"
-output     = ".jig/lint-output.txt"
-script     = ".agents/jig/scripts/run-lint.sh"
+applies_when = "find_next_task.progress == 'continue'"
+resource_class = "checks"
+isolation = "worktree"
+output_type = { enum = ["pass", "fail", "skip", "error"] }
+run = "test -z \"$(gofmt -l .)\" && go vet ./..."
 
 # ─── 16c. Test coverage gate ─────────────────────────────────────────────────
 # Runs after run_tests completes (reads the coverage profile it writes).
@@ -770,12 +780,13 @@ script     = ".agents/jig/scripts/run-lint.sh"
 # the proof artifact and is surfaced at task_checkpoint for human decision.
 [[step]]
 id         = "check_coverage"
-type       = "command"
+type       = "check"
 depends_on = ["run_tests", "find_next_task"]
-when       = "find_next_task.progress == 'continue'"
-on_failure = "continue"
-output     = ".jig/coverage-output.txt"
-script     = ".agents/jig/scripts/check-coverage.sh"
+applies_when = "find_next_task.progress == 'continue'"
+resource_class = "checks"
+isolation = "worktree"
+output_type = { enum = ["pass", "fail", "skip", "error"] }
+run = "go test -coverprofile=.jig/coverage.out ./... && go tool cover -func=.jig/coverage.out | awk '/^total:/ { sub(/%/, \"\", $3); exit ($3 < 70) }'"
 
 # ─── 17. Create proof artifact ────────────────────────────────────────────────
 # Runs after tests, lint, and coverage results are all available. Writes the
@@ -789,23 +800,14 @@ when          = "find_next_task.progress == 'continue'"
 skill         = "../skills/sdd-create-proofs"
 inputs        = ["@find_next_task.task_path", "@find_next_task.spec_name", "@find_next_task.parent_task_num", "@find_next_task.task_title", "@run_tests", "@run_lint", "@check_coverage"]
 allowed_tools = ["Read", "Write", "Bash"]
-isolation     = "none"
+isolation     = "worktree"
+resource_class = "mutation"
 
   [step.context]
   purpose = "write the reviewer-first proof artifact file incorporating test and lint results"
 
   [step.schema]
   proof_path = "text"
-
-# ─── 18. Stage and commit the parent task ────────────────────────────────────
-# Reads the commit message written by implement_code and commits everything:
-# implementation files, updated task file, and the new proof artifact.
-[[step]]
-id         = "commit_task"
-type       = "command"
-depends_on = ["create_proofs", "find_next_task"]
-when       = "find_next_task.progress == 'continue'"
-script     = ".agents/jig/scripts/commit-task.sh"
 
 # ─── 19. Per-task human checkpoint ────────────────────────────────────────────
 # The loop back-edge drives the full implementation cycle: when
@@ -815,7 +817,7 @@ script     = ".agents/jig/scripts/commit-task.sh"
 [[step]]
 id           = "task_checkpoint"
 type         = "review"
-depends_on   = ["commit_task", "find_next_task", "create_proofs"]
+depends_on   = ["find_next_task", "create_proofs", "run_tests", "run_lint", "check_coverage"]
 when         = "find_next_task.progress == 'continue'"
 output_type  = { enum = ["continue", "redo"] }
 
@@ -823,11 +825,17 @@ output_type  = { enum = ["continue", "redo"] }
 source       = "@create_proofs.proof_path"
 label        = "Task proof"
 
-  [step.loop]
-  when           = "find_next_task.progress == 'continue'"
-  goto           = "find_next_task"
-  max_iterations = 15
-  feedback       = "@task_checkpoint"
+[[step.route]]
+when           = "task_checkpoint == 'redo'"
+goto           = "implement_code"
+max_iterations = 15
+feedback       = "@task_checkpoint"
+
+[[step.route]]
+when           = "task_checkpoint == 'continue'"
+goto           = "find_next_task"
+max_iterations = 15
+feedback       = "@task_checkpoint"
 
 # ─── 20. Final sign-off ───────────────────────────────────────────────────────
 # Renders the completion summary from the last find_next_task run ('done').
@@ -843,7 +851,7 @@ output_type  = { enum = ["approve", "flag_issues"] }
 source       = "@find_next_task.completion_summary"
 label        = "Completion summary"
 
-  [step.loop]
+[[step.route]]
   when           = "final_review == 'flag_issues'"
   goto           = "find_next_task"
   max_iterations = 3
@@ -1044,7 +1052,8 @@ inputs        = [
   "@analyze_performance.perf_result",
 ]
 allowed_tools = ["Read", "Grep", "Glob", "Write"]
-isolation     = "none"
+isolation     = "worktree"
+resource_class = "mutation"
 
   [step.context]
   purpose = "synthesise all analysis findings into the gated validation report; apply gate logic and write to disk"
@@ -1068,7 +1077,7 @@ output_type  = { enum = ["approve", "flag"] }
 source       = "@assemble_report.report_content"
 label        = "Validation report"
 
-  [step.loop]
+[[step.route]]
   when           = "validation_review == 'flag'"
   goto           = "assemble_report"
   max_iterations = 3
@@ -1206,7 +1215,8 @@ inputs        = [
   "@run_dep_audit",
 ]
 allowed_tools = ["Read", "Grep", "Glob", "Write"]
-isolation     = "none"
+isolation     = "worktree"
+resource_class = "mutation"
 
   [step.schema]
   report_path        = "text"
@@ -1226,7 +1236,7 @@ output_type  = { enum = ["approve", "flag"] }
 source       = "@assemble_compliance_report.report_content"
 label        = "Compliance report"
 
-  [step.loop]
+[[step.route]]
   when           = "compliance_review == 'flag'"
   goto           = "assemble_compliance_report"
   max_iterations = 3
@@ -1254,7 +1264,8 @@ inputs        = [
   "@assemble_compliance_report.compliance_status",
 ]
 allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit"]
-isolation     = "none"
+isolation     = "worktree"
+resource_class = "mutation"
 
   [step.context]
   purpose = "draft a CHANGELOG.md entry summarising the spec, implementation, and compliance outcomes"
@@ -1262,14 +1273,3 @@ isolation     = "none"
   [step.schema]
   changelog_entry = "text"
   entry_written   = "bool"
-
-# ─── 40. Commit changelog ─────────────────────────────────────────────────────
-# Deterministic commit of the CHANGELOG.md update. Runs only after gen_changelog
-# completes and only when compliance was approved. compliance_review in depends_on
-# provides the guard reference; gen_changelog provides the content.
-[[step]]
-id         = "commit_changelog"
-type       = "command"
-depends_on = ["gen_changelog", "compliance_review"]
-when       = "compliance_review == 'approve'"
-script     = ".agents/jig/scripts/commit-changelog.sh"

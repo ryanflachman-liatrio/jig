@@ -44,6 +44,7 @@ permission_mode     = "acceptEdits"
 backend             = "claude"       # agent vendor (claude or cursor today)
 transport           = "sdk"          # sdk | acp (how jig reaches the backend)
 max_parallel        = 4
+resource_limits     = { research = 4, mutation = 1, checks = 2 } # optional per-class caps
 artifacts_dir       = ".jig/artifacts"   # run artifacts live outside the working tree
 inject_context      = true               # engine-assembled step-context preamble on agent steps (default true)
 ```
@@ -70,7 +71,8 @@ they stay reachable regardless of which git worktree a step runs in:
 
 ## The step model
 
-Steps are declared with `[[step]]`. Three types: `agent`, `command`, `review`.
+Steps are declared with `[[step]]`. Four types: `agent`, `command`, `check`,
+and `review`.
 
 ### Common fields
 
@@ -84,8 +86,30 @@ Steps are declared with `[[step]]`. Three types: `agent`, `command`, `review`.
 | `output_type` | see below| `"text"` (default) or a scalar verdict. See "Structured outputs". |
 | `on_failure`  | string   | `"abort"` (default), `"retry"`, `"continue"`. See "Failure recovery". |
 | `max_retries` | int      | With `on_failure = "retry"`. Default 1.                          |
+| `resource_class` | string | Optional named concurrency class declared in `resource_limits`.       |
 | `[step.validate]` | table| Deterministic gate. See "Validation".                            |
 | `[step.loop]` | table    | Bounded loop-back. See "Loops".                                  |
+| `[[step.route]]` | table | Ordered bounded route; preferred for new workflows.                |
+
+### Check step
+
+A `check` is a deterministic command with a machine-readable outcome rather
+than an engine failure. It must declare an enum containing `pass`, `fail`,
+`skip`, and `error`; exit zero produces `pass`, a normal non-zero exit produces
+`fail`, and missing tooling produces `error`. A false `applies_when` produces
+`skip` without invoking the command. Every attempt's stdout/stderr is preserved
+under the step's run directory, so looping does not overwrite prior evidence.
+
+```toml
+[[step]]
+id             = "unit_tests"
+type           = "check"
+depends_on     = ["implement"]
+resource_class = "checks"
+isolation      = "worktree"
+output_type    = { enum = ["pass", "fail", "skip", "error"] }
+run            = "go test ./..."
+```
 
 ### Agent step
 
@@ -433,6 +457,24 @@ output_type = { enum = ["approve", "revise"] }
   goto           = "draft"          # target step to re-run
   max_iterations = 3                # engine aborts the run past this
   feedback       = "@review"        # becomes an input to the target's next run
+```
+
+New workflows should use ordered routes. Routes are evaluated in declaration
+order; guards must be non-ambiguous and either exhaust the source enum or end
+in `fallback = true`.
+
+```toml
+[[step.route]]
+when           = "checkpoint == 'redo'"
+goto           = "implement"
+max_iterations = 3
+feedback       = "@checkpoint"
+
+[[step.route]]
+when           = "checkpoint == 'continue'"
+goto           = "next_task"
+max_iterations = 12
+feedback       = "@checkpoint"
 ```
 
 ---

@@ -1,6 +1,10 @@
 package engine
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+
 	"jig/internal/interaction"
 	"jig/internal/step"
 	"jig/internal/workflow"
@@ -23,6 +27,9 @@ type command interface {
 // post-exec chain / failure-policy path.
 func (m stepDoneMsg) execute(s *scheduler) {
 	s.inFlight--
+	if wfStep := s.stepByID(m.stepID); wfStep != nil && wfStep.ResourceClass != "" {
+		s.classInFlight[wfStep.ResourceClass]--
+	}
 	delete(s.pendingQuestions, m.stepID)
 	// Accrue this attempt's cost/tokens once, before any early-return branch
 	// (stopped, recovery-parked, failed) — every executor invocation was paid
@@ -80,6 +87,10 @@ func (m stepDoneMsg) execute(s *scheduler) {
 	if m.result != nil {
 		s.states[m.stepID].Result = m.result
 	}
+	wfStep := s.stepByID(m.stepID)
+	if wfStep != nil && wfStep.Type == workflow.StepCheck {
+		s.persistCheckEvidence(m.stepID, wfStep)
+	}
 	if m.err != nil {
 		res := s.states[m.stepID].Result
 		if res == nil {
@@ -93,8 +104,6 @@ func (m stepDoneMsg) execute(s *scheduler) {
 
 	// Raw execution failure short-circuits the chain.
 	execFailed := m.err != nil || (m.result != nil && m.result.Status == step.StatusFailed)
-
-	wfStep := s.stepByID(m.stepID)
 
 	if execFailed {
 		s.applyFailurePolicy(m.stepID, wfStep)
@@ -117,9 +126,49 @@ func (m stepDoneMsg) execute(s *scheduler) {
 	default: // decisionContinue — all handlers passed → step succeeded
 		curFrom := s.states[m.stepID].Status
 		s.transition(m.stepID, curFrom, step.StatusSucceeded)
-		if wfStep != nil && wfStep.Loop != nil {
-			s.recordLoopIntent(m.stepID, wfStep)
+		if wfStep != nil {
+			s.recordRoutes(m.stepID, wfStep, "")
 		}
+	}
+}
+
+// persistCheckEvidence snapshots tool-produced findings into the run. The
+// source is resolved in the check's isolated worktree, so a quality gate never
+// reads a same-named file from an operator's unrelated working tree.
+func (s *scheduler) persistCheckEvidence(stepID string, wfStep *workflow.Step) {
+	if wfStep.FindingsFile == "" || s.runDir == "" {
+		return
+	}
+	base := s.worktrees[stepID]
+	if base == "" {
+		base = s.runWorktree
+	}
+	if base == "" {
+		base = s.repoRoot
+	}
+	if base == "" {
+		return
+	}
+	source := wfStep.FindingsFile
+	if !filepath.IsAbs(source) {
+		source = filepath.Join(base, source)
+	}
+	data, err := os.ReadFile(source)
+	if err != nil {
+		res := s.states[stepID].Result
+		if res != nil && res.Verdict == "pass" {
+			res.Verdict = "error"
+			res.Err = fmt.Sprintf("read check findings %q: %v", wfStep.FindingsFile, err)
+		}
+		return
+	}
+	dir := filepath.Join(s.runDir, "steps", stepID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	dest := filepath.Join(dir, "findings.json")
+	if err := os.WriteFile(dest, data, 0o644); err == nil && s.states[stepID].Result != nil {
+		s.states[stepID].Result.OutputPath = dest
 	}
 }
 
@@ -149,6 +198,18 @@ func (m userInputMsg) execute(s *scheduler) {
 	// All inputs collected — promote to preResolved and reset to pending
 	// so nextReady picks it up for normal dispatch.
 	s.preResolvedInputs[m.stepID] = s.collectedUserInputs[m.stepID]
+	if wfStep := s.stepByID(m.stepID); wfStep != nil {
+		for _, input := range wfStep.Inputs {
+			if !input.Once {
+				continue
+			}
+			for _, resolved := range s.collectedUserInputs[m.stepID] {
+				if resolved.Ref.As == input.As {
+					s.stickyUserInputs[m.stepID] = append(s.stickyUserInputs[m.stepID], resolved)
+				}
+			}
+		}
+	}
 	delete(s.collectedUserInputs, m.stepID)
 	delete(s.pendingUserInputs, m.stepID)
 	s.transition(m.stepID, step.StatusAwaitingReview, step.StatusPending)

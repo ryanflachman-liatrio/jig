@@ -74,6 +74,28 @@ func TestCommandExecutor_Failure(t *testing.T) {
 	}
 }
 
+func TestCheckExecutor_ReturnsTypedFailureAndEvidence(t *testing.T) {
+	dir := t.TempDir()
+	exec := NewCheckExecutor("")
+	result, err := exec.Execute(context.Background(), engine.StepRequest{
+		Step:           &workflow.Step{ID: "quality", Type: workflow.StepCheck, Run: "echo broken; exit 1"},
+		TranscriptPath: filepath.Join(dir, "transcript.jsonl"),
+	}, &noopReporter{})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.Status != step.StatusSucceeded || result.Verdict != "fail" {
+		t.Fatalf("result = %+v, want succeeded check verdict fail", result)
+	}
+	data, err := os.ReadFile(result.OutputPath)
+	if err != nil {
+		t.Fatalf("read findings: %v", err)
+	}
+	if !strings.Contains(string(data), `"outcome":"fail"`) {
+		t.Fatalf("findings = %s", data)
+	}
+}
+
 func TestCommandExecutor_MultilineScript(t *testing.T) {
 	exec := NewCommandExecutor("")
 	req := engine.StepRequest{

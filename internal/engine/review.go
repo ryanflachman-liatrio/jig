@@ -201,7 +201,5 @@ func (s *scheduler) finalizeReview(id string, sub review.Submission) {
 	s.emit(ReviewSubmitted{RunID: s.runID, StepID: id, RoundID: sess.RoundID, Verdict: sub.Verdict, CommentCount: len(sub.Comments)})
 	s.transition(id, step.StatusAwaitingReview, step.StatusSucceeded)
 	delete(s.reviewSessions, id)
-	if st.Loop != nil {
-		s.recordLoopIntentWithFeedback(id, st, feedback)
-	}
+	s.recordRoutes(id, st, feedback)
 }

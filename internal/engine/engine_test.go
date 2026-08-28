@@ -341,6 +341,66 @@ run = "echo b"
 	}
 }
 
+func TestScheduler_ResourceClassCapsOnlyThatClass(t *testing.T) {
+	const toml = `
+[workflow]
+name = "resources"
+version = "1"
+
+[defaults]
+max_parallel = 3
+resource_limits = { mutation = 1 }
+
+[[step]]
+id = "mutate-a"
+type = "command"
+resource_class = "mutation"
+run = "echo a"
+
+[[step]]
+id = "mutate-b"
+type = "command"
+resource_class = "mutation"
+run = "echo b"
+
+[[step]]
+id = "research"
+type = "command"
+run = "echo research"
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &testExec{outcomes: map[string]testOutcome{
+		"mutate-a": {delay: 20 * time.Millisecond},
+		"mutate-b": {delay: 20 * time.Millisecond},
+		"research": {delay: 20 * time.Millisecond},
+	}}
+	mgr := NewManager(exec, "")
+	_, ch := mgr.Subscribe()
+	if _, err := mgr.Start(wf); err != nil {
+		t.Fatal(err)
+	}
+	events := collectEvents(t, ch, time.Second)
+	mutating := 0
+	for _, event := range events {
+		status, ok := event.(StepStatus)
+		if !ok || (status.StepID != "mutate-a" && status.StepID != "mutate-b") {
+			continue
+		}
+		if status.To == step.StatusRunning {
+			mutating++
+		}
+		if status.To == step.StatusSucceeded {
+			mutating--
+		}
+		if mutating > 1 {
+			t.Fatal("mutation resource class exceeded its capacity")
+		}
+	}
+}
+
 func TestScheduler_StepFails_RunFails(t *testing.T) {
 	const toml = `
 [workflow]

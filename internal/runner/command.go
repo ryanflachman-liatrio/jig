@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -125,18 +126,38 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 	// durable record read by the monitor's chat view. Written on both success and
 	// failure so a failed command's output survives.
 	writeCommandTranscript(req, rep, combined.String())
+	evidencePath := writeCheckEvidence(req, combined.String())
 
 	if waitErr != nil {
 		return &step.Result{
-			Status:   step.StatusFailed,
-			Err:      waitErr.Error(),
-			Duration: duration,
+			Status:     step.StatusFailed,
+			OutputPath: evidencePath,
+			Err:        waitErr.Error(),
+			Duration:   duration,
 		}, nil
 	}
 	return &step.Result{
-		Status:   step.StatusSucceeded,
-		Duration: duration,
+		Status:     step.StatusSucceeded,
+		OutputPath: evidencePath,
+		Duration:   duration,
 	}, nil
+}
+
+// writeCheckEvidence preserves each deterministic check attempt independently,
+// rather than pointing later loop iterations at a shared .jig/*.txt file.
+func writeCheckEvidence(req engine.StepRequest, output string) string {
+	if req.Step == nil || req.Step.Type != workflow.StepCheck || req.TranscriptPath == "" {
+		return ""
+	}
+	dir := filepath.Join(filepath.Dir(req.TranscriptPath), "evidence")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return ""
+	}
+	path := filepath.Join(dir, fmt.Sprintf("iteration-%03d-attempt-%03d.log", req.Iteration, req.Attempt))
+	if err := os.WriteFile(path, []byte(output), 0o644); err != nil {
+		return ""
+	}
+	return path
 }
 
 // writeCommandTranscript records a command step's combined stdout/stderr as a

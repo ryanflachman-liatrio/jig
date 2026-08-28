@@ -654,10 +654,11 @@ type scheduler struct {
 	// settled (loopBarrierReady). This makes parallel siblings that all loop to
 	// the same step deterministic — no reset-collides-with-in-flight-worker, no
 	// last-write-wins feedback clobber. Keyed by goto-target step id.
-	pendingLoops map[string]*loopIntent
-	aborted      bool // true when the run was explicitly aborted (loop cap, etc.)
-	inFlight     int
-	seq          int
+	pendingLoops  map[string]*loopIntent
+	aborted       bool // true when the run was explicitly aborted (loop cap, etc.)
+	inFlight      int
+	classInFlight map[string]int
+	seq           int
 
 	// Phase 5: worktree lifecycle.
 	jigRoot    string            // .jig/ root; "" when persistence is disabled
@@ -694,6 +695,7 @@ type scheduler struct {
 	pendingUserInputs   map[string][]workflow.Input // stepID → remaining prompts
 	collectedUserInputs map[string][]ResolvedInput  // stepID → answers so far
 	preResolvedInputs   map[string][]ResolvedInput  // stepID → fully collected, ready to inject
+	stickyUserInputs    map[string][]ResolvedInput  // once=true answers retained across loop rewinds
 
 	// review-gate messaging: a human can send free-text to the reviewed agent
 	// step, which resumes the agent's SDK session and re-runs it before a
@@ -782,6 +784,7 @@ func newScheduler(
 		stepFeedback:        make(map[string]string),
 		rerunSource:         make(map[string]string),
 		pendingLoops:        make(map[string]*loopIntent),
+		classInFlight:       make(map[string]int),
 		jigRoot:             jigRoot,
 		repoRoot:            repoRoot,
 		worktrees:           make(map[string]string),
@@ -791,6 +794,7 @@ func newScheduler(
 		pendingUserInputs:   make(map[string][]workflow.Input),
 		collectedUserInputs: make(map[string][]ResolvedInput),
 		preResolvedInputs:   make(map[string][]ResolvedInput),
+		stickyUserInputs:    make(map[string][]ResolvedInput),
 		resumeSessions:      make(map[string]string),
 		stepMessage:         make(map[string]string),
 		reviewSessions:      make(map[string]review.Session),
@@ -914,6 +918,9 @@ func (s *scheduler) nextReady(ctx context.Context) (*workflow.Step, bool) {
 		if state.Status != step.StatusPending {
 			continue
 		}
+		if !s.resourceAvailable(st) {
+			continue
+		}
 		if !s.depsReady(st) {
 			continue
 		}
@@ -930,11 +937,26 @@ func (s *scheduler) nextReady(ctx context.Context) (*workflow.Step, bool) {
 			}
 		}
 
+		// A non-applicable deterministic gate is successful evidence with a
+		// typed skip verdict, not a missing command or a failed dependency.
+		if st.Type == workflow.StepCheck && st.AppliesWhen != "" {
+			cond, _ := workflow.ParseCondition(st.AppliesWhen)
+			if !s.evalGuard(cond) {
+				state.Result = &step.Result{Status: step.StatusSucceeded, Verdict: "skip"}
+				s.transition(st.ID, state.Status, step.StatusSucceeded)
+				continue
+			}
+		}
+
 		// If the step has from="user" inputs that haven't been collected yet,
 		// park it on a prompt and keep scanning for other runnable steps.
 		// The preResolvedInputs check prevents re-intercepting after all inputs
 		// are collected and the step resets back to StatusPending.
 		if hasUserInputs(st) && len(s.preResolvedInputs[st.ID]) == 0 {
+			if sticky := s.stickyUserInputs[st.ID]; len(sticky) > 0 {
+				s.preResolvedInputs[st.ID] = append([]ResolvedInput(nil), sticky...)
+				return st, true
+			}
 			s.dispatchUserPrompt(st)
 			continue
 		}
@@ -998,6 +1020,13 @@ func (s *scheduler) depsReady(st *workflow.Step) bool {
 		return false
 	}
 	return true
+}
+
+func (s *scheduler) resourceAvailable(st *workflow.Step) bool {
+	if st.ResourceClass == "" {
+		return true
+	}
+	return s.classInFlight[st.ResourceClass] < s.wf.Defaults.ResourceLimits[st.ResourceClass]
 }
 
 // stepByID returns a pointer into wf.Steps for the given ID, or nil.
@@ -1249,6 +1278,9 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	from := s.states[st.ID].Status
 	s.transition(st.ID, from, step.StatusRunning)
 	s.inFlight++
+	if st.ResourceClass != "" {
+		s.classInFlight[st.ResourceClass]++
+	}
 
 	runID, stepID := s.runID, st.ID
 	subs := s.subs
@@ -1789,8 +1821,8 @@ func (s *scheduler) handleResolveIntegration(m resolveIntegrationMsg) {
 	}
 	wfStep := s.stepByID(m.stepID)
 	s.transition(m.stepID, step.StatusAwaitingIntegration, step.StatusSucceeded)
-	if wfStep != nil && wfStep.Loop != nil {
-		s.recordLoopIntent(m.stepID, wfStep)
+	if wfStep != nil {
+		s.recordRoutes(m.stepID, wfStep, "")
 	}
 }
 
@@ -2139,6 +2171,7 @@ type loopContribution struct {
 	kind     workflow.StepType
 	feedback string
 	iter     int
+	max      int
 }
 
 // recordLoopIntent evaluates a finished step's [step.loop] and, if it fires,
@@ -2152,7 +2185,39 @@ func (s *scheduler) recordLoopIntent(stepID string, wfStep *workflow.Step) {
 }
 
 func (s *scheduler) recordLoopIntentWithFeedback(stepID string, wfStep *workflow.Step, submittedFeedback string) {
-	loop := wfStep.Loop
+	if wfStep == nil || wfStep.Loop == nil {
+		return
+	}
+	s.recordLoopIntentFor(stepID, wfStep, wfStep.Loop, submittedFeedback)
+}
+
+// recordRoutes chooses the first matching route (or explicit fallback). It
+// deliberately reuses the loop rewind implementation so route back-edges have
+// the same coalescing, transcript iteration, and resume semantics as legacy
+// loops during the migration period.
+func (s *scheduler) recordRoutes(stepID string, wfStep *workflow.Step, submittedFeedback string) {
+	if wfStep == nil {
+		return
+	}
+	if wfStep.Loop != nil {
+		s.recordLoopIntentWithFeedback(stepID, wfStep, submittedFeedback)
+		return
+	}
+	for _, route := range wfStep.Routes {
+		if !route.Fallback {
+			cond, _ := workflow.ParseCondition(route.When)
+			if !s.evalGuard(cond) {
+				continue
+			}
+		}
+		s.recordLoopIntentFor(stepID, wfStep, &workflow.Loop{
+			Goto: route.Goto, MaxIterations: route.MaxIterations, Feedback: route.Feedback,
+		}, submittedFeedback)
+		return
+	}
+}
+
+func (s *scheduler) recordLoopIntentFor(stepID string, wfStep *workflow.Step, loop *workflow.Loop, submittedFeedback string) {
 	state := s.states[stepID]
 
 	// Evaluate the loop's when guard (validated at load, won't error).
@@ -2206,6 +2271,7 @@ func (s *scheduler) recordLoopIntentWithFeedback(stepID string, wfStep *workflow
 		kind:     wfStep.Type,
 		feedback: content,
 		iter:     state.Iteration,
+		max:      loop.MaxIterations,
 	})
 }
 
@@ -2265,6 +2331,13 @@ func (s *scheduler) bodyUnion(gotoID string) []string {
 		if L.Loop != nil && L.Loop.Goto == gotoID {
 			for _, id := range s.loopBody(gotoID, L.ID) {
 				seen[id] = true
+			}
+		}
+		for _, route := range L.Routes {
+			if route.Goto == gotoID {
+				for _, id := range s.loopBody(gotoID, L.ID) {
+					seen[id] = true
+				}
 			}
 		}
 	}
@@ -2334,17 +2407,12 @@ func (s *scheduler) fireCoalescedLoop(intent *loopIntent) {
 
 	// Emit one LoopFired per contributor for journal/observability fidelity.
 	for _, c := range intent.contribs {
-		src := s.stepByID(c.source)
-		max := 0
-		if src != nil && src.Loop != nil {
-			max = src.Loop.MaxIterations
-		}
 		s.emit(LoopFired{
 			RunID:     s.runID,
 			StepID:    c.source,
 			Goto:      intent.gotoID,
 			Iteration: newIter,
-			Max:       max,
+			Max:       c.max,
 		})
 	}
 

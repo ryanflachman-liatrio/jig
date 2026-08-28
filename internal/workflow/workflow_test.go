@@ -110,6 +110,97 @@ func TestDecodeValid(t *testing.T) {
 	}
 }
 
+func TestDecodeCheckRoutesAndResourceLimits(t *testing.T) {
+	const source = `
+[workflow]
+name = "quality"
+version = "1"
+
+[defaults]
+max_parallel = 4
+resource_limits = { checks = 2 }
+
+[[step]]
+id = "quality"
+type = "check"
+resource_class = "checks"
+output_type = { enum = ["pass", "fail", "skip", "error"] }
+run = "go test ./..."
+
+[[step.route]]
+when = "quality == 'fail'"
+goto = "quality"
+max_iterations = 2
+
+[[step.route]]
+when = "quality == 'pass'"
+goto = "quality"
+max_iterations = 2
+
+[[step.route]]
+when = "quality == 'skip'"
+goto = "quality"
+max_iterations = 2
+
+[[step.route]]
+when = "quality == 'error'"
+goto = "quality"
+max_iterations = 2
+`
+	wf, err := Decode(source, "")
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if got := len(wf.Steps[0].Routes); got != 4 {
+		t.Fatalf("routes = %d, want 4", got)
+	}
+}
+
+func TestDecodeRejectsCheckWithoutTypedOutcomes(t *testing.T) {
+	const source = `
+[workflow]
+name = "quality"
+version = "1"
+
+[[step]]
+id = "quality"
+type = "check"
+run = "true"
+`
+	_, err := Decode(source, "")
+	if err == nil || !strings.Contains(err.Error(), "output_type must include") {
+		t.Fatalf("Decode error = %v, want typed check outcome error", err)
+	}
+}
+
+func TestDecodeRejectsOverlappingRoutes(t *testing.T) {
+	const source = `
+[workflow]
+name = "routes"
+version = "1"
+
+[[step]]
+id = "gate"
+type = "command"
+output_type = { enum = ["pass", "fail", "skip"] }
+run = "true"
+
+[[step.route]]
+when = "gate != 'pass'"
+goto = "gate"
+max_iterations = 1
+
+[[step.route]]
+when = "gate != 'fail'"
+goto = "gate"
+max_iterations = 1
+`
+	_, err := Decode(source, "")
+	if err == nil || !strings.Contains(err.Error(), "not mutually exclusive") {
+		t.Fatalf("Decode error = %v, want route exclusivity error", err)
+	}
+}
+
 func TestDecodeBackendTransport(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteSkill(t, filepath.Join(dir, "skills/a", "SKILL.md"), "# Skill")

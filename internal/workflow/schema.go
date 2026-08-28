@@ -24,6 +24,9 @@ const (
 	StepCommand StepType = "command"
 	// StepReview pauses the run for a human decision in the TUI.
 	StepReview StepType = "review"
+	// StepCheck runs a deterministic quality gate. Unlike a command, it always
+	// records a typed pass/fail/skip/error outcome for routing and audit.
+	StepCheck StepType = "check"
 )
 
 // FailurePolicy decides what happens when a step (or its validation) fails.
@@ -231,6 +234,9 @@ type Defaults struct {
 	PermissionMode    string      `toml:"permission_mode"`
 	MaxParallel       int         `toml:"max_parallel"`
 	ArtifactsDir      string      `toml:"artifacts_dir"`
+	// ResourceLimits caps concurrently running steps by resource class. A class
+	// not present here is constrained only by max_parallel.
+	ResourceLimits map[string]int `toml:"resource_limits"`
 
 	// InjectContext is the workflow-wide default for the engine-assembled
 	// "Workflow context" preamble on agent steps. Parsed as *bool so "unset"
@@ -260,6 +266,9 @@ type Step struct {
 	OutputType OutputType    `toml:"output_type"`
 	OnFailure  FailurePolicy `toml:"on_failure"`
 	MaxRetries int           `toml:"max_retries"`
+	// ResourceClass lets workflows reserve scarce capacity (for example one
+	// mutating worktree while allowing several read-only research steps).
+	ResourceClass string `toml:"resource_class"`
 
 	// Agent-only.
 	Skill     string    `toml:"skill"`
@@ -328,6 +337,12 @@ type Step struct {
 	Run    string `toml:"run"`
 	Script string `toml:"script"`
 
+	// Check-only. Applicability is a typed guard: a false predicate yields the
+	// explicit skip outcome without running tooling. FindingsFile, when set,
+	// is copied into the run-scoped evidence directory by the engine.
+	AppliesWhen  string `toml:"applies_when"`
+	FindingsFile string `toml:"findings_file"`
+
 	// Review-only. `@step` / `@step.field` / `diff` / literal workflow file.
 	Review []ReviewTarget `toml:"review"`
 
@@ -338,6 +353,7 @@ type Step struct {
 
 	Validate *Validate    `toml:"validate"`
 	Loop     *Loop        `toml:"loop"`
+	Routes   []Route      `toml:"route"`
 	Security StepSecurity `toml:"security"`
 }
 
@@ -396,6 +412,10 @@ type Input struct {
 	From     string // "user" for interactive collection
 	Label    string // prompt shown in TUI (required when From="user")
 	As       string // name hint passed to agent prompt (required when From="user")
+	// Once retains a user-provided operational preference across loop rewinds.
+	// It is valid only for from="user" inputs; identity/spec inputs should
+	// normally remain per-run rather than be asked once per task iteration.
+	Once bool
 }
 
 // UnmarshalTOML accepts either a string ("@stepid", "@stepid.field", or a path)
@@ -452,6 +472,13 @@ func (in *Input) UnmarshalTOML(data any) error {
 				return fmt.Errorf("input `as` must be a string, got %T", raw)
 			}
 			in.As = s
+		}
+		if raw, ok := v["once"]; ok {
+			b, ok := raw.(bool)
+			if !ok {
+				return fmt.Errorf("input `once` must be a bool, got %T", raw)
+			}
+			in.Once = b
 		}
 		if in.From != "" && (in.Ref != "" || in.Path != "") {
 			return fmt.Errorf("input table: `from` cannot be combined with `ref` or `path`")
@@ -728,4 +755,15 @@ type Loop struct {
 	Goto          string `toml:"goto"`
 	MaxIterations int    `toml:"max_iterations"`
 	Feedback      string `toml:"feedback"` // "@stepid" fed into Goto's next run
+}
+
+// Route is an ordered, bounded back-edge. Exactly one matching route may fire;
+// fallback is explicit so a terminal path is never accidental. It supersedes
+// Loop for new workflows while old files remain readable during migration.
+type Route struct {
+	When          string `toml:"when"`
+	Goto          string `toml:"goto"`
+	MaxIterations int    `toml:"max_iterations"`
+	Feedback      string `toml:"feedback"`
+	Fallback      bool   `toml:"fallback"`
 }

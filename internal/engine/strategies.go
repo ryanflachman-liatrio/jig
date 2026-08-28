@@ -36,6 +36,12 @@ func (commandDispatchStrategy) dispatch(s *scheduler, ctx context.Context, st *w
 	s.dispatchWorker(ctx, st)
 }
 
+type checkDispatchStrategy struct{}
+
+func (checkDispatchStrategy) dispatch(s *scheduler, ctx context.Context, st *workflow.Step) {
+	s.dispatchWorker(ctx, st)
+}
+
 // reviewDispatchStrategy wraps the existing dispatchReview rather than
 // duplicating it; it ignores ctx because a review step never starts a
 // cancellable worker goroutine.
@@ -51,6 +57,7 @@ func (reviewDispatchStrategy) dispatch(s *scheduler, _ context.Context, st *work
 var stepDispatchStrategies = map[workflow.StepType]stepDispatchStrategy{
 	workflow.StepAgent:   agentDispatchStrategy{},
 	workflow.StepCommand: commandDispatchStrategy{},
+	workflow.StepCheck:   checkDispatchStrategy{},
 	workflow.StepReview:  reviewDispatchStrategy{},
 }
 
