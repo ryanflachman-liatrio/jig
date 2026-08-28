@@ -58,6 +58,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		} else {
 			m.cursor = len(m.docs[m.active].lines)
 		}
+	} else if m.handleSourcePan(k) {
 	} else if keybind.Matches(k, m.keys.PrevDoc) {
 		m.changeDoc(-1)
 	} else if keybind.Matches(k, m.keys.NextDoc) {
@@ -177,10 +178,29 @@ func (m Model) updateSelection(k tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.move(-1)
 	} else if keybind.Matches(k, m.keys.Down) {
 		m.move(1)
+	} else if m.handleSourcePan(k) {
 	} else if keybind.Matches(k, m.keys.Comment) || keybind.Matches(k, m.keys.Confirm) {
 		m.openComposer(false)
 	}
 	return m, nil
+}
+
+func (m *Model) handleSourcePan(k tea.KeyPressMsg) bool {
+	if m.activeDocumentMode() != DocumentSource || m.active < 0 || m.active >= len(m.sourceXOffsets) {
+		return false
+	}
+	switch {
+	case keybind.Matches(k, m.keys.PanLeft):
+		m.sourceXOffsets[m.active] = max(0, m.sourceXOffsets[m.active]-4)
+	case keybind.Matches(k, m.keys.PanRight):
+		m.sourceXOffsets[m.active] += 4
+		m.clampSourceOffset()
+	case keybind.Matches(k, m.keys.PanHome):
+		m.sourceXOffsets[m.active] = 0
+	default:
+		return false
+	}
+	return true
 }
 
 func (m Model) updateSummary(k tea.KeyPressMsg) (Model, tea.Cmd) {
@@ -369,6 +389,7 @@ func (m *Model) resize() {
 		m.composer.SetWidth(documentWidth)
 		m.replacement.SetWidth(documentWidth)
 	}
+	m.clampSourceOffset()
 }
 func nextKind(k review.Kind) review.Kind {
 	kinds := []review.Kind{review.KindNote, review.KindQuestion, review.KindConcern, review.KindBlocker, review.KindSuggestion, review.KindPraise}

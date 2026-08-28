@@ -50,6 +50,8 @@ type Model struct {
 	keys                           keyMap
 	error                          string
 	previews                       []previewState
+	sources                        []sourcePresentation
+	sourceXOffsets                 []int
 	previewBlock                   int
 }
 
@@ -62,8 +64,11 @@ func NewWithDraft(session domain.Session, draft domain.Draft) (Model, error) {
 	}
 	m := Model{session: session, docs: docs, reviewed: map[string]bool{}, mode: ModeBrowse, commentKind: domain.KindNote, keys: defaultKeyMap(), nextID: 1}
 	m.previews = make([]previewState, len(docs))
+	m.sources = make([]sourcePresentation, len(docs))
+	m.sourceXOffsets = make([]int, len(docs))
 	m.documentModes = make([]DocumentMode, len(docs))
 	for i, d := range docs {
+		m.sources[i] = buildSourcePresentation(d)
 		if d.meta.Format != "markdown" {
 			continue
 		}

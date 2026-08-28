@@ -3,6 +3,9 @@ name        = "review-ui-demo"
 version     = "1"
 description = "Deterministic visual fixture for the document review workspace."
 
+# Inspect Markdown in preview and source, then use h/l and 0 on the Go, module,
+# and literal-diff documents to verify fixed gutters and horizontal panning.
+
 [[step]]
 id          = "review_ui"
 type        = "review"

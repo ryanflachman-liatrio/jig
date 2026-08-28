@@ -6,6 +6,7 @@ import (
 	"charm.land/glamour/v2/ansi"
 	"charm.land/glamour/v2/styles"
 	"charm.land/lipgloss/v2"
+	"github.com/alecthomas/chroma/v2"
 )
 
 // Styles groups all lipgloss styles for the TUI, organized by UI region.
@@ -111,14 +112,24 @@ type Styles struct {
 		Hunk   lipgloss.Style
 	}
 	Review struct {
-		ModeActive        lipgloss.Style
-		ModeInactive      lipgloss.Style
-		BlockRailActive   lipgloss.Style
-		BlockRailInactive lipgloss.Style
-		BlockMetaActive   lipgloss.Style
-		BlockMetaInactive lipgloss.Style
-		CommentMarker     lipgloss.Style
-		ActiveComment     lipgloss.Style
+		ModeActive          lipgloss.Style
+		ModeInactive        lipgloss.Style
+		BlockRailActive     lipgloss.Style
+		BlockRailInactive   lipgloss.Style
+		BlockMetaActive     lipgloss.Style
+		BlockMetaInactive   lipgloss.Style
+		CommentMarker       lipgloss.Style
+		ActiveComment       lipgloss.Style
+		Gutter              lipgloss.Style
+		GutterCursor        lipgloss.Style
+		GutterRange         lipgloss.Style
+		CursorRail          lipgloss.Style
+		RangeRail           lipgloss.Style
+		ActiveCommentMarker lipgloss.Style
+		Language            lipgloss.Style
+		HorizontalHint      lipgloss.Style
+		SyntaxBase          lipgloss.Style
+		Syntax              *chroma.Style
 	}
 	Step struct {
 		ID    lipgloss.Style
@@ -277,6 +288,37 @@ func DefaultTheme() Styles {
 	s.Review.BlockMetaInactive = lipgloss.NewStyle().Foreground(fgDim)
 	s.Review.CommentMarker = lipgloss.NewStyle().Foreground(warning)
 	s.Review.ActiveComment = lipgloss.NewStyle().Bold(true).Foreground(secondary)
+	s.Review.Gutter = lipgloss.NewStyle().Foreground(fgDim)
+	s.Review.GutterCursor = lipgloss.NewStyle().Bold(true).Foreground(primary)
+	s.Review.GutterRange = lipgloss.NewStyle().Foreground(secondary)
+	s.Review.CursorRail = lipgloss.NewStyle().Bold(true).Foreground(primary)
+	s.Review.RangeRail = lipgloss.NewStyle().Foreground(secondary)
+	s.Review.ActiveCommentMarker = lipgloss.NewStyle().Bold(true).Foreground(primary)
+	s.Review.Language = lipgloss.NewStyle().Foreground(fgMuted)
+	s.Review.HorizontalHint = lipgloss.NewStyle().Foreground(fgDim).Italic(true)
+	s.Review.SyntaxBase = lipgloss.NewStyle().Foreground(fgBase)
+	s.Review.Syntax = chroma.MustNewStyle("jig-charmtone", chroma.StyleEntries{
+		chroma.Text:                hexSash,
+		chroma.Error:               hexSriracha,
+		chroma.Comment:             "italic " + hexSquid,
+		chroma.CommentPreproc:      hexMalibu,
+		chroma.Keyword:             "bold " + hexBlush,
+		chroma.KeywordReserved:     "bold " + hexBlush,
+		chroma.KeywordType:         hexDolly,
+		chroma.Operator:            hexBok,
+		chroma.Punctuation:         hexSmoke,
+		chroma.Name:                hexSash,
+		chroma.NameBuiltin:         hexMalibu,
+		chroma.NameFunction:        hexBok,
+		chroma.NameClass:           "bold " + hexDolly,
+		chroma.LiteralString:       hexMustard,
+		chroma.LiteralStringEscape: hexTang,
+		chroma.LiteralNumber:       hexCitron,
+		chroma.GenericInserted:     hexJulep,
+		chroma.GenericDeleted:      hexSriracha,
+		chroma.GenericSubheading:   "bold " + hexMalibu,
+		chroma.GenericError:        "bold " + hexSriracha,
+	})
 
 	s.Step.ID = lipgloss.NewStyle().Foreground(fgBase)
 	s.Step.Types = map[string]lipgloss.Style{
@@ -366,3 +408,21 @@ func charmtoneMarkdown() ansi.StyleConfig {
 
 // Theme is the package-level singleton; swap it out to change the active theme.
 var Theme = DefaultTheme()
+
+func SourceTokenStyle(tokenType chroma.TokenType) lipgloss.Style {
+	entry := Theme.Review.Syntax.Get(tokenType)
+	style := Theme.Review.SyntaxBase
+	if entry.Bold == chroma.Yes {
+		style = style.Bold(true)
+	}
+	if entry.Italic == chroma.Yes {
+		style = style.Italic(true)
+	}
+	if entry.Underline == chroma.Yes {
+		style = style.Underline(true)
+	}
+	if entry.Colour.IsSet() {
+		style = style.Foreground(lipgloss.Color(entry.Colour.String()))
+	}
+	return style
+}

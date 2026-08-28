@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
+	"github.com/alecthomas/chroma/v2"
 )
 
 func TestReviewStylesBelongToThemeAndPreserveVisibleWidth(t *testing.T) {
@@ -21,6 +22,15 @@ func TestReviewStylesBelongToThemeAndPreserveVisibleWidth(t *testing.T) {
 		{name: "inactive metadata", style: theme.Review.BlockMetaInactive, text: "L12–L18"},
 		{name: "comment marker", style: theme.Review.CommentMarker, text: "● 2 comments"},
 		{name: "active comment", style: theme.Review.ActiveComment, text: "● C003 active"},
+		{name: "gutter", style: theme.Review.Gutter, text: " 42 │"},
+		{name: "cursor gutter", style: theme.Review.GutterCursor, text: " 42 │"},
+		{name: "range gutter", style: theme.Review.GutterRange, text: " 42 │"},
+		{name: "cursor rail", style: theme.Review.CursorRail, text: "▌"},
+		{name: "range rail", style: theme.Review.RangeRail, text: "▌"},
+		{name: "active source comment", style: theme.Review.ActiveCommentMarker, text: "●2"},
+		{name: "language", style: theme.Review.Language, text: "Go"},
+		{name: "horizontal hint", style: theme.Review.HorizontalHint, text: "← col 5 →"},
+		{name: "syntax base", style: theme.Review.SyntaxBase, text: "plain source"},
 	}
 
 	for _, tt := range tests {
@@ -36,5 +46,17 @@ func TestReviewStylesBelongToThemeAndPreserveVisibleWidth(t *testing.T) {
 
 	if theme.Review.ModeActive.GetForeground() == theme.Review.ModeInactive.GetForeground() {
 		t.Fatal("active and inactive modes are not visually distinct")
+	}
+
+	for _, token := range []chroma.TokenType{
+		chroma.Text, chroma.Comment, chroma.CommentPreproc, chroma.Keyword,
+		chroma.KeywordReserved, chroma.KeywordType, chroma.Operator, chroma.Punctuation,
+		chroma.NameBuiltin, chroma.NameFunction, chroma.NameClass, chroma.LiteralString,
+		chroma.LiteralStringEscape, chroma.LiteralNumber, chroma.GenericInserted,
+		chroma.GenericDeleted, chroma.GenericSubheading, chroma.Error,
+	} {
+		if entry := theme.Review.Syntax.Get(token); !entry.Colour.IsSet() {
+			t.Errorf("syntax token %s has no theme color", token)
+		}
 	}
 }

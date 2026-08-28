@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	domain "jig/internal/review"
 	"jig/internal/tui/shared"
@@ -103,6 +104,14 @@ func (m *Model) documentView() string {
 		b.WriteString(shared.Theme.Error.Render(m.error))
 		b.WriteByte('\n')
 	}
+	if m.sources[m.active].err != nil {
+		b.WriteString(shared.Theme.Error.Render("syntax highlighting unavailable: " + m.sources[m.active].err.Error()))
+		b.WriteByte('\n')
+	}
+	if m.sourceOverflow() {
+		b.WriteString(shared.Theme.Review.HorizontalHint.Render(fmt.Sprintf("← col %d →", m.sourceXOffsets[m.active]+1)))
+		b.WriteByte('\n')
+	}
 	start := m.cursor - 8
 	if start < 1 {
 		start = 1
@@ -116,14 +125,7 @@ func (m *Model) documentView() string {
 		end = len(d.lines)
 	}
 	for i := start; i <= end; i++ {
-		prefix := "  "
-		if i == m.cursor {
-			prefix = "▌ "
-		}
-		if m.mode == ModeSelectRange && i >= min(m.cursor, m.rangeEnd) && i <= max(m.cursor, m.rangeEnd) {
-			prefix = "▌▌"
-		}
-		b.WriteString(fmt.Sprintf("%s%4d %s\n", prefix, i, d.lines[i-1]))
+		m.writeSourceRow(&b, i)
 	}
 	m.writeCommentsAndComposer(&b, d)
 	return shared.Panel(d.meta.Label, b.String(), documentPanelWidth(m.width), max(12, m.height-2), m.mode != ModeSummary)
@@ -144,16 +146,112 @@ func (m *Model) documentHeader(d document) string {
 		b.WriteString(preview)
 		b.WriteString("  ")
 		b.WriteString(source)
-		b.WriteString("     Markdown")
+		b.WriteString("     ")
+		b.WriteString(shared.Theme.Review.Language.Render(m.sourceLanguage()))
 		return b.String()
 	}
 	b.WriteString(shared.Theme.Review.ModeActive.Render("[ SOURCE ]"))
-	if d.meta.Format == "diff" {
-		b.WriteString("     Diff")
-	} else {
-		b.WriteString("     Plain text")
-	}
+	b.WriteString("     ")
+	b.WriteString(shared.Theme.Review.Language.Render(m.sourceLanguage()))
 	return b.String()
+}
+
+func (m *Model) sourceLanguage() string {
+	if m.activeDocumentMode() == DocumentPreview {
+		return "Markdown"
+	}
+	if m.active >= 0 && m.active < len(m.sources) && m.sources[m.active].language != "" {
+		if m.docs[m.active].meta.Format == "markdown" {
+			return "Markdown source"
+		}
+		return m.sources[m.active].language
+	}
+	return "Plain text"
+}
+
+func (m *Model) writeSourceRow(b *strings.Builder, line int) {
+	selected := m.mode == ModeSelectRange && line >= min(m.cursor, m.rangeEnd) && line <= max(m.cursor, m.rangeEnd)
+	rail, railStyle := " ", shared.Theme.Review.Gutter
+	gutterStyle := shared.Theme.Review.Gutter
+	if selected {
+		rail, railStyle = "▌", shared.Theme.Review.RangeRail
+		gutterStyle = shared.Theme.Review.GutterRange
+	}
+	if line == m.cursor {
+		rail, railStyle = "▌", shared.Theme.Review.CursorRail
+		gutterStyle = shared.Theme.Review.GutterCursor
+	}
+
+	digits := len(fmt.Sprint(len(m.docs[m.active].lines)))
+	marker, markerStyle := m.sourceCommentMarker(line)
+	contentWidth := m.sourceContentWidth()
+	content := ansi.Cut(m.sources[m.active].lines[line-1], m.sourceXOffsets[m.active], m.sourceXOffsets[m.active]+contentWidth)
+	b.WriteString(railStyle.Render(rail))
+	b.WriteByte(' ')
+	b.WriteString(markerStyle.Render(fmt.Sprintf("%-2s", marker)))
+	b.WriteByte(' ')
+	b.WriteString(gutterStyle.Render(fmt.Sprintf("%*d", digits, line)))
+	b.WriteString(shared.Theme.Review.Gutter.Render(" │ "))
+	b.WriteString(content)
+	b.WriteByte('\n')
+}
+
+func (m *Model) sourceCommentMarker(line int) (string, lipgloss.Style) {
+	comments := make([]domain.Comment, 0)
+	for _, comment := range m.comments {
+		if comment.Anchor.DocumentID == m.docs[m.active].meta.ID && comment.Anchor.StartLine == line {
+			comments = append(comments, comment)
+		}
+	}
+	if len(comments) == 0 {
+		return "", shared.Theme.Review.CommentMarker
+	}
+	marker := "●"
+	if len(comments) > 1 {
+		marker = fmt.Sprintf("●%d", len(comments))
+		if lipgloss.Width(marker) > 2 {
+			marker = "●+"
+		}
+	}
+	for _, comment := range comments {
+		if comment.ID == m.activeComment {
+			return marker, shared.Theme.Review.ActiveCommentMarker
+		}
+	}
+	return marker, shared.Theme.Review.CommentMarker
+}
+
+func (m *Model) sourceGutterWidth() int {
+	digits := len(fmt.Sprint(len(m.docs[m.active].lines)))
+	return lipgloss.Width("  " + "  " + " " + strings.Repeat("0", digits) + " │ ")
+}
+
+func (m *Model) sourceContentWidth() int {
+	hFrame, _ := shared.PanelFrame()
+	return max(1, documentPanelWidth(m.width)-hFrame-m.sourceGutterWidth())
+}
+
+func (m *Model) sourceMaxWidth() int {
+	if m.active < 0 || m.active >= len(m.sources) {
+		return 0
+	}
+	width := 0
+	for _, line := range m.sources[m.active].lines {
+		width = max(width, lipgloss.Width(line))
+	}
+	return width
+}
+
+func (m *Model) sourceOverflow() bool {
+	return m.sourceXOffsets[m.active] > 0 || m.sourceMaxWidth() > m.sourceContentWidth()
+}
+
+func (m *Model) clampSourceOffset() {
+	if m.active < 0 || m.active >= len(m.sourceXOffsets) {
+		return
+	}
+	maxOffset := max(0, m.sourceMaxWidth()-m.sourceContentWidth())
+	m.sourceXOffsets[m.active] = min(max(m.sourceXOffsets[m.active], 0), maxOffset)
 }
 
 func (m *Model) previewContentWidth() int {
@@ -291,7 +389,11 @@ func (m *Model) footer() string {
 	if m.docs[m.active].meta.Format == "markdown" {
 		view = " · s view"
 	}
-	return "S finish review · j/k move · {/} document · c comment · r reviewed" + view + " · esc close"
+	pan := ""
+	if m.activeDocumentMode() == DocumentSource {
+		pan = " · h/l pan · 0 first col"
+	}
+	return "S finish review · j/k move · {/} document · c comment · r reviewed" + view + pan + " · esc close"
 }
 func listWidth(width int) int {
 	if width > 0 && width < 90 {

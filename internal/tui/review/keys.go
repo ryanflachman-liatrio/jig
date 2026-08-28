@@ -7,6 +7,7 @@ type keyMap struct {
 	PrevDoc, NextDoc, NextOpen keybind.Binding
 	Select, Comment, Reviewed  keybind.Binding
 	ToggleMode, NextComment    keybind.Binding
+	PanLeft, PanRight, PanHome keybind.Binding
 	Edit, Delete, Summary      keybind.Binding
 	Confirm, Cancel, NextKind  keybind.Binding
 }
@@ -22,7 +23,9 @@ func defaultKeyMap() keyMap {
 		NextOpen: b([]string{"u"}, "next unreviewed"), Select: b([]string{"v"}, "select range"),
 		Comment: b([]string{"c"}, "comment"), Reviewed: b([]string{"r"}, "mark reviewed"),
 		ToggleMode: b([]string{"s"}, "toggle source/preview"), NextComment: b([]string{"n", "N"}, "next comment"),
-		Edit: b([]string{"e"}, "edit comment"), Delete: b([]string{"x"}, "delete comment"),
+		PanLeft: b([]string{"left", "h"}, "pan left"), PanRight: b([]string{"right", "l"}, "pan right"),
+		PanHome: b([]string{"0"}, "first column"),
+		Edit:    b([]string{"e"}, "edit comment"), Delete: b([]string{"x"}, "delete comment"),
 		Summary: b([]string{"S"}, "finish review"), Confirm: b([]string{"enter"}, "confirm"),
 		Cancel: b([]string{"esc"}, "cancel"), NextKind: b([]string{"tab"}, "next kind"),
 	}
@@ -55,6 +58,7 @@ func (m Model) Help() []KeyHelp {
 	}
 	if m.activeDocumentMode() == DocumentSource {
 		help = append(help, KeyHelp{Key: "v", Description: "select range"})
+		help = append(help, KeyHelp{Key: "h/l", Description: "pan source"}, KeyHelp{Key: "0", Description: "first column"})
 	}
 	help = append(help, KeyHelp{Key: "c", Description: "comment"}, KeyHelp{Key: "r", Description: "mark reviewed"})
 	if m.docs[m.active].meta.Format == "markdown" {

@@ -189,6 +189,24 @@ func TestReviewWorkspaceRoutesViewToggleAndFitsTargetSizes(t *testing.T) {
 	}
 }
 
+func TestReviewWorkspaceRoutesSourcePanOnlyWhileOpen(t *testing.T) {
+	m := monitorWithReviewWorkspace(t)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m, _ = m.Update(key("l"))
+	m, _ = m.Update(key("enter"))
+	m, _ = m.Update(key("s"))
+	if view := ansiStrip(m.View()); strings.Contains(view, "col 5") {
+		t.Fatalf("closed workspace consumed source pan key:\n%s", view)
+	}
+	m, _ = m.Update(key("l"))
+	if view := ansiStrip(m.View()); !strings.Contains(view, "col 5") {
+		t.Fatalf("open workspace did not consume source pan key:\n%s", view)
+	}
+	if width := lipgloss.Width(m.View()); width > 80 {
+		t.Fatalf("panned workspace width = %d, want <= 80", width)
+	}
+}
+
 func TestReplayedReviewIsExplicitlyReadOnly(t *testing.T) {
 	content := "Historical scope assessment"
 	m := New("old-run").WithJournal([]engine.Event{

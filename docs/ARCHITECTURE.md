@@ -134,6 +134,22 @@ the immutable source document and one-based logical lines—rendered terminal
 rows never become review identity. Non-Markdown content is never passed through
 Glamour.
 
+Source presentation follows a separate, width-independent path. Literal
+`.diff` and `.patch` documents use semantic diff styles; Markdown source uses
+the Markdown lexer; other literal files select Chroma only from the source
+filename; unmatched or known-ambiguous matches such as `go.mod` remain plain
+text. Chroma tokenizes the complete
+immutable document so multiline lexer state survives, then reconstructs
+exactly one styled item for every logical source line. Any tokenizer failure or
+line-count mismatch falls back to the original verbatim lines.
+
+The review view adds the stable line-number gutter, selection rails, and
+comment markers after source highlighting. Only the styled content segment is
+horizontally clipped: `h`/left and `l`/right pan by four terminal cells, while
+`0` returns to the first column. Offsets are transient and per document. The
+gutter never pans, code never soft-wraps, and anchors continue to quote bytes
+from the immutable document rather than ANSI-rendered output.
+
 Message flow for one exchange: user submits (`ctrl+s`) → append a `turn`, set
 `streaming` → `submitPromptCmd` sends on the persistent client →
 `waitForClaudeMessageCmd` drains the channel → each `claudeDeltaMsg` appends to

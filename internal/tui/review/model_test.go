@@ -327,3 +327,122 @@ func TestSummaryDisplaysNumberedVerdictChoices(t *testing.T) {
 		}
 	}
 }
+
+func TestSourceViewPansStyledContentWithoutMovingGutter(t *testing.T) {
+	content := "package main\nvar long = \"" + strings.Repeat("0123456789", 12) + "世界\""
+	session := domain.Session{StepID: "source", Documents: []domain.Document{{
+		ID: "go", Label: "Go source", Source: "main.go", Format: "text", Content: content, SHA256: domain.Digest(content),
+	}}}
+	m, err := New(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.cursor = 2
+	m.comments = []domain.Comment{
+		{ID: "C001", Anchor: domain.Anchor{DocumentID: "go", StartLine: 2, EndLine: 2}},
+		{ID: "C002", Anchor: domain.Anchor{DocumentID: "go", StartLine: 2, EndLine: 2}},
+	}
+	m.activeComment = "C002"
+
+	var before strings.Builder
+	m.writeSourceRow(&before, 2)
+	m = update(m, "l")
+	if m.sourceXOffsets[0] != 4 {
+		t.Fatalf("offset = %d, want 4", m.sourceXOffsets[0])
+	}
+	var after strings.Builder
+	m.writeSourceRow(&after, 2)
+	beforePlain, afterPlain := ansi.Strip(before.String()), ansi.Strip(after.String())
+	if !strings.Contains(beforePlain, "▌ ●2 2 │ ") || !strings.Contains(afterPlain, "▌ ●2 2 │ ") {
+		t.Fatalf("panning moved or changed gutter:\nbefore %q\nafter  %q", beforePlain, afterPlain)
+	}
+	expected := ansi.Strip(ansi.Cut(m.sources[0].lines[1], 4, 4+m.sourceContentWidth()))
+	if !strings.Contains(afterPlain, expected) {
+		t.Fatalf("panned row does not contain expected ANSI-safe slice %q: %q", expected, afterPlain)
+	}
+	if view := ansi.Strip(m.documentView()); !strings.Contains(view, "← col 5 →") || !strings.Contains(view, "Go") {
+		t.Fatalf("source view missing pan hint or language:\n%s", view)
+	}
+	m = update(m, "0")
+	if m.sourceXOffsets[0] != 0 {
+		t.Fatalf("home offset = %d", m.sourceXOffsets[0])
+	}
+}
+
+func TestSourceOffsetsArePerDocumentAndEditorsCapturePanKeys(t *testing.T) {
+	long := strings.Repeat("abcdefghij", 12)
+	session := domain.Session{StepID: "source", Documents: []domain.Document{
+		{ID: "one", Label: "One", Source: "one.go", Format: "text", Content: long, SHA256: domain.Digest(long)},
+		{ID: "two", Label: "Two", Source: "two.go", Format: "text", Content: long, SHA256: domain.Digest(long)},
+	}}
+	m, err := New(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = update(m, "l")
+	m = update(m, "}")
+	m = update(m, "l")
+	m = update(m, "l")
+	m = update(m, "{")
+	if got := m.sourceXOffsets; got[0] != 4 || got[1] != 8 {
+		t.Fatalf("per-document offsets = %v, want [4 8]", got)
+	}
+	m = update(m, "c")
+	m = update(m, "h")
+	m = update(m, "l")
+	m = update(m, "0")
+	if m.sourceXOffsets[0] != 4 || !strings.Contains(m.composer.Value(), "hl0") {
+		t.Fatalf("editor did not capture pan keys: offset=%d value=%q", m.sourceXOffsets[0], m.composer.Value())
+	}
+}
+
+func TestHighlightedRenderingDoesNotChangeAnchorsOrRebuildOnResize(t *testing.T) {
+	content := "package main\n\nfunc main() { println(\"世界\") }\n"
+	session := domain.Session{StepID: "source", Documents: []domain.Document{{
+		ID: "go", Label: "Go", Source: "main.go", Format: "text", Content: content, SHA256: domain.Digest(content),
+	}}}
+	m, err := New(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := m.docs[0].anchor(m.docs[0].meta.SHA256, 2, 3)
+	styled := m.sources[0].lines[2]
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = update(m, "l")
+	_ = m.documentView()
+	got := m.docs[0].anchor(m.docs[0].meta.SHA256, 2, 3)
+	if got != want || strings.Contains(got.Quote, "\x1b[") {
+		t.Fatalf("styled rendering changed anchor:\ngot  %#v\nwant %#v", got, want)
+	}
+	if m.sources[0].lines[2] != styled {
+		t.Fatal("resize or cursor movement rebuilt the cached source presentation")
+	}
+}
+
+func TestSourceRowsFitTargetWidthsAndClampOffsetOnResize(t *testing.T) {
+	content := "const wide = \"" + strings.Repeat("界", 80) + "\""
+	session := domain.Session{StepID: "source", Documents: []domain.Document{{
+		ID: "go", Label: "Go", Source: "wide.go", Format: "text", Content: content, SHA256: domain.Digest(content),
+	}}}
+	for _, size := range []tea.WindowSizeMsg{{Width: 80, Height: 24}, {Width: 120, Height: 40}} {
+		m, err := New(session)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, _ = m.Update(size)
+		for range 100 {
+			m = update(m, "l")
+		}
+		m, _ = m.Update(tea.WindowSizeMsg{Width: size.Width + 40, Height: size.Height})
+		if m.sourceXOffsets[0] > max(0, m.sourceMaxWidth()-m.sourceContentWidth()) {
+			t.Fatalf("%dx%d offset was not clamped: %d", size.Width, size.Height, m.sourceXOffsets[0])
+		}
+		for _, row := range strings.Split(m.documentView(), "\n") {
+			if width := lipgloss.Width(row); width > documentPanelWidth(m.width) {
+				t.Fatalf("%dx%d source row width = %d, panel = %d", size.Width, size.Height, width, documentPanelWidth(m.width))
+			}
+		}
+	}
+}
