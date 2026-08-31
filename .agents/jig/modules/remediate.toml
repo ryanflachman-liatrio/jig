@@ -1,0 +1,39 @@
+# Targeted remediation never re-runs task discovery. The parent binds the
+# selected task and the review finding identifiers that scoped this repair.
+[module]
+schema_version = 1
+
+[module.inputs.spec_name]
+type = "text"
+
+[module.inputs.task_path]
+type = "text"
+
+[module.inputs.selected_task]
+type = "text"
+
+[module.inputs.finding_ids]
+type = "text"
+
+[module.inputs.affected_paths]
+type = "text"
+
+[module.exports.remediation_summary]
+ref = "@apply_remediation.summary"
+
+[[step]]
+id = "apply_remediation"
+type = "agent"
+depends_on = ["implementation_review"]
+skill = "../../skills/sdd-implement-code"
+inputs = ["@module.spec_name", "@module.task_path", "@module.selected_task", "@module.finding_ids", "@module.affected_paths"]
+allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit", "Bash"]
+isolation = "worktree"
+resource_class = "mutation"
+mutation_paths = ["internal/**", "cmd/**", "docs/specs/**", "go.mod", "go.sum"]
+
+[[step.route]]
+when = "implementation_review == 'redo'"
+goto = "implementation_review"
+max_iterations = 5
+feedback = "@apply_remediation"

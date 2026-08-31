@@ -1,0 +1,132 @@
+[module]
+schema_version = 1
+
+[module.inputs.spec_name]
+type = "text"
+
+[module.inputs.spec_path]
+type = "text"
+
+[module.exports.task_path]
+ref = "@generate_tasks.task_path"
+
+[module.exports.audit_decision]
+ref = "@audit_review"
+
+[[step]]
+id = "analyze_requirements"
+type = "agent"
+skill = "../../skills/sdd-analyze-spec-requirements"
+inputs = ["@module.spec_name", "@module.spec_path"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation = "none"
+  [step.schema]
+  requirements_notes = "text"
+
+[[step]]
+id = "analyze_standards"
+type = "agent"
+skill = "../../skills/sdd-analyze-repo-standards"
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation = "none"
+  [step.schema]
+  standards_notes = "text"
+
+[[step]]
+id = "generate_tasks"
+type = "agent"
+depends_on = ["analyze_requirements", "analyze_standards"]
+skill = "../../skills/sdd-parent-tasks"
+inputs = ["@module.spec_name", "@module.spec_path", "@analyze_requirements.requirements_notes", "@analyze_standards.standards_notes"]
+allowed_tools = ["Read", "Grep", "Glob", "Write"]
+isolation = "worktree"
+resource_class = "mutation"
+mutation_paths = ["docs/specs/**"]
+  [step.schema]
+  task_path = "text"
+  task_summary = "text"
+
+[[step]]
+id = "expand_tasks"
+type = "agent"
+depends_on = ["generate_tasks"]
+skill = "../../skills/sdd-subtasks"
+inputs = ["@module.spec_name", "@module.spec_path", "@generate_tasks.task_path"]
+allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit"]
+isolation = "worktree"
+resource_class = "mutation"
+mutation_paths = ["docs/specs/**"]
+  [step.schema]
+  task_path = "text"
+
+[[step]]
+id = "audit_traceability"
+type = "agent"
+depends_on = ["expand_tasks"]
+skill = "../../skills/sdd-audit-traceability"
+inputs = ["@module.spec_path", "@expand_tasks.task_path"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation = "none"
+  [step.schema]
+  findings = "text"
+
+[[step]]
+id = "audit_proofs"
+type = "agent"
+depends_on = ["expand_tasks"]
+skill = "../../skills/sdd-audit-proof-quality"
+inputs = ["@module.spec_path", "@expand_tasks.task_path"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation = "none"
+  [step.schema]
+  findings = "text"
+
+[[step]]
+id = "audit_standards"
+type = "agent"
+depends_on = ["expand_tasks"]
+skill = "../../skills/sdd-audit-standards-consistency"
+inputs = ["@module.spec_path", "@expand_tasks.task_path"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation = "none"
+  [step.schema]
+  findings = "text"
+
+[[step]]
+id = "audit_open_questions"
+type = "agent"
+depends_on = ["expand_tasks"]
+skill = "../../skills/sdd-audit-open-questions"
+inputs = ["@module.spec_path", "@expand_tasks.task_path"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation = "none"
+  [step.schema]
+  findings = "text"
+
+[[step]]
+id = "synthesize_audit"
+type = "agent"
+depends_on = ["audit_traceability", "audit_proofs", "audit_standards", "audit_open_questions"]
+skill = "../../skills/sdd-synthesize-audit"
+inputs = ["@expand_tasks.task_path", "@audit_traceability.findings", "@audit_proofs.findings", "@audit_standards.findings", "@audit_open_questions.findings"]
+allowed_tools = ["Read", "Write"]
+isolation = "worktree"
+resource_class = "mutation"
+mutation_paths = ["docs/specs/**"]
+  [step.schema]
+  audit_report = "text"
+
+[[step]]
+id = "audit_review"
+type = "review"
+depends_on = ["synthesize_audit"]
+output_type = { enum = ["approve", "remediate"] }
+  [[step.review]]
+  source = "@synthesize_audit.audit_report"
+  label = "Planning audit"
+
+[[step.route]]
+when = "audit_review == 'remediate'"
+goto = "generate_tasks"
+max_iterations = 3
+feedback = "@audit_review"

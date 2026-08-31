@@ -134,7 +134,7 @@ inputs = ["@module.request"]
 
 Module input types are `text`, `number`, `bool`, `enum`, and `artifact`; enum
 inputs declare their complete `enum` set. `@module.name` is only legal inside a
-module. Exports may expose a module-internal typed field with `ref`, or a
+module. Exports may expose a module-internal scalar or typed field with `ref`, or a
 declared check artifact with `artifact`, but never an internal worktree path.
 
 The parent gives the module its public name, source path, and bindings. Parent
@@ -338,7 +338,7 @@ Deterministic script/command; no agent context.
 | Field    | Type    | Notes                                              |
 |----------|---------|----------------------------------------------------|
 | `run`    | string  | Shell command (runs in `cwd`). Exactly one of run/script. |
-| `script` | path    | Script file to execute, resolved from the **project (git repo) root** (e.g. `.agents/jig/scripts/run-tests.sh`). A multi-line value is an inline script body. |
+| `script` | path    | Script file to execute, resolved from the **project (git repo) root** (e.g. `.agents/jig/scripts/verify-proof-files.sh`). A multi-line value is an inline script body. |
 | `inputs` | [string]| `@stepid` refs / paths made available.             |
 | `output` | path    | Optional file the command writes.                  |
 
@@ -443,6 +443,10 @@ When a budget is exhausted, pending work fails closed rather than being
 dispatched. Input files are copied into an immutable per-attempt run
 snapshot with SHA-256 digests before a consumer starts; snapshot and evidence
 filenames include generation, iteration, and attempt.
+
+Bundled SDD checks use explicit repository quality profiles rather than
+auto-detecting a package manager or linter; see
+[quality profiles](quality-profiles.md).
 
 ## Worktrees
 

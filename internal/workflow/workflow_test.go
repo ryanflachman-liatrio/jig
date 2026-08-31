@@ -192,6 +192,83 @@ inputs = ["@spec.document"]
 	}
 }
 
+func TestLoadRewritesModuleExportsInParentGuardsAndReviews(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteSkill(t, filepath.Join(dir, "skills", "decision", "SKILL.md"), "# decision")
+	mustWriteSkill(t, filepath.Join(dir, "skills", "gate", "SKILL.md"), "# gate")
+	mustWrite(t, filepath.Join(dir, "module.toml"), `
+[module]
+schema_version = 1
+
+[module.exports.ready]
+ref = "@decision.ready"
+
+[module.exports.summary]
+ref = "@decision.overview"
+
+[[step]]
+id = "decision"
+type = "agent"
+skill = "skills/decision"
+  [step.schema]
+  ready = { enum = ["yes", "no"] }
+  overview = "text"
+`)
+	root := filepath.Join(dir, "workflow.toml")
+	mustWrite(t, root, `
+[workflow]
+name = "modules"
+version = "1"
+
+[[step]]
+id = "gate"
+type = "agent"
+skill = "skills/gate"
+  [step.schema]
+  enabled = "bool"
+
+[[step]]
+id = "phase"
+type = "subworkflow"
+depends_on = ["gate"]
+when = "gate.enabled"
+module = "module.toml"
+
+[[step]]
+id = "continue"
+type = "command"
+depends_on = ["phase"]
+when = "phase.ready == 'yes'"
+run = "true"
+
+[[step]]
+id = "review"
+type = "review"
+depends_on = ["phase"]
+output_type = { enum = ["approve"] }
+  [[step.review]]
+  source = "@phase.summary"
+  label = "Phase summary"
+`)
+
+	wf, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	continueStep := wf.Steps[wf.index["continue"]]
+	if got, want := continueStep.When, `phase__decision.ready == "yes"`; got != want {
+		t.Fatalf("rewritten condition = %q, want %q", got, want)
+	}
+	decision := wf.Steps[wf.index["phase__decision"]]
+	if got, want := decision.When, "gate.enabled"; got != want || !contains(decision.DependsOn, "gate") {
+		t.Fatalf("module invocation guard was not propagated: when=%q depends_on=%v", got, decision.DependsOn)
+	}
+	review := wf.Steps[wf.index["review"]]
+	if got, want := review.Review[0].Source, "@phase__decision.overview"; got != want {
+		t.Fatalf("rewritten review source = %q, want %q", got, want)
+	}
+}
+
 func TestLoadRejectsInvalidSubworkflowContracts(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "workflow.toml")

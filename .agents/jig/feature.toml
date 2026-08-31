@@ -150,7 +150,7 @@ run        = "go build ./..."
 id          = "unit_test"
 type        = "command"
 depends_on  = ["implement"]
-script      = ".agents/jig/scripts/run-tests.sh"
+run         = "go test ./... > test-report.txt 2>&1"
 output      = "test-report.txt"
 idempotent = true
 

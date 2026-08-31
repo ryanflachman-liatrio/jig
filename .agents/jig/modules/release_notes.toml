@@ -1,0 +1,26 @@
+[module]
+schema_version = 1
+
+[module.inputs.spec_name]
+type = "text"
+
+[module.inputs.validation_report]
+type = "text"
+
+[module.inputs.compliance_report]
+type = "text"
+
+[module.exports.draft]
+ref = "@draft.changelog_entry"
+
+[[step]]
+id = "draft"
+type = "agent"
+skill = "../../skills/sdd-gen-changelog"
+inputs = ["@module.spec_name", "@module.validation_report", "@module.compliance_report"]
+allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit"]
+isolation = "worktree"
+resource_class = "mutation"
+mutation_paths = ["CHANGELOG.md"]
+  [step.schema]
+  changelog_entry = "text"

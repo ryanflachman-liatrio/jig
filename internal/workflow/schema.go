@@ -168,7 +168,7 @@ type ModuleValue struct {
 	Required *bool     `toml:"required"`
 }
 
-// ModuleExport exposes one module-internal typed field or check artifact.
+// ModuleExport exposes a module-internal scalar/typed field or check artifact.
 type ModuleExport struct {
 	Ref      string `toml:"ref"`
 	Artifact string `toml:"artifact"`

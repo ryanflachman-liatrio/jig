@@ -1,0 +1,71 @@
+[module]
+schema_version = 1
+
+[module.inputs.spec_name]
+type = "text"
+
+[module.exports.report]
+ref = "@assemble_report.report_content"
+
+[module.exports.status]
+ref = "@assemble_report.overall_status"
+
+[[step]]
+id = "discover"
+type = "agent"
+skill = "../../skills/sdd-discover-artifacts"
+inputs = ["@module.spec_name"]
+allowed_tools = ["Read", "Grep", "Glob", "Bash"]
+isolation = "none"
+  [step.schema]
+  spec_path = "text"
+  task_path = "text"
+  requirements = { list = "text" }
+  changed_files = { list = "text" }
+
+[[step]]
+id = "coverage_matrix"
+type = "agent"
+depends_on = ["discover"]
+skill = "../../skills/sdd-build-coverage-matrix"
+inputs = ["@discover.spec_path", "@discover.task_path", "@discover.requirements"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation = "none"
+  [step.schema]
+  findings = "text"
+
+[[step]]
+id = "repo_compliance"
+type = "agent"
+depends_on = ["discover"]
+skill = "../../skills/sdd-check-repo-compliance"
+inputs = ["@discover.spec_path", "@discover.task_path", "@discover.changed_files"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation = "none"
+  [step.schema]
+  findings = "text"
+
+[[step]]
+id = "proofs"
+type = "agent"
+depends_on = ["discover"]
+skill = "../../skills/sdd-check-credentials"
+inputs = ["@discover.spec_path", "@discover.task_path"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation = "none"
+  [step.schema]
+  findings = "text"
+
+[[step]]
+id = "assemble_report"
+type = "agent"
+depends_on = ["discover", "coverage_matrix", "repo_compliance", "proofs"]
+skill = "../../skills/sdd-assemble-report"
+inputs = ["@discover.spec_path", "@discover.task_path", "@coverage_matrix.findings", "@repo_compliance.findings", "@proofs.findings"]
+allowed_tools = ["Read", "Write"]
+isolation = "worktree"
+resource_class = "mutation"
+mutation_paths = ["docs/specs/**"]
+  [step.schema]
+  report_content = "text"
+  overall_status = { enum = ["pass", "fail"] }

@@ -101,18 +101,53 @@ func (e *moduleExpansion) expand(wf *Workflow, baseDir, sourcePath string, stack
 		if err := validateModuleExports(child); err != nil {
 			return fmt.Errorf("step %q: module %q: %w", raw.ID, raw.Module, err)
 		}
-		inst, err := instantiateModule(child, raw, wf)
+		inst, err := instantiateModule(child, raw, wf, modules)
 		if err != nil {
 			return err
 		}
 		modules[raw.ID] = inst
-		out = append(out, instSteps(child, raw.ID)...)
+		steps, err := instSteps(child, raw)
+		if err != nil {
+			return fmt.Errorf("step %q: %w", raw.ID, err)
+		}
+		out = append(out, steps...)
 	}
 
 	// A module invocation is a public boundary. Its consumer waits for every
 	// internal terminal, while an exported value is rewired to its true producer.
 	for i := range out {
 		st := &out[i]
+		var err error
+		if st.When, err = rewriteModuleCondition(st.When, modules); err != nil {
+			return fmt.Errorf("step %q: %w", st.ID, err)
+		}
+		if st.AppliesWhen, err = rewriteModuleCondition(st.AppliesWhen, modules); err != nil {
+			return fmt.Errorf("step %q: %w", st.ID, err)
+		}
+		if st.BlockOn, err = rewriteModuleCondition(st.BlockOn, modules); err != nil {
+			return fmt.Errorf("step %q: %w", st.ID, err)
+		}
+		if condition, err := ParseCondition(st.When); err == nil {
+			st.DependsOn = uniqueStrings(append(st.DependsOn, condition.Step))
+		}
+		if condition, err := ParseCondition(st.AppliesWhen); err == nil {
+			st.DependsOn = uniqueStrings(append(st.DependsOn, condition.Step))
+		}
+		for j := range st.Routes {
+			if st.Routes[j].When, err = rewriteModuleCondition(st.Routes[j].When, modules); err != nil {
+				return fmt.Errorf("step %q route %d: %w", st.ID, j+1, err)
+			}
+			st.Routes[j].Feedback, err = rewriteModuleReference(st.Routes[j].Feedback, modules)
+			if err != nil {
+				return fmt.Errorf("step %q route %d: %w", st.ID, j+1, err)
+			}
+		}
+		for j := range st.Review {
+			st.Review[j].Source, err = rewriteModuleReference(st.Review[j].Source, modules)
+			if err != nil {
+				return fmt.Errorf("step %q review %d: %w", st.ID, j+1, err)
+			}
+		}
 		var deps []string
 		for _, dep := range st.DependsOn {
 			if mod, ok := modules[dep]; ok {
@@ -145,6 +180,72 @@ func (e *moduleExpansion) expand(wf *Workflow, baseDir, sourcePath string, stack
 	wf.Steps = out
 	wf.applyDefaults()
 	return nil
+}
+
+// rewriteModuleCondition resolves a public module export in a guard to the
+// internal producer that owns the exported value. Conditions have to be
+// rewritten alongside inputs; otherwise a parent could consume an export but
+// not use it to express a phase transition.
+func rewriteModuleCondition(raw string, modules map[string]expandedModule) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	condition, err := ParseCondition(raw)
+	if err != nil {
+		return raw, nil
+	}
+	module, ok := modules[condition.Step]
+	if !ok {
+		return raw, nil
+	}
+	if len(condition.Field) == 0 {
+		return "", fmt.Errorf("module %q conditions must name an export", condition.Step)
+	}
+	export, ok := module.exports[condition.Field[0]]
+	if !ok {
+		return "", fmt.Errorf("module %q has no export %q", condition.Step, condition.Field[0])
+	}
+	if export.Artifact != "" {
+		return "", fmt.Errorf("module export %q is an artifact and cannot be used in a condition", condition.Field[0])
+	}
+	left := export.Ref
+	if len(export.RefField) > 0 {
+		left += "." + strings.Join(export.RefField, ".")
+	}
+	switch condition.Op {
+	case CondTruthy:
+		return left, nil
+	case CondEq, CondNeq:
+		return left + " " + string(condition.Op) + " " + fmt.Sprintf("%q", condition.Value), nil
+	default:
+		return "", fmt.Errorf("unsupported condition operator %q", condition.Op)
+	}
+}
+
+func rewriteModuleReference(raw string, modules map[string]expandedModule) (string, error) {
+	if !strings.HasPrefix(raw, "@") {
+		return raw, nil
+	}
+	step, fields := parseRef(strings.TrimPrefix(raw, "@"))
+	module, ok := modules[step]
+	if !ok {
+		return raw, nil
+	}
+	if len(fields) != 1 {
+		return "", fmt.Errorf("module reference @%s must name one export", step)
+	}
+	export, ok := module.exports[fields[0]]
+	if !ok {
+		return "", fmt.Errorf("module %q has no export %q", step, fields[0])
+	}
+	if export.Artifact != "" {
+		return "@" + export.Ref + "." + export.Artifact, nil
+	}
+	result := "@" + export.Ref
+	if len(export.RefField) > 0 {
+		result += "." + strings.Join(export.RefField, ".")
+	}
+	return result, nil
 }
 
 func (e *moduleExpansion) moduleData(path string) ([]byte, error) {
@@ -183,19 +284,35 @@ func markModuleInputs(wf *Workflow) error {
 	return nil
 }
 
-func instSteps(child *Workflow, parentID string) []Step {
+func instSteps(child *Workflow, parent Step) ([]Step, error) {
 	steps := cloneSteps(child.Steps)
 	internal := make(map[string]bool, len(child.Steps))
 	for _, step := range child.Steps {
 		internal[step.ID] = true
 	}
 	for i := range steps {
-		prefixStep(&steps[i], parentID, internal)
+		isRoot := true
+		for _, dep := range steps[i].DependsOn {
+			if internal[dep] {
+				isRoot = false
+				break
+			}
+		}
+		if isRoot {
+			steps[i].DependsOn = uniqueStrings(append(steps[i].DependsOn, parent.DependsOn...))
+			if parent.When != "" {
+				if steps[i].When != "" {
+					return nil, fmt.Errorf("module root %q already has a when guard; cannot combine it with the invocation guard", steps[i].ID)
+				}
+				steps[i].When = parent.When
+			}
+		}
+		prefixStep(&steps[i], parent.ID, internal)
 	}
-	return steps
+	return steps, nil
 }
 
-func instantiateModule(child *Workflow, parent Step, parentWF *Workflow) (expandedModule, error) {
+func instantiateModule(child *Workflow, parent Step, parentWF *Workflow, siblings map[string]expandedModule) (expandedModule, error) {
 	bindings := make(map[string]Input, len(child.Module.Inputs))
 	for name, spec := range child.Module.Inputs {
 		raw, ok := parent.With[name]
@@ -214,6 +331,15 @@ func instantiateModule(child *Workflow, parent Step, parentWF *Workflow) (expand
 			if !ok || !sameModuleValue(parentInput, spec) {
 				return expandedModule{}, fmt.Errorf("step %q: binding %q: module input %q has a different type", parent.ID, name, binding.moduleInput)
 			}
+		} else if sibling, ok := siblings[binding.Ref]; ok {
+			if len(binding.RefField) != 1 || binding.Artifact != "" {
+				return expandedModule{}, fmt.Errorf("step %q: binding %q must name one export from module %q", parent.ID, name, binding.Ref)
+			}
+			export, ok := sibling.exports[binding.RefField[0]]
+			if !ok {
+				return expandedModule{}, fmt.Errorf("step %q: binding %q references unknown export %q", parent.ID, name, binding.RefField[0])
+			}
+			binding = export
 		} else if err := validateBindingType(parentWF, binding, spec); err != nil {
 			return expandedModule{}, fmt.Errorf("step %q: binding %q: %w", parent.ID, name, err)
 		}
@@ -308,9 +434,6 @@ func validateModuleExports(wf *Workflow) error {
 			continue
 		}
 		if len(in.RefField) == 0 {
-			if producer.OutputType.Kind != OutputText {
-				return fmt.Errorf("module export %q must reference a typed field or text output", name)
-			}
 			continue
 		}
 		if _, ok := fieldForStep(producer, in.RefField); !ok {

@@ -20,7 +20,7 @@ if [ -f go.mod ]; then
       echo "PASS: ${COVERAGE}% meets the ${THRESHOLD}% threshold"
     fi
   else
-    echo "SKIP: no Go coverage profile found — run-tests.sh may need -coverprofile flag"
+    echo "SKIP: no Go coverage profile found — the test quality profile may need -coverprofile"
   fi
 elif [ -f package.json ]; then
   if [ -f coverage/coverage-summary.json ]; then

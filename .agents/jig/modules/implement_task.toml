@@ -1,0 +1,158 @@
+# This module owns one selected-task loop. A redo returns directly to the same
+# implementation step; only a continue asks find_next_task to select again.
+[module]
+schema_version = 1
+
+[module.inputs.spec_name]
+type = "text"
+
+[module.inputs.task_path]
+type = "text"
+
+[module.exports.completion_summary]
+ref = "@complete.completion_report"
+
+[module.exports.progress]
+ref = "@find_next_task.progress"
+
+[module.exports.selected_task]
+ref = "@find_next_task.task_title"
+
+[[step]]
+id = "find_next_task"
+type = "agent"
+skill = "../../skills/sdd-find-next-task"
+inputs = [
+  "@module.spec_name",
+  "@module.task_path",
+  { from = "user", label = "Checkpoint mode (task or batch):", as = "checkpoint_mode", once = true },
+]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation = "none"
+  [step.schema]
+  progress = { enum = ["continue", "done"] }
+  task_title = "text"
+  parent_task_num = "text"
+  completion_summary = "text"
+
+[[step]]
+id = "implement_code"
+type = "agent"
+depends_on = ["find_next_task"]
+when = "find_next_task.progress == 'continue'"
+skill = "../../skills/sdd-implement-code"
+inputs = ["@module.task_path", "@module.spec_name", "@find_next_task.task_title", "@find_next_task.parent_task_num"]
+allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit", "Bash"]
+isolation = "worktree"
+resource_class = "mutation"
+mutation_paths = ["internal/**", "cmd/**", "docs/specs/**", "go.mod", "go.sum"]
+
+[[step]]
+id = "test"
+type = "check"
+depends_on = ["implement_code", "find_next_task"]
+applies_when = "find_next_task.progress == 'continue'"
+isolation = "worktree"
+resource_class = "checks"
+output_type = { enum = ["pass", "fail", "skip", "error"] }
+run = "mkdir -p .jig; if go test -coverprofile=.jig/coverage.out ./...; then outcome=pass; else outcome=fail; fi; printf '{\"schema_version\":1,\"outcome\":\"%s\",\"findings\":[]}' \"$outcome\" > .jig/test-findings.json"
+  [step.findings]
+  schema_version = 1
+  file = ".jig/test-findings.json"
+  required_tools = ["go", "mkdir"]
+  artifacts = { coverage = ".jig/coverage.out" }
+
+[[step.route]]
+when = "test != 'pass'"
+goto = "implement_code"
+max_iterations = 15
+feedback = "@test"
+
+[[step]]
+id = "lint"
+type = "check"
+depends_on = ["implement_code", "find_next_task"]
+applies_when = "find_next_task.progress == 'continue'"
+isolation = "worktree"
+resource_class = "checks"
+output_type = { enum = ["pass", "fail", "skip", "error"] }
+run = "mkdir -p .jig; if test -z \"$(gofmt -l .)\" && go vet ./...; then outcome=pass; else outcome=fail; fi; printf '{\"schema_version\":1,\"outcome\":\"%s\",\"findings\":[]}' \"$outcome\" > .jig/lint-findings.json"
+  [step.findings]
+  schema_version = 1
+  file = ".jig/lint-findings.json"
+  required_tools = ["go", "gofmt", "mkdir"]
+
+[[step.route]]
+when = "lint != 'pass'"
+goto = "implement_code"
+max_iterations = 15
+feedback = "@lint"
+
+[[step]]
+id = "coverage"
+type = "check"
+depends_on = ["test", "find_next_task"]
+inputs = [{ artifact = "@test.coverage", as = "coverage" }]
+applies_when = "find_next_task.progress == 'continue'"
+isolation = "worktree"
+resource_class = "checks"
+output_type = { enum = ["pass", "fail", "skip", "error"] }
+run = "mkdir -p .jig; if go tool cover -func=\"$JIG_INPUT_COVERAGE\" | awk '/^total:/ { sub(/%/, \"\", $3); exit ($3 < 70) }'; then outcome=pass; else outcome=fail; fi; printf '{\"schema_version\":1,\"outcome\":\"%s\",\"findings\":[]}' \"$outcome\" > .jig/coverage-findings.json"
+  [step.findings]
+  schema_version = 1
+  file = ".jig/coverage-findings.json"
+  required_tools = ["go", "awk", "mkdir"]
+
+[[step.route]]
+when = "coverage != 'pass'"
+goto = "implement_code"
+max_iterations = 15
+feedback = "@coverage"
+
+[[step]]
+id = "proof"
+type = "agent"
+depends_on = ["test", "lint", "coverage", "find_next_task"]
+when = "find_next_task.progress == 'continue'"
+skill = "../../skills/sdd-create-proofs"
+inputs = ["@module.task_path", "@module.spec_name", "@find_next_task.parent_task_num", "@find_next_task.task_title", "@test", "@lint", "@coverage"]
+allowed_tools = ["Read", "Write"]
+isolation = "worktree"
+resource_class = "mutation"
+mutation_paths = ["docs/specs/**"]
+  [step.schema]
+  proof_path = "text"
+
+[[step]]
+id = "task_checkpoint"
+type = "review"
+depends_on = ["proof", "find_next_task"]
+when = "find_next_task.progress == 'continue'"
+output_type = { enum = ["continue", "redo"] }
+  [[step.review]]
+  source = "@proof.proof_path"
+  label = "Task proof"
+
+[[step.route]]
+when = "task_checkpoint == 'redo'"
+goto = "implement_code"
+max_iterations = 15
+feedback = "@task_checkpoint"
+
+[[step.route]]
+when = "task_checkpoint == 'continue'"
+goto = "find_next_task"
+max_iterations = 15
+feedback = "@task_checkpoint"
+
+[[step]]
+id = "complete"
+type = "agent"
+depends_on = ["find_next_task", "task_checkpoint"]
+when = "find_next_task.progress == 'done'"
+skill = "../../skills/sdd-find-next-task"
+inputs = ["@find_next_task.completion_summary"]
+allowed_tools = []
+isolation = "none"
+  [step.schema]
+  completion_report = "text"

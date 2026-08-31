@@ -1,0 +1,155 @@
+# SDD specification module. Research fan-out stays read-only; exceptions are
+# explicit review decisions rather than implicit agent prose.
+[module]
+schema_version = 1
+
+[module.exports.spec_name]
+ref = "@context_assess.spec_name"
+
+[module.exports.spec_path]
+ref = "@write_spec.spec_path"
+
+[module.exports.scope_decision]
+ref = "@scope_gate"
+
+[module.exports.architecture_decision]
+ref = "@architecture_gate"
+
+[[step]]
+id = "context_assess"
+type = "agent"
+skill = "../../skills/sdd-context-assess"
+inputs = [
+  { from = "user", label = "Describe the feature to spec:", as = "request", once = true },
+  { from = "user", label = "Spec name (kebab-case):", as = "spec_name", once = true },
+]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation = "none"
+  [step.schema]
+  spec_name = "text"
+  technologies = { list = "text" }
+  repo_standards = { list = "text" }
+
+[[step]]
+id = "research_security"
+type = "agent"
+depends_on = ["context_assess"]
+skill = "../../skills/sdd-research-security"
+inputs = ["@context_assess.summary", "@context_assess.technologies"]
+allowed_tools = ["WebSearch", "WebFetch"]
+isolation = "none"
+  [step.schema]
+  findings = { list = "text" }
+
+[[step]]
+id = "research_api"
+type = "agent"
+depends_on = ["context_assess"]
+skill = "../../skills/sdd-research-api-contracts"
+inputs = ["@context_assess.summary", "@context_assess.technologies"]
+allowed_tools = ["WebSearch", "WebFetch"]
+isolation = "none"
+  [step.schema]
+  findings = { list = "text" }
+
+[[step]]
+id = "research_data"
+type = "agent"
+depends_on = ["context_assess"]
+skill = "../../skills/sdd-research-data-patterns"
+inputs = ["@context_assess.summary", "@context_assess.technologies"]
+allowed_tools = ["WebSearch", "WebFetch"]
+isolation = "none"
+  [step.schema]
+  findings = { list = "text" }
+
+[[step]]
+id = "research_testing"
+type = "agent"
+depends_on = ["context_assess"]
+skill = "../../skills/sdd-research-testing-standards"
+inputs = ["@context_assess.summary", "@context_assess.technologies"]
+allowed_tools = ["WebSearch", "WebFetch"]
+isolation = "none"
+  [step.schema]
+  findings = { list = "text" }
+
+[[step]]
+id = "research_ecosystem"
+type = "agent"
+depends_on = ["context_assess"]
+skill = "../../skills/sdd-research-ecosystem"
+inputs = ["@context_assess.summary", "@context_assess.technologies"]
+allowed_tools = ["WebSearch", "WebFetch"]
+isolation = "none"
+  [step.schema]
+  findings = { list = "text" }
+
+[[step]]
+id = "synthesize_research"
+type = "agent"
+depends_on = ["research_security", "research_api", "research_data", "research_testing", "research_ecosystem"]
+skill = "../../skills/sdd-synthesize-research"
+inputs = ["@research_security.findings", "@research_api.findings", "@research_data.findings", "@research_testing.findings", "@research_ecosystem.findings"]
+allowed_tools = []
+isolation = "none"
+  [step.schema]
+  research_notes = { list = "text" }
+
+[[step]]
+id = "scope_assess"
+type = "agent"
+depends_on = ["context_assess", "synthesize_research"]
+skill = "../../skills/sdd-scope-assess"
+inputs = ["@context_assess.summary", "@synthesize_research.research_notes"]
+allowed_tools = ["Read", "Grep", "Glob"]
+isolation = "none"
+  [step.schema]
+  sizing = { enum = ["too_large", "too_small", "just_right"] }
+  rationale = "text"
+  decomposition = "text"
+
+[[step]]
+id = "scope_gate"
+type = "review"
+depends_on = ["scope_assess"]
+output_type = { enum = ["proceed", "narrow", "generate_epic"] }
+  [[step.review]]
+  source = "@scope_assess.rationale"
+  label = "Scope assessment"
+
+[[step.route]]
+when = "scope_gate == 'narrow'"
+goto = "scope_assess"
+max_iterations = 3
+feedback = "@scope_gate"
+
+[[step]]
+id = "write_spec"
+type = "agent"
+depends_on = ["context_assess", "synthesize_research", "scope_assess", "scope_gate"]
+when = "scope_gate == 'proceed'"
+skill = "../../skills/sdd-write-spec"
+inputs = ["@context_assess.spec_name", "@context_assess.summary", "@synthesize_research.research_notes", "@scope_assess.rationale"]
+allowed_tools = ["Read", "Grep", "Glob", "Write"]
+isolation = "worktree"
+resource_class = "mutation"
+mutation_paths = ["docs/specs/**"]
+  [step.schema]
+  spec_path = "text"
+
+[[step]]
+id = "architecture_gate"
+type = "review"
+depends_on = ["write_spec", "scope_gate"]
+when = "scope_gate == 'proceed'"
+output_type = { enum = ["approve", "revise"] }
+  [[step.review]]
+  source = "@write_spec.summary"
+  label = "Specification and architecture"
+
+[[step.route]]
+when = "architecture_gate == 'revise'"
+goto = "write_spec"
+max_iterations = 3
+feedback = "@architecture_gate"
