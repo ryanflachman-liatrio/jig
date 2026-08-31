@@ -71,6 +71,21 @@ func (v *validator) checkMeta() {
 	if v.wf.Defaults.MaxParallel < 1 {
 		v.errf("[defaults] max_parallel must be >= 1, got %d", v.wf.Defaults.MaxParallel)
 	}
+	if v.wf.Defaults.MaxReadOnly < 0 {
+		v.errf("[defaults] max_read_only must be >= 0, got %d", v.wf.Defaults.MaxReadOnly)
+	}
+	if v.wf.Defaults.MaxMutating < 0 {
+		v.errf("[defaults] max_mutating must be >= 0, got %d", v.wf.Defaults.MaxMutating)
+	}
+	if v.wf.Defaults.MaxCostUSD < 0 {
+		v.errf("[defaults] max_cost_usd must be >= 0, got %g", v.wf.Defaults.MaxCostUSD)
+	}
+	if v.wf.Defaults.MaxSecurityFindings < 0 {
+		v.errf("[defaults] max_security_findings must be >= 0, got %d", v.wf.Defaults.MaxSecurityFindings)
+	}
+	if v.wf.Defaults.MaxNetworkRequests < 0 {
+		v.errf("[defaults] max_network_requests must be >= 0, got %d", v.wf.Defaults.MaxNetworkRequests)
+	}
 }
 
 // checkIDs enforces that every step has a unique, well-formed id, since ids are
@@ -120,6 +135,7 @@ func (v *validator) checkStep(s *Step) {
 	v.checkOutputType(s)
 	v.checkSchema(s)
 	v.checkTuning(s)
+	v.checkExecutionControls(s)
 	v.checkFailure(s)
 	v.checkWhen(s)
 	v.checkValidate(s)
@@ -162,6 +178,9 @@ func (v *validator) checkTuning(s *Step) {
 	if s.MaxBudgetUSD < 0 {
 		v.errf("step %q max_budget_usd must be >= 0", s.ID)
 	}
+	if s.Timeout.Duration < 0 {
+		v.errf("step %q timeout must be greater than zero", s.ID)
+	}
 	if s.Backend != "" && !validBackend(s.Backend) {
 		v.errf("step %q has invalid backend %q (want %s|%s|%s)", s.ID, s.Backend, BackendClaude, BackendCursor, BackendCodex)
 	}
@@ -170,6 +189,64 @@ func (v *validator) checkTuning(s *Step) {
 	}
 	if (s.Backend == BackendCursor || s.Backend == BackendCodex) && s.Transport != TransportACP {
 		v.errf("step %q backend %q requires transport %q", s.ID, s.Backend, TransportACP)
+	}
+}
+
+func (v *validator) checkExecutionControls(s *Step) {
+	if s.Retry != nil {
+		if s.Retry.MaxAttempts < 2 {
+			v.errf("step %q retry.max_attempts must be >= 2", s.ID)
+		}
+		if s.Idempotent == nil || !*s.Idempotent {
+			v.errf("step %q automatic retries require idempotent = true", s.ID)
+		}
+		switch s.Retry.Backoff {
+		case RetryBackoffNone, RetryBackoffFixed, RetryBackoffExponential:
+		default:
+			v.errf("step %q retry.backoff must be none|fixed|exponential", s.ID)
+		}
+		if s.Retry.Backoff != RetryBackoffNone && s.Retry.Initial.Duration <= 0 {
+			v.errf("step %q retry.initial_backoff must be greater than zero when backoff is enabled", s.ID)
+		}
+		if len(s.Retry.RetryOn) == 0 {
+			v.errf("step %q retry.retry_on must declare retryable failure classes", s.ID)
+		}
+		seen := map[string]bool{}
+		for _, class := range s.Retry.RetryOn {
+			switch class {
+			case RetryTimeout, RetryTemporary, RetryExitFailure, RetryAgentError:
+			default:
+				v.errf("step %q retry.retry_on has unknown classification %q", s.ID, class)
+			}
+			if seen[class] {
+				v.errf("step %q retry.retry_on repeats %q", s.ID, class)
+			}
+			seen[class] = true
+		}
+	}
+	seenPaths := map[string]bool{}
+	for _, path := range s.MutationPaths {
+		clean := filepath.Clean(path)
+		if path == "" || filepath.IsAbs(path) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			v.errf("step %q mutation_paths entry %q must be a repository-relative path or glob", s.ID, path)
+		}
+		if seenPaths[path] {
+			v.errf("step %q mutation_paths repeats %q", s.ID, path)
+		}
+		seenPaths[path] = true
+	}
+	if len(s.MutationPaths) > 0 && s.Isolation != IsolationWorktree {
+		v.errf("step %q mutation_paths requires isolation = \"worktree\"", s.ID)
+	}
+	seenSecrets := map[string]bool{}
+	for _, name := range s.Secrets {
+		if !isIdent(name) {
+			v.errf("step %q secret reference %q must be a name, not a value", s.ID, name)
+		}
+		if seenSecrets[name] {
+			v.errf("step %q secrets repeats %q", s.ID, name)
+		}
+		seenSecrets[name] = true
 	}
 }
 

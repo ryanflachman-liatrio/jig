@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -42,6 +43,7 @@ func main() {
 	mux.Register(workflow.StepAgent, runner.NewAgentExecutor(harness.For))
 	mux.Register(workflow.StepReview, runner.NewFakeExecutor(nil, runner.FakeOutcome{}))
 	mgr := engine.NewManager(mux, ".jig")
+	mgr.SetSecretResolver(resolveNamedSecret)
 
 	// Register Tier-2 monitor agents. Look for .md files in the well-known
 	// monitors directory beside the examples; skip silently if absent so the
@@ -57,6 +59,17 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error running program: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// resolveNamedSecret keeps secret values outside workflow TOML. The name is
+// normalized the same way command execution exposes JIG_SECRET_<NAME>.
+func resolveNamedSecret(name string) (string, error) {
+	key := "JIG_SECRET_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return "", fmt.Errorf("%s is not set", key)
+	}
+	return value, nil
 }
 
 // discoverMonitors returns MonitorDef entries for every .md file found in dir.

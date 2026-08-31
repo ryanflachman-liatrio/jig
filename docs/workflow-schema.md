@@ -45,6 +45,11 @@ backend             = "claude"       # agent vendor (claude or cursor today)
 transport           = "sdk"          # sdk | acp (how jig reaches the backend)
 max_parallel        = 4
 resource_limits     = { research = 4, mutation = 1, checks = 2 } # optional per-class caps
+max_read_only       = 6                # optional capacity for isolation = "none"
+max_mutating        = 1                # optional capacity for worktree steps
+max_cost_usd        = 20.0             # run-wide observed-cost ceiling; 0 is unlimited
+max_security_findings = 3              # unique findings allowed before dispatch stops; 0 is unlimited
+max_network_requests = 50              # observed outbound agent-tool calls; 0 is unlimited
 artifacts_dir       = ".jig/artifacts"   # run artifacts live outside the working tree
 inject_context      = true               # engine-assembled step-context preamble on agent steps (default true)
 ```
@@ -85,9 +90,12 @@ Steps are declared with `[[step]]`. Five author-facing types: `agent`,
 | `when`        | string   | Guard expression; step runs only if true. See "Conditionals".    |
 | `output`      | path     | Single output file (content). **Optional.**                     |
 | `output_type` | see below| `"text"` (default) or a scalar verdict. See "Structured outputs". |
-| `on_failure`  | string   | `"abort"` (default), `"retry"`, `"continue"`. See "Failure recovery". |
-| `max_retries` | int      | With `on_failure = "retry"`. Default 1.                          |
+| `on_failure`  | string   | `"abort"` (default), `"continue"`, or legacy `"retry"`; new retry contracts use `[step.retry]`. |
+| `timeout` | duration | Per-attempt deadline such as `"30s"`; zero is unbounded. |
+| `[step.retry]` | table | Automatic retry contract; requires `idempotent = true`. |
 | `resource_class` | string | Optional named concurrency class declared in `resource_limits`.       |
+| `mutation_paths` | [path/glob] | Allowed repository paths for a worktree step; unexpected diffs fail before integration. |
+| `secrets` | [string] | Named externally resolved references; values are never stored in TOML. |
 | `[step.validate]` | table| Deterministic gate. See "Validation".                            |
 | `[[step.route]]` | table | Ordered bounded back-edge. See "Routes".                           |
 
@@ -373,6 +381,68 @@ are schema-enforced rather than observed.) Humans review markdown/diffs, never
 raw JSON.
 
 ---
+
+## Production execution controls
+
+Every automatic retry is an explicit safety contract. `max_attempts` includes
+the initial dispatch; the terminal `on_failure` policy applies only after the
+declared classes are exhausted. The engine never retries a step unless the
+author has declared `idempotent = true`.
+
+```toml
+[[step]]
+id = "fetch_metadata"
+type = "command"
+run = "./scripts/fetch-metadata.sh"
+timeout = "45s"
+idempotent = true
+
+  [step.retry]
+  max_attempts = 3
+  backoff = "exponential"              # none | fixed | exponential
+  initial_backoff = "1s"
+  retry_on = ["timeout", "temporary"] # timeout | temporary | exit_failure | agent_error
+```
+
+`max_parallel` remains the global ceiling. `resource_limits` applies an
+additional named-class ceiling; `max_read_only` and `max_mutating` independently
+limit in-place/read-only and worktree-isolated work. A zero partition limit is
+unbounded, subject to `max_parallel`.
+
+Any worktree diff is checked before it is staged or merged. `mutation_paths`
+uses repository-relative paths, normal globs, or a recursive `dir/**` prefix.
+When declared, its allowlist is fail-closed; workflows that omit the field keep
+the baseline worktree integration policy.
+
+```toml
+[[step]]
+id = "implement"
+type = "agent"
+isolation = "worktree"
+mutation_paths = ["internal/**", "cmd/**", "go.mod", "go.sum"]
+```
+
+Secrets are only names in a workflow and are resolved by the embedding
+application immediately before dispatch. Command and check steps receive named
+values as `JIG_SECRET_<NAME>` environment variables. Values are redacted from
+prompts, transcripts, logs, evidence, findings, and generated output artifacts;
+they are never placed in a workflow or run snapshot.
+
+```toml
+[[step]]
+id = "publish"
+type = "command"
+secrets = ["release_token"]
+run = "./scripts/publish.sh"
+```
+
+The scheduler enforces `max_cost_usd` before each new dispatch using all
+observed attempt spend, `max_security_findings` using unique engine security
+findings, and `max_network_requests` through guarded outbound agent tool calls.
+When a budget is exhausted, pending work fails closed rather than being
+dispatched. Input files are copied into an immutable per-attempt run
+snapshot with SHA-256 digests before a consumer starts; snapshot and evidence
+filenames include generation, iteration, and attempt.
 
 ## Worktrees
 

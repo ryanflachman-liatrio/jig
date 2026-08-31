@@ -1,6 +1,9 @@
 package engine
 
 import (
+	"path"
+	"strings"
+
 	"jig/internal/step"
 	"jig/internal/workflow"
 )
@@ -32,8 +35,49 @@ type postExecHandler func(s *scheduler, m stepDoneMsg, wfStep *workflow.Step) po
 func phCaptureWorktreeDiff(s *scheduler, m stepDoneMsg, _ *workflow.Step) postExecDecision {
 	if path, ok := s.worktrees[m.stepID]; ok {
 		s.diffs[m.stepID] = captureDiff(path, s.wtBaseSHAs[m.stepID])
+		if result := s.states[m.stepID].Result; result != nil {
+			result.ChangedFiles = changedFiles(path, s.wtBaseSHAs[m.stepID])
+		}
 	}
 	return decisionContinue
+}
+
+// phValidateMutationPaths blocks integration before git add/merge when a
+// worktree changed a path outside its declared allowlist. Workflows that omit
+// mutation_paths keep their established integration behavior; declaring it
+// opts into this fail-closed gate.
+func phValidateMutationPaths(s *scheduler, m stepDoneMsg, wfStep *workflow.Step) postExecDecision {
+	if wfStep == nil || wfStep.Isolation != workflow.IsolationWorktree || len(wfStep.MutationPaths) == 0 {
+		return decisionContinue
+	}
+	result := s.states[m.stepID].Result
+	if result == nil || len(result.ChangedFiles) == 0 {
+		return decisionContinue
+	}
+	var unexpected []string
+	for _, changed := range result.ChangedFiles {
+		if !mutationPathAllowed(changed, wfStep.MutationPaths) {
+			unexpected = append(unexpected, changed)
+		}
+	}
+	if len(unexpected) == 0 {
+		return decisionContinue
+	}
+	result.Status = step.StatusFailed
+	result.Err = "unexpected worktree changes outside mutation_paths: " + strings.Join(unexpected, ", ")
+	return decisionFailed
+}
+
+func mutationPathAllowed(changed string, allowed []string) bool {
+	for _, pattern := range allowed {
+		if prefix, ok := strings.CutSuffix(pattern, "/**"); ok && (changed == prefix || strings.HasPrefix(changed, prefix+"/")) {
+			return true
+		}
+		if matched, _ := path.Match(pattern, changed); matched {
+			return true
+		}
+	}
+	return false
 }
 
 // phRunValidateGate runs [step.validate] synchronously when present.

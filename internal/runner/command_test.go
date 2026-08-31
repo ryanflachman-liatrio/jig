@@ -74,6 +74,21 @@ func TestCommandExecutor_Failure(t *testing.T) {
 	}
 }
 
+func TestCommandExecutor_InjectsAndRedactsNamedSecrets(t *testing.T) {
+	dir := t.TempDir()
+	rep := &noopReporter{}
+	result, err := NewCommandExecutor(dir).Execute(context.Background(), engine.StepRequest{
+		Step:    &workflow.Step{ID: "secret", Type: workflow.StepCommand, Run: "printf '%s' \"$JIG_SECRET_RELEASE_TOKEN\""},
+		Secrets: map[string]string{"release_token": "super-secret"},
+	}, rep)
+	if err != nil || result.Status != step.StatusSucceeded {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if got := strings.Join(rep.deltas, ""); strings.Contains(got, "super-secret") || !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("live output = %q, want a redacted value", got)
+	}
+}
+
 func TestCheckExecutor_ReturnsTypedFailureAndEvidence(t *testing.T) {
 	dir := t.TempDir()
 	exec := NewCheckExecutor(dir)

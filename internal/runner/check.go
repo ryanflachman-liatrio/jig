@@ -58,6 +58,7 @@ func (e *CheckExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 	if err != nil {
 		return e.protocolError(req, fmt.Sprintf("read check findings %q: %v", req.Step.Findings.File, err), false), nil
 	}
+	data = []byte(redactSecrets(req, string(data)))
 	doc, err := parseCheckFindings(data)
 	if err != nil {
 		return e.protocolError(req, fmt.Sprintf("invalid check findings %q: %v", req.Step.Findings.File, err), false), nil

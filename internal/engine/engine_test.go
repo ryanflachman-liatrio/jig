@@ -820,6 +820,84 @@ max_retries = 2
 	}
 }
 
+func TestScheduler_DeclaredRetryRetriesOnlyMatchingFailure(t *testing.T) {
+	const toml = `
+[workflow]
+name = "declared-retry"
+version = "1"
+[[step]]
+id = "flaky"
+type = "command"
+run = "false"
+idempotent = true
+  [step.retry]
+  max_attempts = 3
+  backoff = "none"
+  retry_on = ["exit_failure"]
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	exec := &countingExec{
+		inner:     &testExec{outcomes: map[string]testOutcome{"flaky": {fail: true}}},
+		onExecute: func(string) { calls++ },
+	}
+	mgr := NewManager(exec, "")
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collectEventsAborting(t, ch, run, 5*time.Second)
+	if calls != 3 {
+		t.Fatalf("calls = %d, want 3", calls)
+	}
+}
+
+func TestScheduler_TimeoutUsesRetryClassification(t *testing.T) {
+	const toml = `
+[workflow]
+name = "timeout-retry"
+version = "1"
+[[step]]
+id = "slow"
+type = "command"
+run = "sleep"
+timeout = "2ms"
+idempotent = true
+  [step.retry]
+  max_attempts = 2
+  backoff = "none"
+  retry_on = ["timeout"]
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	exec := &countingExec{
+		inner:     &testExec{outcomes: map[string]testOutcome{"slow": {delay: time.Second}}},
+		onExecute: func(string) { calls++ },
+	}
+	mgr := NewManager(exec, "")
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := collectEventsAborting(t, ch, run, 5*time.Second)
+	if calls != 2 {
+		t.Fatalf("calls = %d, want timeout retry to make 2 attempts", calls)
+	}
+	for _, event := range events {
+		if status, ok := event.(StepStatus); ok && status.To == step.StatusFailed && !strings.Contains(status.Err, "timeout") {
+			t.Fatalf("timeout failure = %q, want timeout provenance", status.Err)
+		}
+	}
+}
+
 // failCostExec returns a failing Result carrying a fixed cost/token usage on
 // every call, so a retried step accrues once per attempt.
 type failCostExec struct {

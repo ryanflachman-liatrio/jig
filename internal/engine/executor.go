@@ -41,8 +41,9 @@ type StepRequest struct {
 	TranscriptPath string
 	// Iteration and Attempt tag every transcript entry so loop iterations and
 	// retries (which append to the same file) can be distinguished on read.
-	Iteration int
-	Attempt   int
+	Iteration  int
+	Attempt    int
+	Generation int
 
 	// ResumeSessionID, when non-empty, causes the agent runner to resume the
 	// given session (WithResume + WithContinueConversation) and use Message as
@@ -59,12 +60,20 @@ type StepRequest struct {
 	// non-empty the runner appends a Finding record for every blocked/escalated
 	// tool call. "" disables persistence (persistence-off path).
 	FindingsPath string
+	// Secrets contains externally resolved values keyed by their TOML reference.
+	// It is deliberately runtime-only and is never serialized into snapshots.
+	Secrets map[string]string
+	// NetworkRequest reports one outbound agent tool-call attempt to the engine.
+	// It is nil for non-agent steps and persistence-off test executors.
+	NetworkRequest func()
 }
 
 // ResolvedInput pairs an original workflow.Input with its resolved value.
 type ResolvedInput struct {
-	Ref   workflow.Input
-	Value string // resolved path, or inlined content when Ref.Inline is true
+	Ref          workflow.Input
+	Value        string // resolved path, or inlined content when Ref.Inline is true
+	SnapshotPath string // engine-owned immutable copy when persistence is enabled
+	SHA256       string // digest of the exact snapshotted value
 }
 
 // Reporter carries live signals out of an in-flight execution back to the

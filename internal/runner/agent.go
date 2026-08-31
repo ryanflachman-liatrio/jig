@@ -101,6 +101,9 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 		}
 		guard := req.Guard
 		spec.Permission = func(toolName string, input map[string]any) harness.Decision {
+			if req.NetworkRequest != nil && outboundToolCall(toolName, input) {
+				req.NetworkRequest()
+			}
 			// Findings and the SecurityFinding event are produced by captureStream
 			// when it processes the buffered assistant blocks. The callback only
 			// needs to return the decision so the backend feeds it back to the agent.
@@ -112,7 +115,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 	if previewer, ok := h.(harness.PromptPreviewer); ok {
 		inputPrompt = previewer.PreviewPrompt(spec)
 	}
-	if err := writeAgentInput(req, inputPrompt); err != nil {
+	if err := writeAgentInput(req, redactSecrets(req, inputPrompt)); err != nil {
 		return failResult(fmt.Sprintf("input artifact: %v", err), start), nil
 	}
 
@@ -127,6 +130,20 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 		initialMsg = req.Message
 	}
 	return captureStream(sess.Messages(), req, rep, start, initialMsg)
+}
+
+func outboundToolCall(tool string, input map[string]any) bool {
+	switch tool {
+	case "WebFetch", "WebSearch":
+		return true
+	case "Bash":
+		for _, value := range input {
+			if text, ok := value.(string); ok && (strings.Contains(text, "curl ") || strings.Contains(text, "wget ")) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func writeAgentInput(req engine.StepRequest, prompt string) error {
@@ -228,6 +245,7 @@ func captureStream(
 		if w == nil || len(blocks) == 0 {
 			return
 		}
+		blocks = redactTranscriptBlocks(req, blocks)
 		seq, err := w.Append(transcript.Entry{
 			Iteration: req.Iteration,
 			Attempt:   req.Attempt,
@@ -315,7 +333,7 @@ func captureStream(
 		case harness.EventTextDelta:
 			// Live-typing tail only; the finalized EventText above is
 			// authoritative and is what lands in the transcript.
-			rep.Output(ev.Text)
+			rep.Output(redactSecrets(req, ev.Text))
 		case harness.EventResult:
 			if ev.IsError {
 				appendEntry(transcript.RoleResult, []transcript.Block{{Type: transcript.BlockText, Text: ev.ErrText}})
@@ -342,7 +360,7 @@ func captureStream(
 			// lives in raw_result.md, written by the engine from the agent's text
 			// response below.
 			if ev.Structured != nil {
-				result.Structured = ev.Structured
+				result.Structured = []byte(redactSecrets(req, string(ev.Structured)))
 			}
 
 			// Auto-capture to the canonical step directory whenever persistence
@@ -360,6 +378,7 @@ func captureStream(
 				}
 				if lastAssistantText != "" {
 					rawPath := filepath.Join(stepDir, "raw_result.md")
+					lastAssistantText = redactSecrets(req, lastAssistantText)
 					if err := os.WriteFile(rawPath, []byte(lastAssistantText), 0o644); err == nil {
 						result.OutputPath = rawPath
 						// Also write to the step's declared output path when set.
@@ -372,6 +391,7 @@ func captureStream(
 				} else if md := structuredToMarkdown(result.Structured); md != "" {
 					result.OutputPath = filepath.Join(stepDir, "output.md")
 				}
+				writeAgentAttemptArtifacts(req, result.Structured, lastAssistantText)
 			}
 
 			return result, nil
@@ -394,6 +414,23 @@ func captureStream(
 	return res, nil
 }
 
+func writeAgentAttemptArtifacts(req engine.StepRequest, structured []byte, prose string) {
+	if req.TranscriptPath == "" {
+		return
+	}
+	dir := filepath.Join(filepath.Dir(req.TranscriptPath), "evidence")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	prefix := fmt.Sprintf("generation-%03d-iteration-%03d-attempt-%03d", req.Generation, req.Iteration, req.Attempt)
+	if len(structured) > 0 {
+		_ = os.WriteFile(filepath.Join(dir, prefix+".output.json"), structured, 0o644)
+	}
+	if prose != "" {
+		_ = os.WriteFile(filepath.Join(dir, prefix+".raw_result.md"), []byte(prose), 0o644)
+	}
+}
+
 // appendStreamBlock joins adjacent text-like stream chunks. ACP adapters choose
 // their own chunk sizes; keeping that transport detail out of the transcript
 // gives all harnesses one stable rendering and persistence format.
@@ -406,6 +443,17 @@ func appendStreamBlock(blocks []transcript.Block, next transcript.Block) []trans
 		}
 	}
 	return append(blocks, next)
+}
+
+func redactTranscriptBlocks(req engine.StepRequest, blocks []transcript.Block) []transcript.Block {
+	for i := range blocks {
+		blocks[i].Text = redactSecrets(req, blocks[i].Text)
+		blocks[i].Content = redactSecrets(req, blocks[i].Content)
+		if len(blocks[i].Input) > 0 {
+			blocks[i].Input = []byte(redactSecrets(req, string(blocks[i].Input)))
+		}
+	}
+	return blocks
 }
 
 // guardBlocks scans every tool_use block's input for policy violations when

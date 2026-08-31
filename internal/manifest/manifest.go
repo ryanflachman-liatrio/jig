@@ -26,11 +26,13 @@
 package manifest
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 
 	"jig/internal/datastore"
+	"jig/internal/step"
 )
 
 // Writer appends events to journal.jsonl and materializes per-step result.json.
@@ -56,10 +58,17 @@ func NewWriter(runDir string) (*Writer, error) {
 // step reaches a terminal status.  It is filled by the engine's emit() method,
 // which already knows the current step state.
 type StepTerminal struct {
-	StepID       string
-	Status       string // "succeeded" | "failed" | "skipped"
-	Attempt      int
-	TotalCostUSD *float64
+	StepID            string
+	Status            string // "succeeded" | "failed" | "skipped"
+	Attempt           int
+	TotalCostUSD      *float64
+	Result            *step.Result
+	Backend           string
+	Model             string
+	Transport         string
+	ToolPolicy        []string
+	IntegrationCommit string
+	DiffSHA256        string
 }
 
 // AppendLine writes one pre-encoded JSONL line to journal.jsonl.  If terminal
@@ -88,6 +97,14 @@ func (w *Writer) writeResult(t *StepTerminal) {
 		Status:       t.Status,
 		Attempt:      t.Attempt,
 		TotalCostUSD: t.TotalCostUSD,
+		Result:       t.Result,
+		Provenance: provenanceJSON{
+			Backend: t.Backend, Model: t.Model, Transport: t.Transport,
+			ToolPolicy: t.ToolPolicy, IntegrationCommit: t.IntegrationCommit,
+			DiffSHA256:     t.DiffSHA256,
+			OutputSHA256:   digestPath(resultOutputPath(t.Result)),
+			ArtifactSHA256: digestArtifacts(t.Result),
+		},
 	}
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
@@ -98,10 +115,54 @@ func (w *Writer) writeResult(t *StepTerminal) {
 
 // stepResultJSON is the shape written to steps/<id>/result.json.
 type stepResultJSON struct {
-	StepID       string   `json:"step_id"`
-	Status       string   `json:"status"`
-	Attempt      int      `json:"attempt"`
-	TotalCostUSD *float64 `json:"total_cost_usd,omitempty"`
+	StepID       string         `json:"step_id"`
+	Status       string         `json:"status"`
+	Attempt      int            `json:"attempt"`
+	TotalCostUSD *float64       `json:"total_cost_usd,omitempty"`
+	Result       *step.Result   `json:"result,omitempty"`
+	Provenance   provenanceJSON `json:"provenance"`
+}
+
+type provenanceJSON struct {
+	Backend           string            `json:"backend,omitempty"`
+	Model             string            `json:"model,omitempty"`
+	Transport         string            `json:"transport,omitempty"`
+	ToolPolicy        []string          `json:"tool_policy,omitempty"`
+	IntegrationCommit string            `json:"integration_commit,omitempty"`
+	DiffSHA256        string            `json:"diff_sha256,omitempty"`
+	OutputSHA256      string            `json:"output_sha256,omitempty"`
+	ArtifactSHA256    map[string]string `json:"artifact_sha256,omitempty"`
+}
+
+func resultOutputPath(result *step.Result) string {
+	if result == nil {
+		return ""
+	}
+	return result.OutputPath
+}
+
+func digestPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%x", sha256.Sum256(data))
+}
+
+func digestArtifacts(result *step.Result) map[string]string {
+	if result == nil || len(result.Artifacts) == 0 {
+		return nil
+	}
+	digests := make(map[string]string, len(result.Artifacts))
+	for name, path := range result.Artifacts {
+		if digest := digestPath(path); digest != "" {
+			digests[name] = digest
+		}
+	}
+	return digests
 }
 
 // Close flushes and closes the journal file.  Call once after the final event

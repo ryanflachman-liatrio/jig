@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // StepType is the kind of work a step performs.
@@ -311,6 +312,19 @@ type Defaults struct {
 	// ResourceLimits caps concurrently running steps by resource class. A class
 	// not present here is constrained only by max_parallel.
 	ResourceLimits map[string]int `toml:"resource_limits"`
+	// MaxReadOnly and MaxMutating independently cap the two kinds of work that
+	// otherwise compete under max_parallel. Zero leaves that partition uncapped.
+	MaxReadOnly int `toml:"max_read_only"`
+	MaxMutating int `toml:"max_mutating"`
+	// MaxCostUSD is a workflow-wide ceiling. It is enforced before dispatch and
+	// after each reported spend; zero means no workflow-wide ceiling.
+	MaxCostUSD float64 `toml:"max_cost_usd"`
+	// MaxSecurityFindings stops new work once this many unique security findings
+	// have been observed. Zero means no finding-count budget.
+	MaxSecurityFindings int `toml:"max_security_findings"`
+	// MaxNetworkRequests caps observed outbound agent tool calls for the run.
+	// Zero means no network-call budget.
+	MaxNetworkRequests int `toml:"max_network_requests"`
 
 	// InjectContext is the workflow-wide default for the engine-assembled
 	// "Workflow context" preamble on agent steps. Parsed as *bool so "unset"
@@ -340,9 +354,23 @@ type Step struct {
 	OutputType OutputType    `toml:"output_type"`
 	OnFailure  FailurePolicy `toml:"on_failure"`
 	MaxRetries int           `toml:"max_retries"`
+	// Timeout bounds one execution attempt. A zero value means no step deadline.
+	Timeout Duration `toml:"timeout"`
+	// Retry is the explicit automatic-retry contract. It replaces using
+	// on_failure=retry as a retry configuration; on_failure still decides the
+	// terminal handling once this policy is exhausted.
+	Retry *RetryPolicy `toml:"retry"`
+	// Idempotent must be explicitly true before Retry can be used.
+	Idempotent *bool `toml:"idempotent"`
 	// ResourceClass lets workflows reserve scarce capacity (for example one
 	// mutating worktree while allowing several read-only research steps).
 	ResourceClass string `toml:"resource_class"`
+	// MutationPaths opts a mutating worktree step into a repository-relative
+	// allowlist. The integration gate rejects every other diff.
+	MutationPaths []string `toml:"mutation_paths"`
+	// Secrets names externally resolved secret references. Values never live in
+	// workflow TOML and are passed only to supported executors at dispatch.
+	Secrets []string `toml:"secrets"`
 
 	// Agent-only.
 	Skill     string    `toml:"skill"`
@@ -440,6 +468,43 @@ type Step struct {
 	Routes   []Route      `toml:"route"`
 	Security StepSecurity `toml:"security"`
 }
+
+// Duration is TOML's string duration form (for example "30s" or "5m").
+// Keeping the parsed duration distinct from a plain string makes invalid
+// deadlines fail while loading instead of much later in the scheduler.
+type Duration struct{ time.Duration }
+
+func (d *Duration) UnmarshalTOML(data any) error {
+	s, ok := data.(string)
+	if !ok {
+		return fmt.Errorf("duration must be a string, got %T", data)
+	}
+	parsed, err := time.ParseDuration(s)
+	if err != nil {
+		return err
+	}
+	d.Duration = parsed
+	return nil
+}
+
+// RetryPolicy declares when it is safe to repeat a completed attempt.
+// max_attempts includes the first attempt, so 1 is effectively no retry.
+type RetryPolicy struct {
+	MaxAttempts int      `toml:"max_attempts"`
+	Backoff     string   `toml:"backoff"`
+	Initial     Duration `toml:"initial_backoff"`
+	RetryOn     []string `toml:"retry_on"`
+}
+
+const (
+	RetryBackoffNone        = "none"
+	RetryBackoffFixed       = "fixed"
+	RetryBackoffExponential = "exponential"
+	RetryTimeout            = "timeout"
+	RetryTemporary          = "temporary"
+	RetryExitFailure        = "exit_failure"
+	RetryAgentError         = "agent_error"
+)
 
 // ReviewTarget is one review target row in a review step.
 type ReviewTarget struct {

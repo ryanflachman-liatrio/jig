@@ -1,6 +1,9 @@
 package engine
 
 import (
+	"strings"
+	"time"
+
 	"jig/internal/interaction"
 	"jig/internal/step"
 	"jig/internal/workflow"
@@ -25,6 +28,11 @@ func (m stepDoneMsg) execute(s *scheduler) {
 	s.inFlight--
 	if wfStep := s.stepByID(m.stepID); wfStep != nil && wfStep.ResourceClass != "" {
 		s.classInFlight[wfStep.ResourceClass]--
+	}
+	if wfStep := s.stepByID(m.stepID); wfStep != nil && wfStep.Isolation == workflow.IsolationWorktree {
+		s.mutatingInFlight--
+	} else {
+		s.readOnlyInFlight--
 	}
 	delete(s.pendingQuestions, m.stepID)
 	// Accrue this attempt's cost/tokens once, before any early-return branch
@@ -84,6 +92,15 @@ func (m stepDoneMsg) execute(s *scheduler) {
 		s.states[m.stepID].Result = m.result
 	}
 	wfStep := s.stepByID(m.stepID)
+	if m.timedOut {
+		res := s.states[m.stepID].Result
+		if res == nil {
+			res = &step.Result{}
+			s.states[m.stepID].Result = res
+		}
+		res.Status = step.StatusFailed
+		res.Err = "step timeout exceeded"
+	}
 	if m.err != nil {
 		res := s.states[m.stepID].Result
 		if res == nil {
@@ -96,9 +113,12 @@ func (m stepDoneMsg) execute(s *scheduler) {
 	}
 
 	// Raw execution failure short-circuits the chain.
-	execFailed := m.err != nil || (m.result != nil && m.result.Status == step.StatusFailed)
+	execFailed := m.err != nil || m.timedOut || (m.result != nil && m.result.Status == step.StatusFailed)
 
 	if execFailed {
+		if s.scheduleAutomaticRetry(m.stepID, wfStep, m) {
+			return
+		}
 		s.applyFailurePolicy(m.stepID, wfStep)
 		return
 	}
@@ -185,6 +205,87 @@ func (m stopMsg) execute(s *scheduler)               { s.handleStop(m) }
 func (m resumeMsg) execute(s *scheduler)             { s.handleResume(m) }
 func (m resetMsg) execute(s *scheduler)              { s.handleReset(m) }
 func (m securityFindingMsg) execute(s *scheduler)    { s.handleSecurityFinding(m.sf) }
+func (m retryWakeMsg) execute(s *scheduler)          { delete(s.retryNotBefore, m.stepID) }
+func (m networkRequestMsg) execute(s *scheduler) {
+	s.networkRequests++
+	cap := s.wf.Defaults.MaxNetworkRequests
+	if cap <= 0 || s.networkRequests <= cap {
+		return
+	}
+	if cancel, ok := s.stepCancels[m.stepID]; ok {
+		cancel()
+	}
+}
+
+func (s *scheduler) scheduleAutomaticRetry(stepID string, wfStep *workflow.Step, done stepDoneMsg) bool {
+	if wfStep == nil || wfStep.Retry == nil || !retryMatches(wfStep.Retry, done) {
+		return false
+	}
+	state := s.states[stepID]
+	if state == nil || state.Attempt+1 >= wfStep.Retry.MaxAttempts {
+		return false
+	}
+	state.Attempt++
+	delay := retryDelay(wfStep.Retry, state.Attempt)
+	s.retryNotBefore[stepID] = time.Now().Add(delay)
+	from := state.Status
+	s.transition(stepID, from, step.StatusPending)
+	if delay == 0 {
+		select {
+		case s.inbox <- retryWakeMsg{stepID: stepID}:
+		default:
+		}
+		return true
+	}
+	go func() {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		<-timer.C
+		select {
+		case s.inbox <- retryWakeMsg{stepID: stepID}:
+		default:
+		}
+	}()
+	return true
+}
+
+func retryMatches(policy *workflow.RetryPolicy, done stepDoneMsg) bool {
+	if done.timedOut {
+		return containsRetryClass(policy.RetryOn, workflow.RetryTimeout)
+	}
+	if done.err != nil {
+		return containsRetryClass(policy.RetryOn, workflow.RetryTemporary)
+	}
+	if done.result == nil || done.result.Status != step.StatusFailed {
+		return false
+	}
+	if strings.HasPrefix(done.result.Subtype, "error_") {
+		return containsRetryClass(policy.RetryOn, workflow.RetryAgentError)
+	}
+	return containsRetryClass(policy.RetryOn, workflow.RetryExitFailure)
+}
+
+func containsRetryClass(classes []string, want string) bool {
+	for _, class := range classes {
+		if class == want {
+			return true
+		}
+	}
+	return false
+}
+
+func retryDelay(policy *workflow.RetryPolicy, attempt int) time.Duration {
+	if policy.Backoff == workflow.RetryBackoffNone {
+		return 0
+	}
+	delay := policy.Initial.Duration
+	if policy.Backoff == workflow.RetryBackoffExponential {
+		for i := 1; i < attempt; i++ {
+			delay *= 2
+		}
+	}
+	return delay
+}
 
 func (m agentQuestionRequestMsg) execute(s *scheduler) {
 	state := s.states[m.stepID]

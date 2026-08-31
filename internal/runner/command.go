@@ -62,6 +62,7 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 	// the many edge cases in shell tokenisation.
 	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
 	cmd.Env = append(os.Environ(), commandInputEnv(req.Inputs)...)
+	cmd.Env = append(cmd.Env, commandSecretEnv(req.Secrets)...)
 	// Kill the whole process group (sh plus every child it spawns) on cancel, not
 	// just the shell — otherwise pipeline/background children outlive a Stop and
 	// can hold the output pipe open (see configureProcessGroup).
@@ -107,7 +108,7 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 			if n > 0 {
 				chunk := string(buf[:n])
 				combined.WriteString(chunk)
-				rep.Output(chunk)
+				rep.Output(redactSecrets(req, chunk))
 			}
 			if readErr != nil {
 				return
@@ -126,8 +127,9 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 	// agent step (Phase 6). The live rep.Output tail is ephemeral; this is the
 	// durable record read by the monitor's chat view. Written on both success and
 	// failure so a failed command's output survives.
-	writeCommandTranscript(req, rep, combined.String())
-	evidencePath := writeCheckEvidence(req, combined.String())
+	output := redactSecrets(req, combined.String())
+	writeCommandTranscript(req, rep, output)
+	evidencePath := writeCheckEvidence(req, output)
 
 	if waitErr != nil {
 		return &step.Result{
@@ -142,6 +144,33 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 		OutputPath: evidencePath,
 		Duration:   duration,
 	}, nil
+}
+
+func commandSecretEnv(secrets map[string]string) []string {
+	var env []string
+	for name, value := range secrets {
+		var b strings.Builder
+		b.WriteString("JIG_SECRET_")
+		for _, r := range strings.ToUpper(name) {
+			switch {
+			case r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+				b.WriteRune(r)
+			default:
+				b.WriteByte('_')
+			}
+		}
+		env = append(env, b.String()+"="+value)
+	}
+	return env
+}
+
+func redactSecrets(req engine.StepRequest, text string) string {
+	for _, secret := range req.Secrets {
+		if secret != "" {
+			text = strings.ReplaceAll(text, secret, "[REDACTED]")
+		}
+	}
+	return text
 }
 
 // commandInputEnv exposes only named artifact inputs to shell commands. Their

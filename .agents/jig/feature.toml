@@ -152,8 +152,13 @@ type        = "command"
 depends_on  = ["implement"]
 script      = ".agents/jig/scripts/run-tests.sh"
 output      = "test-report.txt"
-on_failure  = "retry"
-max_retries = 2
+idempotent = true
+
+  [step.retry]
+  max_attempts    = 3
+  backoff         = "fixed"
+  initial_backoff = "1s"
+  retry_on        = ["exit_failure"]
 
   [step.validate]
   command       = "go test ./..."

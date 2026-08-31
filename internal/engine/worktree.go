@@ -5,8 +5,40 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
+
+// changedFiles returns every tracked or untracked path modified by a step
+// worktree relative to its dispatch base. It is intentionally independent of
+// the textual diff used by reviews so allowlist enforcement also sees new files.
+func changedFiles(wtPath, baseSHA string) []string {
+	seen := map[string]bool{}
+	if baseSHA != "" {
+		if out, err := gitCmd(wtPath, "diff", "--name-only", baseSHA, "HEAD"); err == nil {
+			for _, path := range strings.Split(strings.TrimSpace(out), "\n") {
+				if path != "" {
+					seen[path] = true
+				}
+			}
+		}
+	}
+	for _, args := range [][]string{{"diff", "--name-only", "--cached"}, {"diff", "--name-only"}, {"ls-files", "--others", "--exclude-standard"}} {
+		if out, err := gitCmd(wtPath, args...); err == nil {
+			for _, path := range strings.Split(strings.TrimSpace(out), "\n") {
+				if path != "" {
+					seen[path] = true
+				}
+			}
+		}
+	}
+	paths := make([]string, 0, len(seen))
+	for path := range seen {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
+}
 
 // createWorktree creates a git worktree at wtPath on branch branchName, ensuring
 // the parent directory exists first. It returns the HEAD SHA at creation time so

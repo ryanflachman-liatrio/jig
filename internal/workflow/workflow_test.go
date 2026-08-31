@@ -1955,3 +1955,54 @@ func mustWriteSkill(t *testing.T, path, body string) {
 	name := filepath.Base(filepath.Dir(path))
 	mustWrite(t, path, "---\nname: "+name+"\ndescription: Test skill fixture\n---\n"+body+"\n")
 }
+
+func TestProductionExecutionControls(t *testing.T) {
+	valid := `
+[workflow]
+name = "controls"
+version = "1"
+[defaults]
+max_read_only = 2
+max_mutating = 1
+max_cost_usd = 4.5
+max_security_findings = 2
+[[step]]
+id = "publish"
+type = "command"
+run = "true"
+timeout = "30s"
+isolation = "worktree"
+mutation_paths = ["cmd/**", "go.mod"]
+secrets = ["release_token"]
+idempotent = true
+  [step.retry]
+  max_attempts = 3
+  backoff = "exponential"
+  initial_backoff = "1s"
+  retry_on = ["timeout", "temporary"]
+`
+	wf, err := Decode(valid, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := wf.Steps[0]
+	if step.Timeout.Duration.String() != "30s" || step.Retry.MaxAttempts != 3 {
+		t.Fatalf("controls not decoded: %+v", step)
+	}
+
+	for _, tc := range []struct {
+		name, old, new, want string
+	}{
+		{"retry requires idempotency", "idempotent = true", "idempotent = false", "automatic retries require idempotent = true"},
+		{"bad retry class", "\"temporary\"]", "\"unknown\"]", "unknown classification"},
+		{"unsafe mutation path", "\"go.mod\"]", "\"../go.mod\"]", "repository-relative path or glob"},
+		{"secret must be name", "\"release_token\"]", "\"bad secret\"]", "must be a name, not a value"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			broken := strings.Replace(valid, tc.old, tc.new, 1)
+			if _, err := Decode(broken, ""); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}

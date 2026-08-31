@@ -6,6 +6,7 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -44,7 +45,12 @@ type Manager struct {
 	root     string // .jig/ root (used in Phase 2+ for file I/O)
 	subs     []sub  // manager-level fan-out; TUI subscribes once
 	monitors []sentinel.MonitorDef
+	secrets  SecretResolver
 }
+
+// SecretResolver obtains a named secret at dispatch time. Workflow TOML only
+// names references; implementations own where their values come from.
+type SecretResolver func(name string) (string, error)
 
 // NewManager returns a Manager backed by exec. root is the .jig/ directory;
 // pass "" in tests or when file persistence is not yet wired (Phase 1).
@@ -60,6 +66,15 @@ func NewManager(exec Executor, root string) *Manager {
 // out-of-band for every run started by this manager. Call before Start.
 func (m *Manager) SetMonitors(monitors []sentinel.MonitorDef) {
 	m.monitors = monitors
+}
+
+// SetSecretResolver configures external secret resolution for subsequent runs.
+// A step that names secrets fails before dispatch if no resolver is configured
+// or a referenced value cannot be resolved.
+func (m *Manager) SetSecretResolver(resolver SecretResolver) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.secrets = resolver
 }
 
 // Root returns the .jig/ directory configured for this manager, or "" when
@@ -129,6 +144,7 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	// Snapshot subscriber list at start — additions after Start don't join mid-run.
 	subs := make([]sub, len(m.subs))
 	copy(subs, m.subs)
+	secrets := m.secrets
 	m.mu.Unlock()
 
 	// Create the run directory and open a manifest.Writer when root is
@@ -169,6 +185,7 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 		close(run.done)
 	}
 	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir, m.root, repoRoot, onDone)
+	s.secretResolver = secrets
 	go s.run(ctx)
 
 	// Tier-2: start the supervisor out-of-band when monitors are configured and
@@ -456,9 +473,10 @@ func newRunID() string {
 type schedMsg interface{ isSchedMsg() }
 
 type stepDoneMsg struct {
-	stepID string
-	result *step.Result
-	err    error
+	stepID   string
+	result   *step.Result
+	err      error
+	timedOut bool
 }
 
 type reviewSubmissionMsg struct {
@@ -556,6 +574,12 @@ type resetMsg struct {
 	stepID string
 }
 
+// retryWakeMsg wakes the scheduler when a bounded backoff expires. The step
+// remains pending while waiting, but nextReady observes retryNotBefore.
+type retryWakeMsg struct{ stepID string }
+
+type networkRequestMsg struct{ stepID string }
+
 func (stepDoneMsg) isSchedMsg()             {}
 func (reviewSubmissionMsg) isSchedMsg()     {}
 func (userInputMsg) isSchedMsg()            {}
@@ -571,6 +595,8 @@ func (finalMergeMsg) isSchedMsg()           {}
 func (stopMsg) isSchedMsg()                 {}
 func (resumeMsg) isSchedMsg()               {}
 func (resetMsg) isSchedMsg()                {}
+func (retryWakeMsg) isSchedMsg()            {}
+func (networkRequestMsg) isSchedMsg()       {}
 
 // securityFindingMsg delivers a SecurityFinding to the scheduler inbox so the
 // scheduler can escalate critical findings to the recovery gate without
@@ -655,11 +681,17 @@ type scheduler struct {
 	// settled (loopBarrierReady). This makes parallel siblings that all loop to
 	// the same step deterministic — no reset-collides-with-in-flight-worker, no
 	// last-write-wins feedback clobber. Keyed by goto-target step id.
-	pendingLoops  map[string]*loopIntent
-	aborted       bool // true when the run was explicitly aborted (loop cap, etc.)
-	inFlight      int
-	classInFlight map[string]int
-	seq           int
+	pendingLoops     map[string]*loopIntent
+	aborted          bool // true when the run was explicitly aborted (loop cap, etc.)
+	inFlight         int
+	classInFlight    map[string]int
+	readOnlyInFlight int
+	mutatingInFlight int
+	retryNotBefore   map[string]time.Time
+	securityFindings int
+	networkRequests  int
+	secretResolver   SecretResolver
+	seq              int
 
 	// Phase 5: worktree lifecycle.
 	jigRoot    string            // .jig/ root; "" when persistence is disabled
@@ -787,6 +819,7 @@ func newScheduler(
 		rerunMax:            make(map[string]int),
 		pendingLoops:        make(map[string]*loopIntent),
 		classInFlight:       make(map[string]int),
+		retryNotBefore:      make(map[string]time.Time),
 		jigRoot:             jigRoot,
 		repoRoot:            repoRoot,
 		worktrees:           make(map[string]string),
@@ -810,6 +843,7 @@ func newScheduler(
 		stopping:            make(map[string]bool),
 		postExecChain: []postExecHandler{
 			phCaptureWorktreeDiff,
+			phValidateMutationPaths,
 			phRunValidateGate,
 			phCheckBlockOn,
 			phSquashMergeIntegration,
@@ -920,6 +954,14 @@ func (s *scheduler) nextReady(ctx context.Context) (*workflow.Step, bool) {
 		if state.Status != step.StatusPending {
 			continue
 		}
+		if blocked, reason := s.budgetExhausted(); blocked {
+			state.Result = &step.Result{Status: step.StatusFailed, Err: reason}
+			s.transition(st.ID, step.StatusPending, step.StatusFailed)
+			continue
+		}
+		if until := s.retryNotBefore[st.ID]; !until.IsZero() && time.Now().Before(until) {
+			continue
+		}
 		if !s.resourceAvailable(st) {
 			continue
 		}
@@ -980,6 +1022,25 @@ func (s *scheduler) nextReady(ctx context.Context) (*workflow.Step, bool) {
 	return nil, false
 }
 
+func (s *scheduler) budgetExhausted() (bool, string) {
+	if cap := s.wf.Defaults.MaxCostUSD; cap > 0 {
+		var spent float64
+		for _, state := range s.states {
+			spent += state.SpentUSD
+		}
+		if spent >= cap {
+			return true, fmt.Sprintf("workflow cost budget exhausted ($%.2f of $%.2f)", spent, cap)
+		}
+	}
+	if cap := s.wf.Defaults.MaxSecurityFindings; cap > 0 && s.securityFindings >= cap {
+		return true, fmt.Sprintf("workflow security finding budget exhausted (%d of %d)", s.securityFindings, cap)
+	}
+	if cap := s.wf.Defaults.MaxNetworkRequests; cap > 0 && s.networkRequests >= cap {
+		return true, fmt.Sprintf("workflow network request budget exhausted (%d of %d)", s.networkRequests, cap)
+	}
+	return false, ""
+}
+
 // hasUserInputs reports whether st declares any from="user" inputs.
 func hasUserInputs(st *workflow.Step) bool {
 	for _, inp := range st.Inputs {
@@ -1028,6 +1089,13 @@ func (s *scheduler) depsReady(st *workflow.Step) bool {
 }
 
 func (s *scheduler) resourceAvailable(st *workflow.Step) bool {
+	if st.Isolation == workflow.IsolationWorktree {
+		if cap := s.wf.Defaults.MaxMutating; cap > 0 && s.mutatingInFlight >= cap {
+			return false
+		}
+	} else if cap := s.wf.Defaults.MaxReadOnly; cap > 0 && s.readOnlyInFlight >= cap {
+		return false
+	}
 	if st.ResourceClass == "" {
 		return true
 	}
@@ -1283,6 +1351,11 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	from := s.states[st.ID].Status
 	s.transition(st.ID, from, step.StatusRunning)
 	s.inFlight++
+	if st.Isolation == workflow.IsolationWorktree {
+		s.mutatingInFlight++
+	} else {
+		s.readOnlyInFlight++
+	}
 	if st.ResourceClass != "" {
 		s.classInFlight[st.ResourceClass]++
 	}
@@ -1325,8 +1398,44 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 		artifactDir = filepath.Join(s.runDir, "artifacts")
 		transcriptPath = datastore.TranscriptPath(s.runDir, st.ID)
 	}
+	secrets, err := s.resolveSecrets(st)
+	if err != nil {
+		s.inFlight--
+		if st.Isolation == workflow.IsolationWorktree {
+			s.mutatingInFlight--
+		} else {
+			s.readOnlyInFlight--
+		}
+		if st.ResourceClass != "" {
+			s.classInFlight[st.ResourceClass]--
+		}
+		s.states[st.ID].Result = &step.Result{Status: step.StatusFailed, Err: err.Error()}
+		s.applyFailurePolicy(st.ID, st)
+		return
+	}
 	s.resolveAllInputs(st)
+	if err := s.snapshotInputs(st.ID, s.preResolvedInputs[st.ID]); err != nil {
+		s.inFlight--
+		if st.Isolation == workflow.IsolationWorktree {
+			s.mutatingInFlight--
+		} else {
+			s.readOnlyInFlight--
+		}
+		if st.ResourceClass != "" {
+			s.classInFlight[st.ResourceClass]--
+		}
+		s.states[st.ID].Result = &step.Result{Status: step.StatusFailed, Err: err.Error()}
+		s.applyFailurePolicy(st.ID, st)
+		return
+	}
 	req := s.buildRequest(st, runID, worktreePath, artifactDir, transcriptPath)
+	req.Secrets = secrets
+	req.NetworkRequest = func() {
+		select {
+		case s.inbox <- networkRequestMsg{stepID: st.ID}:
+		default:
+		}
+	}
 	delete(s.preResolvedInputs, st.ID)
 	if sess := s.resumeSessions[st.ID]; sess != "" {
 		req.ResumeSessionID = sess
@@ -1344,10 +1453,14 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	// stepDoneMsg is handled (normal completion) — the latter releases the context
 	// resources. Cancelling the run context still cascades to every child.
 	stepCtx, stepCancel := context.WithCancel(ctx)
+	if st.Timeout.Duration > 0 {
+		stepCtx, stepCancel = context.WithTimeout(ctx, st.Timeout.Duration)
+	}
 	s.stepCancels[st.ID] = stepCancel
 
 	go func() {
 		result, err := s.exec.Execute(stepCtx, req, rep)
+		timedOut := stepCtx.Err() == context.DeadlineExceeded
 		// Deliver the result, but never block forever: once the run context is
 		// cancelled the scheduler has stopped draining the inbox, so an
 		// unconditional send would strand this goroutine (the inbox is only
@@ -1356,10 +1469,76 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 		// stepCtx while the run keeps draining — still delivers its stepDoneMsg
 		// and transitions the step to StatusStopped.
 		select {
-		case s.inbox <- stepDoneMsg{stepID: stepID, result: result, err: err}:
+		case s.inbox <- stepDoneMsg{stepID: stepID, result: result, err: err, timedOut: timedOut}:
 		case <-ctx.Done():
 		}
 	}()
+}
+
+type inputSnapshot struct {
+	Label  string `json:"label"`
+	SHA256 string `json:"sha256"`
+	Path   string `json:"path,omitempty"`
+}
+
+func (s *scheduler) snapshotInputs(stepID string, inputs []ResolvedInput) error {
+	if s.runDir == "" {
+		return nil
+	}
+	state := s.states[stepID]
+	dir, err := datastore.StepDir(s.runDir, stepID)
+	if err != nil {
+		return fmt.Errorf("create input snapshot directory: %w", err)
+	}
+	snapshots := make([]inputSnapshot, 0, len(inputs))
+	for i := range inputs {
+		data := []byte(inputs[i].Value)
+		path := ""
+		if !inputs[i].Ref.Inline && inputs[i].Value != "" {
+			if fileData, readErr := os.ReadFile(inputs[i].Value); readErr == nil {
+				data = fileData
+				path = filepath.Join(dir, fmt.Sprintf("input-generation-%03d-iteration-%03d-attempt-%03d-%02d", state.Generation, state.Iteration, state.Attempt, i+1))
+				if err := os.WriteFile(path, data, 0o600); err != nil {
+					return fmt.Errorf("snapshot input %d: %w", i+1, err)
+				}
+				inputs[i].SnapshotPath = path
+				inputs[i].Value = path
+			}
+		}
+		digest := fmt.Sprintf("%x", sha256.Sum256(data))
+		inputs[i].SHA256 = digest
+		snapshots = append(snapshots, inputSnapshot{Label: inputs[i].Ref.String(), SHA256: digest, Path: path})
+	}
+	data, err := json.MarshalIndent(snapshots, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode input snapshots: %w", err)
+	}
+	manifestPath := filepath.Join(dir, fmt.Sprintf("inputs-generation-%03d-iteration-%03d-attempt-%03d.json", state.Generation, state.Iteration, state.Attempt))
+	if err := os.WriteFile(manifestPath, data, 0o600); err != nil {
+		return fmt.Errorf("write input snapshot manifest: %w", err)
+	}
+	return nil
+}
+
+func (s *scheduler) resolveSecrets(st *workflow.Step) (map[string]string, error) {
+	if len(st.Secrets) == 0 {
+		return nil, nil
+	}
+	if s.secretResolver == nil {
+		return nil, fmt.Errorf("step %q requires named secrets but no secret resolver is configured", st.ID)
+	}
+	values := make(map[string]string, len(st.Secrets))
+	for _, name := range st.Secrets {
+		value, err := s.secretResolver(name)
+		if err != nil {
+			return nil, fmt.Errorf("resolve secret %q for step %q: %w", name, st.ID, err)
+		}
+		if value == "" {
+			return nil, fmt.Errorf("resolve secret %q for step %q: empty value", name, st.ID)
+		}
+		values[name] = value
+	}
+	return values, nil
 }
 
 // resolveAllInputs appends ResolvedInput entries for every non-user input
@@ -1481,6 +1660,7 @@ func (s *scheduler) buildRequest(
 		TranscriptPath:  transcriptPath,
 		Iteration:       state.Iteration,
 		Attempt:         state.Attempt,
+		Generation:      state.Generation,
 		Guard:           guard,
 		FindingsPath:    findingsPath,
 	}
@@ -1540,6 +1720,7 @@ func (s *scheduler) handleSecurityFinding(sf SecurityFinding) {
 		return
 	}
 	s.seenEscalations[sf.Fingerprint] = true
+	s.securityFindings++
 
 	if sf.Severity != "critical" {
 		return
@@ -2628,6 +2809,17 @@ func (s *scheduler) emit(e Event) {
 					}
 					if state.Result != nil {
 						term.TotalCostUSD = state.Result.TotalCostUSD
+						term.Result = state.Result
+					}
+					if wfStep := s.stepByID(ss.StepID); wfStep != nil {
+						term.Backend = wfStep.Backend
+						term.Model = wfStep.Model
+						term.Transport = wfStep.Transport
+						term.ToolPolicy = append(append([]string{}, wfStep.AllowedTools...), wfStep.DisallowedTools...)
+					}
+					term.IntegrationCommit = s.stepCommits[ss.StepID]
+					if diff := s.diffs[ss.StepID]; diff != "" {
+						term.DiffSHA256 = fmt.Sprintf("%x", sha256.Sum256([]byte(diff)))
 					}
 				}
 			}
