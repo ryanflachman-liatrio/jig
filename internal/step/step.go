@@ -46,7 +46,7 @@ type State struct {
 	ID        string
 	Status    Status
 	Attempt   int // retry count under on_failure = "retry"
-	Iteration int // loop iteration when re-run via [step.loop]
+	Iteration int // route iteration when re-run via a bounded back-edge
 	// Generation counts manual operator resets (Run.Reset). Unlike Attempt,
 	// which gates the MaxRetries budget, Generation is purely a provenance axis
 	// that makes re-runs legible in the transcript and gates nothing.
@@ -65,14 +65,17 @@ type State struct {
 // Result is what execution produced; serialized as result.json by the manifest
 // writer (Phase 2+).
 type Result struct {
-	Status       Status          `json:"status"`
-	OutputPath   string          `json:"output_path,omitempty"`
-	Structured   json.RawMessage `json:"structured,omitempty"`
-	Verdict      string          `json:"verdict,omitempty"`
-	ChangedFiles []string        `json:"changed_files,omitempty"`
-	Duration     time.Duration   `json:"duration_ms"`
-	Err          string          `json:"error,omitempty"`
-	SessionID    string          `json:"session_id,omitempty"`
+	Status     Status `json:"status"`
+	OutputPath string `json:"output_path,omitempty"`
+	// Artifacts maps a declared export name to its immutable, engine-owned
+	// snapshot path. It is empty when persistence is disabled.
+	Artifacts    map[string]string `json:"artifacts,omitempty"`
+	Structured   json.RawMessage   `json:"structured,omitempty"`
+	Verdict      string            `json:"verdict,omitempty"`
+	ChangedFiles []string          `json:"changed_files,omitempty"`
+	Duration     time.Duration     `json:"duration_ms"`
+	Err          string            `json:"error,omitempty"`
+	SessionID    string            `json:"session_id,omitempty"`
 	// Subtype is the SDK's ResultMessage.Subtype — the closest thing to a
 	// turn-level "why did this end" (e.g. a clean finish vs. hitting max_turns).
 	Subtype string `json:"subtype,omitempty"`

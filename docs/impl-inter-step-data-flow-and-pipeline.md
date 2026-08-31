@@ -358,8 +358,8 @@ case stepDoneMsg:
     default: // decisionContinue — all handlers passed → step succeeded
         curFrom := s.states[m.stepID].Status
         s.transition(m.stepID, curFrom, step.StatusSucceeded)
-        if wfStep != nil && wfStep.Loop != nil {
-            s.fireLoop(m.stepID, wfStep)
+        if wfStep != nil {
+            s.recordRoutes(m.stepID, wfStep, "")
         }
     }
 ```

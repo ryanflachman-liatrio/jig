@@ -39,8 +39,10 @@ func eventKind(e Event) string {
 		return "step_message"
 	case GateResult:
 		return "gate_result"
-	case LoopFired:
-		return "loop_fired"
+	case RouteSelected:
+		return "route_selected"
+	case RouteCapExceeded:
+		return "route_cap_exceeded"
 	case StepsReset:
 		return "steps_reset"
 	case ReviewRequest:
@@ -116,8 +118,12 @@ var decoders = map[string]func([]byte) (Event, error){
 		var e GateResult
 		return e, json.Unmarshal(b, &e)
 	},
-	"loop_fired": func(b []byte) (Event, error) {
-		var e LoopFired
+	"route_selected": func(b []byte) (Event, error) {
+		var e RouteSelected
+		return e, json.Unmarshal(b, &e)
+	},
+	"route_cap_exceeded": func(b []byte) (Event, error) {
+		var e RouteCapExceeded
 		return e, json.Unmarshal(b, &e)
 	},
 	"steps_reset": func(b []byte) (Event, error) {

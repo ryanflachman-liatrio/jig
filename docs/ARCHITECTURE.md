@@ -62,7 +62,7 @@ jig is an application, not a library.
 Responsibility: read a `.toml` file and either return a fully validated
 `*Workflow` or a precise error. If this package returns no error, the graph is
 guaranteed well-formed: unique ids, a real DAG (back-edges only via
-`[step.loop]`), every `@ref` and `.field` path resolves, every guard comparison
+`[[step.route]]`), every `@ref` and `.field` path resolves, every guard comparison
 is legal for the type it tests, and every loop is bounded.
 
 File-by-file:
@@ -79,7 +79,7 @@ File-by-file:
 ### Key design decisions
 
 - **DAG + bounded back-edges, not a state machine.** Forward edges (`depends_on`)
-  form a DAG; the *only* backward edges are `[step.loop]` with a mandatory
+form a DAG; the *only* backward edges are `[[step.route]]` with a mandatory
   `max_iterations`. This is what buys static validation, visualization, and a
   termination guarantee. Preserve this invariant — do not add a construct that
   lets control flow jump arbitrarily.

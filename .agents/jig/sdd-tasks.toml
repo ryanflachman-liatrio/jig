@@ -132,11 +132,11 @@ output_type  = { enum = ["approve", "revise"] }
 source       = "@gen_parent_tasks.task_summary"
 label        = "Parent task summary"
 
-  [step.loop]
-  when           = "parent_tasks_review == 'revise'"
-  goto           = "gen_parent_tasks"
-  max_iterations = 3
-  feedback       = "@parent_tasks_review"
+[[step.route]]
+when           = "parent_tasks_review == 'revise'"
+goto           = "gen_parent_tasks"
+max_iterations = 3
+feedback       = "@parent_tasks_review"
 
 # ─── 4. Generate sub-tasks and relevant-files table ───────────────────────────
 [[step]]
@@ -273,8 +273,8 @@ output_type  = { enum = ["approve", "remediate"] }
 source       = "@synthesize_audit.findings_summary"
 label        = "Audit findings"
 
-  [step.loop]
-  when           = "audit_review == 'remediate'"
-  goto           = "synthesize_audit"
-  max_iterations = 3
-  feedback       = "@audit_review"
+[[step.route]]
+when           = "audit_review == 'remediate'"
+goto           = "synthesize_audit"
+max_iterations = 3
+feedback       = "@audit_review"

@@ -74,7 +74,7 @@ func (m Model) body() string {
 	}
 
 	b.WriteString("  " + shared.Theme.Valid.Render(shared.IconSuccess+" valid") +
-		shared.Theme.Question.Render(fmt.Sprintf("  ·  %d step(s)", len(m.wf.Steps))) + "\n\n")
+		shared.Theme.Question.Render(fmt.Sprintf("  ·  %d step(s)", len(m.wf.PublicSteps()))) + "\n\n")
 	if m.viewMode {
 		b.WriteString(m.chartView())
 	} else {
@@ -98,7 +98,7 @@ const stepTypeBadgeWidth = 8
 // stepsView renders one line per step: an index, the step id, a type badge, and
 // any loop/gate/guard annotations.
 func (m Model) stepsView() string {
-	steps := m.wf.Steps
+	steps := m.wf.PublicSteps()
 	idWidth := len("id")
 	for _, s := range steps {
 		if len(s.ID) > idWidth {
@@ -140,10 +140,10 @@ func stepMarkers(s workflow.Step) []string {
 			out = append(out, s.Backend)
 		}
 	}
-	if s.Loop != nil {
-		m := fmt.Sprintf("↺ loop→%s", s.Loop.Goto)
-		if s.Loop.MaxIterations > 0 {
-			m += fmt.Sprintf(" (max %d)", s.Loop.MaxIterations)
+	for _, route := range s.Routes {
+		m := fmt.Sprintf("↺ route→%s", route.Goto)
+		if route.MaxIterations > 0 {
+			m += fmt.Sprintf(" (max %d)", route.MaxIterations)
 		}
 		out = append(out, m)
 	}

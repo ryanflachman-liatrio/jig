@@ -2,7 +2,7 @@
 # Kitchen-sink example: an end-to-end feature-delivery pipeline.
 #
 # Exercises every construct jig supports today:
-#   - all three step types: agent / command / review
+#   - all four step types: agent / command / check / review
 #   - parallelism (fan-out) and joins (fan-in), derived purely from depends_on
 #   - producer agents with structured output, two ways:
 #       * [step.schema] -> TOML-native schemas
@@ -110,11 +110,11 @@ type        = "review"
 depends_on  = ["plan"]
 output_type = { enum = ["approve", "revise"] }
 
-  [step.loop]
-  when           = "plan_review == 'revise'"
-  goto           = "plan"
-  max_iterations = 3
-  feedback       = "@plan_review"
+[[step.route]]
+when           = "plan_review == 'revise'"
+goto           = "plan"
+max_iterations = 3
+feedback       = "@plan_review"
 
 [[step.review]]
 source = "@plan.summary"
@@ -159,6 +159,46 @@ max_retries = 2
   command       = "go test ./..."
   output_exists = true
 
+# A typed check exports an engine-owned artifact. Its consumer gets the
+# immutable run-evidence path through JIG_INPUT_QUALITY_REPORT, never the
+# producer's worktree path.
+[[step]]
+id            = "quality_snapshot"
+type          = "check"
+depends_on    = ["implement", "plan_review"]
+applies_when  = "plan_review == 'approve'"
+isolation     = "worktree"
+output_type   = { enum = ["pass", "fail", "skip", "error"] }
+run           = "printf 'quality report\n' > quality-report.txt; printf '{\"schema_version\":1,\"outcome\":\"pass\",\"findings\":[]}' > quality-findings.json"
+
+  [step.findings]
+  schema_version = 1
+  file = "quality-findings.json"
+  required_tools = ["sh"]
+  artifacts = { quality_report = "quality-report.txt" }
+
+[[step.route]]
+when           = "quality_snapshot != 'pass'"
+goto           = "implement"
+max_iterations = 2
+feedback       = "@quality_snapshot"
+
+[[step]]
+id         = "consume_quality_report"
+type       = "command"
+depends_on = ["quality_snapshot"]
+inputs     = [{ artifact = "@quality_snapshot.quality_report", as = "quality_report" }]
+run        = "test -f \"$JIG_INPUT_QUALITY_REPORT\""
+
+# Subworkflows expose a small typed interface. The parent binds the check
+# artifact by name; module internals remain unavailable to the rest of the DAG.
+[[step]]
+id         = "quality_summary"
+type       = "subworkflow"
+depends_on = ["quality_snapshot"]
+module     = "modules/quality-summary.toml"
+with       = { quality_report = "@quality_snapshot.quality_report" }
+
 # -----------------------------------------------------------------------------
 # 7. QA — a producer validation agent joining all three checks. Read-only, so no
 #    worktree. Its bool `passed` field drives an automated loop back to
@@ -176,11 +216,11 @@ allowed_tools = ["Read", "Grep", "Glob"]
   passed      = "bool"
   qa_findings = { list = { severity = { enum = ["low", "high"] }, detail = "text" } }
 
-  [step.loop]
-  when           = "qa.passed == 'false'"
-  goto           = "implement"
-  max_iterations = 2
-  feedback       = "@qa"
+[[step.route]]
+when           = "qa.passed == 'false'"
+goto           = "implement"
+max_iterations = 2
+feedback       = "@qa"
 
 # -----------------------------------------------------------------------------
 # 8. Final review — human reviews the diff, but only if QA passed (bare bool

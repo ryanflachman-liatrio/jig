@@ -57,7 +57,7 @@ func (e *coalesceExec) reqsFor(id string) []StepRequest {
 }
 
 // TestScheduler_ParallelLoopsCoalesce proves that two parallel gates that both
-// loop back to the same step (a) trigger exactly ONE rewind — not one per gate —
+// route back to the same step (a) trigger exactly ONE rewind — not one per gate —
 // and (b) feed the union of both gates' feedback into the re-run, not just the
 // fastest sibling's. This is the coalescing barrier + feedback aggregation
 // (options 1 & 2): the rewind waits for the slow sibling and merges outputs.
@@ -82,11 +82,11 @@ depends_on = ["implement"]
 run = "echo a"
 output_type = { enum = ["redo-a", "ok"] }
 
-  [step.loop]
-  when           = "a == 'redo-a'"
-  goto           = "implement"
-  max_iterations = 3
-  feedback       = "@a"
+[[step.route]]
+when           = "a == 'redo-a'"
+goto           = "implement"
+max_iterations = 3
+feedback       = "@a"
 
 [[step]]
 id = "b"
@@ -95,11 +95,11 @@ depends_on = ["implement"]
 run = "echo b"
 output_type = { enum = ["redo-b", "ok"] }
 
-  [step.loop]
-  when           = "b == 'redo-b'"
-  goto           = "implement"
-  max_iterations = 3
-  feedback       = "@b"
+[[step.route]]
+when           = "b == 'redo-b'"
+goto           = "implement"
+max_iterations = 3
+feedback       = "@b"
 `
 	wf, err := workflow.Decode(toml, "")
 	if err != nil {
@@ -136,20 +136,19 @@ output_type = { enum = ["redo-b", "ok"] }
 		t.Errorf("rewind feedback missing gate b's contribution:\n%s", fb)
 	}
 
-	// Exactly one LoopFired per contributing gate for the single rewind (2 total),
-	// all at iteration 1 — no double-rewind to iteration 2.
-	var fires []LoopFired
+	// Exactly one RouteSelected per contributing gate for the single rewind.
+	var fires []RouteSelected
 	for _, e := range events {
-		if lf, ok := e.(LoopFired); ok {
+		if lf, ok := e.(RouteSelected); ok {
 			fires = append(fires, lf)
 		}
 	}
 	if len(fires) != 2 {
-		t.Fatalf("want 2 LoopFired (one per gate, one rewind); got %d: %+v", len(fires), fires)
+		t.Fatalf("want 2 RouteSelected (one per gate, one rewind); got %d: %+v", len(fires), fires)
 	}
 	for _, lf := range fires {
 		if lf.Iteration != 1 {
-			t.Errorf("LoopFired at iteration %d, want 1 (single rewind)", lf.Iteration)
+			t.Errorf("RouteSelected at iteration %d, want 1 (single rewind)", lf.Iteration)
 		}
 	}
 }

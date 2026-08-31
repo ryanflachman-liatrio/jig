@@ -199,7 +199,7 @@ component structs — the package singleton is always available.
 [[step]]          # one node: type = "agent" | "command" | "review"
   [step.schema]   # producer's structured-output contract
   [step.validate] # deterministic gate (exit code / schema / file checks)
-  [step.loop]     # bounded back-edge (guaranteed to terminate)
+  [[step.route]]  # bounded back-edge (guaranteed to terminate)
 ```
 
 Agent backend is chosen in the TOML (`backend` / `transport`), not the

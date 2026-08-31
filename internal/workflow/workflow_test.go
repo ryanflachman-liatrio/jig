@@ -43,11 +43,11 @@ type = "review"
 depends_on = ["fix"]
 output_type = { enum = ["approve", "revise"] }
 
-  [step.loop]
-  when = "approve == 'revise'"
-  goto = "fix"
-  max_iterations = 3
-  feedback = "@approve"
+[[step.route]]
+when = "approve == 'revise'"
+goto = "fix"
+max_iterations = 3
+feedback = "@approve"
 
 [[step.review]]
 source = "diff"
@@ -110,6 +110,194 @@ func TestDecodeValid(t *testing.T) {
 	}
 }
 
+func TestLoadExpandsSubworkflowWithTypedExports(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteSkill(t, filepath.Join(dir, "skills", "collect", "SKILL.md"), "# collect")
+	mustWriteSkill(t, filepath.Join(dir, "modules", "skills", "write", "SKILL.md"), "# write")
+	mustWriteSkill(t, filepath.Join(dir, "skills", "consume", "SKILL.md"), "# consume")
+	modulePath := filepath.Join(dir, "modules", "spec.toml")
+	if err := os.WriteFile(modulePath, []byte(`
+[module]
+schema_version = 1
+
+[module.inputs.request]
+type = "text"
+
+[module.exports.document]
+ref = "@write.document"
+
+[[step]]
+id = "write"
+type = "agent"
+skill = "skills/write"
+inputs = ["@module.request"]
+  [step.schema]
+  document = "text"
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rootPath := filepath.Join(dir, "workflow.toml")
+	if err := os.WriteFile(rootPath, []byte(`
+[workflow]
+name = "modules"
+version = "1"
+
+[[step]]
+id = "collect"
+type = "agent"
+skill = "skills/collect"
+  [step.schema]
+  request = "text"
+
+[[step]]
+id = "spec"
+type = "subworkflow"
+depends_on = ["collect"]
+module = "modules/spec.toml"
+with = { request = "@collect.request" }
+
+[[step]]
+id = "consume"
+type = "agent"
+depends_on = ["spec"]
+skill = "skills/consume"
+inputs = ["@spec.document"]
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	wf, err := Load(rootPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if got := len(wf.PublicSteps()); got != 3 {
+		t.Fatalf("public steps = %d, want 3", got)
+	}
+	if got := len(wf.Steps); got != 3 {
+		t.Fatalf("expanded steps = %d, want 3", got)
+	}
+	write := wf.Steps[wf.index["spec__write"]]
+	if got := write.Inputs[0]; got.Ref != "collect" || strings.Join(got.RefField, ".") != "request" || !contains(write.DependsOn, "collect") {
+		t.Fatalf("expanded module input = %+v depends_on=%v", got, write.DependsOn)
+	}
+	consume := wf.Steps[wf.index["consume"]]
+	if got := consume.Inputs[0]; got.Ref != "spec__write" || strings.Join(got.RefField, ".") != "document" {
+		t.Fatalf("expanded module export = %+v", got)
+	}
+	if !contains(consume.DependsOn, "spec__write") {
+		t.Fatalf("consume dependencies = %v, want module terminal", consume.DependsOn)
+	}
+	if got := wf.ModuleSources(); len(got) != 1 || got[0].Path != modulePath || got[0].SHA256 == "" {
+		t.Fatalf("module sources = %+v", got)
+	}
+}
+
+func TestLoadRejectsInvalidSubworkflowContracts(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "workflow.toml")
+	writeRoot := func(t *testing.T, body string) {
+		t.Helper()
+		mustWrite(t, root, "[workflow]\nname = \"modules\"\nversion = \"1\"\n\n"+body)
+	}
+	writeModule := func(t *testing.T, body string) {
+		t.Helper()
+		mustWrite(t, filepath.Join(dir, "module.toml"), body)
+	}
+
+	tests := []struct {
+		name       string
+		module     string
+		root       string
+		want       string
+		additional func(t *testing.T)
+	}{
+		{
+			name:   "unsupported version",
+			module: "[module]\nschema_version = 2\n[module.exports.result]\nref = \"@run\"\n[[step]]\nid = \"run\"\ntype = \"command\"\nrun = \"true\"\n",
+			root:   "[[step]]\nid = \"part\"\ntype = \"subworkflow\"\nmodule = \"module.toml\"\n",
+			want:   "module.schema_version = 2",
+		},
+		{
+			name:   "missing required input",
+			module: "[module]\nschema_version = 1\n[module.inputs.request]\ntype = \"text\"\n[module.exports.result]\nref = \"@run\"\n[[step]]\nid = \"run\"\ntype = \"command\"\nrun = \"true\"\n",
+			root:   "[[step]]\nid = \"part\"\ntype = \"subworkflow\"\nmodule = \"module.toml\"\n",
+			want:   "module input \"request\" is required",
+		},
+		{
+			name:   "unknown binding",
+			module: "[module]\nschema_version = 1\n[module.exports.result]\nref = \"@run\"\n[[step]]\nid = \"run\"\ntype = \"command\"\nrun = \"true\"\n",
+			root:   "[[step]]\nid = \"part\"\ntype = \"subworkflow\"\nmodule = \"module.toml\"\nwith = { unknown = \"value\" }\n",
+			want:   "unknown module input binding \"unknown\"",
+		},
+		{
+			name:   "illegal export",
+			module: "[module]\nschema_version = 1\n[module.exports.result]\nref = \"@missing.result\"\n[[step]]\nid = \"run\"\ntype = \"command\"\nrun = \"true\"\n",
+			root:   "[[step]]\nid = \"part\"\ntype = \"subworkflow\"\nmodule = \"module.toml\"\n",
+			want:   "references unknown internal step \"missing\"",
+		},
+		{
+			name:   "binding type mismatch",
+			module: "[module]\nschema_version = 1\n[module.inputs.request]\ntype = \"text\"\n[module.exports.result]\nref = \"@run\"\n[[step]]\nid = \"run\"\ntype = \"command\"\nrun = \"true\"\n",
+			root:   "[[step]]\nid = \"collect\"\ntype = \"command\"\noutput_type = \"bool\"\nrun = \"true\"\n\n[[step]]\nid = \"part\"\ntype = \"subworkflow\"\ndepends_on = [\"collect\"]\nmodule = \"module.toml\"\nwith = { request = \"@collect\" }\n",
+			want:   "expects text but @collect is an untyped output",
+		},
+		{
+			name:   "duplicate expanded id",
+			module: "[module]\nschema_version = 1\n[module.exports.result]\nref = \"@run\"\n[[step]]\nid = \"run\"\ntype = \"command\"\nrun = \"true\"\n",
+			root:   "[[step]]\nid = \"part\"\ntype = \"subworkflow\"\nmodule = \"module.toml\"\n\n[[step]]\nid = \"part__run\"\ntype = \"command\"\nrun = \"true\"\n",
+			want:   "duplicate step id \"part__run\"",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			writeModule(t, tt.module)
+			writeRoot(t, tt.root)
+			_, err := Load(root)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Load error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsModuleCycle(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "a.toml"), `
+[module]
+schema_version = 1
+[module.exports.result]
+ref = "@b.result"
+[[step]]
+id = "b"
+type = "subworkflow"
+module = "b.toml"
+`)
+	mustWrite(t, filepath.Join(dir, "b.toml"), `
+[module]
+schema_version = 1
+[module.exports.result]
+ref = "@a.result"
+[[step]]
+id = "a"
+type = "subworkflow"
+module = "a.toml"
+`)
+	root := filepath.Join(dir, "workflow.toml")
+	mustWrite(t, root, `
+[workflow]
+name = "cycle"
+version = "1"
+[[step]]
+id = "entry"
+type = "subworkflow"
+module = "a.toml"
+`)
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "module cycle") {
+		t.Fatalf("Load error = %v, want module cycle", err)
+	}
+}
+
 func TestDecodeCheckRoutesAndResourceLimits(t *testing.T) {
 	const source = `
 [workflow]
@@ -121,11 +309,24 @@ max_parallel = 4
 resource_limits = { checks = 2 }
 
 [[step]]
+id = "ready"
+type = "command"
+output_type = "bool"
+run = "true"
+
+[[step]]
 id = "quality"
 type = "check"
+depends_on = ["ready"]
+applies_when = "ready"
 resource_class = "checks"
 output_type = { enum = ["pass", "fail", "skip", "error"] }
 run = "go test ./..."
+
+  [step.findings]
+  schema_version = 1
+  file = ".jig/quality.findings.json"
+  required_tools = ["go"]
 
 [[step.route]]
 when = "quality == 'fail'"
@@ -151,7 +352,7 @@ max_iterations = 2
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	if got := len(wf.Steps[0].Routes); got != 4 {
+	if got := len(wf.Steps[wf.index["quality"]].Routes); got != 4 {
 		t.Fatalf("routes = %d, want 4", got)
 	}
 }
@@ -170,6 +371,105 @@ run = "true"
 	_, err := Decode(source, "")
 	if err == nil || !strings.Contains(err.Error(), "output_type must include") {
 		t.Fatalf("Decode error = %v, want typed check outcome error", err)
+	}
+}
+
+func TestDecodeRejectsCheckWithoutApplicabilityOrFindingsContract(t *testing.T) {
+	const source = `
+[workflow]
+name = "quality"
+version = "1"
+
+[[step]]
+id = "ready"
+type = "command"
+output_type = "bool"
+run = "true"
+
+[[step]]
+id = "quality"
+type = "check"
+depends_on = ["ready"]
+output_type = { enum = ["pass", "fail", "skip", "error"] }
+run = "true"
+`
+	_, err := Decode(source, "")
+	if err == nil || !strings.Contains(err.Error(), "requires `applies_when`") || !strings.Contains(err.Error(), "requires a [step.findings] interface") {
+		t.Fatalf("Decode error = %v, want applicability and findings contract errors", err)
+	}
+}
+
+func TestDecodeRejectsCheckWithoutAutomaticRemediationRoute(t *testing.T) {
+	const source = `
+[workflow]
+name = "quality"
+version = "1"
+
+[[step]]
+id = "ready"
+type = "command"
+output_type = "bool"
+run = "true"
+
+[[step]]
+id = "quality"
+type = "check"
+depends_on = ["ready"]
+applies_when = "ready"
+output_type = { enum = ["pass", "fail", "skip", "error"] }
+run = "true"
+
+  [step.findings]
+  schema_version = 1
+  file = "quality.json"
+  required_tools = ["sh"]
+`
+	_, err := Decode(source, "")
+	if err == nil || !strings.Contains(err.Error(), "automatic remediation route") {
+		t.Fatalf("Decode error = %v, want automatic remediation route error", err)
+	}
+}
+
+func TestDecodeRejectsUndeclaredCheckArtifactInput(t *testing.T) {
+	const source = `
+[workflow]
+name = "quality"
+version = "1"
+
+[[step]]
+id = "ready"
+type = "command"
+output_type = "bool"
+run = "true"
+
+[[step]]
+id = "quality"
+type = "check"
+depends_on = ["ready"]
+applies_when = "ready"
+output_type = { enum = ["pass", "fail", "skip", "error"] }
+run = "true"
+
+  [step.findings]
+  schema_version = 1
+  file = "quality.json"
+  required_tools = ["sh"]
+
+[[step.route]]
+when = "quality != 'pass'"
+goto = "ready"
+max_iterations = 1
+
+[[step]]
+id = "consumer"
+type = "command"
+depends_on = ["quality"]
+inputs = [{ artifact = "@quality.missing" }]
+run = "true"
+`
+	_, err := Decode(source, "")
+	if err == nil || !strings.Contains(err.Error(), "undeclared check artifact") {
+		t.Fatalf("Decode error = %v, want undeclared check artifact error", err)
 	}
 }
 
@@ -198,6 +498,110 @@ max_iterations = 1
 	_, err := Decode(source, "")
 	if err == nil || !strings.Contains(err.Error(), "not mutually exclusive") {
 		t.Fatalf("Decode error = %v, want route exclusivity error", err)
+	}
+}
+
+func TestDecodeRouteCompletionAndRemediationContracts(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			name: "bool routes exhaust without fallback",
+			src: `
+[workflow]
+name = "routes"
+version = "1"
+[[step]]
+id = "gate"
+type = "command"
+output_type = "bool"
+run = "true"
+[[step.route]]
+when = "gate == 'true'"
+goto = "gate"
+max_iterations = 1
+[[step.route]]
+when = "gate == 'false'"
+goto = "gate"
+max_iterations = 1`,
+		},
+		{
+			name: "fallback unreachable after exhaustive enum",
+			src: `
+[workflow]
+name = "routes"
+version = "1"
+[[step]]
+id = "gate"
+type = "command"
+output_type = { enum = ["pass", "fail"] }
+run = "true"
+[[step.route]]
+when = "gate == 'pass'"
+goto = "gate"
+max_iterations = 1
+[[step.route]]
+when = "gate == 'fail'"
+goto = "gate"
+max_iterations = 1
+[[step.route]]
+fallback = true
+goto = "gate"
+max_iterations = 1`,
+			want: "fallback route is unreachable",
+		},
+		{
+			name: "check cannot route forward to approval",
+			src: `
+[workflow]
+name = "quality"
+version = "1"
+[[step]]
+id = "ready"
+type = "command"
+output_type = "bool"
+run = "true"
+[[step]]
+id = "quality"
+type = "check"
+depends_on = ["ready"]
+applies_when = "ready"
+output_type = { enum = ["pass", "fail", "skip", "error"] }
+run = "true"
+  [step.findings]
+  schema_version = 1
+  file = "findings.json"
+  required_tools = ["sh"]
+[[step.route]]
+when = "quality != 'pass'"
+goto = "approval"
+max_iterations = 1
+[[step]]
+id = "approval"
+type = "review"
+depends_on = ["quality"]
+output_type = { enum = ["continue"] }
+[[step.review]]
+source = "diff"
+label = "Approval"`,
+			want: "upstream remediation/review step",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Decode(tt.src, "")
+			if tt.want == "" {
+				if err != nil {
+					t.Fatalf("Decode: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("Decode error = %v, want %q", err, tt.want)
+			}
+		})
 	}
 }
 
@@ -462,7 +866,7 @@ version = "1"
 id = "a"
 type = "review"
 output_type = { enum = ["ok", "redo"] }
-[step.loop]
+[[step.route]]
 when = "a == 'redo'"
 goto = "a"
 max_iterations = 0

@@ -24,23 +24,68 @@ func Load(path string) (*Workflow, error) {
 	if err != nil {
 		return nil, err
 	}
-	wf, err := Decode(string(data), filepath.Dir(path))
-	if err != nil {
-		return nil, err
-	}
 	abs, absErr := filepath.Abs(path)
-	if absErr == nil {
-		wf.sourcePath = abs
-	} else {
-		wf.sourcePath = path
+	if absErr != nil {
+		abs = path
 	}
-	return wf, nil
+	return decodeWorkflow(string(data), filepath.Dir(abs), abs)
 }
 
 // Decode parses and validates a workflow from TOML text. baseDir is the root
 // for resolving file-existence checks; pass "" to skip them and run structural
 // validation only (useful for tests and editor tooling).
 func Decode(data, baseDir string) (*Workflow, error) {
+	return decodeWorkflow(data, baseDir, "")
+}
+
+func decodeWorkflow(data, baseDir, sourcePath string) (*Workflow, error) {
+	return decodeWorkflowLocked(data, baseDir, sourcePath, nil)
+}
+
+// DecodeLocked rebuilds a persisted workflow from its root source and the
+// module sources captured when the run began. It is deliberately separate from
+// Decode: callers restoring a run must never silently substitute a changed
+// module from the checkout for the version that produced the journal.
+func DecodeLocked(data, baseDir, sourcePath string, sources []ModuleSource) (*Workflow, error) {
+	locked := make(map[string]ModuleSource, len(sources))
+	for _, source := range sources {
+		if source.Path == "" || source.TOML == "" || source.SHA256 == "" {
+			return nil, fmt.Errorf("invalid locked module source")
+		}
+		path, err := filepath.Abs(source.Path)
+		if err != nil {
+			return nil, fmt.Errorf("resolve locked module %q: %w", source.Path, err)
+		}
+		locked[filepath.Clean(path)] = source
+	}
+	return decodeWorkflowLocked(data, baseDir, sourcePath, locked)
+}
+
+func decodeWorkflowLocked(data, baseDir, sourcePath string, locked map[string]ModuleSource) (*Workflow, error) {
+	wf, err := decodePrepared(data, baseDir)
+	if err != nil {
+		return nil, err
+	}
+	if hasSubworkflow(wf) {
+		if err := expandModules(wf, baseDir, sourcePath, locked); err != nil {
+			return nil, err
+		}
+	}
+	if wf.Module != nil && sourcePath == "" {
+		return nil, fmt.Errorf("[module] is only valid in a subworkflow file")
+	}
+	if err := wf.validate(baseDir); err != nil {
+		return nil, err
+	}
+	wf.sourcePath = sourcePath
+	wf.sourceTOML = data
+	return wf, nil
+}
+
+// decodePrepared loads authoring assets and defaults but deliberately defers
+// validation. Module templates contain @module.<input> placeholders that only
+// become ordinary graph edges once a parent has bound them.
+func decodePrepared(data, baseDir string) (*Workflow, error) {
 	var wf Workflow
 	md, err := toml.Decode(data, &wf)
 	if err != nil {
@@ -80,11 +125,16 @@ func Decode(data, baseDir string) (*Workflow, error) {
 	wf.applyProfiles()
 
 	wf.applyDefaults()
-	if err := wf.validate(baseDir); err != nil {
-		return nil, err
-	}
-	wf.sourceTOML = data
 	return &wf, nil
+}
+
+func hasSubworkflow(wf *Workflow) bool {
+	for _, s := range wf.Steps {
+		if s.Type == StepSubworkflow {
+			return true
+		}
+	}
+	return false
 }
 
 // applyDefaults fills in engine defaults and propagates [defaults] down to each

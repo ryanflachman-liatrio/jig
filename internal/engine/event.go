@@ -93,13 +93,27 @@ type GateResult struct {
 	Detail string
 }
 
-// LoopFired is emitted when a [step.loop] back-edge triggers.
-type LoopFired struct {
-	RunID     string
-	StepID    string
-	Goto      string
-	Iteration int
-	Max       int
+// RouteSelected records the guarded route that requested a bounded rewind.
+// RouteIndex is one-based to match the workflow author's TOML declaration.
+type RouteSelected struct {
+	RunID      string
+	StepID     string
+	RouteIndex int
+	When       string
+	Goto       string
+	Iteration  int
+	Max        int
+}
+
+// RouteCapExceeded records the route decision that exhausted its bounded
+// rewind budget before the run is aborted.
+type RouteCapExceeded struct {
+	RunID      string
+	StepID     string
+	RouteIndex int
+	Goto       string
+	Iteration  int
+	Max        int
 }
 
 // ReviewRequest asks the human to pick from Choices for a review step.
@@ -204,7 +218,7 @@ type AgentQuestionResolved struct {
 // the full closure that was invalidated, and the git commit the run branch was
 // rewound to. State reconstruction relies on the journaled StepStatus
 // transitions; StepsReset carries provenance the status stream cannot express
-// and requires no state-changing fold handler (same design as LoopFired).
+// and requires no state-changing fold handler (same design as RouteSelected).
 type StepsReset struct {
 	RunID    string
 	Target   string   // the step the operator chose to reset to
@@ -235,7 +249,8 @@ func (StepOutput) isEvent()                 {}
 func (StepToolCall) isEvent()               {}
 func (StepMessage) isEvent()                {}
 func (GateResult) isEvent()                 {}
-func (LoopFired) isEvent()                  {}
+func (RouteSelected) isEvent()              {}
+func (RouteCapExceeded) isEvent()           {}
 func (ReviewRequest) isEvent()              {}
 func (ReviewSubmitted) isEvent()            {}
 func (InputRequest) isEvent()               {}

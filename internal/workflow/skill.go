@@ -32,6 +32,7 @@ func (wf *Workflow) resolveSkills(baseDir string) error {
 			return fmt.Errorf("agent step %q: %s/SKILL.md is invalid: %w", s.ID, s.Skill, err)
 		}
 		s.agentPrompt = prompt
+		s.SnapshotAgentPrompt = prompt
 	}
 	return nil
 }

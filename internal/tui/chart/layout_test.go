@@ -199,7 +199,7 @@ id = "check"
 type = "review"
 depends_on = ["work"]
 output_type = { enum = ["ok", "redo"] }
-[step.loop]
+[[step.route]]
 when = "check == 'redo'"
 goto = "work"
 max_iterations = 4

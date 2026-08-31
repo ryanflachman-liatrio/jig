@@ -63,6 +63,7 @@ they stay reachable regardless of which git worktree a step runs in:
 .jig/
   runs/<run-id>/
     artifacts/          # step outputs (@stepid resolves to files here)
+    workflow.json       # locked root workflow, expanded module sources, and digests
     steps/<step-id>/
       result.json       # engine-owned metadata (see "Engine-observed metadata")
 ```
@@ -71,15 +72,15 @@ they stay reachable regardless of which git worktree a step runs in:
 
 ## The step model
 
-Steps are declared with `[[step]]`. Four types: `agent`, `command`, `check`,
-and `review`.
+Steps are declared with `[[step]]`. Five author-facing types: `agent`,
+`command`, `check`, `review`, and `subworkflow`.
 
 ### Common fields
 
 | Field         | Type     | Notes                                                            |
 |---------------|----------|------------------------------------------------------------------|
 | `id`          | string   | Required. Unique. Used by `depends_on`, `@id` refs, and `when`.  |
-| `type`        | string   | `"agent"`, `"command"`, or `"review"`.                           |
+| `type`        | string   | `"agent"`, `"command"`, `"check"`, or `"review"`.                |
 | `depends_on`  | [string] | **Always explicit.** Step ids that must finish first.            |
 | `when`        | string   | Guard expression; step runs only if true. See "Conditionals".    |
 | `output`      | path     | Single output file (content). **Optional.**                     |
@@ -88,27 +89,152 @@ and `review`.
 | `max_retries` | int      | With `on_failure = "retry"`. Default 1.                          |
 | `resource_class` | string | Optional named concurrency class declared in `resource_limits`.       |
 | `[step.validate]` | table| Deterministic gate. See "Validation".                            |
-| `[step.loop]` | table    | Bounded loop-back. See "Loops".                                  |
-| `[[step.route]]` | table | Ordered bounded route; preferred for new workflows.                |
+| `[[step.route]]` | table | Ordered bounded back-edge. See "Routes".                           |
+
+### Subworkflow modules
+
+A reusable workflow module is a TOML file with a schema-versioned interface.
+It is not independently runnable: a parent invokes it through a
+`type = "subworkflow"` step and provides every required input explicitly.
+
+```toml
+# modules/spec.toml
+[module]
+schema_version = 1
+
+[module.inputs.request]
+type = "text"
+
+[module.inputs.include_api]
+type = "bool"
+required = false
+
+[module.exports.document]
+ref = "@write_spec.document"
+
+[module.exports.coverage_profile]
+artifact = "@run_tests.coverage_profile"
+
+[[step]]
+id = "write_spec"
+type = "agent"
+skill = "skills/write-spec"
+inputs = ["@module.request"]
+  [step.schema]
+  document = "text"
+```
+
+Module input types are `text`, `number`, `bool`, `enum`, and `artifact`; enum
+inputs declare their complete `enum` set. `@module.name` is only legal inside a
+module. Exports may expose a module-internal typed field with `ref`, or a
+declared check artifact with `artifact`, but never an internal worktree path.
+
+The parent gives the module its public name, source path, and bindings. Parent
+steps can depend on the invocation and consume a named export; they cannot
+reference internal step IDs.
+
+```toml
+[[step]]
+id = "spec"
+type = "subworkflow"
+depends_on = ["collect_request"]
+module = "modules/spec.toml"          # relative to this workflow file
+with = { request = "@collect_request.request" }
+
+[[step]]
+id = "review_spec"
+type = "review"
+depends_on = ["spec"]
+inputs = ["@spec.document"]
+output_type = { enum = ["approve", "revise"] }
+  [[step.review]]
+  source = "@spec.document"
+  label = "Specification"
+```
+
+At load time jig resolves module paths relative to their referring workflow,
+expands execution IDs as `parent__internal`, rewrites dependencies, inputs, and
+route targets, then validates the complete expanded graph before dispatch. The
+TUI retains the compact parent graph. A run snapshot includes the root source,
+every module source, and their SHA-256 digests; resume rebuilds from that locked
+data rather than reading modules from the checkout.
 
 ### Check step
 
 A `check` is a deterministic command with a machine-readable outcome rather
 than an engine failure. It must declare an enum containing `pass`, `fail`,
-`skip`, and `error`; exit zero produces `pass`, a normal non-zero exit produces
-`fail`, and missing tooling produces `error`. A false `applies_when` produces
-`skip` without invoking the command. Every attempt's stdout/stderr is preserved
-under the step's run directory, so looping does not overwrite prior evidence.
+`skip`, and `error`, an `applies_when` guard, and a versioned
+`[step.findings]` interface. A false `applies_when` is the only way a check can
+produce `skip`; otherwise the tool must write its own findings JSON with a
+`pass`, `fail`, or `error` outcome. Process exit status is not a verdict: a
+startup failure, cancellation, unavailable declared tool, unreadable findings,
+or malformed findings becomes `error`. Every attempt's command log and findings
+JSON are separately copied under the step's run directory, so looping does not
+overwrite prior evidence.
+
+Every check must also route `fail` and `error` back to a remediation or review
+step. A single `when = "check_id != 'pass'"` route is the usual form: `skip`
+never reaches route selection because the engine produces it before dispatch.
+
+Findings schema version 1 is an exact JSON object:
+
+```json
+{
+  "schema_version": 1,
+  "outcome": "pass",
+  "findings": [
+    {"id": "unique-check-id", "severity": "info", "message": "details"}
+  ]
+}
+```
+
+`outcome` is `pass`, `fail`, or `error`; `findings` is always an array and each
+entry has a non-empty `id` and `message`, plus severity `info`, `warning`, or
+`error`. The command must declare every external executable it relies on in
+`required_tools`; jig verifies these before dispatch.
+
+`findings.artifacts` optionally names other check outputs that downstream steps
+need. Its values are paths relative to the producer's execution directory. Jig
+copies each declared file into the per-attempt evidence directory before a
+dependent dispatches, then consumers bind it explicitly with
+`{ artifact = "@producer.export", as = "name" }`. Command consumers receive the
+absolute snapshot path as `JIG_INPUT_NAME`; they never receive a producer
+worktree path.
 
 ```toml
 [[step]]
 id             = "unit_tests"
 type           = "check"
 depends_on     = ["implement"]
+applies_when   = "implement.ready"
 resource_class = "checks"
 isolation      = "worktree"
 output_type    = { enum = ["pass", "fail", "skip", "error"] }
-run            = "go test ./..."
+run            = """
+if go test ./...; then outcome=pass; else outcome=fail; fi
+printf '{\"schema_version\":1,\"outcome\":\"%s\",\"findings\":[]}' "$outcome" > .jig/unit-tests.findings.json
+"""
+
+  [step.findings]
+  schema_version = 1
+  file = ".jig/unit-tests.findings.json"
+  required_tools = ["go"]
+  artifacts = { coverage_profile = ".jig/coverage.out" }
+
+[[step.route]]
+when           = "unit_tests != 'pass'"
+goto           = "implement"
+max_iterations = 3
+feedback       = "@unit_tests"
+```
+
+```toml
+[[step]]
+id         = "coverage"
+type       = "check"
+depends_on = ["unit_tests"]
+inputs     = [{ artifact = "@unit_tests.coverage_profile", as = "coverage_profile" }]
+# Its command reads "$JIG_INPUT_COVERAGE_PROFILE".
 ```
 
 ### Agent step
@@ -437,10 +563,10 @@ a load-time error (the block would be inert).
 
 ---
 
-## Loops (bounded back-edges)
+## Routes (bounded back-edges)
 
-A `[step.loop]` re-runs a prior step (and everything between) with a hard cap,
-guaranteeing termination.
+A `[[step.route]]` re-runs an upstream remediation or review step (and
+everything between) with a hard cap, guaranteeing termination.
 
 ```toml
 [[step]]
@@ -452,16 +578,16 @@ source     = "@draft"
 label      = "Draft"
 output_type = { enum = ["approve", "revise"] }
 
-  [step.loop]
-  when           = "review == 'revise'"
-  goto           = "draft"          # target step to re-run
-  max_iterations = 3                # engine aborts the run past this
-  feedback       = "@review"        # becomes an input to the target's next run
+[[step.route]]
+when           = "review == 'revise'"
+goto           = "draft"          # target step to re-run
+max_iterations = 3                # engine aborts the run past this
+feedback       = "@review"        # becomes an input to the target's next run
 ```
 
-New workflows should use ordered routes. Routes are evaluated in declaration
-order; guards must be non-ambiguous and either exhaust the source enum or end
-in `fallback = true`.
+Routes are evaluated in declaration order; guards must be non-ambiguous and
+either exhaust the source enum/bool domain or end in `fallback = true`. Every
+selection and cap exhaustion is recorded as a distinct journal event.
 
 ```toml
 [[step.route]]
@@ -626,11 +752,11 @@ source      = "diff"
 label       = "Code changes"
 output_type = { enum = ["approve", "revise"] }
 
-  [step.loop]
-  when           = "approve == 'revise'"
-  goto           = "fix"
-  max_iterations = 3
-  feedback       = "@approve"
+[[step.route]]
+when           = "approve == 'revise'"
+goto           = "fix"
+max_iterations = 3
+feedback       = "@approve"
 ```
 
 > **Note:** A hand-wired `merge` command step is no longer needed. jig runs each
@@ -643,7 +769,7 @@ output_type = { enum = ["approve", "revise"] }
 ## Execution semantics
 
 1. **Parse & validate:** unique ids; forward edges form a DAG (back-edges only
-   via `[step.loop]`); every `@ref` (and `.field` path) resolves and its target
+   via `[[step.route]]`); every `@ref` (and `.field` path) resolves and its target
    is in `depends_on`; every `skill` dir / schema file exists; every comparison
    value is legal for the type it tests; every `goto` target exists.
 2. **Topological execution.** Ready steps run concurrently up to `max_parallel`.
@@ -653,7 +779,7 @@ output_type = { enum = ["approve", "revise"] }
    under `--json-schema` (from `[step.schema]` / `schema_file`), and its
    schema-valid `structured_output` is saved as the step's JSON artifact.
 4. **After completion**, run `[step.validate]`; on failure apply `on_failure`.
-   Evaluate `[step.loop]`; if it fires and the cap isn't hit, re-run the target.
+   Evaluate routes; if one fires and its cap isn't hit, re-run the target.
 5. **Workflow succeeds** when every reachable terminal step succeeds.
 
 **Stop and reset add no schema surface.** Stopping a running step and resetting
@@ -740,7 +866,7 @@ The chart is a direct, deterministic drawing of the constructs above:
 
 - **Nodes** are steps, boxed and colored by `type` (agent / command / review),
   the same palette the step list uses for its type badges. A `⇢` marks a step
-  with a `[step.validate]` gate; a `↺` marks a step that carries a `[step.loop]`.
+  with a `[step.validate]` gate; a `↺` marks a step that carries a route.
   The gate's check is spelled out next to the box (`⇢ go build`, `⇢ exists`, …).
 - **Layers (top → bottom)** are longest-path ranks over `depends_on`: a step sits
   one row below its deepest dependency, so edges always flow downward. Steps in
@@ -751,7 +877,7 @@ The chart is a direct, deterministic drawing of the constructs above:
   hollow arrowhead (`▽`) in the conditional color, since `when` gates an existing
   dependency rather than adding a new one. The guard is labeled beside the edge
   in compact form (e.g. `review == approve`).
-- **Back-edges** — bounded `[step.loop]` goto targets — are a distinct class
+- **Back-edges** — bounded route targets — are a distinct class
   routed up a dedicated channel on the right (`↺`, `◄`), reflecting that they are
   the only cycles in the graph and are capped by `max_iterations`. The channel is
   captioned with the loop guard and its bound (e.g. `review == revise  ≤3`).
@@ -777,7 +903,7 @@ alignment between ranks is centered, not optimized to reduce edge crossings.
 gates, engine-observed metadata, `review` (human-in-the-loop) steps, scalar
 `output_type` verdicts, schema-enforced producer output (`[step.schema]` /
 `schema_file`) with `stepid.field` refs, forward `when` conditionals, bounded
-`[step.loop]`.
+`[[step.route]]`.
 
 **Deferred:** map/fan-out over a dynamic list (N parallel steps from data),
 arbitrary in-flight agent checkpoint/resume, secrets management,

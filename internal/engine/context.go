@@ -33,17 +33,17 @@ func (s *scheduler) buildStepContext(st *workflow.Step) step.StepContext {
 		ctx.Notes = st.Context.Notes
 	}
 
-	// Run-state framing (loops & re-runs). A rerunSource entry means a loop fired
-	// and re-dispatched this step (the goto target), so we know both the current
-	// iteration and the firing loop's cap and can name why. Iteration is populated
+	// Run-state framing (routes & re-runs). A rerunSource entry means a route
+	// fired and re-dispatched this step (the goto target), so we know both the current
+	// iteration and the firing route's cap and can name why. Iteration is populated
 	// alongside MaxIterations because the clause "iteration N of M" needs both — a
 	// first run (no entry) leaves all three zero, so Render omits the iteration
 	// clause and the State line. Scoped to loop re-runs: a block_on resume
 	// continues the existing SDK conversation and never re-runs buildAgentPrompt.
 	if src, ok := s.rerunSource[st.ID]; ok {
-		if srcStep := s.stepByID(src); srcStep != nil && srcStep.Loop != nil {
+		if srcStep := s.stepByID(src); srcStep != nil {
 			ctx.Iteration = s.states[st.ID].Iteration
-			ctx.MaxIterations = srcStep.Loop.MaxIterations
+			ctx.MaxIterations = s.rerunMax[st.ID]
 			ctx.RerunReason = rerunReason(src, srcStep.Type)
 		}
 	}

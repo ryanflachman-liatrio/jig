@@ -166,11 +166,11 @@ output_type  = { enum = ["continue", "redo"] }
 source       = "@create_proofs.proof_path"
 label        = "Task proof"
 
-  [step.loop]
-  when           = "find_next_task.progress == 'continue'"
-  goto           = "find_next_task"
-  max_iterations = 15
-  feedback       = "@task_checkpoint"
+[[step.route]]
+when           = "find_next_task.progress == 'continue'"
+goto           = "find_next_task"
+max_iterations = 15
+feedback       = "@task_checkpoint"
 
 # ─── 8. Final sign-off ────────────────────────────────────────────────────────
 # Renders the completion summary from the last find_next_task run ('done').
@@ -186,8 +186,8 @@ output_type  = { enum = ["approve", "flag_issues"] }
 source       = "@find_next_task.completion_summary"
 label        = "Completion summary"
 
-  [step.loop]
-  when           = "final_review == 'flag_issues'"
-  goto           = "find_next_task"
-  max_iterations = 3
-  feedback       = "@final_review"
+[[step.route]]
+when           = "final_review == 'flag_issues'"
+goto           = "find_next_task"
+max_iterations = 3
+feedback       = "@final_review"

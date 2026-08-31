@@ -131,7 +131,7 @@ id = "review"
 type = "review"
 depends_on = ["plan"]
 output_type = { enum = ["approve", "revise"] }
-[step.loop]
+[[step.route]]
 when = "review == 'revise'"
 goto = "plan"
 max_iterations = 3
@@ -169,7 +169,7 @@ id = "review"
 type = "review"
 depends_on = ["plan"]
 output_type = { enum = ["approve", "revise_with_detailed_feedback"] }
-[step.loop]
+[[step.route]]
 when = "review == 'revise_with_detailed_feedback'"
 goto = "plan"
 max_iterations = 3

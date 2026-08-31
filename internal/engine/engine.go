@@ -640,15 +640,16 @@ type scheduler struct {
 	writer       *manifest.Writer          // nil when persistence is disabled (root = "")
 	runDir       string                    // .jig/runs/<runID>/; "" when persistence is disabled
 	structured   map[string]map[string]any // cached JSON decode of step Result.Structured
-	stepFeedback map[string]string         // gotoStepID → feedback step ID for loop replay
-	// rerunSource maps a loop's goto target → the firing source step id. When a
-	// coalesced rewind has several contributing loopers it names the first in
+	stepFeedback map[string]string         // gotoStepID → feedback for route replay
+	// rerunSource maps a route's goto target → the firing source step id. When a
+	// coalesced rewind has several contributors it names the first in
 	// declaration order. It lets buildStepContext name why a step is re-running.
 	// In-memory only, never persisted — it mirrors stepFeedback.
 	rerunSource map[string]string
+	rerunMax    map[string]int
 
-	// pendingLoops coalesces loop back-edges that target the same goto step
-	// within one execution wave. A finishing looper records its intent here
+	// pendingLoops coalesces route back-edges that target the same goto step
+	// within one execution wave. A finishing step records its intent here
 	// instead of rewinding immediately; the rewind fires once, with the union of
 	// every contributing looper's feedback, when the whole rewind body has
 	// settled (loopBarrierReady). This makes parallel siblings that all loop to
@@ -783,6 +784,7 @@ func newScheduler(
 		structured:          make(map[string]map[string]any),
 		stepFeedback:        make(map[string]string),
 		rerunSource:         make(map[string]string),
+		rerunMax:            make(map[string]int),
 		pendingLoops:        make(map[string]*loopIntent),
 		classInFlight:       make(map[string]int),
 		jigRoot:             jigRoot,
@@ -922,6 +924,9 @@ func (s *scheduler) nextReady(ctx context.Context) (*workflow.Step, bool) {
 			continue
 		}
 		if !s.depsReady(st) {
+			continue
+		}
+		if s.deferredByAutomaticCheckRoute(st) {
 			continue
 		}
 
@@ -1369,6 +1374,11 @@ func (s *scheduler) resolveAllInputs(st *workflow.Step) {
 		var value string
 
 		switch {
+		case inp.Ref != "" && inp.Artifact != "":
+			if depState := s.states[inp.Ref]; depState != nil && depState.Result != nil {
+				value = depState.Result.Artifacts[inp.Artifact]
+			}
+
 		case inp.Ref != "" && len(inp.RefField) > 0:
 			// @step.field — extract from the dependency's structured output.
 			// Reuse the same decode cache as evalGuard for consistency.
@@ -1703,6 +1713,7 @@ func (s *scheduler) handleReset(m resetMsg) {
 		delete(s.stepMessage, id)
 		delete(s.stepFeedback, id)
 		delete(s.rerunSource, id)
+		delete(s.rerunMax, id)
 		delete(s.recoverCount, id)
 		delete(s.reviewSessions, id)
 		delete(s.stepInputCount, id)
@@ -2167,73 +2178,46 @@ type loopIntent struct {
 // (so buildStepContext can name the reason), the resolved feedback content (""
 // when the loop wires none), and the iteration at which it fired.
 type loopContribution struct {
-	source   string
-	kind     workflow.StepType
-	feedback string
-	iter     int
-	max      int
+	source     string
+	kind       workflow.StepType
+	feedback   string
+	iter       int
+	max        int
+	routeIndex int
+	when       string
+	// automaticCheckRoute stops a completed failing check from dispatching a
+	// downstream approval while its remediation back-edge is waiting to fire.
+	automaticCheckRoute bool
 }
 
-// recordLoopIntent evaluates a finished step's [step.loop] and, if it fires,
-// records its contribution against the goto target instead of rewinding
-// immediately. The actual rewind is deferred to fireReadyLoops once the whole
-// body settles — this is what makes parallel siblings looping to one step
-// deterministic. The cap is still checked here (at the moment the looper fires),
-// so an over-cap loop aborts the run exactly as before.
-func (s *scheduler) recordLoopIntent(stepID string, wfStep *workflow.Step) {
-	s.recordLoopIntentWithFeedback(stepID, wfStep, "")
-}
-
-func (s *scheduler) recordLoopIntentWithFeedback(stepID string, wfStep *workflow.Step, submittedFeedback string) {
-	if wfStep == nil || wfStep.Loop == nil {
-		return
-	}
-	s.recordLoopIntentFor(stepID, wfStep, wfStep.Loop, submittedFeedback)
-}
-
-// recordRoutes chooses the first matching route (or explicit fallback). It
-// deliberately reuses the loop rewind implementation so route back-edges have
-// the same coalescing, transcript iteration, and resume semantics as legacy
-// loops during the migration period.
+// recordRoutes chooses the first matching route (or explicit fallback) and
+// records an engine-owned route event before any rewind state changes.
 func (s *scheduler) recordRoutes(stepID string, wfStep *workflow.Step, submittedFeedback string) {
 	if wfStep == nil {
 		return
 	}
-	if wfStep.Loop != nil {
-		s.recordLoopIntentWithFeedback(stepID, wfStep, submittedFeedback)
-		return
-	}
-	for _, route := range wfStep.Routes {
+	for i, route := range wfStep.Routes {
 		if !route.Fallback {
 			cond, _ := workflow.ParseCondition(route.When)
 			if !s.evalGuard(cond) {
 				continue
 			}
 		}
-		s.recordLoopIntentFor(stepID, wfStep, &workflow.Loop{
-			Goto: route.Goto, MaxIterations: route.MaxIterations, Feedback: route.Feedback,
-		}, submittedFeedback)
+		automaticCheckRoute := wfStep.Type == workflow.StepCheck && s.states[stepID].Result != nil && (s.states[stepID].Result.Verdict == "fail" || s.states[stepID].Result.Verdict == "error")
+		s.recordRouteIntent(stepID, wfStep, route, i+1, submittedFeedback, automaticCheckRoute)
 		return
 	}
 }
 
-func (s *scheduler) recordLoopIntentFor(stepID string, wfStep *workflow.Step, loop *workflow.Loop, submittedFeedback string) {
+func (s *scheduler) recordRouteIntent(stepID string, wfStep *workflow.Step, route workflow.Route, routeIndex int, submittedFeedback string, automaticCheckRoute bool) {
 	state := s.states[stepID]
+	s.emit(RouteSelected{RunID: s.runID, StepID: stepID, RouteIndex: routeIndex, When: route.When, Goto: route.Goto, Iteration: state.Iteration + 1, Max: route.MaxIterations})
 
-	// Evaluate the loop's when guard (validated at load, won't error).
-	if loop.When != "" {
-		cond, _ := workflow.ParseCondition(loop.When)
-		if !s.evalGuard(cond) {
-			return // condition false: loop does not fire
-		}
-	}
-
-	if state.Iteration >= loop.MaxIterations {
-		// Exceeded the cap — abort the run per spec.
+	if state.Iteration >= route.MaxIterations {
+		s.emit(RouteCapExceeded{RunID: s.runID, StepID: stepID, RouteIndex: routeIndex, Goto: route.Goto, Iteration: state.Iteration + 1, Max: route.MaxIterations})
 		s.aborted = true
 		s.emit(RunError{
-			RunID: s.runID,
-			Err:   fmt.Sprintf("step %q exceeded max_iterations %d", stepID, loop.MaxIterations),
+			RunID: s.runID, Err: fmt.Sprintf("step %q route %d exceeded max_iterations %d", stepID, routeIndex, route.MaxIterations),
 		})
 		s.cancel()
 		return
@@ -2243,8 +2227,8 @@ func (s *scheduler) recordLoopIntentFor(stepID string, wfStep *workflow.Step, lo
 	// document review supplies its rendered submission directly so comments are
 	// preserved even when persistence is off and there is no output file to read.
 	var content string
-	if loop.Feedback != "" {
-		feedbackID := strings.TrimPrefix(loop.Feedback, "@")
+	if route.Feedback != "" {
+		feedbackID := strings.TrimPrefix(route.Feedback, "@")
 		if dot := strings.Index(feedbackID, "."); dot >= 0 {
 			feedbackID = feedbackID[:dot]
 		}
@@ -2261,18 +2245,41 @@ func (s *scheduler) recordLoopIntentFor(stepID string, wfStep *workflow.Step, lo
 		}
 	}
 
-	intent := s.pendingLoops[loop.Goto]
+	intent := s.pendingLoops[route.Goto]
 	if intent == nil {
-		intent = &loopIntent{gotoID: loop.Goto}
-		s.pendingLoops[loop.Goto] = intent
+		intent = &loopIntent{gotoID: route.Goto}
+		s.pendingLoops[route.Goto] = intent
 	}
 	intent.contribs = append(intent.contribs, loopContribution{
-		source:   stepID,
-		kind:     wfStep.Type,
-		feedback: content,
-		iter:     state.Iteration,
-		max:      loop.MaxIterations,
+		source:              stepID,
+		kind:                wfStep.Type,
+		feedback:            content,
+		iter:                state.Iteration,
+		max:                 route.MaxIterations,
+		routeIndex:          routeIndex,
+		when:                route.When,
+		automaticCheckRoute: automaticCheckRoute,
 	})
+}
+
+// deferredByAutomaticCheckRoute prevents an evidence failure from racing into
+// a downstream review while the scheduler waits for parallel checks in the
+// same remediation wave to settle. The back-edge then resets its own body;
+// unrelated branches continue normally.
+func (s *scheduler) deferredByAutomaticCheckRoute(candidate *workflow.Step) bool {
+	for _, intent := range s.pendingLoops {
+		for _, contribution := range intent.contribs {
+			if !contribution.automaticCheckRoute || contribution.source == candidate.ID {
+				continue
+			}
+			for _, id := range s.closureOf(contribution.source) {
+				if id == candidate.ID {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // fireReadyLoops rewinds every pending loop whose body has fully settled. It is
@@ -2328,11 +2335,6 @@ func (s *scheduler) bodyUnion(gotoID string) []string {
 	seen := map[string]bool{}
 	for i := range s.wf.Steps {
 		L := &s.wf.Steps[i]
-		if L.Loop != nil && L.Loop.Goto == gotoID {
-			for _, id := range s.loopBody(gotoID, L.ID) {
-				seen[id] = true
-			}
-		}
 		for _, route := range L.Routes {
 			if route.Goto == gotoID {
 				for _, id := range s.loopBody(gotoID, L.ID) {
@@ -2350,9 +2352,8 @@ func (s *scheduler) bodyUnion(gotoID string) []string {
 	return out
 }
 
-// fireCoalescedLoop performs one rewind for an intent: it composes the union of
-// its contributors' feedback, records the reason, emits a LoopFired per
-// contributor, and resets the whole body to pending at the next iteration.
+// fireCoalescedLoop performs one route-driven rewind and resets the affected
+// body at the next iteration.
 func (s *scheduler) fireCoalescedLoop(intent *loopIntent) {
 	// Deterministic order: sort contributors by workflow declaration index.
 	declIndex := func(id string) int {
@@ -2404,17 +2405,7 @@ func (s *scheduler) fireCoalescedLoop(intent *loopIntent) {
 
 	// Name the re-run reason from the first contributor (declaration order).
 	s.rerunSource[intent.gotoID] = intent.contribs[0].source
-
-	// Emit one LoopFired per contributor for journal/observability fidelity.
-	for _, c := range intent.contribs {
-		s.emit(LoopFired{
-			RunID:     s.runID,
-			StepID:    c.source,
-			Goto:      intent.gotoID,
-			Iteration: newIter,
-			Max:       c.max,
-		})
-	}
+	s.rerunMax[intent.gotoID] = intent.contribs[0].max
 
 	// Reset every step in the body to pending with the new iteration count.
 	for _, id := range s.bodyUnion(intent.gotoID) {

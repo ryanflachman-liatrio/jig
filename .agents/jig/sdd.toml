@@ -759,7 +759,23 @@ applies_when = "find_next_task.progress == 'continue'"
 resource_class = "checks"
 isolation = "worktree"
 output_type = { enum = ["pass", "fail", "skip", "error"] }
-run = "go test -coverprofile=.jig/coverage.out ./..."
+run = """
+mkdir -p .jig
+if go test -coverprofile=.jig/coverage.out ./...; then outcome=pass; else outcome=fail; fi
+printf '{\"schema_version\":1,\"outcome\":\"%s\",\"findings\":[]}' "$outcome" > .jig/run-tests.findings.json
+"""
+
+  [step.findings]
+  schema_version = 1
+  file = ".jig/run-tests.findings.json"
+  required_tools = ["go", "mkdir"]
+  artifacts = { coverage_profile = ".jig/coverage.out" }
+
+[[step.route]]
+when           = "run_tests != 'pass'"
+goto           = "implement_code"
+max_iterations = 15
+feedback       = "@run_tests"
 
 # ─── 16b. Run lint and format checks ─────────────────────────────────────────
 # Parallel with run_tests. The when guard prevents this from running on the
@@ -772,7 +788,22 @@ applies_when = "find_next_task.progress == 'continue'"
 resource_class = "checks"
 isolation = "worktree"
 output_type = { enum = ["pass", "fail", "skip", "error"] }
-run = "test -z \"$(gofmt -l .)\" && go vet ./..."
+run = """
+mkdir -p .jig
+if test -z "$(gofmt -l .)" && go vet ./...; then outcome=pass; else outcome=fail; fi
+printf '{\"schema_version\":1,\"outcome\":\"%s\",\"findings\":[]}' "$outcome" > .jig/run-lint.findings.json
+"""
+
+  [step.findings]
+  schema_version = 1
+  file = ".jig/run-lint.findings.json"
+  required_tools = ["go", "gofmt", "mkdir"]
+
+[[step.route]]
+when           = "run_lint != 'pass'"
+goto           = "implement_code"
+max_iterations = 15
+feedback       = "@run_lint"
 
 # ─── 16c. Test coverage gate ─────────────────────────────────────────────────
 # Runs after run_tests completes (reads the coverage profile it writes).
@@ -782,11 +813,27 @@ run = "test -z \"$(gofmt -l .)\" && go vet ./..."
 id         = "check_coverage"
 type       = "check"
 depends_on = ["run_tests", "find_next_task"]
+inputs = [{ artifact = "@run_tests.coverage_profile", as = "coverage_profile" }]
 applies_when = "find_next_task.progress == 'continue'"
 resource_class = "checks"
 isolation = "worktree"
 output_type = { enum = ["pass", "fail", "skip", "error"] }
-run = "go test -coverprofile=.jig/coverage.out ./... && go tool cover -func=.jig/coverage.out | awk '/^total:/ { sub(/%/, \"\", $3); exit ($3 < 70) }'"
+run = """
+mkdir -p .jig
+if go tool cover -func="$JIG_INPUT_COVERAGE_PROFILE" | awk '/^total:/ { sub(/%/, "", $3); exit ($3 < 70) }'; then outcome=pass; else outcome=fail; fi
+printf '{\"schema_version\":1,\"outcome\":\"%s\",\"findings\":[]}' "$outcome" > .jig/check-coverage.findings.json
+"""
+
+  [step.findings]
+  schema_version = 1
+  file = ".jig/check-coverage.findings.json"
+  required_tools = ["go", "awk", "mkdir"]
+
+[[step.route]]
+when           = "check_coverage != 'pass'"
+goto           = "implement_code"
+max_iterations = 15
+feedback       = "@check_coverage"
 
 # ─── 17. Create proof artifact ────────────────────────────────────────────────
 # Runs after tests, lint, and coverage results are all available. Writes the

@@ -215,11 +215,11 @@ label        = "Scope assessment"
 source       = "@scope_assess.decomposition"
 label        = "Proposed decomposition"
 
-  [step.loop]
-  when           = "scope_gate == 'narrow'"
-  goto           = "scope_assess"
-  max_iterations = 3
-  feedback       = "@scope_gate"
+[[step.route]]
+when           = "scope_gate == 'narrow'"
+goto           = "scope_assess"
+max_iterations = 3
+feedback       = "@scope_gate"
 
 # ─── 5a. Generate a terminal epic when requested ─────────────────────────────
 [[step]]
@@ -284,8 +284,8 @@ output_type  = { enum = ["approve", "revise"] }
 source       = "@write_spec.spec_content"
 label        = "Specification"
 
-  [step.loop]
-  when           = "spec_review == 'revise'"
-  goto           = "write_spec"
-  max_iterations = 5
-  feedback       = "@spec_review"
+[[step.route]]
+when           = "spec_review == 'revise'"
+goto           = "write_spec"
+max_iterations = 5
+feedback       = "@spec_review"

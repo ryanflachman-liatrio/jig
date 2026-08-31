@@ -21,7 +21,7 @@ type StepRequest struct {
 	RunID    string
 	Step     *workflow.Step
 	Inputs   []ResolvedInput
-	Feedback string // loop feedback step ID, when re-running via [step.loop]
+	Feedback string // route feedback, when re-running after a bounded back-edge
 	// WorkflowContext is the pre-rendered "Workflow context" preamble, prepended
 	// at the front of the agent's single user turn. It is "" when there is none:
 	// a non-agent step, or an agent step with inject_context off (Unit 4). An

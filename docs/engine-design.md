@@ -24,7 +24,7 @@ run (A), layered with an event-sourced journal as the seam between engine,
 manifest, and TUI (D). Alternatives considered and rejected:
 
 - **A compiled state machine from the .toml** — the validated `*Workflow`
-  *already is* the state machine (`depends_on` edges + `[step.loop]`
+  *already is* the state machine (`depends_on` edges + `[[step.route]]`
   back-edges determine every legal transition). A second representation would
   duplicate the validator's knowledge and drift as the schema grows.
 - **Actor/dataflow (goroutine per step, channels as edges)** — elegant for
@@ -134,7 +134,7 @@ type State struct {
     ID        string
     Status    Status
     Attempt   int // retry count under on_failure = "retry"
-    Iteration int // loop iteration when re-run via [step.loop]
+    Iteration int // route iteration when re-run via a bounded back-edge
     // Generation counts manual operator resets (Run.Reset). Unlike Attempt,
     // which gates the MaxRetries budget, Generation is purely a provenance axis
     // that marks manual re-runs and makes them legible in the transcript.
@@ -173,7 +173,8 @@ type StepOutput    struct{ RunID, StepID string; Delta string }   // live-typing
 type StepMessage   struct{ RunID, StepID string; Seq, Iteration int } // transcript advanced (liveness)
 type StepToolCall  struct{ RunID, StepID, Tool, Detail string }   // observed metadata, live
 type GateResult    struct{ RunID, StepID string; Passed bool; Detail string }
-type LoopFired     struct{ RunID, StepID, Goto string; Iteration, Max int }
+type RouteSelected struct{ RunID, StepID string; RouteIndex int; Goto string; Iteration, Max int }
+type RouteCapExceeded struct{ RunID, StepID string; RouteIndex int; Goto string; Iteration, Max int }
 type ReviewRequest struct{ RunID, StepID string; Render ReviewRender; Choices []string }
 type RunError      struct{ RunID string; Err string } // engine-level, not step-level
 // StepsReset is the journaled audit record for an operator reset. It carries
@@ -284,8 +285,8 @@ The logic lives in three independently table-testable methods:
   failed session, or aborts via `Run.Recover` (see "Failure recovery" in
   workflow-schema.md). Worktree/step-dir setup failures route through the same
   gate. On success,
-  evaluate `[step.loop]`: if `when` holds and `Iteration < max_iterations`,
-  emit `LoopFired`, reset the goto target *and every step on a path between
+  evaluate `[[step.route]]`: if its guard holds and `Iteration < max_iterations`,
+  emit `RouteSelected`, reset the goto target *and every step on a path between
   goto and the looping step* to `pending` with `Iteration+1`, and record the
   `feedback` ref as an extra input for the target's next run. Past the cap →
   abort the run (per spec).
@@ -538,7 +539,7 @@ faithful transcript of what you watched.
 
 ### Phase 3 — control flow and the human
 
-Build: guard evaluation (`when`, skip + skip-cascade) · `[step.loop]` with
+Build: guard evaluation (`when`, skip + skip-cascade) · `[[step.route]]` with
 iteration reset and feedback wiring · review steps: `ReviewRequest` rendering
 (markdown artifact via glamour; diff deferred to Phase 5), verdict picker,
 `Run.Resolve`.

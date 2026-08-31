@@ -61,6 +61,7 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 	// "sh -c" rather than parsing and splitting the command ourselves avoids
 	// the many edge cases in shell tokenisation.
 	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
+	cmd.Env = append(os.Environ(), commandInputEnv(req.Inputs)...)
 	// Kill the whole process group (sh plus every child it spawns) on cancel, not
 	// just the shell — otherwise pipeline/background children outlive a Stop and
 	// can hold the output pipe open (see configureProcessGroup).
@@ -141,6 +142,34 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 		OutputPath: evidencePath,
 		Duration:   duration,
 	}, nil
+}
+
+// commandInputEnv exposes only named artifact inputs to shell commands. Their
+// values are absolute paths beneath the run directory, never producer-worktree
+// paths, so a consumer cannot accidentally depend on another isolated checkout.
+func commandInputEnv(inputs []engine.ResolvedInput) []string {
+	var env []string
+	for _, input := range inputs {
+		if input.Ref.Artifact == "" {
+			continue
+		}
+		name := input.Ref.As
+		if name == "" {
+			name = input.Ref.Artifact
+		}
+		var b strings.Builder
+		b.WriteString("JIG_INPUT_")
+		for _, r := range strings.ToUpper(name) {
+			switch {
+			case r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+				b.WriteRune(r)
+			default:
+				b.WriteByte('_')
+			}
+		}
+		env = append(env, b.String()+"="+input.Value)
+	}
+	return env
 }
 
 // writeCheckEvidence preserves each deterministic check attempt independently,

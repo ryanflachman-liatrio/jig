@@ -20,7 +20,7 @@ import (
 //     longest-path computation and within-rank order is just the Steps index.
 //   - Step.When is validated to reference a step already in depends_on, so it
 //     DECORATES that existing edge rather than adding one (chartEdge.conditional).
-//   - Step.Loop.Goto is a bounded back-edge deliberately excluded from the
+//   - Step.Routes' Goto targets are bounded back-edges deliberately excluded from the
 //     acyclic check; it is emitted as a distinct chartBackEdge, routed upward.
 //   - Step.Validate is a node gate annotation (chartNode.gate); Step.Type picks
 //     the node color from theme.Step.Types at render time.
@@ -81,7 +81,7 @@ type chartLayout struct {
 // no I/O, no globals, no clock — so it is directly table-testable and makes the
 // renderer golden-testable.
 func layoutChart(wf *workflow.Workflow) chartLayout {
-	steps := wf.Steps
+	steps := wf.PublicSteps()
 
 	// The workflow's index map is unexported; build our own id->position map.
 	idIndex := make(map[string]int, len(steps))
@@ -131,8 +131,8 @@ func layoutChart(wf *workflow.Workflow) chartLayout {
 		if s.Validate != nil {
 			n.gateLabel = gateLabel(s.Validate)
 		}
-		if s.Loop != nil {
-			n.loop = &chartLoop{target: s.Loop.Goto, maxIter: s.Loop.MaxIterations}
+		if len(s.Routes) > 0 {
+			n.loop = &chartLoop{target: s.Routes[0].Goto, maxIter: s.Routes[0].MaxIterations}
 		}
 		nodes[i] = n
 		if rank[i] > maxRank {
@@ -173,16 +173,15 @@ func layoutChart(wf *workflow.Workflow) chartLayout {
 		}
 	}
 
-	// Loop back-edges: a distinct class routed upward by the renderer.
+	// Route back-edges: a distinct class routed upward by the renderer.
 	var back []chartBackEdge
 	for i := range steps {
-		if steps[i].Loop == nil {
-			continue
-		}
-		if j, ok := idIndex[steps[i].Loop.Goto]; ok {
-			be := chartBackEdge{from: i, to: j, maxIter: steps[i].Loop.MaxIterations}
-			be.label = loopLabel(steps[i].Loop)
-			back = append(back, be)
+		for _, route := range steps[i].Routes {
+			if j, ok := idIndex[route.Goto]; ok {
+				be := chartBackEdge{from: i, to: j, maxIter: route.MaxIterations}
+				be.label = routeLabel(route)
+				back = append(back, be)
+			}
 		}
 	}
 
@@ -209,7 +208,7 @@ func condLabel(c *workflow.Condition) string {
 
 // loopLabel is a back-edge's caption: the re-run guard plus the ≤N iteration
 // bound that makes the termination guarantee visible.
-func loopLabel(l *workflow.Loop) string {
+func routeLabel(l workflow.Route) string {
 	var b strings.Builder
 	if cond, err := workflow.ParseCondition(l.When); err == nil {
 		b.WriteString(condLabel(cond))

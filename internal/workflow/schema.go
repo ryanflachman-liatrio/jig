@@ -27,6 +27,9 @@ const (
 	// StepCheck runs a deterministic quality gate. Unlike a command, it always
 	// records a typed pass/fail/skip/error outcome for routing and audit.
 	StepCheck StepType = "check"
+	// StepSubworkflow is an author-facing module invocation. Loader expansion
+	// replaces it with namespaced executable steps before the engine sees it.
+	StepSubworkflow StepType = "subworkflow"
 )
 
 // FailurePolicy decides what happens when a step (or its validation) fails.
@@ -131,6 +134,7 @@ type Workflow struct {
 	Meta     Meta     `toml:"workflow"`
 	Defaults Defaults `toml:"defaults"`
 	Steps    []Step   `toml:"step"`
+	Module   *Module  `toml:"module"`
 
 	// index maps step id -> position in Steps, populated by applyDefaults so
 	// validation and later execution can resolve references in O(1).
@@ -141,7 +145,42 @@ type Workflow struct {
 
 	sourcePath string
 	sourceTOML string
+
+	// publicSteps retains the author graph after Steps has been expanded for
+	// execution. It is not serialized; run snapshots contain the expansion.
+	publicSteps   []Step
+	moduleSources []ModuleSource
 }
+
+// Module declares the versioned interface of a reusable workflow.
+type Module struct {
+	SchemaVersion int                     `toml:"schema_version"`
+	Inputs        map[string]ModuleValue  `toml:"inputs"`
+	Exports       map[string]ModuleExport `toml:"exports"`
+}
+
+// ModuleValue describes one module input. Required is true unless explicitly
+// set false.
+type ModuleValue struct {
+	Type     FieldType `toml:"type"`
+	Enum     []string  `toml:"enum"`
+	Required *bool     `toml:"required"`
+}
+
+// ModuleExport exposes one module-internal typed field or check artifact.
+type ModuleExport struct {
+	Ref      string `toml:"ref"`
+	Artifact string `toml:"artifact"`
+}
+
+// ModuleSource is the immutable module provenance captured in a run snapshot.
+type ModuleSource struct {
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+	TOML   string `json:"toml"`
+}
+
+const ModuleSchemaVersion = 1
 
 // Source returns the workflow file and TOML used to construct this resolved
 // workflow. Decode-created workflows have TOML but no source path.
@@ -150,6 +189,41 @@ func (wf *Workflow) Source() (path, toml string) {
 		return "", ""
 	}
 	return wf.sourcePath, wf.sourceTOML
+}
+
+// PublicSteps returns the author-facing graph. Workflows without modules use
+// their executable steps directly, preserving existing callers.
+func (wf *Workflow) PublicSteps() []Step {
+	if wf == nil {
+		return nil
+	}
+	if wf.publicSteps != nil {
+		return wf.publicSteps
+	}
+	return wf.Steps
+}
+
+// ModuleSources returns a defensive copy of the provenance used by expansion.
+func (wf *Workflow) ModuleSources() []ModuleSource {
+	if wf == nil {
+		return nil
+	}
+	return append([]ModuleSource(nil), wf.moduleSources...)
+}
+
+// RestoreExpanded reconstructs the already-validated execution graph captured
+// at run start. It intentionally does not reload module files: resume uses this
+// locked graph even when the checkout has since changed.
+func RestoreExpanded(meta Meta, defaults Defaults, publicSteps, steps []Step, sources []ModuleSource) *Workflow {
+	wf := &Workflow{
+		Meta:          meta,
+		Defaults:      defaults,
+		Steps:         cloneSteps(steps),
+		publicSteps:   cloneSteps(publicSteps),
+		moduleSources: append([]ModuleSource(nil), sources...),
+	}
+	wf.applyDefaults()
+	return wf
 }
 
 // AgentProfile is a reusable bundle of agent configuration. Profiles let
@@ -318,12 +392,18 @@ type Step struct {
 	// fills its sections in the conversation — no agent Write tool required.
 	OutputTemplate     string `toml:"output_template"`
 	outputTemplateBody string // resolved body, populated at load time
+	// SnapshotOutputTemplate preserves the resolved body in a run's locked
+	// execution graph so resume does not depend on the authoring file changing.
+	SnapshotOutputTemplate string `toml:"-" json:"snapshot_output_template,omitempty"`
 
 	// AppendSystemPrompt is injected after the skill/agent-file prompt for
 	// per-step constraints. agentPrompt holds the resolved instruction body; it
 	// is populated at load time, not decoded.
 	AppendSystemPrompt string `toml:"append_system_prompt"`
 	agentPrompt        string
+	// SnapshotAgentPrompt is the already-resolved skill or agent-file prompt
+	// persisted with an expanded run graph for resume.
+	SnapshotAgentPrompt string `toml:"-" json:"snapshot_agent_prompt,omitempty"`
 
 	// Structured output (producer agents). At most one of these, and neither
 	// alongside a bool/enum output_type. Schema is the TOML-native form parsed
@@ -338,10 +418,15 @@ type Step struct {
 	Script string `toml:"script"`
 
 	// Check-only. Applicability is a typed guard: a false predicate yields the
-	// explicit skip outcome without running tooling. FindingsFile, when set,
-	// is copied into the run-scoped evidence directory by the engine.
-	AppliesWhen  string `toml:"applies_when"`
-	FindingsFile string `toml:"findings_file"`
+	// explicit skip outcome without running tooling. Findings declares the
+	// versioned, tool-produced evidence contract consumed by the runner.
+	AppliesWhen string         `toml:"applies_when"`
+	Findings    *CheckFindings `toml:"findings"`
+
+	// Subworkflow-only. Module is relative to the referring workflow; With
+	// maps every module input to an explicit parent binding.
+	Module string            `toml:"module"`
+	With   map[string]string `toml:"with"`
 
 	// Review-only. `@step` / `@step.field` / `diff` / literal workflow file.
 	Review []ReviewTarget `toml:"review"`
@@ -352,7 +437,6 @@ type Step struct {
 	BlockOn string `toml:"block_on"`
 
 	Validate *Validate    `toml:"validate"`
-	Loop     *Loop        `toml:"loop"`
 	Routes   []Route      `toml:"route"`
 	Security StepSecurity `toml:"security"`
 }
@@ -372,12 +456,22 @@ func (r ReviewTarget) ResolvedPath() string {
 // AgentPrompt returns the resolved skill or agent-file instruction body.
 // The getter exists so runner.AgentExecutor can access it without importing
 // the workflow package's unexported fields directly.
-func (s *Step) AgentPrompt() string { return s.agentPrompt }
+func (s *Step) AgentPrompt() string {
+	if s.agentPrompt != "" {
+		return s.agentPrompt
+	}
+	return s.SnapshotAgentPrompt
+}
 
 // OutputTemplateBody returns the resolved markdown template body for this step,
 // or "" if no output_template was set. Populated at load time by
 // resolveOutputTemplates; the runner appends it under the ## Output section.
-func (s *Step) OutputTemplateBody() string { return s.outputTemplateBody }
+func (s *Step) OutputTemplateBody() string {
+	if s.outputTemplateBody != "" {
+		return s.outputTemplateBody
+	}
+	return s.SnapshotOutputTemplate
+}
 
 // InjectContextEnabled reports whether the engine should assemble and prepend
 // the deterministic "Workflow context" preamble for this agent step. The
@@ -407,6 +501,9 @@ func (s *Step) isMutating() bool {
 type Input struct {
 	Ref      string
 	RefField []string
+	// Artifact names an immutable export from Ref. It is populated by
+	// { artifact = "@step.export" } and cannot be combined with RefField.
+	Artifact string
 	Path     string
 	Inline   bool
 	From     string // "user" for interactive collection
@@ -416,6 +513,10 @@ type Input struct {
 	// It is valid only for from="user" inputs; identity/spec inputs should
 	// normally remain per-run rather than be asked once per task iteration.
 	Once bool
+
+	// moduleInput is an expansion placeholder for @module.<name>. It never
+	// reaches execution: the parent binding replaces it before final validation.
+	moduleInput string
 }
 
 // UnmarshalTOML accepts either a string ("@stepid", "@stepid.field", or a path)
@@ -431,12 +532,29 @@ func (in *Input) UnmarshalTOML(data any) error {
 		}
 		return nil
 	case map[string]any:
+		_, hasRef := v["ref"]
+		_, hasArtifact := v["artifact"]
+		if hasRef && hasArtifact {
+			return fmt.Errorf("input table sets both `ref` and `artifact`; pick one")
+		}
 		if raw, ok := v["ref"]; ok {
 			s, ok := raw.(string)
 			if !ok {
 				return fmt.Errorf("input `ref` must be a string, got %T", raw)
 			}
 			in.Ref, in.RefField = parseRef(strings.TrimPrefix(s, "@"))
+		}
+		if raw, ok := v["artifact"]; ok {
+			s, ok := raw.(string)
+			if !ok {
+				return fmt.Errorf("input `artifact` must be a string, got %T", raw)
+			}
+			in.Ref, in.RefField = parseRef(strings.TrimPrefix(s, "@"))
+			if len(in.RefField) != 1 {
+				return fmt.Errorf("input `artifact` must be @step.export, got %q", s)
+			}
+			in.Artifact = in.RefField[0]
+			in.RefField = nil
 		}
 		if raw, ok := v["path"]; ok {
 			s, ok := raw.(string)
@@ -481,13 +599,13 @@ func (in *Input) UnmarshalTOML(data any) error {
 			in.Once = b
 		}
 		if in.From != "" && (in.Ref != "" || in.Path != "") {
-			return fmt.Errorf("input table: `from` cannot be combined with `ref` or `path`")
+			return fmt.Errorf("input table: `from` cannot be combined with `ref`, `artifact`, or `path`")
 		}
 		if in.Ref == "" && in.Path == "" && in.From == "" {
 			return fmt.Errorf("input table must set `ref`, `path`, or `from`")
 		}
 		if in.Ref != "" && in.Path != "" {
-			return fmt.Errorf("input table sets both `ref` and `path`; pick one")
+			return fmt.Errorf("input table sets both `ref`/`artifact` and `path`; pick one")
 		}
 		return nil
 	default:
@@ -502,6 +620,9 @@ func (in Input) String() string {
 	}
 	if in.Ref != "" {
 		s := "@" + in.Ref
+		if in.Artifact != "" {
+			return "artifact:" + s + "." + in.Artifact
+		}
 		if len(in.RefField) > 0 {
 			s += "." + strings.Join(in.RefField, ".")
 		}
@@ -747,19 +868,25 @@ type Validate struct {
 	OutputContains string `toml:"output_contains"`
 }
 
-// Loop is a [step.loop] table: a bounded back-edge that re-runs Goto (and the
-// subgraph between it and this step) while When holds, capped by MaxIterations
-// so the workflow is guaranteed to terminate.
-type Loop struct {
-	When          string `toml:"when"`
-	Goto          string `toml:"goto"`
-	MaxIterations int    `toml:"max_iterations"`
-	Feedback      string `toml:"feedback"` // "@stepid" fed into Goto's next run
+// CheckFindings declares the on-disk protocol a check command must produce.
+// The file is read from the check's execution directory after the command
+// exits, validated, and copied to the immutable per-attempt run evidence.
+type CheckFindings struct {
+	SchemaVersion int      `toml:"schema_version"`
+	File          string   `toml:"file"`
+	RequiredTools []string `toml:"required_tools"`
+	// Artifacts maps export names to files the check produces in its execution
+	// directory. The runner snapshots these files before a consumer can run.
+	Artifacts map[string]string `toml:"artifacts"`
 }
 
+// CheckFindingsSchemaVersion is the only version the current runner accepts.
+// A new incompatible evidence shape must get a new version and explicit
+// runner support rather than being silently interpreted as the old protocol.
+const CheckFindingsSchemaVersion = 1
+
 // Route is an ordered, bounded back-edge. Exactly one matching route may fire;
-// fallback is explicit so a terminal path is never accidental. It supersedes
-// Loop for new workflows while old files remain readable during migration.
+// fallback is explicit so a terminal path is never accidental.
 type Route struct {
 	When          string `toml:"when"`
 	Goto          string `toml:"goto"`

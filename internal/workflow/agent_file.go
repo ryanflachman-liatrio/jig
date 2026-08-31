@@ -44,6 +44,7 @@ func (wf *Workflow) resolveAgentFiles(baseDir string) error {
 			return fmt.Errorf("agent step %q: agent_file %q is invalid: %w", s.ID, s.AgentFile, err)
 		}
 		s.agentPrompt = af.Prompt
+		s.SnapshotAgentPrompt = af.Prompt
 		if len(s.AllowedTools) == 0 {
 			s.AllowedTools = af.Tools
 		}
@@ -71,6 +72,7 @@ func (wf *Workflow) resolveOutputTemplates(baseDir string) error {
 			return fmt.Errorf("agent step %q: output_template %q not found", s.ID, s.OutputTemplate)
 		}
 		s.outputTemplateBody = strings.TrimSpace(string(data))
+		s.SnapshotOutputTemplate = s.outputTemplateBody
 	}
 	return nil
 }

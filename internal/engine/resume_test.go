@@ -35,11 +35,11 @@ output_type = { enum = ["proceed", "narrow"] }
   [[step.review]]
   source = "@scope.summary"
   label = "Scope"
-  [step.loop]
-  when = "gate == 'narrow'"
-  goto = "scope"
-  max_iterations = 2
-  feedback = "@gate"
+[[step.route]]
+when = "gate == 'narrow'"
+goto = "scope"
+max_iterations = 2
+feedback = "@gate"
 
 [[step]]
 id = "after"
@@ -195,4 +195,75 @@ run = "true"
 	if loaded.Meta.Name != wf.Meta.Name || len(loaded.Steps) != 1 {
 		t.Fatalf("workflow snapshot = %+v", loaded)
 	}
+}
+
+func TestWorkflowSnapshotLocksExpandedModuleSources(t *testing.T) {
+	dir := t.TempDir()
+	modulePath := filepath.Join(dir, "module.toml")
+	mustWrite := func(path, body string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustWrite(modulePath, `
+[module]
+schema_version = 1
+[module.exports.result]
+ref = "@original"
+[[step]]
+id = "original"
+type = "command"
+run = "true"
+`)
+	path := filepath.Join(dir, "workflow.toml")
+	mustWrite(path, `
+[workflow]
+name = "locked-modules"
+version = "1"
+[[step]]
+id = "part"
+type = "subworkflow"
+module = "module.toml"
+`)
+	wf, err := workflow.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(dir, ".jig")
+	mgr := NewManager(&testExec{}, root)
+	_, ctrl := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	collectEvents(t, ctrl, 5*time.Second)
+
+	// A resume must use the source captured above, not this changed checkout file.
+	mustWrite(modulePath, `
+[module]
+schema_version = 1
+[module.exports.result]
+ref = "@changed"
+[[step]]
+id = "changed"
+type = "command"
+run = "true"
+`)
+	loaded, err := loadWorkflowSnapshot(mgr.RunDir(run.ID))
+	if err != nil {
+		t.Fatalf("loadWorkflowSnapshot: %v", err)
+	}
+	if len(loaded.ModuleSources()) != 1 || loaded.ModuleSources()[0].Path != modulePath {
+		t.Fatalf("locked sources = %+v", loaded.ModuleSources())
+	}
+	for _, st := range loaded.Steps {
+		if st.ID == "part__changed" {
+			t.Fatalf("snapshot expanded changed module: %+v", loaded.Steps)
+		}
+		if st.ID == "part__original" {
+			return
+		}
+	}
+	t.Fatalf("snapshot did not retain original expansion: %+v", loaded.Steps)
 }

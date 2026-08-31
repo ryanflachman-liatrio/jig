@@ -68,10 +68,10 @@ source      = "diff"
 label       = "Code changes"
 output_type = { enum = ["approve", "revise"] }
 
-  [step.loop]
-  when           = "approve == 'revise'"            # bounded back-edge
-  goto           = "fix"
-  max_iterations = 3
+[[step.route]]
+when           = "approve == 'revise'"            # bounded back-edge
+goto           = "fix"
+max_iterations = 3
 ```
 
 Three step types — `agent`, `command`, `review` — wired into a DAG by

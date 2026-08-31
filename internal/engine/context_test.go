@@ -10,7 +10,7 @@ import (
 	"jig/internal/workflow"
 )
 
-// fireLoopNow records the given loopers' intents and fires the coalesced rewind
+// fireLoopNow records the given route sources' intents and fires the coalesced rewind
 // for their shared goto target, bypassing the run-loop barrier. White-box
 // context tests set step states directly rather than driving real dispatch, so
 // they invoke the record+fire pair explicitly. Passing several loopers models
@@ -19,8 +19,8 @@ func fireLoopNow(s *scheduler, loopers ...string) {
 	var gotoID string
 	for _, id := range loopers {
 		st := s.stepByID(id)
-		s.recordLoopIntent(id, st)
-		gotoID = st.Loop.Goto
+		s.recordRouteIntent(id, st, st.Routes[0], 1, "", false)
+		gotoID = st.Routes[0].Goto
 	}
 	if intent := s.pendingLoops[gotoID]; intent != nil {
 		s.fireCoalescedLoop(intent)
@@ -77,11 +77,11 @@ type = "review"
 depends_on = ["plan"]
 output_type = { enum = ["approve", "revise"] }
 
-  [step.loop]
-  when           = "plan_review == 'revise'"
-  goto           = "plan"
-  max_iterations = 3
-  feedback       = "@plan_review"
+[[step.route]]
+when           = "plan_review == 'revise'"
+goto           = "plan"
+max_iterations = 3
+feedback       = "@plan_review"
 
 [[step.review]]
 source = "@plan.summary"
@@ -349,10 +349,10 @@ depends_on = ["build"]
 skill = "skills/qa"
 output_type = "bool"
 
-  [step.loop]
-  when           = "qa == 'false'"
-  goto           = "build"
-  max_iterations = 2
+[[step.route]]
+when           = "qa == 'false'"
+goto           = "build"
+max_iterations = 2
 `
 
 // twoLoopsFixture: two loops (a review `qa1` and an agent gate `qa2`) whose goto
@@ -373,10 +373,10 @@ type = "review"
 depends_on = ["build"]
 output_type = { enum = ["approve", "revise"] }
 
-  [step.loop]
-  when           = "qa1 == 'revise'"
-  goto           = "build"
-  max_iterations = 3
+[[step.route]]
+when           = "qa1 == 'revise'"
+goto           = "build"
+max_iterations = 3
 
 [[step.review]]
 source = "@build.summary"
@@ -389,10 +389,10 @@ depends_on = ["build"]
 skill = "skills/qa"
 output_type = "bool"
 
-  [step.loop]
-  when           = "qa2 == 'false'"
-  goto           = "build"
-  max_iterations = 2
+[[step.route]]
+when           = "qa2 == 'false'"
+goto           = "build"
+max_iterations = 2
 `
 
 // TestWorkflowContextReviseIteration drives a plan_review == 'revise' loop fire so

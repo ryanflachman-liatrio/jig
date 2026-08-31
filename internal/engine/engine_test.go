@@ -1485,11 +1485,11 @@ output_type = { enum = ["proceed", "narrow"] }
 [[step.review]]
 source = "@scope.rationale"
 label = "Scope assessment"
-  [step.loop]
-  when = "gate == 'narrow'"
-  goto = "scope"
-  max_iterations = 2
-  feedback = "@gate"
+[[step.route]]
+when = "gate == 'narrow'"
+goto = "scope"
+max_iterations = 2
+feedback = "@gate"
 `
 	wf, err := workflow.Decode(toml, "")
 	if err != nil {
@@ -1766,10 +1766,10 @@ done:
 	}
 }
 
-// TestScheduler_Loop verifies that a [step.loop] back-edge re-runs the loop
+// TestScheduler_Loop verifies that a route back-edge re-runs the route
 // body while the condition holds, and terminates once max_iterations is reached.
 func TestScheduler_Loop(t *testing.T) {
-	// a → b, b has a loop back to a with max_iterations = 2.
+	// a → b, b routes back to a with max_iterations = 2.
 	// The condition always holds (a always returns "yes").
 	// Expected: a,b run → loop fires (iter 1) → a,b run → loop fires (iter 2) →
 	// a,b run → iter 2 >= max 2 → run aborted with RunError.
@@ -1790,10 +1790,10 @@ type = "command"
 run = "echo b"
 depends_on = ["a"]
 
-  [step.loop]
-  when = "a == 'yes'"
-  goto = "a"
-  max_iterations = 2
+[[step.route]]
+when = "a == 'yes'"
+goto = "a"
+max_iterations = 2
 `
 	wf, err := workflow.Decode(toml, "")
 	if err != nil {
@@ -1816,15 +1816,15 @@ depends_on = ["a"]
 
 	events := collectEvents(t, ch, 10*time.Second)
 
-	// LoopFired must be emitted at least twice.
-	var loopFires []LoopFired
+	// RouteSelected must be emitted at least twice.
+	var loopFires []RouteSelected
 	for _, e := range events {
-		if lf, ok := e.(LoopFired); ok {
+		if lf, ok := e.(RouteSelected); ok {
 			loopFires = append(loopFires, lf)
 		}
 	}
 	if len(loopFires) < 2 {
-		t.Errorf("expected at least 2 LoopFired events; got %d", len(loopFires))
+		t.Errorf("expected at least 2 RouteSelected events; got %d", len(loopFires))
 	}
 
 	// Run must end failed (exceeded max_iterations → abort).
@@ -1834,15 +1834,142 @@ depends_on = ["a"]
 		t.Errorf("want RunFinished{Failed:true} (loop cap exceeded); got %v", last)
 	}
 
-	// RunError must have been emitted.
-	var hasError bool
+	// Cap exhaustion and RunError must both have been emitted.
+	var hasError, hasCap bool
 	for _, e := range events {
 		if _, ok := e.(RunError); ok {
 			hasError = true
 		}
+		if _, ok := e.(RouteCapExceeded); ok {
+			hasCap = true
+		}
 	}
 	if !hasError {
-		t.Error("expected RunError event when loop exceeds max_iterations")
+		t.Error("expected RunError event when route exceeds max_iterations")
+	}
+	if !hasCap {
+		t.Error("expected RouteCapExceeded event when route exceeds max_iterations")
+	}
+}
+
+type failingCheckThenPassExec struct {
+	mu        sync.Mutex
+	checkRuns int
+}
+
+func (e *failingCheckThenPassExec) Execute(_ context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if req.Step.ID == "quality" {
+		e.checkRuns++
+		verdict := "pass"
+		if e.checkRuns == 1 {
+			verdict = "fail"
+		}
+		return &step.Result{Status: step.StatusSucceeded, Verdict: verdict}, nil
+	}
+	if req.Step.ID == "ready" {
+		return &step.Result{Status: step.StatusSucceeded, Verdict: "true"}, nil
+	}
+	return &step.Result{Status: step.StatusSucceeded}, nil
+}
+
+func (e *failingCheckThenPassExec) runs() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.checkRuns
+}
+
+func TestScheduler_CheckFailureRoutesBeforeDownstreamReview(t *testing.T) {
+	const toml = `
+[workflow]
+name = "check-remediation"
+version = "1"
+
+[[step]]
+id = "ready"
+type = "command"
+output_type = "bool"
+run = "true"
+
+[[step]]
+id = "remediate"
+type = "command"
+depends_on = ["ready"]
+run = "true"
+
+[[step]]
+id = "quality"
+type = "check"
+depends_on = ["ready", "remediate"]
+applies_when = "ready"
+output_type = { enum = ["pass", "fail", "skip", "error"] }
+run = "true"
+
+  [step.findings]
+  schema_version = 1
+  file = "quality.json"
+  required_tools = ["sh"]
+
+[[step.route]]
+when = "quality != 'pass'"
+goto = "remediate"
+max_iterations = 2
+feedback = "@quality"
+
+[[step]]
+id = "continue_gate"
+type = "review"
+depends_on = ["quality"]
+output_type = { enum = ["continue"] }
+
+[[step.review]]
+source = "diff"
+label = "Quality evidence"
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &failingCheckThenPassExec{}
+	mgr := NewManager(exec, "")
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved := false
+	var events []Event
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case event := <-ch:
+			events = append(events, event)
+			if request, ok := event.(ReviewRequest); ok && request.StepID == "continue_gate" {
+				if exec.runs() != 2 {
+					t.Fatalf("continue gate opened after %d quality run(s), want remediation check to pass first", exec.runs())
+				}
+				resolved = true
+				run.Resolve("continue_gate", "continue")
+			}
+			if _, ok := event.(RunFinished); ok {
+				goto done
+			}
+		case <-deadline:
+			t.Fatal("timeout waiting for remediated quality run")
+		}
+	}
+
+done:
+	if !resolved {
+		t.Fatal("continue gate was never opened")
+	}
+	if exec.runs() != 2 {
+		t.Fatalf("quality runs = %d, want 2", exec.runs())
+	}
+	if got := findStatus(events, "continue_gate"); len(got) == 0 || got[len(got)-1] != step.StatusSucceeded {
+		t.Fatalf("continue gate statuses = %v, want succeeded", got)
 	}
 }
 
@@ -1901,10 +2028,10 @@ type = "command"
 run = "echo b"
 depends_on = ["a"]
 
-  [step.loop]
-  when = "a == 'yes'"
-  goto = "a"
-  max_iterations = 2
+[[step.route]]
+when = "a == 'yes'"
+goto = "a"
+max_iterations = 2
 `
 	wf, err := workflow.Decode(toml, "")
 	if err != nil {
@@ -2120,6 +2247,86 @@ inputs     = ["@a"]
 	}
 	if inputs[0].Value != "/tmp/a-out.txt" {
 		t.Errorf("step b input Value = %q, want %q", inputs[0].Value, "/tmp/a-out.txt")
+	}
+}
+
+type artifactInputExec struct {
+	mu     sync.Mutex
+	inputs map[string][]ResolvedInput
+}
+
+func (e *artifactInputExec) Execute(_ context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.inputs == nil {
+		e.inputs = make(map[string][]ResolvedInput)
+	}
+	e.inputs[req.Step.ID] = append([]ResolvedInput(nil), req.Inputs...)
+	switch req.Step.ID {
+	case "ready":
+		return &step.Result{Status: step.StatusSucceeded, Verdict: "true"}, nil
+	case "tests":
+		return &step.Result{Status: step.StatusSucceeded, Verdict: "pass", Artifacts: map[string]string{"coverage_profile": "/run/evidence/coverage.out"}}, nil
+	default:
+		return &step.Result{Status: step.StatusSucceeded}, nil
+	}
+}
+
+func TestScheduler_CheckArtifactInputUsesEngineOwnedSnapshot(t *testing.T) {
+	const toml = `
+[workflow]
+name = "check-artifact-input"
+version = "1"
+
+[[step]]
+id = "ready"
+type = "command"
+output_type = "bool"
+run = "true"
+
+[[step]]
+id = "tests"
+type = "check"
+depends_on = ["ready"]
+applies_when = "ready"
+output_type = { enum = ["pass", "fail", "skip", "error"] }
+run = "true"
+
+  [step.findings]
+  schema_version = 1
+  file = "findings.json"
+  required_tools = ["sh"]
+  artifacts = { coverage_profile = "coverage.out" }
+
+[[step.route]]
+when = "tests != 'pass'"
+goto = "ready"
+max_iterations = 1
+
+[[step]]
+id = "coverage"
+type = "command"
+depends_on = ["tests"]
+inputs = [{ artifact = "@tests.coverage_profile", as = "coverage_profile" }]
+run = "true"
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &artifactInputExec{}
+	mgr := NewManager(exec, "")
+	_, ch := mgr.Subscribe()
+	if _, err := mgr.Start(wf); err != nil {
+		t.Fatal(err)
+	}
+	collectEvents(t, ch, 5*time.Second)
+
+	exec.mu.Lock()
+	inputs := exec.inputs["coverage"]
+	exec.mu.Unlock()
+	if len(inputs) != 1 || inputs[0].Value != "/run/evidence/coverage.out" {
+		t.Fatalf("coverage inputs = %+v, want engine-owned artifact path", inputs)
 	}
 }
 

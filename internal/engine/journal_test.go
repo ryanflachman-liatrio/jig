@@ -54,8 +54,12 @@ func TestJournalRoundTrip(t *testing.T) {
 			ev:   GateResult{RunID: "r1", StepID: "validate", Passed: true, Detail: "exit 0"},
 		},
 		{
-			name: "LoopFired",
-			ev:   LoopFired{RunID: "r1", StepID: "fix", Goto: "research", Iteration: 2, Max: 3},
+			name: "RouteSelected",
+			ev:   RouteSelected{RunID: "r1", StepID: "fix", RouteIndex: 1, Goto: "research", Iteration: 2, Max: 3},
+		},
+		{
+			name: "RouteCapExceeded",
+			ev:   RouteCapExceeded{RunID: "r1", StepID: "fix", RouteIndex: 1, Goto: "research", Iteration: 4, Max: 3},
 		},
 		{
 			name: "ReviewRequest",
@@ -189,7 +193,7 @@ var allEventInstances = []Event{
 	StepToolCall{RunID: "r", StepID: "s", Tool: "Bash", Detail: "ls"},
 	StepMessage{RunID: "r", StepID: "s", Seq: 1, Iteration: 0},
 	GateResult{RunID: "r", StepID: "s", Passed: true},
-	LoopFired{RunID: "r", StepID: "s", Goto: "s", Iteration: 1, Max: 3},
+	RouteSelected{RunID: "r", StepID: "s", RouteIndex: 1, Goto: "s", Iteration: 1, Max: 3},
 	ReviewRequest{RunID: "r", StepID: "s", Choices: []string{"approve"}},
 	InputRequest{RunID: "r", StepID: "s"},
 	RunError{RunID: "r", Err: "boom"},

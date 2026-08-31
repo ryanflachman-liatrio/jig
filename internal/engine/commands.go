@@ -1,10 +1,6 @@
 package engine
 
 import (
-	"fmt"
-	"os"
-	"path/filepath"
-
 	"jig/internal/interaction"
 	"jig/internal/step"
 	"jig/internal/workflow"
@@ -88,9 +84,6 @@ func (m stepDoneMsg) execute(s *scheduler) {
 		s.states[m.stepID].Result = m.result
 	}
 	wfStep := s.stepByID(m.stepID)
-	if wfStep != nil && wfStep.Type == workflow.StepCheck {
-		s.persistCheckEvidence(m.stepID, wfStep)
-	}
 	if m.err != nil {
 		res := s.states[m.stepID].Result
 		if res == nil {
@@ -129,46 +122,6 @@ func (m stepDoneMsg) execute(s *scheduler) {
 		if wfStep != nil {
 			s.recordRoutes(m.stepID, wfStep, "")
 		}
-	}
-}
-
-// persistCheckEvidence snapshots tool-produced findings into the run. The
-// source is resolved in the check's isolated worktree, so a quality gate never
-// reads a same-named file from an operator's unrelated working tree.
-func (s *scheduler) persistCheckEvidence(stepID string, wfStep *workflow.Step) {
-	if wfStep.FindingsFile == "" || s.runDir == "" {
-		return
-	}
-	base := s.worktrees[stepID]
-	if base == "" {
-		base = s.runWorktree
-	}
-	if base == "" {
-		base = s.repoRoot
-	}
-	if base == "" {
-		return
-	}
-	source := wfStep.FindingsFile
-	if !filepath.IsAbs(source) {
-		source = filepath.Join(base, source)
-	}
-	data, err := os.ReadFile(source)
-	if err != nil {
-		res := s.states[stepID].Result
-		if res != nil && res.Verdict == "pass" {
-			res.Verdict = "error"
-			res.Err = fmt.Sprintf("read check findings %q: %v", wfStep.FindingsFile, err)
-		}
-		return
-	}
-	dir := filepath.Join(s.runDir, "steps", stepID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return
-	}
-	dest := filepath.Join(dir, "findings.json")
-	if err := os.WriteFile(dest, data, 0o644); err == nil && s.states[stepID].Result != nil {
-		s.states[stepID].Result.OutputPath = dest
 	}
 }
 

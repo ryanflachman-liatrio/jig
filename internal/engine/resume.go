@@ -19,10 +19,15 @@ import (
 )
 
 type workflowSnapshot struct {
-	SourcePath string `json:"source_path,omitempty"`
-	BaseDir    string `json:"base_dir,omitempty"`
-	SHA256     string `json:"sha256"`
-	TOML       string `json:"toml"`
+	SourcePath    string                  `json:"source_path,omitempty"`
+	BaseDir       string                  `json:"base_dir,omitempty"`
+	SHA256        string                  `json:"sha256"`
+	TOML          string                  `json:"toml"`
+	ModuleSources []workflow.ModuleSource `json:"module_sources,omitempty"`
+	Meta          workflow.Meta           `json:"meta"`
+	Defaults      workflow.Defaults       `json:"defaults"`
+	PublicSteps   []workflow.Step         `json:"public_steps,omitempty"`
+	ExpandedSteps []workflow.Step         `json:"expanded_steps,omitempty"`
 }
 
 func persistWorkflowSnapshot(runDir string, wf *workflow.Workflow) error {
@@ -35,10 +40,15 @@ func persistWorkflowSnapshot(runDir string, wf *workflow.Workflow) error {
 	}
 	sum := sha256.Sum256([]byte(source))
 	snap := workflowSnapshot{
-		SourcePath: path,
-		BaseDir:    filepath.Dir(path),
-		SHA256:     hex.EncodeToString(sum[:]),
-		TOML:       source,
+		SourcePath:    path,
+		BaseDir:       filepath.Dir(path),
+		SHA256:        hex.EncodeToString(sum[:]),
+		TOML:          source,
+		ModuleSources: wf.ModuleSources(),
+		Meta:          wf.Meta,
+		Defaults:      wf.Defaults,
+		PublicSteps:   wf.PublicSteps(),
+		ExpandedSteps: wf.Steps,
 	}
 	data, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {
@@ -60,7 +70,16 @@ func loadWorkflowSnapshot(runDir string) (*workflow.Workflow, error) {
 	if hex.EncodeToString(sum[:]) != snap.SHA256 {
 		return nil, fmt.Errorf("workflow snapshot checksum mismatch")
 	}
-	return workflow.Decode(snap.TOML, snap.BaseDir)
+	for _, source := range snap.ModuleSources {
+		sum := sha256.Sum256([]byte(source.TOML))
+		if source.Path == "" || source.SHA256 == "" || hex.EncodeToString(sum[:]) != source.SHA256 {
+			return nil, fmt.Errorf("workflow snapshot module checksum mismatch")
+		}
+	}
+	if len(snap.ExpandedSteps) > 0 {
+		return workflow.RestoreExpanded(snap.Meta, snap.Defaults, snap.PublicSteps, snap.ExpandedSteps, snap.ModuleSources), nil
+	}
+	return workflow.DecodeLocked(snap.TOML, snap.BaseDir, snap.SourcePath, snap.ModuleSources)
 }
 
 func acquireRunLock(runDir string) (*os.File, error) {

@@ -76,9 +76,18 @@ func TestCommandExecutor_Failure(t *testing.T) {
 
 func TestCheckExecutor_ReturnsTypedFailureAndEvidence(t *testing.T) {
 	dir := t.TempDir()
-	exec := NewCheckExecutor("")
+	exec := NewCheckExecutor(dir)
 	result, err := exec.Execute(context.Background(), engine.StepRequest{
-		Step:           &workflow.Step{ID: "quality", Type: workflow.StepCheck, Run: "echo broken; exit 1"},
+		Step: &workflow.Step{
+			ID:   "quality",
+			Type: workflow.StepCheck,
+			Run:  "printf '{\"schema_version\":1,\"outcome\":\"fail\",\"findings\":[{\"id\":\"test-failure\",\"severity\":\"error\",\"message\":\"broken\"}]}' > findings.json; exit 1",
+			Findings: &workflow.CheckFindings{
+				SchemaVersion: workflow.CheckFindingsSchemaVersion,
+				File:          "findings.json",
+				RequiredTools: []string{"sh"},
+			},
+		},
 		TranscriptPath: filepath.Join(dir, "transcript.jsonl"),
 	}, &noopReporter{})
 	if err != nil {
@@ -93,6 +102,172 @@ func TestCheckExecutor_ReturnsTypedFailureAndEvidence(t *testing.T) {
 	}
 	if !strings.Contains(string(data), `"outcome":"fail"`) {
 		t.Fatalf("findings = %s", data)
+	}
+}
+
+func TestCheckExecutor_ProtocolErrorsAreTypedAndKeepAttemptArtifacts(t *testing.T) {
+	const valid = `{"schema_version":1,"outcome":"pass","findings":[]}`
+	cases := []struct {
+		name          string
+		findings      string
+		requiredTools []string
+		wantVerdict   string
+	}{
+		{name: "valid protocol", findings: valid, requiredTools: []string{"sh"}, wantVerdict: "pass"},
+		{name: "reserved skip outcome", findings: `{"schema_version":1,"outcome":"skip","findings":[]}`, requiredTools: []string{"sh"}, wantVerdict: "error"},
+		{name: "malformed finding", findings: `{"schema_version":1,"outcome":"fail","findings":[{"id":"missing-message","severity":"error"}]}`, requiredTools: []string{"sh"}, wantVerdict: "error"},
+		{name: "missing required tool", findings: valid, requiredTools: []string{"jig-test-tool-that-does-not-exist"}, wantVerdict: "error"},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "findings.json"), []byte(tt.findings), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			result, err := NewCheckExecutor(dir).Execute(context.Background(), engine.StepRequest{
+				Step: &workflow.Step{
+					ID:   "quality",
+					Type: workflow.StepCheck,
+					Run:  "printf command-log; exit 42",
+					Findings: &workflow.CheckFindings{
+						SchemaVersion: workflow.CheckFindingsSchemaVersion,
+						File:          "findings.json",
+						RequiredTools: tt.requiredTools,
+					},
+				},
+				TranscriptPath: filepath.Join(dir, "transcript.jsonl"),
+				Iteration:      7,
+				Attempt:        3,
+			}, &noopReporter{})
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if result.Status != step.StatusSucceeded || result.Verdict != tt.wantVerdict {
+				t.Fatalf("result = %+v, want succeeded/%s", result, tt.wantVerdict)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "evidence", "iteration-007-attempt-003.log")); err != nil {
+				t.Fatalf("missing immutable command log: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "evidence", "iteration-007-attempt-003.findings.json")); err != nil {
+				t.Fatalf("missing immutable findings: %v", err)
+			}
+		})
+	}
+}
+
+func TestCheckExecutor_SnapshotsDeclaredArtifacts(t *testing.T) {
+	worktree := t.TempDir()
+	runDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(worktree, "coverage.out"), []byte("mode: set\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktree, "findings.json"), []byte(`{"schema_version":1,"outcome":"pass","findings":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := NewCheckExecutor(worktree).Execute(context.Background(), engine.StepRequest{
+		Step: &workflow.Step{
+			ID:   "tests",
+			Type: workflow.StepCheck,
+			Run:  "true",
+			Findings: &workflow.CheckFindings{
+				SchemaVersion: workflow.CheckFindingsSchemaVersion,
+				File:          "findings.json",
+				RequiredTools: []string{"sh"},
+				Artifacts:     map[string]string{"coverage_profile": "coverage.out"},
+			},
+		},
+		Worktree:       worktree,
+		TranscriptPath: filepath.Join(runDir, "transcript.jsonl"),
+		Iteration:      2,
+		Attempt:        1,
+	}, &noopReporter{})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	artifact := result.Artifacts["coverage_profile"]
+	if artifact == "" {
+		t.Fatal("coverage_profile was not exported")
+	}
+	if strings.HasPrefix(artifact, worktree) {
+		t.Fatalf("artifact path %q points into producer worktree", artifact)
+	}
+	data, err := os.ReadFile(artifact)
+	if err != nil {
+		t.Fatalf("read snapshot: %v", err)
+	}
+	if string(data) != "mode: set\n" {
+		t.Fatalf("snapshot = %q, want coverage data", data)
+	}
+}
+
+func TestCheckArtifactConsumerReadsSnapshotAcrossIsolatedWorktrees(t *testing.T) {
+	producerWorktree := t.TempDir()
+	consumerWorktree := t.TempDir()
+	runDir := t.TempDir()
+	producer := NewCheckExecutor(producerWorktree)
+	result, err := producer.Execute(context.Background(), engine.StepRequest{
+		Step: &workflow.Step{
+			ID:   "tests",
+			Type: workflow.StepCheck,
+			Run:  `printf 'coverage-from-producer\n' > coverage.out; printf '{"schema_version":1,"outcome":"pass","findings":[]}' > findings.json`,
+			Findings: &workflow.CheckFindings{
+				SchemaVersion: workflow.CheckFindingsSchemaVersion,
+				File:          "findings.json",
+				RequiredTools: []string{"sh", "printf"},
+				Artifacts:     map[string]string{"coverage_profile": "coverage.out"},
+			},
+		},
+		Worktree:       producerWorktree,
+		TranscriptPath: filepath.Join(runDir, "producer-transcript.jsonl"),
+	}, &noopReporter{})
+	if err != nil || result.Status != step.StatusSucceeded || result.Verdict != "pass" {
+		t.Fatalf("producer Execute = %+v, %v", result, err)
+	}
+	artifact := result.Artifacts["coverage_profile"]
+	if artifact == "" || strings.HasPrefix(artifact, producerWorktree) {
+		t.Fatalf("artifact = %q, want run-owned snapshot outside producer worktree", artifact)
+	}
+
+	consumer := NewCommandExecutor(consumerWorktree)
+	consumerResult, err := consumer.Execute(context.Background(), engine.StepRequest{
+		Step: &workflow.Step{ID: "coverage", Type: workflow.StepCommand, Run: `test "$(cat "$JIG_INPUT_COVERAGE_PROFILE")" = "coverage-from-producer"`},
+		Inputs: []engine.ResolvedInput{{
+			Ref:   workflow.Input{Ref: "tests", Artifact: "coverage_profile", As: "coverage_profile"},
+			Value: artifact,
+		}},
+		Worktree:       consumerWorktree,
+		TranscriptPath: filepath.Join(runDir, "consumer-transcript.jsonl"),
+	}, &noopReporter{})
+	if err != nil || consumerResult.Status != step.StatusSucceeded {
+		t.Fatalf("consumer Execute = %+v, %v", consumerResult, err)
+	}
+}
+
+func TestCommandExecutor_ExposesArtifactInputsAsNamedEnvironment(t *testing.T) {
+	dir := t.TempDir()
+	result, err := NewCommandExecutor(dir).Execute(context.Background(), engine.StepRequest{
+		Step: &workflow.Step{ID: "coverage", Type: workflow.StepCommand, Run: "printf %s \"$JIG_INPUT_COVERAGE_PROFILE\""},
+		Inputs: []engine.ResolvedInput{{
+			Ref:   workflow.Input{Ref: "tests", Artifact: "coverage_profile", As: "coverage_profile"},
+			Value: "/run/evidence/coverage.out",
+		}},
+		TranscriptPath: filepath.Join(dir, "transcript.jsonl"),
+	}, &noopReporter{})
+	if err != nil || result.Status != step.StatusSucceeded {
+		t.Fatalf("Execute = %+v, %v", result, err)
+	}
+	reader, err := transcript.Open(filepath.Join(dir, "transcript.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := reader.Tail(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Blocks[0].Text != "/run/evidence/coverage.out" {
+		t.Fatalf("command transcript = %+v, want artifact path", entries)
 	}
 }
 

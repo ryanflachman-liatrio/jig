@@ -218,8 +218,8 @@ output_type  = { enum = ["approve", "flag"] }
 source       = "@assemble_report.report_content"
 label        = "Validation report"
 
-  [step.loop]
-  when           = "validation_review == 'flag'"
-  goto           = "assemble_report"
-  max_iterations = 3
-  feedback       = "@validation_review"
+[[step.route]]
+when           = "validation_review == 'flag'"
+goto           = "assemble_report"
+max_iterations = 3
+feedback       = "@validation_review"

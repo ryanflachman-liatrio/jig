@@ -1,0 +1,17 @@
+# Minimal reusable module exercised by feature.toml. It accepts only an
+# engine-owned check artifact, so the command never reaches into another
+# worktree to inspect the producer's files.
+[module]
+schema_version = 1
+
+[module.inputs.quality_report]
+type = "artifact"
+
+[module.exports.summary]
+ref = "@verify_report"
+
+[[step]]
+id = "verify_report"
+type = "command"
+inputs = ["@module.quality_report"]
+run = "test -f \"$JIG_INPUT_QUALITY_REPORT\""

@@ -123,7 +123,6 @@ func (v *validator) checkStep(s *Step) {
 	v.checkFailure(s)
 	v.checkWhen(s)
 	v.checkValidate(s)
-	v.checkLoop(s)
 	v.checkRoutes(s)
 	v.checkContext(s)
 	v.checkStepSecurity(s)
@@ -275,7 +274,7 @@ func (v *validator) checkAgent(s *Step) {
 	case s.Skill != "" && s.AgentFile != "":
 		v.errf("agent step %q sets both `skill` and `agent_file`; pick one", s.ID)
 	case s.Skill != "" && v.baseDir != "":
-		dir := filepath.Join(v.baseDir, s.Skill)
+		dir := resolveAuthorPath(v.baseDir, s.Skill)
 		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
 			v.errf("agent step %q: skill dir %q not found", s.ID, s.Skill)
 		} else if _, err := os.Stat(filepath.Join(dir, "SKILL.md")); err != nil {
@@ -285,14 +284,14 @@ func (v *validator) checkAgent(s *Step) {
 	// Prompt and output-template files are already read by their resolvers; any
 	// error there aborts the load before we get here.
 	if s.OutputTemplate != "" && v.baseDir != "" {
-		if _, err := os.Stat(filepath.Join(v.baseDir, s.OutputTemplate)); err != nil {
+		if _, err := os.Stat(resolveAuthorPath(v.baseDir, s.OutputTemplate)); err != nil {
 			v.errf("agent step %q: output_template %q not found", s.ID, s.OutputTemplate)
 		}
 	}
 	if s.Isolation != IsolationWorktree && s.Isolation != IsolationNone {
 		v.errf("agent step %q has invalid isolation %q (want worktree|none)", s.ID, s.Isolation)
 	}
-	if s.Run != "" || s.Script != "" || s.AppliesWhen != "" || s.FindingsFile != "" || len(s.Review) > 0 {
+	if s.Run != "" || s.Script != "" || s.AppliesWhen != "" || s.Findings != nil || len(s.Review) > 0 {
 		v.errf("agent step %q sets fields belonging to another step type (run/script/review)", s.ID)
 	}
 	if s.BlockOn != "" {
@@ -307,6 +306,13 @@ func (v *validator) checkAgent(s *Step) {
 			v.checkFieldRef(s.ID, "block_on", s, cond.Field)
 		}
 	}
+}
+
+func resolveAuthorPath(baseDir, path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(baseDir, path)
 }
 
 // checkContext validates the optional [step.context] block. The block is
@@ -351,7 +357,7 @@ func (v *validator) checkCommand(s *Step) {
 			v.errf("command step %q: script %q not found (resolved from project root %q)", s.ID, s.Script, root)
 		}
 	}
-	if s.AppliesWhen != "" || s.FindingsFile != "" || len(s.Review) > 0 || hasAgentOnlyFields(s) {
+	if s.AppliesWhen != "" || s.Findings != nil || len(s.Review) > 0 || hasAgentOnlyFields(s) {
 		v.errf("command step %q sets fields belonging to another step type (agent skill/agent_file/tools or review)", s.ID)
 	}
 	if s.InjectContext != nil {
@@ -377,10 +383,9 @@ func (v *validator) checkCheck(s *Step) {
 			v.errf("check step %q output_type must include %q", s.ID, outcome)
 		}
 	}
-	if s.InjectContext != nil {
-		v.errf("step %q: inject_context is only valid on agent steps", s.ID)
-	}
-	if s.AppliesWhen != "" {
+	if s.AppliesWhen == "" {
+		v.errf("check step %q requires `applies_when`; this is the only way a check may produce skip", s.ID)
+	} else {
 		cond, err := ParseCondition(s.AppliesWhen)
 		if err != nil {
 			v.errf("check step %q applies_when: %v", s.ID, err)
@@ -390,6 +395,43 @@ func (v *validator) checkCheck(s *Step) {
 			}
 			v.checkCondValue(s.ID, "applies_when", cond)
 		}
+	}
+	if s.Findings == nil {
+		v.errf("check step %q requires a [step.findings] interface", s.ID)
+	} else {
+		if s.Findings.SchemaVersion != CheckFindingsSchemaVersion {
+			v.errf("check step %q findings.schema_version = %d, want %d", s.ID, s.Findings.SchemaVersion, CheckFindingsSchemaVersion)
+		}
+		if s.Findings.File == "" {
+			v.errf("check step %q findings.file is required", s.ID)
+		} else if filepath.IsAbs(s.Findings.File) || filepath.Clean(s.Findings.File) == ".." || strings.HasPrefix(filepath.Clean(s.Findings.File), ".."+string(filepath.Separator)) {
+			v.errf("check step %q findings.file must stay within the execution directory", s.ID)
+		}
+		if len(s.Findings.RequiredTools) == 0 {
+			v.errf("check step %q findings.required_tools must declare every required executable", s.ID)
+		}
+		seenTools := map[string]bool{}
+		for _, tool := range s.Findings.RequiredTools {
+			if strings.TrimSpace(tool) == "" {
+				v.errf("check step %q findings.required_tools contains a blank executable", s.ID)
+			} else if strings.ContainsAny(tool, `/\\`) {
+				v.errf("check step %q findings.required_tools entry %q must be an executable name, not a path", s.ID, tool)
+			} else if seenTools[tool] {
+				v.errf("check step %q findings.required_tools repeats %q", s.ID, tool)
+			}
+			seenTools[tool] = true
+		}
+		for name, path := range s.Findings.Artifacts {
+			if !isIdent(name) {
+				v.errf("check step %q findings.artifacts has invalid export name %q", s.ID, name)
+			}
+			if path == "" || filepath.IsAbs(path) || filepath.Clean(path) == ".." || strings.HasPrefix(filepath.Clean(path), ".."+string(filepath.Separator)) {
+				v.errf("check step %q findings.artifacts.%s must stay within the execution directory", s.ID, name)
+			}
+		}
+	}
+	if s.InjectContext != nil {
+		v.errf("step %q: inject_context is only valid on agent steps", s.ID)
 	}
 }
 
@@ -455,7 +497,7 @@ func (v *validator) checkReview(s *Step) {
 	if s.OutputType.Kind != OutputEnum && s.OutputType.Kind != OutputBool {
 		v.errf("review step %q needs an output_type (bool or enum) to record the verdict", s.ID)
 	}
-	if s.Run != "" || s.Script != "" || s.AppliesWhen != "" || s.FindingsFile != "" || hasAgentOnlyFields(s) {
+	if s.Run != "" || s.Script != "" || s.AppliesWhen != "" || s.Findings != nil || hasAgentOnlyFields(s) {
 		v.errf("review step %q sets fields belonging to another step type (agent skill/agent_file/tools or run/script)", s.ID)
 	}
 	if s.InjectContext != nil {
@@ -483,6 +525,13 @@ func (v *validator) checkInputs(s *Step) {
 		}
 		if !contains(s.DependsOn, in.Ref) {
 			v.errf("step %q input @%s must also appear in depends_on", s.ID, in.Ref)
+		}
+		if in.Artifact != "" {
+			producer := &v.wf.Steps[ti]
+			if producer.Type != StepCheck || producer.Findings == nil || producer.Findings.Artifacts[in.Artifact] == "" {
+				v.errf("step %q input %s references undeclared check artifact", s.ID, in.String())
+			}
+			continue
 		}
 		if len(in.RefField) > 0 {
 			v.checkFieldRef(s.ID, "input "+in.String(), &v.wf.Steps[ti], in.RefField)
@@ -596,50 +645,15 @@ func (v *validator) checkValidate(s *Step) {
 	}
 }
 
-// checkLoop validates a bounded back-edge: the target must exist, the cap must
-// be positive (guaranteeing termination), and the guard must reference either
-// this step's own verdict or one of its dependencies.
-func (v *validator) checkLoop(s *Step) {
-	if s.Loop == nil {
-		return
-	}
-	l := s.Loop
-	if l.Goto == "" {
-		v.errf("step %q [step.loop] requires `goto`", s.ID)
-	} else if _, ok := v.wf.index[l.Goto]; !ok {
-		v.errf("step %q [step.loop] goto unknown step %q", s.ID, l.Goto)
-	}
-	if l.MaxIterations < 1 {
-		v.errf("step %q [step.loop] max_iterations must be >= 1 to guarantee termination", s.ID)
-	}
-	if l.When == "" {
-		v.errf("step %q [step.loop] requires `when`", s.ID)
-	} else if cond, err := ParseCondition(l.When); err != nil {
-		v.errf("step %q loop.when: %v", s.ID, err)
-	} else {
-		if cond.Step != s.ID && !contains(s.DependsOn, cond.Step) {
-			v.errf("step %q loop.when references %q, which must be this step or in its depends_on", s.ID, cond.Step)
-		}
-		v.checkCondValue(s.ID, "loop.when", cond)
-	}
-	if ref, ok := strings.CutPrefix(l.Feedback, "@"); ok {
-		if _, known := v.wf.index[ref]; !known {
-			v.errf("step %q loop.feedback @%s references unknown step", s.ID, ref)
-		}
-	} else if l.Feedback != "" {
-		v.errf("step %q loop.feedback must be \"@stepid\", got %q", s.ID, l.Feedback)
-	}
-}
-
-// checkRoutes validates the ordered replacement for [step.loop]. Duplicate
+// checkRoutes validates bounded, explicit back-edge selection. Duplicate
 // guards are rejected and a multi-branch decision must make its fallback
 // explicit, so a route can never be selected by declaration accident.
 func (v *validator) checkRoutes(s *Step) {
 	if len(s.Routes) == 0 {
+		if s.Type == StepCheck {
+			v.errf("check step %q requires an automatic remediation route for fail and error", s.ID)
+		}
 		return
-	}
-	if s.Loop != nil {
-		v.errf("step %q sets both [step.loop] and [[step.route]]; pick one", s.ID)
 	}
 	fallback := -1
 	seen := map[string]bool{}
@@ -650,6 +664,8 @@ func (v *validator) checkRoutes(s *Step) {
 			v.errf("%s requires `goto`", label)
 		} else if _, ok := v.wf.index[r.Goto]; !ok {
 			v.errf("%s goto unknown step %q", label, r.Goto)
+		} else if !v.routeTargetPrecedes(r.Goto, s.ID) {
+			v.errf("%s goto %q must be this step or an upstream remediation/review step", label, r.Goto)
 		}
 		if r.MaxIterations < 1 {
 			v.errf("%s max_iterations must be >= 1", label)
@@ -694,12 +710,50 @@ func (v *validator) checkRoutes(s *Step) {
 	if fallback >= 0 && fallback != len(s.Routes)-1 {
 		v.errf("step %q fallback route must be last", s.ID)
 	}
-	if len(s.Routes) > 1 && fallback < 0 && !v.routesExhaustOutput(s) {
+	if len(s.Routes) > 1 && fallback < 0 && !v.routesExhaustOutput(s, false) {
 		v.errf("step %q has multiple routes but no explicit fallback or exhaustive own-output routes", s.ID)
+	}
+	if fallback >= 0 && v.routesExhaustOutput(s, true) {
+		v.errf("step %q fallback route is unreachable because guarded routes exhaust its output", s.ID)
 	}
 	if len(guarded) > 1 && !routesAreMutuallyExclusive(guarded) {
 		v.errf("step %q route guards are not mutually exclusive", s.ID)
 	}
+	if s.Type == StepCheck && !v.hasAutomaticCheckRemediation(s) {
+		v.errf("check step %q requires an automatic remediation route covering both fail and error", s.ID)
+	}
+}
+
+// hasAutomaticCheckRemediation accepts either explicit fail and error guards or
+// a single non-pass guard. Skip is engine-produced before route selection, so
+// the latter is equivalent to fail-or-error for a dispatched check.
+func (v *validator) hasAutomaticCheckRemediation(s *Step) bool {
+	fail, runtimeErr := false, false
+	for _, r := range s.Routes {
+		if r.Fallback {
+			continue
+		}
+		cond, err := ParseCondition(r.When)
+		if err != nil || cond.Step != s.ID || len(cond.Field) != 0 {
+			continue
+		}
+		if !v.routeTargetPrecedes(r.Goto, s.ID) {
+			continue
+		}
+		if cond.Op == CondNeq && cond.Value == "pass" {
+			return true
+		}
+		if cond.Op != CondEq {
+			continue
+		}
+		switch cond.Value {
+		case "fail":
+			fail = true
+		case "error":
+			runtimeErr = true
+		}
+	}
+	return fail && runtimeErr
 }
 
 // routesAreMutuallyExclusive accepts only equality tests over one typed value
@@ -707,12 +761,18 @@ func (v *validator) checkRoutes(s *Step) {
 // pretending that arbitrary boolean expressions are statically disjoint.
 func routesAreMutuallyExclusive(guards []*Condition) bool {
 	first := guards[0]
-	if first.Op != CondEq {
-		return false
-	}
-	values := map[string]bool{first.Value: true}
+	values := map[string]bool{}
 	for _, guard := range guards[1:] {
-		if guard.Op != CondEq || guard.Step != first.Step || strings.Join(guard.Field, ".") != strings.Join(first.Field, ".") || values[guard.Value] {
+		if guard.Step != first.Step || strings.Join(guard.Field, ".") != strings.Join(first.Field, ".") {
+			return false
+		}
+	}
+	if len(guards) == 2 && first.Value == guards[1].Value && first.Op != guards[1].Op &&
+		(first.Op == CondEq || first.Op == CondNeq) && (guards[1].Op == CondEq || guards[1].Op == CondNeq) {
+		return true
+	}
+	for _, guard := range guards {
+		if guard.Op != CondEq || values[guard.Value] {
 			return false
 		}
 		values[guard.Value] = true
@@ -723,13 +783,19 @@ func routesAreMutuallyExclusive(guards []*Condition) bool {
 // routesExhaustOutput permits omitting a fallback only when guarded routes
 // partition every declared enum verdict of their owning step. Anything less
 // exhaustive needs the author to say where an otherwise-unmatched result goes.
-func (v *validator) routesExhaustOutput(s *Step) bool {
-	if s.OutputType.Kind != OutputEnum {
+func (v *validator) routesExhaustOutput(s *Step, ignoreFallback bool) bool {
+	values := s.OutputType.Enum
+	if s.OutputType.Kind == OutputBool {
+		values = []string{"true", "false"}
+	} else if s.OutputType.Kind != OutputEnum {
 		return false
 	}
 	seen := make(map[string]bool, len(s.Routes))
 	for _, r := range s.Routes {
 		if r.Fallback {
+			if ignoreFallback {
+				continue
+			}
 			return false
 		}
 		cond, err := ParseCondition(r.When)
@@ -738,12 +804,40 @@ func (v *validator) routesExhaustOutput(s *Step) bool {
 		}
 		seen[cond.Value] = true
 	}
-	for _, value := range s.OutputType.Enum {
+	for _, value := range values {
 		if !seen[value] {
 			return false
 		}
 	}
 	return true
+}
+
+func (v *validator) routeTargetPrecedes(target, source string) bool {
+	if target == source {
+		return true
+	}
+	seen := map[string]bool{}
+	var visit func(string) bool
+	visit = func(id string) bool {
+		if id == target {
+			return true
+		}
+		if seen[id] {
+			return false
+		}
+		seen[id] = true
+		idx, ok := v.wf.index[id]
+		if !ok {
+			return false
+		}
+		for _, dep := range v.wf.Steps[idx].DependsOn {
+			if visit(dep) {
+				return true
+			}
+		}
+		return false
+	}
+	return visit(source)
 }
 
 // checkCondValue verifies that a guard's comparison is legal for whatever it
