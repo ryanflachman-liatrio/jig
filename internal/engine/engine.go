@@ -1302,39 +1302,25 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 // the shared implementation behind agentDispatchStrategy and
 // commandDispatchStrategy in strategies.go.
 func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
-	// Create a git worktree for mutating steps (first dispatch only; retries and
-	// loop re-dispatches reuse the existing worktree so edits accumulate on the
-	// same branch).
-	var worktreePath string
-	if st.Isolation == workflow.IsolationWorktree && s.repoRoot != "" {
-		if existing, ok := s.worktrees[st.ID]; ok {
-			worktreePath = existing
-		} else {
-			branch := s.stepBranchName(st.ID)
-			wtPath := filepath.Join(s.jigRoot, "worktrees", s.runID, st.ID)
-			// Branch off the run branch's current HEAD at dispatch time (spec 06) so
-			// the step sees the code upstream steps already integrated. Fall back to
-			// repo HEAD when there is no run branch (non-git path, where this whole
-			// block only runs if createWorktree can still find a HEAD to fail against).
-			base := "HEAD"
-			if s.runBranch != "" {
-				base = s.runBranch
-			}
-			baseSHA, err := createWorktreeAt(s.repoRoot, wtPath, branch, base)
-			if err != nil {
-				// Setup failure (e.g. a git error creating the branch). Park for a
-				// human recovery decision rather than tearing down the run — a retry
-				// re-runs createWorktree. There is no agent session to resume here.
-				s.states[st.ID].Result = &step.Result{
-					Status: step.StatusFailed,
-					Err:    fmt.Sprintf("create worktree for step %q: %v", st.ID, err),
-				}
-				s.enterRecovery(st.ID)
-				return
-			}
-			s.worktrees[st.ID] = wtPath
-			s.wtBaseSHAs[st.ID] = baseSHA
-			worktreePath = wtPath
+	workspace, err := s.acquireExecutionWorkspace(st)
+	if err != nil {
+		// A reader view is the persisted execution contract. Falling back to the
+		// caller's checkout here would let a failed snapshot silently read a
+		// different repository state.
+		s.states[st.ID].Result = &step.Result{
+			Status: step.StatusFailed,
+			Err:    fmt.Sprintf("acquire execution workspace for step %q: %v", st.ID, err),
+		}
+		s.enterRecovery(st.ID)
+		return
+	}
+	worktreePath := ""
+	if workspace.Kind == executionWorkspaceMutation {
+		worktreePath = workspace.Dir
+	}
+	releaseReaderView := func() {
+		if workspace.Kind == executionWorkspaceReadOnlyView {
+			s.releaseExecutionViewForStep(st.ID)
 		}
 	}
 
@@ -1344,6 +1330,7 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	// writes, which would otherwise fail with "no such file or directory".
 	if s.runDir != "" {
 		if _, err := datastore.StepDir(s.runDir, st.ID); err != nil {
+			releaseReaderView()
 			s.states[st.ID].Result = &step.Result{
 				Status: step.StatusFailed,
 				Err:    fmt.Sprintf("create step dir for %q: %v", st.ID, err),
@@ -1405,6 +1392,7 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	}
 	secrets, err := s.resolveSecrets(st)
 	if err != nil {
+		releaseReaderView()
 		s.inFlight--
 		if st.Isolation == workflow.IsolationWorktree {
 			s.mutatingInFlight--
@@ -1420,6 +1408,7 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	}
 	s.resolveAllInputs(st)
 	if err := s.snapshotInputs(st.ID, s.preResolvedInputs[st.ID]); err != nil {
+		releaseReaderView()
 		s.inFlight--
 		if st.Isolation == workflow.IsolationWorktree {
 			s.mutatingInFlight--
@@ -1433,7 +1422,7 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 		s.applyFailurePolicy(st.ID, st)
 		return
 	}
-	req := s.buildRequest(st, runID, worktreePath, artifactDir, transcriptPath)
+	req := s.buildRequest(st, runID, worktreePath, workspace.Dir, artifactDir, transcriptPath)
 	req.Secrets = secrets
 	req.NetworkRequest = func() {
 		select {
@@ -1627,7 +1616,7 @@ func (s *scheduler) resolveAllInputs(st *workflow.Step) {
 // (both user and non-user).
 func (s *scheduler) buildRequest(
 	st *workflow.Step,
-	runID, worktreePath, artifactDir, transcriptPath string,
+	runID, worktreePath, executionDir, artifactDir, transcriptPath string,
 ) StepRequest {
 	state := s.states[st.ID]
 	// Agent steps get the engine-assembled "Workflow context" preamble; command
@@ -1661,6 +1650,7 @@ func (s *scheduler) buildRequest(
 		WorkflowContext: workflowContext,
 		ArtifactDir:     artifactDir,
 		Worktree:        worktreePath,
+		ExecutionDir:    executionDir,
 		RepoRoot:        s.repoRoot,
 		TranscriptPath:  transcriptPath,
 		Iteration:       state.Iteration,

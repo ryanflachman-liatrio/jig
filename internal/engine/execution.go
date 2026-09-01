@@ -87,6 +87,12 @@ func (s *scheduler) releaseExecutionView(stepID string, workspace executionWorks
 	delete(s.executionViews, stepID)
 }
 
+func (s *scheduler) releaseExecutionViewForStep(stepID string) {
+	if workspace, ok := s.executionViews[stepID]; ok {
+		s.releaseExecutionView(stepID, workspace)
+	}
+}
+
 // releaseExecutionWorkspaces removes reader views without touching mutating
 // worktrees or the run worktree, which have distinct lifecycle requirements.
 func (s *scheduler) releaseExecutionWorkspaces() {

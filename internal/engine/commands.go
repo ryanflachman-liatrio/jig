@@ -25,6 +25,11 @@ type command interface {
 // early-exit paths (parked for recovery, deliberately stopped) or the normal
 // post-exec chain / failure-policy path.
 func (m stepDoneMsg) execute(s *scheduler) {
+	// Validation runs on the dispatch snapshot too, so defer release until every
+	// post-execution handler has consumed it. A retry always acquires a fresh
+	// view of the current run branch.
+	defer s.releaseExecutionViewForStep(m.stepID)
+
 	s.inFlight--
 	if wfStep := s.stepByID(m.stepID); wfStep != nil && wfStep.ResourceClass != "" {
 		s.classInFlight[wfStep.ResourceClass]--

@@ -27,7 +27,15 @@ type StepRequest struct {
 	// a non-agent step, or an agent step with inject_context off (Unit 4). An
 	// empty value leaves the built prompt byte-identical to the pre-feature form.
 	WorkflowContext string
-	Worktree        string // "" when isolation = none (Phase 5+)
+	// Worktree is the private mutable workspace for an isolated step. It is
+	// deliberately empty for readers: engine lifecycle code uses it to capture
+	// diffs and integrate mutations, neither of which applies to a read-only
+	// execution view.
+	Worktree string
+	// ExecutionDir is the run-owned repository snapshot selected at dispatch.
+	// It is empty when persistence is off, in which case executors use their
+	// configured working-directory fallback.
+	ExecutionDir string
 	// RepoRoot is the project root (the parent of .jig), used to resolve a
 	// command step's `script` file path — scripts are repo-root-relative, not
 	// relative to the execution cwd. "" on the persistence-off / non-git path,

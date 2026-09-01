@@ -23,6 +23,7 @@ type composeExec struct {
 	writes    map[string]map[string]string // stepID → filename → content to write
 	failUntil map[string]int               // stepID → fail while req.Attempt < n
 	present   map[string]map[string]bool   // stepID → filename → present at execute time (recorded)
+	requests  map[string]StepRequest       // stepID → dispatched request
 }
 
 func (e *composeExec) Execute(_ context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
@@ -32,9 +33,17 @@ func (e *composeExec) Execute(_ context.Context, req StepRequest, _ Reporter) (*
 	if e.present == nil {
 		e.present = map[string]map[string]bool{}
 	}
+	if e.requests == nil {
+		e.requests = map[string]StepRequest{}
+	}
+	e.requests[id] = req
 	seen := map[string]bool{}
-	if req.Worktree != "" {
-		if entries, err := os.ReadDir(req.Worktree); err == nil {
+	executionDir := req.ExecutionDir
+	if executionDir == "" {
+		executionDir = req.Worktree
+	}
+	if executionDir != "" {
+		if entries, err := os.ReadDir(executionDir); err == nil {
 			for _, en := range entries {
 				seen[en.Name()] = true
 			}
@@ -51,6 +60,68 @@ func (e *composeExec) Execute(_ context.Context, req StepRequest, _ Reporter) (*
 		}
 	}
 	return &step.Result{Status: step.StatusSucceeded}, nil
+}
+
+// TestReadOnlyStepReceivesRunExecutionView proves a reader is dispatched with
+// a snapshot of the integrated run branch, not the user's original checkout.
+func TestReadOnlyStepReceivesRunExecutionView(t *testing.T) {
+	repo := t.TempDir()
+	initRepo(t, repo)
+	if err := os.WriteFile(filepath.Join(repo, "user-only.txt"), []byte("uncommitted\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	const toml = `
+[workflow]
+name = "read-only-execution-view"
+version = "0.1"
+
+[[step]]
+id = "producer"
+type = "command"
+run = "echo producer"
+isolation = "worktree"
+
+[[step]]
+id = "reader"
+type = "command"
+run = "echo reader"
+depends_on = ["producer"]
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &composeExec{writes: map[string]map[string]string{
+		"producer": {"integrated.txt": "from producer"},
+	}}
+	mgr := NewManager(exec, filepath.Join(repo, ".jig"))
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	driveFinalMerge(t, ch, run, false)
+
+	exec.mu.Lock()
+	readerReq := exec.requests["reader"]
+	readerFiles := exec.present["reader"]
+	exec.mu.Unlock()
+	if readerReq.Worktree != "" {
+		t.Errorf("reader Worktree = %q, want empty", readerReq.Worktree)
+	}
+	if readerReq.ExecutionDir == "" {
+		t.Fatal("reader ExecutionDir is empty")
+	}
+	if !readerFiles["integrated.txt"] {
+		t.Errorf("reader execution view omitted the producer's integrated file: %#v", readerFiles)
+	}
+	if readerFiles["user-only.txt"] {
+		t.Errorf("reader execution view included uncommitted user-checkout file: %#v", readerFiles)
+	}
+	if _, err := os.Stat(readerReq.ExecutionDir); !os.IsNotExist(err) {
+		t.Errorf("reader execution view still exists after run completion: %v", err)
+	}
 }
 
 // TestRunBranchCreatedAtWorkingHead verifies that starting a run in a git repo

@@ -126,7 +126,7 @@ func TestBuildRequestWorkflowContext(t *testing.T) {
 	// preamble must report its real (failed) status, not assume succeeded.
 	s.states["security_scan"].Status = step.StatusFailed
 
-	req := s.buildRequest(s.stepByID("plan"), "run1", "", "", "")
+	req := s.buildRequest(s.stepByID("plan"), "run1", "", "", "", "")
 	got := req.WorkflowContext
 
 	wantLines := []string{
@@ -162,7 +162,7 @@ func TestBuildRequestNoSiblingLeak(t *testing.T) {
 		// A plausible artifact body that must NOT be inlined into the preamble.
 		s.states[id].Result = &step.Result{Structured: []byte(`{"summary":"SECRET_BODY_TEXT"}`)}
 	}
-	got := s.buildRequest(s.stepByID("plan"), "run1", "", "", "").WorkflowContext
+	got := s.buildRequest(s.stepByID("plan"), "run1", "", "", "", "").WorkflowContext
 
 	// `sibling` depends on research_backend (not plan) and `lint` depends on
 	// implement (not plan): neither is a neighbor of plan.
@@ -178,7 +178,7 @@ func TestBuildRequestNoSiblingLeak(t *testing.T) {
 func TestBuildRequestNonAgentEmpty(t *testing.T) {
 	s := fixtureScheduler(t, planFixture)
 	for _, id := range []string{"lint", "plan_review"} {
-		req := s.buildRequest(s.stepByID(id), "run1", "", "", "")
+		req := s.buildRequest(s.stepByID(id), "run1", "", "", "", "")
 		if req.WorkflowContext != "" {
 			t.Errorf("non-agent step %q: WorkflowContext = %q, want empty", id, req.WorkflowContext)
 		}
@@ -211,12 +211,12 @@ inputs = ["@a.summary"]
 	s := fixtureScheduler(t, toml)
 	s.states["a"].Status = step.StatusSucceeded
 
-	if got := s.buildRequest(s.stepByID("b"), "run1", "", "", "").WorkflowContext; got != "" {
+	if got := s.buildRequest(s.stepByID("b"), "run1", "", "", "", "").WorkflowContext; got != "" {
 		t.Errorf("inject_context = false: WorkflowContext = %q, want empty", got)
 	}
 	// Sanity: `a` (inject_context defaulted on) still gets a non-empty preamble,
 	// so the empty result above is the toggle, not an assembly bug.
-	if got := s.buildRequest(s.stepByID("a"), "run1", "", "", "").WorkflowContext; got == "" {
+	if got := s.buildRequest(s.stepByID("a"), "run1", "", "", "", "").WorkflowContext; got == "" {
 		t.Errorf("step a (inject_context default on) should have a non-empty preamble")
 	}
 }
@@ -255,7 +255,7 @@ inputs = ["@plan.tasks"]
 	s.states["plan"].Status = step.StatusSucceeded
 
 	// Own injection: plan's preamble carries its own Purpose and Notes lines.
-	planCtx := s.buildRequest(s.stepByID("plan"), "run1", "", "", "").WorkflowContext
+	planCtx := s.buildRequest(s.stepByID("plan"), "run1", "", "", "", "").WorkflowContext
 	for _, want := range []string{
 		"Purpose: produce the implementation plan",
 		"Notes: focus on the public API surface",
@@ -267,7 +267,7 @@ inputs = ["@plan.tasks"]
 
 	// Neighbor propagation: implement's Upstream line for plan shows plan's
 	// declared purpose after the status.
-	implCtx := s.buildRequest(s.stepByID("implement"), "run1", "", "", "").WorkflowContext
+	implCtx := s.buildRequest(s.stepByID("implement"), "run1", "", "", "", "").WorkflowContext
 	wantUpstream := "- `plan` (succeeded) — produce the implementation plan"
 	if !strings.Contains(implCtx, wantUpstream) {
 		t.Errorf("implement preamble missing propagated purpose %q\n--- got ---\n%s", wantUpstream, implCtx)
@@ -408,7 +408,7 @@ func TestWorkflowContextReviseIteration(t *testing.T) {
 
 	fireLoopNow(s, "plan_review")
 
-	got := s.buildRequest(s.stepByID("plan"), "run1", "", "", "").WorkflowContext
+	got := s.buildRequest(s.stepByID("plan"), "run1", "", "", "", "").WorkflowContext
 	if !strings.Contains(got, "(iteration 2 of 3)") {
 		t.Errorf("want `(iteration 2 of 3)`, got:\n%s", got)
 	}

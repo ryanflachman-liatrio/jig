@@ -162,6 +162,9 @@ skill = "skills/mutate"
 	if req.Worktree == "" {
 		t.Error("StepRequest.Worktree must be non-empty for isolation=worktree step")
 	}
+	if req.ExecutionDir != req.Worktree {
+		t.Errorf("StepRequest.ExecutionDir = %q, want mutation worktree %q", req.ExecutionDir, req.Worktree)
+	}
 
 	// Run must finish successfully.
 	last := events[len(events)-1]
