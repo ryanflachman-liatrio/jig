@@ -136,7 +136,7 @@ depends_on = ["proof", "find_next_task"]
 when = "find_next_task.progress == 'continue'"
 output_type = { enum = ["continue", "redo"] }
   [[step.review]]
-  source = "@proof.proof_path"
+  file = "@proof.proof_path"
   label = "Task proof"
 
 [[step.route]]

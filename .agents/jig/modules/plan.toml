@@ -36,14 +36,14 @@ skill = "../../skills/sdd-analyze-repo-standards"
 allowed_tools = ["Read", "Grep", "Glob"]
 isolation = "none"
   [step.schema]
-  standards_notes = "text"
+  standards_evidence = { list = { source = "text", status = "text", standards = { list = "text" } } }
 
 [[step]]
 id = "generate_tasks"
 type = "agent"
 depends_on = ["analyze_requirements", "analyze_standards"]
 skill = "../../skills/sdd-parent-tasks"
-inputs = ["@module.spec_name", "@module.spec_path", "@analyze_requirements.requirements_notes", "@analyze_standards.standards_notes"]
+inputs = ["@module.spec_name", "@module.spec_path", "@analyze_requirements.requirements_notes", "@analyze_standards.standards_evidence"]
 allowed_tools = ["Read", "Grep", "Glob", "Write"]
 isolation = "worktree"
 resource_class = "mutation"
@@ -90,9 +90,9 @@ isolation = "none"
 [[step]]
 id = "audit_standards"
 type = "agent"
-depends_on = ["expand_tasks"]
+depends_on = ["expand_tasks", "analyze_standards"]
 skill = "../../skills/sdd-audit-standards-consistency"
-inputs = ["@module.spec_path", "@expand_tasks.task_path"]
+inputs = ["@module.spec_path", "@expand_tasks.task_path", "@analyze_standards.standards_evidence"]
 allowed_tools = ["Read", "Grep", "Glob"]
 isolation = "none"
   [step.schema]
@@ -125,11 +125,19 @@ mutation_paths = ["docs/specs/**"]
 [[step]]
 id = "audit_review"
 type = "review"
-depends_on = ["synthesize_audit"]
+depends_on = ["synthesize_audit", "expand_tasks"]
 output_type = { enum = ["approve", "remediate"] }
   [[step.review]]
   source = "@synthesize_audit.audit_report"
   label = "Planning audit"
+
+  [[step.review]]
+  file = "@module.spec_path"
+  label = "Specification"
+
+  [[step.review]]
+  file = "@expand_tasks.task_path"
+  label = "Expanded task plan"
 
 [[step.route]]
 when = "audit_review == 'remediate'"

@@ -66,6 +66,10 @@ output_type = { enum = ["continue", "redo", "done"] }
   source = "@implement_task.completion_summary"
   label = "Implementation completion"
 
+  [[step.review]]
+  source = "diff"
+  label = "Cumulative implementation diff"
+
 [[step]]
 id = "capture_remediation_scope"
 type = "agent"
@@ -151,3 +155,7 @@ output_type = { enum = ["approve", "reject"] }
   [[step.review]]
   source = "@release_notes.draft"
   label = "Release notes and final merge"
+
+  [[step.review]]
+  source = "diff"
+  label = "Cumulative implementation diff"

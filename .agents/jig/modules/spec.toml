@@ -152,7 +152,7 @@ depends_on = ["write_spec", "scope_gate"]
 when = "scope_gate == 'proceed'"
 output_type = { enum = ["approve", "revise"] }
   [[step.review]]
-  source = "@write_spec.summary"
+  file = "@write_spec.spec_path"
   label = "Specification and architecture"
 
 [[step.route]]

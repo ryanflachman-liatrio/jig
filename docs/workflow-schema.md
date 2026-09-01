@@ -406,8 +406,8 @@ idempotent = true
 
 `max_parallel` remains the global ceiling. `resource_limits` applies an
 additional named-class ceiling; `max_read_only` and `max_mutating` independently
-limit in-place/read-only and worktree-isolated work. A zero partition limit is
-unbounded, subject to `max_parallel`.
+limit read-only execution views and mutating worktrees. A zero partition limit
+is unbounded, subject to `max_parallel`.
 
 Any worktree diff is checked before it is staged or merged. `mutation_paths`
 uses repository-relative paths, normal globs, or a recursive `dir/**` prefix.
@@ -448,22 +448,33 @@ Bundled SDD checks use explicit repository quality profiles rather than
 auto-detecting a package manager or linter; see
 [quality profiles](quality-profiles.md).
 
-## Worktrees
+## Execution snapshots and worktrees
 
-`isolation = "worktree"` runs a step in its own git worktree so mutating agents
-don't clobber each other and every change is reviewable/revertible.
+Every persisted worker receives an `ExecutionDir`: a stable, run-owned snapshot
+of the integrated repository state captured when that worker dispatches. This
+is an engine execution field rather than workflow TOML. Relative runtime paths
+(literal inputs, declared outputs, check findings, and dynamic review files)
+resolve beneath it, so a dependency's integrated files are visible without
+exposing its private mutation worktree.
+
+`isolation = "worktree"` gives a mutating step its own `ExecutionDir`; read-only
+steps receive ephemeral execution-view worktrees at the same run-branch commit.
+Views are distinct per dispatch and removed when their worker completes, so
+concurrent readers neither observe later integration nor modify the central run
+checkout. With persistence disabled, `ExecutionDir` is empty and the process
+working directory remains the fallback.
 
 - **Default on** for agent steps whose `allowed_tools` include mutating tools
   (`Edit`/`Write`/`Bash`); override with `isolation = "none"`.
-- **Branch name is derived by convention:** `jig/<workflow>/<step-id>`. No
-  injected variable needed — a later `command` step can reference it directly.
+- **Branch name is derived by convention:** `jig/<workflow>/<run-id>/<step-id>`.
+  No injected variable is needed; the scheduler owns branch lifecycle.
 - **Each step worktree branches off the run-branch HEAD**, not repo-root HEAD.
   This means each step sees the accumulated code changes produced by its upstream
   steps. When the step completes, jig squash-merges its worktree branch back into
   the run branch as one commit. Integration is the engine's responsibility — no
   explicit `merge` command step is needed.
-- `validate` commands run *inside* the step's worktree, so they see the step's
-  changes before integration.
+- `validate` commands run inside the completed step's `ExecutionDir`, so they
+  see the exact state the worker used.
 
 ---
 
@@ -730,6 +741,42 @@ of comments and an optional summary.
    to source lines for stable comments.
 3. The human acknowledges every document and submits one atomic verdict batch.
 4. The engine verifies snapshot digests and rejects incomplete or stale batches.
+
+### Review targets
+
+Every `[[step.review]]` target has a non-blank, unique `label` and exactly one
+of `source` or `file`:
+
+| Form | Meaning |
+|------|---------|
+| `source = "@step.field"` | Render the text stored in a structured output field. |
+| `source = "@step"` | Render the producer's primary output artifact. |
+| `source = "diff"` | Render captured diffs from transitive dependencies. |
+| `source = "notes.md"` | Render a static file resolved relative to the workflow file. |
+| `file = "@step.path_field"` | Dereference a text field as a repository-relative file in the review dispatch snapshot. |
+
+`file` is for an upstream-produced pathname, not the pathname text itself. It
+must name a text field from a direct dependency; absolute paths, parent escapes,
+symlink escapes, directories, binary files, and oversized files fail closed.
+The review snapshot records both the logical field reference and its resolved
+repository-relative path, then replays that immutable content without rereading
+the source file.
+
+```toml
+[[step]]
+id = "architecture_gate"
+type = "review"
+depends_on = ["write_spec"]
+output_type = { enum = ["approve", "revise"] }
+
+  [[step.review]]
+  file = "@write_spec.spec_path"
+  label = "Specification"
+
+  [[step.review]]
+  source = "@write_spec.summary"
+  label = "Author orientation"
+```
 
 ---
 
