@@ -89,6 +89,67 @@ func TestCommandExecutor_InjectsAndRedactsNamedSecrets(t *testing.T) {
 	}
 }
 
+func TestCommandExecutor_UsesExecutionDirAndConfiguredFallback(t *testing.T) {
+	configuredDir := t.TempDir()
+	executionDir := t.TempDir()
+	worktree := t.TempDir()
+	configuredReal, err := filepath.EvalSymlinks(configuredDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	executionReal, err := filepath.EvalSymlinks(executionDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := NewCommandExecutor(configuredDir)
+
+	snapshotRep := &noopReporter{}
+	result, err := exec.Execute(context.Background(), engine.StepRequest{
+		Step:         &workflow.Step{ID: "snapshot", Type: workflow.StepCommand, Run: "pwd"},
+		Worktree:     worktree,
+		ExecutionDir: executionDir,
+	}, snapshotRep)
+	if err != nil || result.Status != step.StatusSucceeded {
+		t.Fatalf("snapshot Execute = %+v, %v", result, err)
+	}
+	if got := strings.TrimSpace(strings.Join(snapshotRep.deltas, "")); got != executionReal {
+		t.Errorf("execution cwd = %q, want %q", got, executionReal)
+	}
+
+	rep := &noopReporter{}
+	result, err = exec.Execute(context.Background(), engine.StepRequest{
+		Step:     &workflow.Step{ID: "fallback", Type: workflow.StepCommand, Run: "pwd"},
+		Worktree: worktree,
+	}, rep)
+	if err != nil || result.Status != step.StatusSucceeded {
+		t.Fatalf("fallback Execute = %+v, %v", result, err)
+	}
+	if got := strings.TrimSpace(strings.Join(rep.deltas, "")); got != configuredReal {
+		t.Errorf("persistence-off cwd = %q, want configured fallback %q", got, configuredReal)
+	}
+
+}
+
+func TestCheckExecutor_UsesExecutionDir(t *testing.T) {
+	configuredDir := t.TempDir()
+	executionDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configuredDir, "findings.json"), []byte(`{"schema_version":1,"outcome":"fail","findings":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	result, err := NewCheckExecutor(configuredDir).Execute(context.Background(), engine.StepRequest{
+		Step: &workflow.Step{
+			ID:       "quality",
+			Type:     workflow.StepCheck,
+			Run:      `printf '{"schema_version":1,"outcome":"pass","findings":[]}' > findings.json`,
+			Findings: &workflow.CheckFindings{SchemaVersion: workflow.CheckFindingsSchemaVersion, File: "findings.json", RequiredTools: []string{"sh"}},
+		},
+		ExecutionDir: executionDir,
+	}, &noopReporter{})
+	if err != nil || result.Status != step.StatusSucceeded || result.Verdict != "pass" {
+		t.Fatalf("Execute = %+v, %v; want pass from execution directory", result, err)
+	}
+}
+
 func TestCheckExecutor_ReturnsTypedFailureAndEvidence(t *testing.T) {
 	dir := t.TempDir()
 	exec := NewCheckExecutor(dir)

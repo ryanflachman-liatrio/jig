@@ -54,7 +54,12 @@ func (e *CheckExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 		return e.protocolError(req, fmt.Sprintf("check command did not complete: %v", ctx.Err()), false), nil
 	}
 
-	data, err := os.ReadFile(filepath.Join(e.executionDir(req), req.Step.Findings.File))
+	executionDir := e.executionDir(req)
+	findingsPath, err := workflow.ExecutionPath(executionDir, req.Step.Findings.File)
+	if err != nil {
+		return e.protocolError(req, fmt.Sprintf("resolve check findings %q: %v", req.Step.Findings.File, err), false), nil
+	}
+	data, err := os.ReadFile(findingsPath)
 	if err != nil {
 		return e.protocolError(req, fmt.Sprintf("read check findings %q: %v", req.Step.Findings.File, err), false), nil
 	}
@@ -63,7 +68,7 @@ func (e *CheckExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 	if err != nil {
 		return e.protocolError(req, fmt.Sprintf("invalid check findings %q: %v", req.Step.Findings.File, err), false), nil
 	}
-	artifacts, err := snapshotCheckArtifacts(req, e.executionDir(req))
+	artifacts, err := snapshotCheckArtifacts(req, executionDir)
 	if err != nil {
 		return e.protocolError(req, err.Error(), false), nil
 	}
@@ -89,15 +94,19 @@ func snapshotCheckArtifacts(req engine.StepRequest, executionDir string) (map[st
 	}
 	artifacts := make(map[string]string, len(req.Step.Findings.Artifacts))
 	for name, source := range req.Step.Findings.Artifacts {
-		data, err := os.ReadFile(filepath.Join(executionDir, source))
+		sourcePath, err := workflow.ExecutionPath(executionDir, source)
+		if err != nil {
+			return nil, fmt.Errorf("resolve check artifact %q: %w", name, err)
+		}
+		data, err := os.ReadFile(sourcePath)
 		if err != nil {
 			return nil, fmt.Errorf("read check artifact %q: %w", name, err)
 		}
-		path := filepath.Join(dir, fmt.Sprintf("generation-%03d-iteration-%03d-attempt-%03d-artifact-%s", req.Generation, req.Iteration, req.Attempt, name))
-		if err := os.WriteFile(path, data, 0o644); err != nil {
+		snapshotPath := filepath.Join(dir, fmt.Sprintf("generation-%03d-iteration-%03d-attempt-%03d-artifact-%s", req.Generation, req.Iteration, req.Attempt, name))
+		if err := os.WriteFile(snapshotPath, data, 0o644); err != nil {
 			return nil, fmt.Errorf("snapshot check artifact %q: %w", name, err)
 		}
-		artifacts[name] = path
+		artifacts[name] = snapshotPath
 	}
 	return artifacts, nil
 }
@@ -115,8 +124,8 @@ func requiredToolsAvailable(st *workflow.Step) error {
 }
 
 func (e *CheckExecutor) executionDir(req engine.StepRequest) string {
-	if req.Worktree != "" {
-		return req.Worktree
+	if req.ExecutionDir != "" {
+		return req.ExecutionDir
 	}
 	return e.command.cwd
 }

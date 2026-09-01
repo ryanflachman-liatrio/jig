@@ -332,7 +332,8 @@ func TestCaptureStream_StructuredToolResultTruncated(t *testing.T) {
 // to it, and that an explicit Step.Output path receives the same content.
 func TestCaptureStream_Artifact(t *testing.T) {
 	dir := t.TempDir()
-	explicitOut := filepath.Join(dir, "explicit.md")
+	executionDir := t.TempDir()
+	explicitOut := "outputs/explicit.md"
 	tPath := filepath.Join(dir, "transcript.jsonl")
 	proseText := "# Done\nthe prose answer"
 
@@ -350,6 +351,7 @@ func TestCaptureStream_Artifact(t *testing.T) {
 	}
 	req := engine.StepRequest{
 		Step:           &workflow.Step{Output: explicitOut},
+		ExecutionDir:   executionDir,
 		TranscriptPath: tPath,
 	}
 
@@ -388,12 +390,30 @@ func TestCaptureStream_Artifact(t *testing.T) {
 	}
 
 	// Explicit output path receives the same prose content.
-	gotExplicit, err := os.ReadFile(explicitOut)
+	gotExplicit, err := os.ReadFile(filepath.Join(executionDir, explicitOut))
 	if err != nil {
 		t.Fatalf("explicit output not written: %v", err)
 	}
 	if string(gotExplicit) != proseText {
 		t.Errorf("explicit output = %q, want prose text", gotExplicit)
+	}
+}
+
+func TestAgentExecutor_UsesExecutionDirForSession(t *testing.T) {
+	executionDir := t.TempDir()
+	h := &harness.FakeHarness{
+		Sess: harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}}),
+	}
+	result, err := NewAgentExecutorFixed(h).Execute(context.Background(), engine.StepRequest{
+		Step:         &workflow.Step{ID: "agent", Type: workflow.StepAgent},
+		Worktree:     t.TempDir(),
+		ExecutionDir: executionDir,
+	}, &captureReporter{})
+	if err != nil || result.Status != step.StatusSucceeded {
+		t.Fatalf("Execute = %+v, %v", result, err)
+	}
+	if h.OpenSpec.Cwd != executionDir {
+		t.Errorf("SessionSpec.Cwd = %q, want execution directory %q", h.OpenSpec.Cwd, executionDir)
 	}
 }
 

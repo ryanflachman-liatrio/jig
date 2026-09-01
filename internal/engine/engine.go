@@ -1406,7 +1406,7 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 		s.applyFailurePolicy(st.ID, st)
 		return
 	}
-	s.resolveAllInputs(st)
+	s.resolveAllInputs(st, workspace.Dir)
 	if err := s.snapshotInputs(st.ID, s.preResolvedInputs[st.ID]); err != nil {
 		releaseReaderView()
 		s.inFlight--
@@ -1538,7 +1538,10 @@ func (s *scheduler) resolveSecrets(st *workflow.Step) (map[string]string, error)
 // resolveAllInputs appends ResolvedInput entries for every non-user input
 // into s.preResolvedInputs[st.ID]. User inputs are already present from the
 // prompt-collection flow (handle(userInputMsg)); this fills the remaining refs.
-func (s *scheduler) resolveAllInputs(st *workflow.Step) {
+// Literal paths are anchored to the dispatch snapshot before snapshotInputs
+// copies them, so the worker receives the same immutable bytes the scheduler
+// observed rather than a path resolved later from an unrelated checkout.
+func (s *scheduler) resolveAllInputs(st *workflow.Step, executionDir string) {
 	for _, inp := range st.Inputs {
 		if inp.From == "user" {
 			continue // already collected via prompt flow
@@ -1602,6 +1605,9 @@ func (s *scheduler) resolveAllInputs(st *workflow.Step) {
 
 		case inp.Path != "":
 			value = inp.Path
+			if executionDir != "" && !filepath.IsAbs(value) {
+				value = filepath.Join(executionDir, value)
+			}
 		}
 
 		s.preResolvedInputs[st.ID] = append(s.preResolvedInputs[st.ID], ResolvedInput{

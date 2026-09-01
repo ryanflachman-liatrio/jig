@@ -72,10 +72,11 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 	// output-copy goroutine forever. WaitDelay bounds that wait, then forcibly
 	// closes the I/O so Wait always returns.
 	cmd.WaitDelay = commandWaitDelay
-	// Worktree takes precedence over the executor's static cwd (Phase 5).
+	// A dispatch snapshot takes precedence over the executor's configured CWD.
+	// The latter is the persistence-off fallback when no run-owned view exists.
 	cwd := e.cwd
-	if req.Worktree != "" {
-		cwd = req.Worktree
+	if req.ExecutionDir != "" {
+		cwd = req.ExecutionDir
 	}
 	if cwd != "" {
 		cmd.Dir = cwd

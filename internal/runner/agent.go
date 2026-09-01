@@ -86,8 +86,8 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 		spec.Prompt = req.Message
 		spec.Resume = req.ResumeSessionID
 	}
-	if req.Worktree != "" {
-		spec.Cwd = req.Worktree
+	if req.ExecutionDir != "" {
+		spec.Cwd = req.ExecutionDir
 	}
 	if containsStr(req.Step.AllowedTools, "AskUserQuestion") {
 		if !caps.Has(harness.CapUserQuestion) {
@@ -383,8 +383,15 @@ func captureStream(
 						result.OutputPath = rawPath
 						// Also write to the step's declared output path when set.
 						if req.Step.Output != "" {
-							if err := os.MkdirAll(filepath.Dir(req.Step.Output), 0o755); err == nil {
-								_ = os.WriteFile(req.Step.Output, []byte(lastAssistantText), 0o644)
+							outputPath, err := explicitOutputPath(req)
+							if err != nil {
+								return failResult(fmt.Sprintf("resolve declared output: %v", err), start), nil
+							}
+							if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+								return failResult(fmt.Sprintf("create declared output directory: %v", err), start), nil
+							}
+							if err := os.WriteFile(outputPath, []byte(lastAssistantText), 0o644); err != nil {
+								return failResult(fmt.Sprintf("write declared output: %v", err), start), nil
 							}
 						}
 					}
@@ -412,6 +419,10 @@ func captureStream(
 	res := failResult(errText, start)
 	res.SessionID = sessionID
 	return res, nil
+}
+
+func explicitOutputPath(req engine.StepRequest) (string, error) {
+	return workflow.ExecutionPath(req.ExecutionDir, req.Step.Output)
 }
 
 func writeAgentAttemptArtifacts(req engine.StepRequest, structured []byte, prose string) {

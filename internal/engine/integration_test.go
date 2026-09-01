@@ -144,6 +144,67 @@ depends_on = ["producer"]
 	}
 }
 
+// TestLiteralInputSnapshotsExecutionView proves literal inputs are resolved
+// from the run-owned execution view before they are copied for the worker.
+func TestLiteralInputSnapshotsExecutionView(t *testing.T) {
+	repo := t.TempDir()
+	initRepo(t, repo)
+	inputPath := filepath.Join(repo, "request.md")
+	if err := os.WriteFile(inputPath, []byte("committed request\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, repo, "add", "request.md")
+	mustGit(t, repo, "commit", "-m", "add request")
+	if err := os.WriteFile(inputPath, []byte("uncommitted request\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	const toml = `
+[workflow]
+name = "literal-input-snapshot"
+version = "0.1"
+
+[[step]]
+id = "reader"
+type = "command"
+run = "echo reader"
+inputs = ["request.md"]
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &composeExec{}
+	mgr := NewManager(exec, filepath.Join(repo, ".jig"))
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	driveFinalMerge(t, ch, run, false)
+
+	exec.mu.Lock()
+	req := exec.requests["reader"]
+	exec.mu.Unlock()
+	if len(req.Inputs) != 1 {
+		t.Fatalf("reader inputs = %d, want 1", len(req.Inputs))
+	}
+	input := req.Inputs[0]
+	if input.Ref.Path != "request.md" {
+		t.Errorf("authored input path = %q, want request.md", input.Ref.Path)
+	}
+	if input.SnapshotPath == "" || input.Value != input.SnapshotPath {
+		t.Fatalf("resolved input = %+v, want prompt to receive its snapshot path", input)
+	}
+	data, err := os.ReadFile(input.SnapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(data), "committed request\n"; got != want {
+		t.Errorf("snapshot content = %q, want %q", got, want)
+	}
+}
+
 // TestConcurrentReadOnlyStepsReceiveDistinctExecutionViews proves siblings do
 // not share a checkout: they concurrently read separate snapshots of the same
 // integrated run commit.
