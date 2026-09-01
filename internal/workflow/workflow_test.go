@@ -110,6 +110,158 @@ func TestDecodeValid(t *testing.T) {
 	}
 }
 
+func TestDecodeReviewFileTargets(t *testing.T) {
+	const header = `
+[workflow]
+name = "review-files"
+version = "1"
+
+[[step]]
+id = "write"
+type = "agent"
+skill = "skills/write"
+  [step.schema]
+  spec_path = "text"
+  count = "number"
+`
+	const review = `
+[[step]]
+id = "review"
+type = "review"
+depends_on = ["write"]
+output_type = { enum = ["approve", "revise"] }
+`
+
+	t.Run("valid upstream text field", func(t *testing.T) {
+		wf, err := Decode(header+review+`
+[[step.review]]
+source = "diff"
+label = "Code changes"
+
+[[step.review]]
+file = "@write.spec_path"
+label = "Specification"
+`, "")
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		target := wf.Steps[wf.index["review"]].Review[1]
+		if target.Kind() != ReviewTargetFile || target.Reference() != "@write.spec_path" {
+			t.Fatalf("file target = %#v, want file reference", target)
+		}
+	})
+
+	cases := []struct {
+		name string
+		toml string
+		want string
+	}{
+		{
+			name: "unknown producer",
+			toml: header + review + `
+[[step.review]]
+file = "@missing.spec_path"
+label = "Specification"
+`,
+			want: `file target "@missing.spec_path" references unknown step "missing"`,
+		},
+		{
+			name: "producer is not a direct dependency",
+			toml: header + `
+[[step]]
+id = "review"
+type = "review"
+output_type = { enum = ["approve", "revise"] }
+[[step.review]]
+file = "@write.spec_path"
+label = "Specification"
+`,
+			want: `file target "@write.spec_path" must also list "write" in depends_on`,
+		},
+		{
+			name: "non text field",
+			toml: header + review + `
+[[step.review]]
+file = "@write.count"
+label = "Count"
+`,
+			want: `file target "@write.count" must reference a text field, got "number"`,
+		},
+		{
+			name: "bare producer reference",
+			toml: header + review + `
+[[step.review]]
+file = "@write"
+label = "Specification"
+`,
+			want: `file target "@write" must be an @step.field reference`,
+		},
+		{
+			name: "literal path",
+			toml: header + review + `
+[[step.review]]
+file = "docs/spec.md"
+label = "Specification"
+`,
+			want: `file target "docs/spec.md" must be an @step.field reference`,
+		},
+		{
+			name: "duplicate label across target forms",
+			toml: header + review + `
+[[step.review]]
+source = "diff"
+label = "Evidence"
+[[step.review]]
+file = "@write.spec_path"
+label = "Evidence"
+`,
+			want: `duplicate review label "Evidence"`,
+		},
+		{
+			name: "mixed source and file",
+			toml: header + review + `
+[[step.review]]
+source = "@write.spec_path"
+file = "@write.spec_path"
+label = "Specification"
+`,
+			want: "sets both `source` and `file`; pick one",
+		},
+		{
+			name: "neither source nor file",
+			toml: header + review + `
+[[step.review]]
+label = "Specification"
+`,
+			want: "requires exactly one of `source` or `file`",
+		},
+		{
+			name: "duplicate file target",
+			toml: header + review + `
+[[step.review]]
+file = "@write.spec_path"
+label = "Specification"
+[[step.review]]
+file = "@write.spec_path"
+label = "Specification duplicate"
+`,
+			want: `duplicate review file "@write.spec_path"`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Decode(tc.toml, "")
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %q, want substring %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestLoadExpandsSubworkflowWithTypedExports(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteSkill(t, filepath.Join(dir, "skills", "collect", "SKILL.md"), "# collect")

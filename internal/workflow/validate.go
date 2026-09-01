@@ -517,14 +517,17 @@ func (v *validator) checkReview(s *Step) {
 		v.errf("review step %q requires at least one `review` target", s.ID)
 	}
 	labels := make(map[string]bool, len(s.Review))
-	sources := make(map[string]bool, len(s.Review))
+	targets := make(map[string]bool, len(s.Review))
 	for i := range s.Review {
 		target := &s.Review[i]
 		source := strings.TrimSpace(target.Source)
+		file := strings.TrimSpace(target.File)
 		label := strings.TrimSpace(target.Label)
-		if source == "" {
-			v.errf("review step %q target %d requires a non-blank `source`", s.ID, i+1)
-			continue
+		switch {
+		case source == "" && file == "":
+			v.errf("review step %q target %d requires exactly one of `source` or `file`", s.ID, i+1)
+		case source != "" && file != "":
+			v.errf("review step %q target %d sets both `source` and `file`; pick one", s.ID, i+1)
 		}
 		if label == "" {
 			v.errf("review step %q target %d requires a non-blank `label`", s.ID, i+1)
@@ -532,42 +535,12 @@ func (v *validator) checkReview(s *Step) {
 			v.errf("review step %q has duplicate review label %q", s.ID, label)
 		}
 		labels[label] = true
-		resolved := source
-		if target.ResolvedPath() != "" {
-			resolved = target.ResolvedPath()
+
+		if source != "" && file == "" {
+			v.checkReviewSourceTarget(s, target, source, targets)
 		}
-		if sources[resolved] {
-			v.errf("review step %q has duplicate review source %q", s.ID, source)
-		}
-		sources[resolved] = true
-		if source == "diff" {
-			continue
-		}
-		if ref, ok := strings.CutPrefix(source, "@"); ok {
-			stepID, field := parseRef(ref)
-			ti, known := v.wf.index[stepID]
-			if !known {
-				v.errf("review step %q reviews unknown step %q", s.ID, stepID)
-				continue
-			}
-			if !contains(s.DependsOn, stepID) {
-				v.errf("review step %q target %q must also list %q in depends_on", s.ID, source, stepID)
-			}
-			if len(field) > 0 {
-				f, ok := v.checkFieldRef(s.ID, "review target "+source, &v.wf.Steps[ti], field)
-				if ok && f.Type != FieldText {
-					v.errf("review step %q target %q must reference a text field, got %q", s.ID, source, f.Type)
-				}
-			}
-			continue
-		}
-		if v.baseDir != "" {
-			fi, err := os.Stat(target.ResolvedPath())
-			if err != nil {
-				v.errf("review step %q target %q: file not found", s.ID, source)
-			} else if !fi.Mode().IsRegular() {
-				v.errf("review step %q target %q is not a regular file", s.ID, source)
-			}
+		if file != "" && source == "" {
+			v.checkReviewFileTarget(s, file, targets)
 		}
 	}
 	// A review exists to capture a human decision, so it must be typed.
@@ -580,6 +553,81 @@ func (v *validator) checkReview(s *Step) {
 	if s.InjectContext != nil {
 		v.errf("step %q: inject_context is only valid on agent steps", s.ID)
 	}
+}
+
+// checkReviewSourceTarget preserves the existing source target semantics:
+// sources may render a diff, an upstream value, or a static workflow file.
+func (v *validator) checkReviewSourceTarget(s *Step, target *ReviewTarget, source string, targets map[string]bool) {
+	resolved := source
+	if target.ResolvedPath() != "" {
+		resolved = target.ResolvedPath()
+	}
+	v.checkDuplicateReviewTarget(s, ReviewTargetSource, resolved, source, targets)
+	if source == "diff" {
+		return
+	}
+	if ref, ok := strings.CutPrefix(source, "@"); ok {
+		stepID, field := parseRef(ref)
+		ti, known := v.wf.index[stepID]
+		if !known {
+			v.errf("review step %q reviews unknown step %q", s.ID, stepID)
+			return
+		}
+		if !contains(s.DependsOn, stepID) {
+			v.errf("review step %q target %q must also list %q in depends_on", s.ID, source, stepID)
+		}
+		if len(field) > 0 {
+			f, ok := v.checkFieldRef(s.ID, "review target "+source, &v.wf.Steps[ti], field)
+			if ok && f.Type != FieldText {
+				v.errf("review step %q target %q must reference a text field, got %q", s.ID, source, f.Type)
+			}
+		}
+		return
+	}
+	if v.baseDir != "" {
+		fi, err := os.Stat(target.ResolvedPath())
+		if err != nil {
+			v.errf("review step %q target %q: file not found", s.ID, source)
+		} else if !fi.Mode().IsRegular() {
+			v.errf("review step %q target %q is not a regular file", s.ID, source)
+		}
+	}
+}
+
+// checkReviewFileTarget accepts only a direct dependency's text field. The
+// field value becomes a runtime path after its producer has completed.
+func (v *validator) checkReviewFileTarget(s *Step, file string, targets map[string]bool) {
+	v.checkDuplicateReviewTarget(s, ReviewTargetFile, file, file, targets)
+	ref, ok := strings.CutPrefix(file, "@")
+	if !ok {
+		v.errf("review step %q file target %q must be an @step.field reference", s.ID, file)
+		return
+	}
+	stepID, field := parseRef(ref)
+	if stepID == "" || len(field) == 0 || contains(field, "") {
+		v.errf("review step %q file target %q must be an @step.field reference", s.ID, file)
+		return
+	}
+	ti, known := v.wf.index[stepID]
+	if !known {
+		v.errf("review step %q file target %q references unknown step %q", s.ID, file, stepID)
+		return
+	}
+	if !contains(s.DependsOn, stepID) {
+		v.errf("review step %q file target %q must also list %q in depends_on", s.ID, file, stepID)
+	}
+	f, ok := v.checkFieldRef(s.ID, "file target "+file, &v.wf.Steps[ti], field)
+	if ok && f.Type != FieldText {
+		v.errf("review step %q file target %q must reference a text field, got %q", s.ID, file, f.Type)
+	}
+}
+
+func (v *validator) checkDuplicateReviewTarget(s *Step, kind ReviewTargetKind, key, reference string, targets map[string]bool) {
+	key = string(kind) + ":" + key
+	if targets[key] {
+		v.errf("review step %q has duplicate review %s %q", s.ID, kind, reference)
+	}
+	targets[key] = true
 }
 
 // checkInputs enforces the "always explicit" rule: an @ref input must resolve
