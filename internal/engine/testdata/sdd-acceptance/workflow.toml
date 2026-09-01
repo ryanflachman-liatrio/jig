@@ -1,0 +1,18 @@
+[workflow]
+name = "sdd-acceptance"
+version = "1"
+description = "Deterministic end-to-end fixture for the production SDD graph."
+
+[defaults]
+max_parallel = 4
+
+[[step]]
+id = "spec"
+type = "subworkflow"
+module = "spec.toml"
+
+[[step]]
+id = "implementation"
+type = "subworkflow"
+depends_on = ["spec"]
+module = "implementation.toml"

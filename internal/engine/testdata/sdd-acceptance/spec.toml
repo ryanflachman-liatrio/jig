@@ -1,0 +1,24 @@
+[module]
+schema_version = 1
+
+[module.exports.result]
+ref = "@synthesize"
+
+[[step]]
+id = "research_backend"
+type = "command"
+run = "true"
+isolation = "none"
+
+[[step]]
+id = "research_frontend"
+type = "command"
+run = "true"
+isolation = "none"
+
+[[step]]
+id = "synthesize"
+type = "command"
+depends_on = ["research_backend", "research_frontend"]
+run = "true"
+isolation = "none"

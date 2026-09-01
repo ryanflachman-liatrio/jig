@@ -1,0 +1,56 @@
+[module]
+schema_version = 1
+
+[module.exports.result]
+ref = "@checkpoint"
+
+[[step]]
+id = "select_task"
+type = "command"
+run = "true"
+isolation = "none"
+output_type = { enum = ["ready"] }
+
+[[step]]
+id = "implement_code"
+type = "command"
+depends_on = ["select_task"]
+run = "true"
+isolation = "worktree"
+mutation_paths = ["implementation-*.txt"]
+
+[[step]]
+id = "quality"
+type = "check"
+depends_on = ["implement_code", "select_task"]
+applies_when = "select_task == 'ready'"
+run = "true"
+isolation = "worktree"
+output_type = { enum = ["pass", "fail", "skip", "error"] }
+
+  [step.findings]
+  schema_version = 1
+  file = "quality.json"
+  required_tools = ["sh"]
+
+[[step.route]]
+when = "quality != 'pass'"
+goto = "implement_code"
+max_iterations = 4
+feedback = "@quality"
+
+[[step]]
+id = "checkpoint"
+type = "review"
+depends_on = ["quality"]
+output_type = { enum = ["continue", "redo"] }
+
+  [[step.review]]
+  source = "diff"
+  label = "Selected task"
+
+[[step.route]]
+when = "checkpoint == 'redo'"
+goto = "implement_code"
+max_iterations = 4
+feedback = "@checkpoint"

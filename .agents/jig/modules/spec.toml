@@ -3,6 +3,13 @@
 [module]
 schema_version = 1
 
+# Modules are decoded independently before expansion, so they need their own
+# agent defaults rather than inheriting the parent workflow's settings.
+[defaults]
+backend = "codex"
+transport = "acp"
+model = "gpt-5.6-luna"
+
 [module.exports.spec_name]
 ref = "@context_assess.spec_name"
 

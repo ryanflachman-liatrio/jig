@@ -161,10 +161,10 @@ func TestCheckExecutor_ProtocolErrorsAreTypedAndKeepAttemptArtifacts(t *testing.
 			if result.Status != step.StatusSucceeded || result.Verdict != tt.wantVerdict {
 				t.Fatalf("result = %+v, want succeeded/%s", result, tt.wantVerdict)
 			}
-			if _, err := os.Stat(filepath.Join(dir, "evidence", "iteration-007-attempt-003.log")); err != nil {
+			if _, err := os.Stat(filepath.Join(dir, "evidence", "generation-000-iteration-007-attempt-003.log")); err != nil {
 				t.Fatalf("missing immutable command log: %v", err)
 			}
-			if _, err := os.Stat(filepath.Join(dir, "evidence", "iteration-007-attempt-003.findings.json")); err != nil {
+			if _, err := os.Stat(filepath.Join(dir, "evidence", "generation-000-iteration-007-attempt-003.findings.json")); err != nil {
 				t.Fatalf("missing immutable findings: %v", err)
 			}
 		})

@@ -699,6 +699,9 @@ type scheduler struct {
 	worktrees  map[string]string // stepID → active worktree absolute path
 	wtBaseSHAs map[string]string // stepID → HEAD SHA captured at worktree creation
 	diffs      map[string]string // stepID → latest diff text (updated each execution)
+	// executionViews holds read-only dispatch snapshots separately from mutation
+	// worktrees so they can never be captured, validated, or integrated as edits.
+	executionViews map[string]executionWorkspace
 
 	// Run-integration branch (spec 06). At run start (repoRoot != "") the
 	// scheduler creates a run branch at the working-branch HEAD and a run
@@ -825,6 +828,7 @@ func newScheduler(
 		worktrees:           make(map[string]string),
 		wtBaseSHAs:          make(map[string]string),
 		diffs:               make(map[string]string),
+		executionViews:      make(map[string]executionWorkspace),
 		stepCommits:         make(map[string]string),
 		pendingUserInputs:   make(map[string][]workflow.Input),
 		collectedUserInputs: make(map[string][]ResolvedInput),
@@ -1253,6 +1257,7 @@ func (s *scheduler) setupRunBranch() error {
 // Callers must invoke this BEFORE emitting RunFinished so that the git
 // subprocesses finish before the caller's goroutine signals completion.
 func (s *scheduler) cleanupWorktrees() {
+	s.releaseExecutionWorkspaces()
 	if s.repoRoot == "" {
 		return
 	}
@@ -2474,7 +2479,7 @@ func (s *scheduler) fireReadyLoops() {
 	for i := range s.wf.Steps {
 		g := s.wf.Steps[i].ID
 		intent := s.pendingLoops[g]
-		if intent == nil || !s.loopBarrierReady(g) {
+		if intent == nil || !s.loopBarrierReady(intent) {
 			continue
 		}
 		s.fireCoalescedLoop(intent)
@@ -2488,8 +2493,8 @@ func (s *scheduler) fireReadyLoops() {
 // human gate, or pending-and-dispatchable (still going to run this wave). A
 // pending body step whose deps can never be satisfied is treated as settled, so
 // a permanently-blocked branch does not stall the rewind.
-func (s *scheduler) loopBarrierReady(gotoID string) bool {
-	for _, id := range s.bodyUnion(gotoID) {
+func (s *scheduler) loopBarrierReady(intent *loopIntent) bool {
+	for _, id := range s.staticRouteBody(intent.gotoID) {
 		st := s.states[id]
 		switch st.Status {
 		case step.StatusRunning,
@@ -2499,7 +2504,8 @@ func (s *scheduler) loopBarrierReady(gotoID string) bool {
 			step.StatusAwaitingIntegration:
 			return false
 		case step.StatusPending:
-			if s.depsReady(s.stepByID(id)) {
+			candidate := s.stepByID(id)
+			if s.depsReady(candidate) && !s.deferredByAutomaticCheckRoute(candidate) {
 				return false
 			}
 		}
@@ -2507,21 +2513,39 @@ func (s *scheduler) loopBarrierReady(gotoID string) bool {
 	return true
 }
 
-// bodyUnion is the reset set for a rewind to gotoID: the union of loopBody over
-// every step statically declaring a loop back to gotoID, in workflow
-// declaration order. For the common single-looper (join) case this is exactly
-// loopBody(gotoID, theLooper); with parallel siblings it covers all their paths
-// so one rewind redoes the whole iteration.
-func (s *scheduler) bodyUnion(gotoID string) []string {
+// staticRouteBody includes every route that shares a target only while the
+// coalescing barrier waits for parallel contributors. The actual reset uses
+// bodyUnion below, which deliberately contains only routes that fired.
+func (s *scheduler) staticRouteBody(gotoID string) []string {
 	seen := map[string]bool{}
 	for i := range s.wf.Steps {
-		L := &s.wf.Steps[i]
-		for _, route := range L.Routes {
-			if route.Goto == gotoID {
-				for _, id := range s.loopBody(gotoID, L.ID) {
-					seen[id] = true
-				}
+		looper := &s.wf.Steps[i]
+		for _, route := range looper.Routes {
+			if route.Goto != gotoID {
+				continue
 			}
+			for _, id := range s.loopBody(gotoID, looper.ID) {
+				seen[id] = true
+			}
+		}
+	}
+	var out []string
+	for i := range s.wf.Steps {
+		if seen[s.wf.Steps[i].ID] {
+			out = append(out, s.wf.Steps[i].ID)
+		}
+	}
+	return out
+}
+
+// bodyUnion is the reset set for the routes that fired in one execution wave.
+// Routes that merely share a target must not join the body until they fire: a
+// pending downstream review otherwise blocks automatic check remediation.
+func (s *scheduler) bodyUnion(intent *loopIntent) []string {
+	seen := map[string]bool{}
+	for _, contribution := range intent.contribs {
+		for _, id := range s.loopBody(intent.gotoID, contribution.source) {
+			seen[id] = true
 		}
 	}
 	var out []string
@@ -2557,6 +2581,11 @@ func (s *scheduler) fireCoalescedLoop(intent *loopIntent) {
 			newIter = c.iter + 1
 		}
 	}
+	for _, id := range s.bodyUnion(intent) {
+		if state := s.states[id]; state != nil && state.Iteration+1 > newIter {
+			newIter = state.Iteration + 1
+		}
+	}
 
 	// Compose feedback. A single contributor writes its content verbatim (so the
 	// single-looper case is byte-identical to before). Multiple contributors are
@@ -2589,7 +2618,7 @@ func (s *scheduler) fireCoalescedLoop(intent *loopIntent) {
 	s.rerunMax[intent.gotoID] = intent.contribs[0].max
 
 	// Reset every step in the body to pending with the new iteration count.
-	for _, id := range s.bodyUnion(intent.gotoID) {
+	for _, id := range s.bodyUnion(intent) {
 		bodyState := s.states[id]
 		bodyState.Iteration = newIter
 		s.transition(id, bodyState.Status, step.StatusPending)

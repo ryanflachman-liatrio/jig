@@ -14,7 +14,7 @@ const (
 	CondNeq    CondOp = "!="
 )
 
-// Condition is a parsed `when` / `loop.when` guard. The grammar is intentionally
+// Condition is a parsed `when` / `route.when` guard. The grammar is intentionally
 // tiny so guards stay statically analyzable:
 //
 //	when = "validate == 'valid'"       # scalar output_type verdict

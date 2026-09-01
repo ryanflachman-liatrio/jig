@@ -211,7 +211,7 @@ func writeCheckEvidence(req engine.StepRequest, output string) string {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return ""
 	}
-	path := filepath.Join(dir, fmt.Sprintf("iteration-%03d-attempt-%03d.log", req.Iteration, req.Attempt))
+	path := filepath.Join(dir, fmt.Sprintf("generation-%03d-iteration-%03d-attempt-%03d.log", req.Generation, req.Iteration, req.Attempt))
 	if err := os.WriteFile(path, []byte(output), 0o644); err != nil {
 		return ""
 	}

@@ -919,7 +919,7 @@ func (v *validator) routeTargetPrecedes(target, source string) bool {
 
 // checkCondValue verifies that a guard's comparison is legal for whatever it
 // references: a schema field (when the condition carries a field path) or the
-// step's scalar output_type verdict. guard names the source ("when"/"loop.when")
+// step's scalar output_type verdict. guard names the source ("when"/"route.when")
 // for error messages.
 func (v *validator) checkCondValue(stepID, guard string, cond *Condition) {
 	target, ok := v.wf.index[cond.Step]

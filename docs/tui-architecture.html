@@ -546,9 +546,9 @@ func fanOut(subs []chan&lt;- Event, e Event) {
 
   <div class="note">
     <strong>Gate failures, loop iterations and engine errors are invisible in the UI.</strong>
-    <code>GateResult</code>, <code>LoopFired</code> and <code>RunError</code> are emitted and journaled
-    but no TUI branch handles them — verified: <code>rg 'GateResult|LoopFired|RunError' internal/tui</code>
-    returns nothing. A gate can reject a step, a bounded loop can burn all its iterations, and a worktree
+    <code>GateResult</code>, <code>RouteSelected</code> and <code>RunError</code> are emitted and journaled
+    but no TUI branch handles them — verified: <code>rg 'GateResult|RouteSelected|RunError' internal/tui</code>
+    returns nothing. A gate can reject a step, a bounded route can burn all its iterations, and a worktree
     creation failure can abort the run, all without a word on screen beyond the resulting status change.
   </div>
 
@@ -949,7 +949,7 @@ const EVENTS = [
   { t:"StepMessage",   d:"event.go:60",  path:"reporter", kind:"step_message",   ok:1, c:"does three things <span class='ref'>monitor.go:389-408</span>: monotonic max into <code>msgCount</code> (the <code>Seq &gt; current</code> guard makes duplicates and drops harmless), <strong>resets the live tail</strong> — that text is now finalized on disk — and, if this step's chat is open, calls <code>loadChat()</code> to re-read the file" },
   { t:"StepToolCall",  d:"event.go:47",  path:"reporter", kind:"step_tool_call", ok:0, dep:1, c:"<em>nothing</em> — superseded by transcript <code>tool_use</code> blocks" },
   { t:"GateResult",    d:"event.go:68",  path:"emit",     kind:"gate_result",    ok:0, gap:1, c:"<em>nothing</em> — a gate rejecting a step is silent in the UI" },
-  { t:"LoopFired",     d:"event.go:75",  path:"emit",     kind:"loop_fired",     ok:0, gap:1, c:"<em>nothing</em> — loop iterations are invisible" },
+  { t:"RouteSelected", d:"event.go:88",  path:"emit",     kind:"route_selected", ok:0, gap:1, c:"<em>nothing</em> — route iterations are invisible" },
   { t:"RunError",      d:"event.go:95",  path:"emit",     kind:"run_error",      ok:0, gap:1, c:"<em>nothing</em> — engine-level failures (e.g. worktree creation) never surface" }
 ];
 

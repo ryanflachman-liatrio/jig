@@ -542,7 +542,7 @@ func TestBuildSessionSpec_Schema(t *testing.T) {
 
 // TestCaptureStream_StructuredOutput verifies a result event's Structured
 // payload is captured into step.Result.Structured — the field block_on/when/
-// loop.when guards read to evaluate schema-field conditions.
+// route.when guards read to evaluate schema-field conditions.
 func TestCaptureStream_StructuredOutput(t *testing.T) {
 	dir := t.TempDir()
 	req := engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: filepath.Join(dir, "transcript.jsonl")}

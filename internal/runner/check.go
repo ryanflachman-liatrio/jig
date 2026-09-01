@@ -93,7 +93,7 @@ func snapshotCheckArtifacts(req engine.StepRequest, executionDir string) (map[st
 		if err != nil {
 			return nil, fmt.Errorf("read check artifact %q: %w", name, err)
 		}
-		path := filepath.Join(dir, fmt.Sprintf("iteration-%03d-attempt-%03d-artifact-%s", req.Iteration, req.Attempt, name))
+		path := filepath.Join(dir, fmt.Sprintf("generation-%03d-iteration-%03d-attempt-%03d-artifact-%s", req.Generation, req.Iteration, req.Attempt, name))
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			return nil, fmt.Errorf("snapshot check artifact %q: %w", name, err)
 		}
@@ -195,7 +195,7 @@ func writeCheckFindings(req engine.StepRequest, data []byte) string {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return ""
 	}
-	path := filepath.Join(dir, fmt.Sprintf("iteration-%03d-attempt-%03d.findings.json", req.Iteration, req.Attempt))
+	path := filepath.Join(dir, fmt.Sprintf("generation-%03d-iteration-%03d-attempt-%03d.findings.json", req.Generation, req.Iteration, req.Attempt))
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return ""
 	}

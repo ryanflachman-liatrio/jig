@@ -85,7 +85,7 @@ Steps are declared with `[[step]]`. Five author-facing types: `agent`,
 | Field         | Type     | Notes                                                            |
 |---------------|----------|------------------------------------------------------------------|
 | `id`          | string   | Required. Unique. Used by `depends_on`, `@id` refs, and `when`.  |
-| `type`        | string   | `"agent"`, `"command"`, `"check"`, or `"review"`.                |
+| `type`        | string   | `"agent"`, `"command"`, `"check"`, `"review"`, or `"subworkflow"`. |
 | `depends_on`  | [string] | **Always explicit.** Step ids that must finish first.            |
 | `when`        | string   | Guard expression; step runs only if true. See "Conditionals".    |
 | `output`      | path     | Single output file (content). **Optional.**                     |
