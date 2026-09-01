@@ -456,7 +456,8 @@ type Step struct {
 	Module string            `toml:"module"`
 	With   map[string]string `toml:"with"`
 
-	// Review-only. `@step` / `@step.field` / `diff` / literal workflow file.
+	// Review-only. `source` renders a value, diff, or literal workflow file;
+	// `file` dereferences an upstream field containing a runtime file path.
 	Review []ReviewTarget `toml:"review"`
 
 	// Agent-only. Condition checked against the step's own structured output
@@ -506,14 +507,40 @@ const (
 	RetryAgentError         = "agent_error"
 )
 
+// ReviewTargetKind identifies the form used by a review target.
+type ReviewTargetKind string
+
+const (
+	ReviewTargetSource ReviewTargetKind = "source"
+	ReviewTargetFile   ReviewTargetKind = "file"
+)
+
 // ReviewTarget is one review target row in a review step.
 type ReviewTarget struct {
 	Source       string `toml:"source"`
+	File         string `toml:"file"`
 	Label        string `toml:"label"`
 	resolvedPath string
 }
 
-// ResolvedPath returns the resolved absolute path for literal file review sources.
+// Kind reports the target's configured form. Validation rejects targets that
+// specify both forms or neither form.
+func (r ReviewTarget) Kind() ReviewTargetKind {
+	if r.File != "" {
+		return ReviewTargetFile
+	}
+	return ReviewTargetSource
+}
+
+// Reference returns the source or file reference selected by Kind.
+func (r ReviewTarget) Reference() string {
+	if r.Kind() == ReviewTargetFile {
+		return r.File
+	}
+	return r.Source
+}
+
+// ResolvedPath returns the resolved absolute path for a literal source target.
 func (r ReviewTarget) ResolvedPath() string {
 	return r.resolvedPath
 }

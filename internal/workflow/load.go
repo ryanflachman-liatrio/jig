@@ -302,18 +302,21 @@ func (wf *Workflow) applyProfiles() {
 	}
 }
 
-// resolveReviewTargets populates each literal file review source with an absolute
-// path under baseDir. It intentionally does no existence checks; validate() owns
-// those checks for both static (baseDir == "") and full validation modes.
+// resolveReviewTargets populates each literal source target with an absolute
+// path under baseDir. File targets name runtime products and are intentionally
+// left unresolved until their producer has run. Existence checks remain owned by
+// validate() for static targets.
 func (wf *Workflow) resolveReviewTargets(baseDir string) error {
 	for i := range wf.Steps {
 		for j := range wf.Steps[i].Review {
-			src := strings.TrimSpace(wf.Steps[i].Review[j].Source)
-			wf.Steps[i].Review[j].Source = src
+			target := &wf.Steps[i].Review[j]
+			src := strings.TrimSpace(target.Source)
+			target.Source = src
+			target.File = strings.TrimSpace(target.File)
 			if baseDir == "" || src == "" || src == "diff" || strings.HasPrefix(src, "@") {
 				continue
 			}
-			wf.Steps[i].Review[j].resolvedPath = filepath.Join(baseDir, src)
+			target.resolvedPath = filepath.Join(baseDir, src)
 		}
 	}
 	return nil
