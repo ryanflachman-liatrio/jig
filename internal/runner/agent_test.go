@@ -399,6 +399,33 @@ func TestCaptureStream_Artifact(t *testing.T) {
 	}
 }
 
+func TestCaptureStream_RejectsDeclaredOutputOutsideExecutionDir(t *testing.T) {
+	executionDir := t.TempDir()
+	outsideDir := t.TempDir()
+	if err := os.Symlink(outsideDir, filepath.Join(executionDir, "escape")); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := captureStream(scriptChan(
+		harness.Event{Type: harness.EventText, Text: "# Done"},
+		harness.Event{Type: harness.EventAssistantEnd},
+		harness.Event{Type: harness.EventResult},
+	), engine.StepRequest{
+		Step:           &workflow.Step{Output: "escape/result.md"},
+		ExecutionDir:   executionDir,
+		TranscriptPath: filepath.Join(t.TempDir(), "transcript.jsonl"),
+	}, &captureReporter{}, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != step.StatusFailed || !strings.Contains(res.Err, "escapes execution directory") {
+		t.Fatalf("result = %+v, want failed execution-root escape", res)
+	}
+	if _, err := os.Stat(filepath.Join(outsideDir, "result.md")); !os.IsNotExist(err) {
+		t.Errorf("escaped output exists: %v", err)
+	}
+}
+
 func TestAgentExecutor_UsesExecutionDirForSession(t *testing.T) {
 	executionDir := t.TempDir()
 	h := &harness.FakeHarness{

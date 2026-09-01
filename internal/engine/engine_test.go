@@ -2280,6 +2280,69 @@ inputs = ["testdata/request.md"]
 	}
 }
 
+func TestScheduler_ResolveAllInputsUsesExecutionDir(t *testing.T) {
+	executionDir := t.TempDir()
+	s := &scheduler{preResolvedInputs: map[string][]ResolvedInput{}}
+	st := &workflow.Step{
+		ID:     "reader",
+		Inputs: []workflow.Input{{Path: "request.md"}},
+	}
+
+	if err := s.resolveAllInputs(st, executionDir); err != nil {
+		t.Fatal(err)
+	}
+	inputs := s.preResolvedInputs[st.ID]
+	if len(inputs) != 1 {
+		t.Fatalf("inputs = %+v, want one resolved input", inputs)
+	}
+	if want := filepath.Join(executionDir, "request.md"); inputs[0].Value != want {
+		t.Errorf("input path = %q, want %q", inputs[0].Value, want)
+	}
+
+	if err := s.resolveAllInputs(&workflow.Step{
+		ID:     "escape",
+		Inputs: []workflow.Input{{Path: "../outside.md"}},
+	}, executionDir); err == nil {
+		t.Fatal("resolveAllInputs accepted an execution-root escape")
+	}
+
+	if err := s.resolveAllInputs(&workflow.Step{
+		ID:     "persistence-off",
+		Inputs: []workflow.Input{{Path: "request.md"}},
+	}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.preResolvedInputs["persistence-off"][0].Value; got != "request.md" {
+		t.Errorf("persistence-off input path = %q, want authored path", got)
+	}
+}
+
+func TestScheduler_RunGateUsesExecutionDirForOutputChecks(t *testing.T) {
+	executionDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(executionDir, "result.md"), []byte("expected content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &scheduler{}
+
+	for _, validate := range []*workflow.Validate{
+		{OutputExists: true},
+		{OutputContains: "expected"},
+	} {
+		passed, detail := s.runGate(&workflow.Step{Output: "result.md", Validate: validate}, executionDir)
+		if !passed {
+			t.Errorf("runGate(%+v) = false, %q; want execution-directory output check to pass", validate, detail)
+		}
+	}
+
+	passed, detail := s.runGate(&workflow.Step{
+		Output:   "../outside.md",
+		Validate: &workflow.Validate{OutputExists: true},
+	}, executionDir)
+	if passed || !strings.Contains(detail, "must not traverse parent directories") {
+		t.Errorf("escaped output gate = %t, %q; want rejected execution-root escape", passed, detail)
+	}
+}
+
 // TestScheduler_BareRefInput verifies that a bare @step ref (no field path)
 // resolves to the upstream step's OutputPath.
 func TestScheduler_BareRefInput(t *testing.T) {

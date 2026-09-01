@@ -1406,7 +1406,21 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 		s.applyFailurePolicy(st.ID, st)
 		return
 	}
-	s.resolveAllInputs(st, workspace.Dir)
+	if err := s.resolveAllInputs(st, workspace.Dir); err != nil {
+		releaseReaderView()
+		s.inFlight--
+		if st.Isolation == workflow.IsolationWorktree {
+			s.mutatingInFlight--
+		} else {
+			s.readOnlyInFlight--
+		}
+		if st.ResourceClass != "" {
+			s.classInFlight[st.ResourceClass]--
+		}
+		s.states[st.ID].Result = &step.Result{Status: step.StatusFailed, Err: err.Error()}
+		s.applyFailurePolicy(st.ID, st)
+		return
+	}
 	if err := s.snapshotInputs(st.ID, s.preResolvedInputs[st.ID]); err != nil {
 		releaseReaderView()
 		s.inFlight--
@@ -1541,7 +1555,7 @@ func (s *scheduler) resolveSecrets(st *workflow.Step) (map[string]string, error)
 // Literal paths are anchored to the dispatch snapshot before snapshotInputs
 // copies them, so the worker receives the same immutable bytes the scheduler
 // observed rather than a path resolved later from an unrelated checkout.
-func (s *scheduler) resolveAllInputs(st *workflow.Step, executionDir string) {
+func (s *scheduler) resolveAllInputs(st *workflow.Step, executionDir string) error {
 	for _, inp := range st.Inputs {
 		if inp.From == "user" {
 			continue // already collected via prompt flow
@@ -1604,9 +1618,10 @@ func (s *scheduler) resolveAllInputs(st *workflow.Step, executionDir string) {
 			}
 
 		case inp.Path != "":
-			value = inp.Path
-			if executionDir != "" && !filepath.IsAbs(value) {
-				value = filepath.Join(executionDir, value)
+			var err error
+			value, err = workflow.ExecutionPath(executionDir, inp.Path)
+			if err != nil {
+				return fmt.Errorf("resolve input path %q: %w", inp.Path, err)
 			}
 		}
 
@@ -1615,6 +1630,7 @@ func (s *scheduler) resolveAllInputs(st *workflow.Step, executionDir string) {
 			Value: value,
 		})
 	}
+	return nil
 }
 
 // buildRequest constructs the StepRequest for a dispatch. It must be called
@@ -2117,7 +2133,10 @@ func (s *scheduler) runGate(wfStep *workflow.Step, executionDir string) (bool, s
 
 	// OutputExists gate: verify the step's output file was written.
 	if v.OutputExists {
-		outputPath := gateOutputPath(executionDir, wfStep.Output)
+		outputPath, err := gateOutputPath(executionDir, wfStep.Output)
+		if err != nil {
+			return false, fmt.Sprintf("output_exists gate: resolve output: %v", err)
+		}
 		if outputPath == "" {
 			return false, "output_exists gate: step has no output field"
 		}
@@ -2129,7 +2148,10 @@ func (s *scheduler) runGate(wfStep *workflow.Step, executionDir string) (bool, s
 
 	// OutputContains gate: check that the output file contains a substring.
 	if v.OutputContains != "" {
-		outputPath := gateOutputPath(executionDir, wfStep.Output)
+		outputPath, err := gateOutputPath(executionDir, wfStep.Output)
+		if err != nil {
+			return false, fmt.Sprintf("output_contains gate: resolve output: %v", err)
+		}
 		if outputPath == "" {
 			return false, "output_contains gate: step has no output field"
 		}
@@ -2145,11 +2167,11 @@ func (s *scheduler) runGate(wfStep *workflow.Step, executionDir string) (bool, s
 	return true, "gate passed"
 }
 
-func gateOutputPath(executionDir, output string) string {
-	if output == "" || executionDir == "" || filepath.IsAbs(output) {
-		return output
+func gateOutputPath(executionDir, output string) (string, error) {
+	if output == "" {
+		return "", nil
 	}
-	return filepath.Join(executionDir, output)
+	return workflow.ExecutionPath(executionDir, output)
 }
 
 // evalGuard evaluates a when-guard condition against the current step results.
