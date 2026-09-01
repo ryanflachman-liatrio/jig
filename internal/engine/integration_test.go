@@ -124,6 +124,80 @@ depends_on = ["producer"]
 	}
 }
 
+// TestValidateGatesUseReadOnlyExecutionView proves both kinds of validate gate
+// inspect the reader's dispatch snapshot, not the process's checkout.
+func TestValidateGatesUseReadOnlyExecutionView(t *testing.T) {
+	repo := t.TempDir()
+	initRepo(t, repo)
+	if err := os.WriteFile(filepath.Join(repo, "integrated.txt"), []byte("from user checkout"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+
+	const toml = `
+[workflow]
+name = "validate-read-only-view"
+version = "0.1"
+
+[[step]]
+id = "producer"
+type = "command"
+run = "echo producer"
+isolation = "worktree"
+
+[[step]]
+id = "check_output"
+type = "command"
+run = "echo check output"
+depends_on = ["producer"]
+output = "integrated.txt"
+
+[step.validate]
+output_exists = true
+output_contains = "from producer"
+
+[[step]]
+id = "check_command"
+type = "command"
+run = "echo check command"
+depends_on = ["producer"]
+
+[step.validate]
+command = "test \"$(cat integrated.txt)\" = \"from producer\""
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &composeExec{writes: map[string]map[string]string{
+		"producer": {"integrated.txt": "from producer"},
+	}}
+	mgr := NewManager(exec, filepath.Join(repo, ".jig"))
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := driveFinalMerge(t, ch, run, false)
+
+	for _, stepID := range []string{"check_output", "check_command"} {
+		var gate *GateResult
+		for _, event := range events {
+			if result, ok := event.(GateResult); ok && result.StepID == stepID {
+				result := result
+				gate = &result
+			}
+		}
+		if gate == nil {
+			t.Errorf("%s did not emit a gate result", stepID)
+			continue
+		}
+		if !gate.Passed {
+			t.Errorf("%s gate failed: %s", stepID, gate.Detail)
+		}
+	}
+}
+
 // TestRunBranchCreatedAtWorkingHead verifies that starting a run in a git repo
 // creates the per-run integration branch jig/<workflow>/run-<runID> rooted at the
 // working-branch HEAD (spec 06, Unit A1 run-branch creation).

@@ -93,6 +93,20 @@ func (s *scheduler) releaseExecutionViewForStep(stepID string) {
 	}
 }
 
+// executionDirForStep returns the dispatch snapshot still held for a running
+// or just-completed step. Reader views live outside the mutation-worktree map
+// so validation cannot accidentally fall back to the caller's checkout.
+func (s *scheduler) executionDirForStep(stepID string) string {
+	st := s.stepByID(stepID)
+	if st != nil && st.Isolation == workflow.IsolationWorktree {
+		return s.worktrees[stepID]
+	}
+	if workspace, ok := s.executionViews[stepID]; ok {
+		return workspace.Dir
+	}
+	return ""
+}
+
 // releaseExecutionWorkspaces removes reader views without touching mutating
 // worktrees or the run worktree, which have distinct lifecycle requirements.
 func (s *scheduler) releaseExecutionWorkspaces() {

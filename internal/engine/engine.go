@@ -2089,16 +2089,17 @@ func composeRecoveryMessage(errText, guidance string) string {
 
 // runGate evaluates the [step.validate] block for wfStep synchronously.
 // Returns (true, detail) on pass, (false, detail) on failure.
-// worktreePath, when non-empty, sets the working directory for command gates
-// so they run inside the step's isolated worktree (Phase 5).
-func (s *scheduler) runGate(wfStep *workflow.Step, worktreePath string) (bool, string) {
+// executionDir, when non-empty, is the dispatch snapshot used by gate commands
+// and relative output checks. It is a mutation worktree for writers and a
+// read-only execution view for readers.
+func (s *scheduler) runGate(wfStep *workflow.Step, executionDir string) (bool, string) {
 	v := wfStep.Validate
 
 	// Command gate: run via sh -c, check exit code 0.
 	if v.Command != "" {
 		cmd := exec.Command("sh", "-c", v.Command)
-		if worktreePath != "" {
-			cmd.Dir = worktreePath
+		if executionDir != "" {
+			cmd.Dir = executionDir
 		}
 		out, err := cmd.CombinedOutput()
 		outStr := strings.TrimSpace(string(out))
@@ -2110,7 +2111,7 @@ func (s *scheduler) runGate(wfStep *workflow.Step, worktreePath string) (bool, s
 
 	// OutputExists gate: verify the step's output file was written.
 	if v.OutputExists {
-		outputPath := wfStep.Output
+		outputPath := gateOutputPath(executionDir, wfStep.Output)
 		if outputPath == "" {
 			return false, "output_exists gate: step has no output field"
 		}
@@ -2122,7 +2123,7 @@ func (s *scheduler) runGate(wfStep *workflow.Step, worktreePath string) (bool, s
 
 	// OutputContains gate: check that the output file contains a substring.
 	if v.OutputContains != "" {
-		outputPath := wfStep.Output
+		outputPath := gateOutputPath(executionDir, wfStep.Output)
 		if outputPath == "" {
 			return false, "output_contains gate: step has no output field"
 		}
@@ -2136,6 +2137,13 @@ func (s *scheduler) runGate(wfStep *workflow.Step, worktreePath string) (bool, s
 	}
 
 	return true, "gate passed"
+}
+
+func gateOutputPath(executionDir, output string) string {
+	if output == "" || executionDir == "" || filepath.IsAbs(output) {
+		return output
+	}
+	return filepath.Join(executionDir, output)
 }
 
 // evalGuard evaluates a when-guard condition against the current step results.
