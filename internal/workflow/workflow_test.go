@@ -421,6 +421,124 @@ output_type = { enum = ["approve"] }
 	}
 }
 
+func TestLoadRebindsModuleFileReviewInput(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteSkill(t, filepath.Join(dir, "skills", "write", "SKILL.md"), "# write")
+	mustWrite(t, filepath.Join(dir, "review.toml"), `
+[module]
+schema_version = 1
+
+[module.inputs.spec_path]
+type = "text"
+
+[module.exports.verdict]
+ref = "@gate"
+
+[[step]]
+id = "gate"
+type = "review"
+output_type = { enum = ["approve"] }
+  [[step.review]]
+  file = "@module.spec_path"
+  label = "Specification"
+`)
+	root := filepath.Join(dir, "workflow.toml")
+	mustWrite(t, root, `
+[workflow]
+name = "module-file-review"
+version = "1"
+
+[[step]]
+id = "write"
+type = "agent"
+skill = "skills/write"
+  [step.schema]
+  spec_path = "text"
+
+[[step]]
+id = "review"
+type = "subworkflow"
+depends_on = ["write"]
+module = "review.toml"
+with = { spec_path = "@write.spec_path" }
+`)
+
+	wf, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	gate := wf.Steps[wf.index["review__gate"]]
+	if got, want := gate.Review[0].File, "@write.spec_path"; got != want {
+		t.Fatalf("file target = %q, want %q", got, want)
+	}
+	if !contains(gate.DependsOn, "write") {
+		t.Fatalf("file review dependencies = %v, want write", gate.DependsOn)
+	}
+}
+
+func TestLoadRebindsNestedModuleFileReviewInput(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteSkill(t, filepath.Join(dir, "skills", "write", "SKILL.md"), "# write")
+	mustWrite(t, filepath.Join(dir, "leaf.toml"), `
+[module]
+schema_version = 1
+[module.inputs.spec_path]
+type = "text"
+[module.exports.verdict]
+ref = "@gate"
+[[step]]
+id = "gate"
+type = "review"
+output_type = { enum = ["approve"] }
+  [[step.review]]
+  file = "@module.spec_path"
+  label = "Specification"
+`)
+	mustWrite(t, filepath.Join(dir, "middle.toml"), `
+[module]
+schema_version = 1
+[module.inputs.spec_path]
+type = "text"
+[module.exports.verdict]
+ref = "@leaf.verdict"
+[[step]]
+id = "leaf"
+type = "subworkflow"
+module = "leaf.toml"
+with = { spec_path = "@module.spec_path" }
+`)
+	root := filepath.Join(dir, "workflow.toml")
+	mustWrite(t, root, `
+[workflow]
+name = "nested-module-file-review"
+version = "1"
+[[step]]
+id = "write"
+type = "agent"
+skill = "skills/write"
+  [step.schema]
+  spec_path = "text"
+[[step]]
+id = "review"
+type = "subworkflow"
+depends_on = ["write"]
+module = "middle.toml"
+with = { spec_path = "@write.spec_path" }
+`)
+
+	wf, err := Load(root)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	gate := wf.Steps[wf.index["review__leaf__gate"]]
+	if got, want := gate.Review[0].File, "@write.spec_path"; got != want {
+		t.Fatalf("nested file target = %q, want %q", got, want)
+	}
+	if !contains(gate.DependsOn, "write") {
+		t.Fatalf("nested file review dependencies = %v, want write", gate.DependsOn)
+	}
+}
+
 func TestLoadRejectsInvalidSubworkflowContracts(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "workflow.toml")

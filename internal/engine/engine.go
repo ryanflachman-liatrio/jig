@@ -1571,28 +1571,7 @@ func (s *scheduler) resolveAllInputs(st *workflow.Step, executionDir string) err
 
 		case inp.Ref != "" && len(inp.RefField) > 0:
 			// @step.field — extract from the dependency's structured output.
-			// Reuse the same decode cache as evalGuard for consistency.
-			depState := s.states[inp.Ref]
-			if depState != nil && depState.Result != nil {
-				m, ok := s.structured[inp.Ref]
-				if !ok && len(depState.Result.Structured) > 0 {
-					if err := json.Unmarshal(depState.Result.Structured, &m); err == nil {
-						s.structured[inp.Ref] = m
-					}
-				}
-				var cur any = m
-				for _, seg := range inp.RefField {
-					obj, ok := cur.(map[string]any)
-					if !ok {
-						cur = nil
-						break
-					}
-					cur, ok = obj[seg]
-					if !ok {
-						cur = nil
-						break
-					}
-				}
+			if cur, err := s.structuredField(inp.Ref, inp.RefField); err == nil {
 				switch v := cur.(type) {
 				case string:
 					value = v
@@ -1631,6 +1610,39 @@ func (s *scheduler) resolveAllInputs(st *workflow.Step, executionDir string) err
 		})
 	}
 	return nil
+}
+
+// structuredField decodes a completed step's structured output once and walks
+// a declared field path. Inputs and review targets share it so both read the
+// same value from the same dispatch-time result cache.
+func (s *scheduler) structuredField(stepID string, fields []string) (any, error) {
+	state := s.states[stepID]
+	if state == nil || state.Result == nil {
+		return nil, fmt.Errorf("step %q has no result", stepID)
+	}
+	m, ok := s.structured[stepID]
+	if !ok {
+		if len(state.Result.Structured) == 0 {
+			return nil, fmt.Errorf("step %q has no structured output", stepID)
+		}
+		if err := json.Unmarshal(state.Result.Structured, &m); err != nil {
+			return nil, fmt.Errorf("decode structured output for step %q: %w", stepID, err)
+		}
+		s.structured[stepID] = m
+	}
+	var value any = m
+	for _, field := range fields {
+		object, ok := value.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("step %q field %q is not an object", stepID, strings.Join(fields, "."))
+		}
+		var found bool
+		value, found = object[field]
+		if !found {
+			return nil, fmt.Errorf("step %q has no field %q", stepID, strings.Join(fields, "."))
+		}
+	}
+	return value, nil
 }
 
 // buildRequest constructs the StepRequest for a dispatch. It must be called

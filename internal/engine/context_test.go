@@ -153,6 +153,19 @@ func TestBuildRequestWorkflowContext(t *testing.T) {
 	}
 }
 
+func TestConsumedFieldsIncludesFileReviewTarget(t *testing.T) {
+	consumer := &workflow.Step{
+		ID:   "gate",
+		Type: workflow.StepReview,
+		Review: []workflow.ReviewTarget{{
+			File: "@write.spec_path",
+		}},
+	}
+	if got, want := strings.Join(consumedFields(consumer, "write"), ","), "spec_path"; got != want {
+		t.Fatalf("consumed fields = %q, want %q", got, want)
+	}
+}
+
 // TestBuildRequestNoSiblingLeak proves assembly is framing-only: no
 // non-dependency sibling ids and no upstream artifact bodies bleed in.
 func TestBuildRequestNoSiblingLeak(t *testing.T) {

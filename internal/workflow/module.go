@@ -147,6 +147,13 @@ func (e *moduleExpansion) expand(wf *Workflow, baseDir, sourcePath string, stack
 			if err != nil {
 				return fmt.Errorf("step %q review %d: %w", st.ID, j+1, err)
 			}
+			st.Review[j].File, err = rewriteModuleReference(st.Review[j].File, modules)
+			if err != nil {
+				return fmt.Errorf("step %q review %d: %w", st.ID, j+1, err)
+			}
+			if ref, fields := parseRef(strings.TrimPrefix(st.Review[j].Reference(), "@")); strings.HasPrefix(st.Review[j].Reference(), "@") && ref != "" && ref != "module" && len(fields) > 0 {
+				st.DependsOn = uniqueStrings(append(st.DependsOn, ref))
+			}
 		}
 		var deps []string
 		for _, dep := range st.DependsOn {
@@ -179,6 +186,9 @@ func (e *moduleExpansion) expand(wf *Workflow, baseDir, sourcePath string, stack
 	}
 	wf.Steps = out
 	wf.applyDefaults()
+	if err := resolveModuleExports(wf, modules); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -280,6 +290,25 @@ func markModuleInputs(wf *Workflow) error {
 			in.moduleInput = in.RefField[0]
 			in.Ref, in.RefField = "", nil
 		}
+		for j := range wf.Steps[i].Review {
+			target := &wf.Steps[i].Review[j]
+			for _, ref := range []string{target.Source, target.File} {
+				stepID, fields := parseRef(strings.TrimPrefix(ref, "@"))
+				if !strings.HasPrefix(ref, "@") || stepID != "module" {
+					continue
+				}
+				if len(fields) != 1 {
+					return fmt.Errorf("module step %q: review @module reference must name one declared module input", wf.Steps[i].ID)
+				}
+				if _, ok := wf.Module.Inputs[fields[0]]; !ok {
+					return fmt.Errorf("module step %q: unknown module input %q", wf.Steps[i].ID, fields[0])
+				}
+				target.moduleInput = fields[0]
+			}
+			if target.moduleInput != "" && target.Source != "" && target.File != "" {
+				return fmt.Errorf("module step %q: review target sets both source and file", wf.Steps[i].ID)
+			}
+		}
 	}
 	return nil
 }
@@ -362,6 +391,35 @@ func instantiateModule(child *Workflow, parent Step, parentWF *Workflow, sibling
 				return expandedModule{}, fmt.Errorf("module step %q: unresolved input %q", child.Steps[i].ID, in.moduleInput)
 			}
 			*in = binding
+		}
+		for j := range child.Steps[i].Review {
+			target := &child.Steps[i].Review[j]
+			if target.moduleInput == "" {
+				continue
+			}
+			binding, ok := bindings[target.moduleInput]
+			if !ok {
+				return expandedModule{}, fmt.Errorf("module step %q: unresolved review input %q", child.Steps[i].ID, target.moduleInput)
+			}
+			if binding.moduleInput != "" {
+				target.moduleInput = binding.moduleInput
+				if target.File != "" {
+					target.File = "@module." + target.moduleInput
+				} else {
+					target.Source = "@module." + target.moduleInput
+				}
+				continue
+			}
+			if binding.Path != "" || binding.Artifact != "" || binding.Ref == "" || len(binding.RefField) == 0 {
+				return expandedModule{}, fmt.Errorf("module step %q: review @module.%s must bind an upstream text field", child.Steps[i].ID, target.moduleInput)
+			}
+			ref := "@" + binding.Ref + "." + strings.Join(binding.RefField, ".")
+			if target.File != "" {
+				target.File = ref
+			} else {
+				target.Source = ref
+			}
+			target.moduleInput = ""
 		}
 	}
 
@@ -602,6 +660,7 @@ func prefixStep(s *Step, prefix string, internal map[string]bool) {
 	}
 	for i := range s.Review {
 		s.Review[i].Source = prefixFeedback(s.Review[i].Source, prefix, internal)
+		s.Review[i].File = prefixFeedback(s.Review[i].File, prefix, internal)
 	}
 }
 
@@ -683,6 +742,7 @@ func cloneStep(in Step) Step {
 	out.DependsOn = append([]string(nil), in.DependsOn...)
 	out.Inputs = append([]Input(nil), in.Inputs...)
 	out.Routes = append([]Route(nil), in.Routes...)
+	out.Review = append([]ReviewTarget(nil), in.Review...)
 	if in.With != nil {
 		out.With = make(map[string]string, len(in.With))
 		for key, value := range in.With {

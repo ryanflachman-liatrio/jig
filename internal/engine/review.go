@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -49,7 +48,7 @@ func (s *scheduler) prepareReview(st *workflow.Step) (review.Session, error) {
 	var docs []review.Document
 	total := 0
 	for i, target := range st.Review {
-		content, err := s.reviewContent(st.ID, target)
+		content, sourcePath, err := s.reviewContent(st.ID, target)
 		if err != nil {
 			return review.Session{}, fmt.Errorf("review %q: %w", st.ID, err)
 		}
@@ -63,14 +62,9 @@ func (s *scheduler) prepareReview(st *workflow.Step) (review.Session, error) {
 		if total > maxReviewRound {
 			return review.Session{}, fmt.Errorf("review round exceeds %d bytes", maxReviewRound)
 		}
-		format := "text"
-		if target.Source == "diff" {
-			format = "diff"
-		} else if strings.HasSuffix(strings.ToLower(target.Source), ".md") || strings.HasPrefix(target.Source, "@") {
-			format = "markdown"
-		}
+		format := reviewFormat(target, sourcePath)
 		id := fmt.Sprintf("%02d-%s", i+1, sanitizeReviewName(target.Label))
-		d := review.Document{ID: id, Label: strings.TrimSpace(target.Label), Source: target.Source, Format: format, SHA256: review.Digest(content), LineCount: len(strings.Split(content, "\n")), Content: content}
+		d := review.Document{ID: id, Label: strings.TrimSpace(target.Label), Source: s.reviewSource(target, sourcePath), Format: format, SHA256: review.Digest(content), LineCount: len(strings.Split(content, "\n")), Content: content}
 		if dir := datastore.ReviewDocumentsDir(s.runDir, st.ID, roundID); dir != "" {
 			path := filepath.Join(dir, id+reviewExtension(format))
 			d.SnapshotPath = path
@@ -91,49 +85,105 @@ func (s *scheduler) prepareReview(st *workflow.Step) (review.Session, error) {
 	return review.Session{StepID: st.ID, RoundID: roundID, Documents: docs}, nil
 }
 
-func (s *scheduler) reviewContent(stepID string, target workflow.ReviewTarget) (string, error) {
+func (s *scheduler) reviewContent(stepID string, target workflow.ReviewTarget) (string, string, error) {
+	if target.Kind() == workflow.ReviewTargetFile {
+		value, err := s.reviewField(target.File)
+		if err != nil {
+			return "", "", err
+		}
+		path, err := workflow.ExecutionPath(s.runWorktree, value)
+		if err != nil {
+			return "", "", fmt.Errorf("file target %q: %w", target.File, err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", "", fmt.Errorf("file target %q: read %q: %w", target.File, value, err)
+		}
+		if !info.Mode().IsRegular() {
+			return "", "", fmt.Errorf("file target %q: %q is not a regular file", target.File, value)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", "", fmt.Errorf("file target %q: read %q: %w", target.File, value, err)
+		}
+		return string(data), path, nil
+	}
+
 	source := target.Source
 	if source == "diff" {
-		return s.collectDepDiffs(stepID), nil
+		return s.collectDepDiffs(stepID), "", nil
 	}
 	if strings.HasPrefix(source, "@") {
-		ref := strings.TrimPrefix(source, "@")
-		parts := strings.Split(ref, ".")
-		state := s.states[parts[0]]
+		stepID, fields := parseReviewRef(source)
+		state := s.states[stepID]
 		if state == nil || state.Result == nil {
-			return "", fmt.Errorf("source %q has no result", source)
+			return "", "", fmt.Errorf("source %q has no result", source)
 		}
-		if len(parts) == 1 {
+		if len(fields) == 0 {
 			if state.Result.OutputPath == "" {
-				return "", fmt.Errorf("source %q has no output", source)
+				return "", "", fmt.Errorf("source %q has no output", source)
 			}
 			data, err := os.ReadFile(state.Result.OutputPath)
-			return string(data), err
+			return string(data), "", err
 		}
-		m := s.structured[parts[0]]
-		if m == nil && len(state.Result.Structured) > 0 {
-			_ = json.Unmarshal(state.Result.Structured, &m)
-		}
-		var value any = m
-		for _, part := range parts[1:] {
-			obj, ok := value.(map[string]any)
-			if !ok {
-				return "", fmt.Errorf("source %q is not text", source)
-			}
-			value = obj[part]
+		value, err := s.structuredField(stepID, fields)
+		if err != nil {
+			return "", "", fmt.Errorf("source %q: %w", source, err)
 		}
 		text, ok := value.(string)
 		if !ok {
-			return "", fmt.Errorf("source %q is not text", source)
+			return "", "", fmt.Errorf("source %q is not text", source)
 		}
-		return text, nil
+		return text, "", nil
 	}
 	path := target.ResolvedPath()
 	if path == "" {
 		path = source
 	}
 	data, err := os.ReadFile(path)
-	return string(data), err
+	return string(data), path, err
+}
+
+func (s *scheduler) reviewField(reference string) (string, error) {
+	stepID, fields := parseReviewRef(reference)
+	value, err := s.structuredField(stepID, fields)
+	if err != nil {
+		return "", fmt.Errorf("file target %q: %w", reference, err)
+	}
+	path, ok := value.(string)
+	if !ok || strings.TrimSpace(path) == "" {
+		return "", fmt.Errorf("file target %q is empty or not text", reference)
+	}
+	return path, nil
+}
+
+func (s *scheduler) reviewSource(target workflow.ReviewTarget, path string) string {
+	if target.Kind() != workflow.ReviewTargetFile || path == "" {
+		return target.Reference()
+	}
+	if s.runWorktree != "" {
+		if rel, err := filepath.Rel(s.runWorktree, path); err == nil {
+			return target.File + " (" + filepath.ToSlash(rel) + ")"
+		}
+	}
+	return target.File + " (" + filepath.ToSlash(path) + ")"
+}
+
+func reviewFormat(target workflow.ReviewTarget, path string) string {
+	if target.Kind() == workflow.ReviewTargetSource && target.Source == "diff" {
+		return "diff"
+	}
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".md", ".markdown", ".mdx":
+		return "markdown"
+	case ".diff", ".patch":
+		return "diff"
+	}
+	if target.Kind() == workflow.ReviewTargetSource && strings.HasPrefix(target.Source, "@") {
+		return "markdown"
+	}
+	return "text"
 }
 
 func sanitizeReviewName(v string) string {

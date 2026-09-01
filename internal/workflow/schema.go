@@ -521,6 +521,7 @@ type ReviewTarget struct {
 	File         string `toml:"file"`
 	Label        string `toml:"label"`
 	resolvedPath string
+	moduleInput  string
 }
 
 // Kind reports the target's configured form. Validation rejects targets that

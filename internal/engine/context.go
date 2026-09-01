@@ -124,7 +124,7 @@ func consumedFields(consumer *workflow.Step, producerID string) []string {
 	}
 	if consumer.Type == workflow.StepReview {
 		for _, target := range consumer.Review {
-			if tgt, path := parseReviewRef(target.Source); tgt == producerID && len(path) > 0 {
+			if tgt, path := parseReviewRef(target.Reference()); tgt == producerID && len(path) > 0 {
 				fields = append(fields, strings.Join(path, "."))
 			}
 		}
