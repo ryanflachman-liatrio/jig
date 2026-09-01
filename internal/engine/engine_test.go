@@ -2178,6 +2178,9 @@ run = "echo a"
 	if reqs[0].TranscriptPath != "" {
 		t.Errorf("TranscriptPath = %q, want empty when persistence off", reqs[0].TranscriptPath)
 	}
+	if reqs[0].ExecutionDir != "" {
+		t.Errorf("ExecutionDir = %q, want empty when persistence off", reqs[0].ExecutionDir)
+	}
 }
 
 // ── Input resolution tests ────────────────────────────────────────────────────

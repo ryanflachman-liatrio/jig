@@ -26,6 +26,26 @@ type composeExec struct {
 	requests  map[string]StepRequest       // stepID → dispatched request
 }
 
+// concurrentReaderExec holds two reader dispatches open so the test can inspect
+// both execution snapshots while they are live.
+type concurrentReaderExec struct {
+	readerRequests chan StepRequest
+	releaseReaders <-chan struct{}
+}
+
+func (e *concurrentReaderExec) Execute(_ context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
+	if req.Step.ID == "producer" {
+		if err := os.WriteFile(filepath.Join(req.Worktree, "integrated.txt"), []byte("from producer\n"), 0o644); err != nil {
+			return nil, err
+		}
+		return &step.Result{Status: step.StatusSucceeded}, nil
+	}
+
+	e.readerRequests <- req
+	<-e.releaseReaders
+	return &step.Result{Status: step.StatusSucceeded}, nil
+}
+
 func (e *composeExec) Execute(_ context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -121,6 +141,110 @@ depends_on = ["producer"]
 	}
 	if _, err := os.Stat(readerReq.ExecutionDir); !os.IsNotExist(err) {
 		t.Errorf("reader execution view still exists after run completion: %v", err)
+	}
+}
+
+// TestConcurrentReadOnlyStepsReceiveDistinctExecutionViews proves siblings do
+// not share a checkout: they concurrently read separate snapshots of the same
+// integrated run commit.
+func TestConcurrentReadOnlyStepsReceiveDistinctExecutionViews(t *testing.T) {
+	repo := t.TempDir()
+	initRepo(t, repo)
+
+	const toml = `
+[workflow]
+name = "concurrent-readers"
+version = "0.1"
+
+[defaults]
+max_parallel = 2
+
+[[step]]
+id = "producer"
+type = "command"
+run = "echo producer"
+isolation = "worktree"
+
+[[step]]
+id = "reader_one"
+type = "command"
+run = "echo reader one"
+depends_on = ["producer"]
+
+[[step]]
+id = "reader_two"
+type = "command"
+run = "echo reader two"
+depends_on = ["producer"]
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	releaseReaders := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() { close(releaseReaders) })
+	}
+	t.Cleanup(release)
+	exec := &concurrentReaderExec{
+		readerRequests: make(chan StepRequest, 2),
+		releaseReaders: releaseReaders,
+	}
+	mgr := NewManager(exec, filepath.Join(repo, ".jig"))
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	requests := make(map[string]StepRequest, 2)
+	deadline := time.After(10 * time.Second)
+	for len(requests) < 2 {
+		select {
+		case req := <-exec.readerRequests:
+			requests[req.Step.ID] = req
+		case <-deadline:
+			t.Fatal("timeout waiting for concurrent reader dispatches")
+		}
+	}
+
+	first := requests["reader_one"]
+	second := requests["reader_two"]
+	if first.ExecutionDir == "" || second.ExecutionDir == "" {
+		t.Fatalf("reader execution directories = %q, %q; want populated snapshots", first.ExecutionDir, second.ExecutionDir)
+	}
+	if first.ExecutionDir == second.ExecutionDir {
+		t.Fatalf("concurrent readers shared execution directory %q", first.ExecutionDir)
+	}
+	if first.Worktree != "" || second.Worktree != "" {
+		t.Errorf("reader mutation worktrees = %q, %q; want both empty", first.Worktree, second.Worktree)
+	}
+
+	var snapshotSHA string
+	for _, req := range []StepRequest{first, second} {
+		data, err := os.ReadFile(filepath.Join(req.ExecutionDir, "integrated.txt"))
+		if err != nil {
+			t.Fatalf("read %s integrated file: %v", req.Step.ID, err)
+		}
+		if got, want := string(data), "from producer\n"; got != want {
+			t.Errorf("%s integrated file = %q, want %q", req.Step.ID, got, want)
+		}
+		sha := strings.TrimSpace(mustGit(t, req.ExecutionDir, "rev-parse", "HEAD"))
+		if snapshotSHA == "" {
+			snapshotSHA = sha
+		} else if sha != snapshotSHA {
+			t.Errorf("reader snapshot SHA = %s, want %s", sha, snapshotSHA)
+		}
+	}
+
+	release()
+	driveFinalMerge(t, ch, run, false)
+	for _, req := range []StepRequest{first, second} {
+		if _, err := os.Stat(req.ExecutionDir); !os.IsNotExist(err) {
+			t.Errorf("reader execution view %q remains after run completion: %v", req.ExecutionDir, err)
+		}
 	}
 }
 
