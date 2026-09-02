@@ -118,12 +118,7 @@ func (m Model) updateEditor(msg tea.Msg) (Model, tea.Cmd) {
 	}
 	if isKey && keybind.Matches(k, m.keys.Confirm) {
 		if m.mode == ModeSummary {
-			if strings.TrimSpace(m.verdict) == "" {
-				m.error = "choose a decision"
-				return m, nil
-			}
-			m.mode = ModeBrowse
-			return m, submitCmd(m)
+			return m.submitReview()
 		}
 		body := strings.TrimSpace(m.composer.Value())
 		if body == "" {
@@ -218,13 +213,7 @@ func (m Model) updateSummary(k tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 	if keybind.Matches(k, m.keys.Confirm) {
-		if strings.TrimSpace(m.verdict) == "" {
-			m.error = "choose a decision"
-			return m, nil
-		}
-		m.mode = ModeBrowse
-		m.summary.Blur()
-		return m, submitCmd(m)
+		return m.submitReview()
 	}
 	if len(k.Text) == 1 && k.Text[0] >= '0' && k.Text[0] <= '9' {
 		idx := int(k.Text[0] - '1')
@@ -235,6 +224,21 @@ func (m Model) updateSummary(k tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m Model) submitReview() (Model, tea.Cmd) {
+	if strings.TrimSpace(m.verdict) == "" {
+		m.error = "choose a decision"
+		return m, nil
+	}
+	remaining := len(m.docs) - m.reviewedDocumentCount()
+	if remaining > 0 {
+		m.error = fmt.Sprintf("acknowledge %d remaining document(s) before submitting", remaining)
+		return m, nil
+	}
+	m.mode = ModeBrowse
+	m.summary.Blur()
+	return m, submitCmd(m)
 }
 func (m *Model) move(delta int) {
 	if m.activeDocumentMode() == DocumentPreview && len(m.previews[m.active].blocks) > 0 {

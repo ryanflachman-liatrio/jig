@@ -1,0 +1,52 @@
+[workflow]
+name = "run-snapshot-file-review-acceptance"
+version = "1"
+
+[[step]]
+id = "write_spec"
+type = "agent"
+skill = "fixture-skill"
+isolation = "worktree"
+mutation_paths = ["docs/spec.md"]
+
+  [step.schema]
+  spec_path = "text"
+
+[[step]]
+id = "write_tasks"
+type = "agent"
+skill = "fixture-skill"
+depends_on = ["write_spec"]
+isolation = "worktree"
+mutation_paths = ["docs/tasks.md"]
+
+  [step.schema]
+  task_path = "text"
+
+[[step]]
+id = "audit"
+type = "agent"
+skill = "fixture-skill"
+depends_on = ["write_spec", "write_tasks"]
+isolation = "none"
+
+  [step.schema]
+  audit_report = "text"
+
+[[step]]
+id = "review"
+type = "review"
+depends_on = ["audit", "write_spec", "write_tasks"]
+output_type = { enum = ["approve", "revise"] }
+
+  [[step.review]]
+  source = "@audit.audit_report"
+  label = "Audit report"
+
+  [[step.review]]
+  file = "@write_spec.spec_path"
+  label = "Specification"
+
+  [[step.review]]
+  file = "@write_tasks.task_path"
+  label = "Task plan"

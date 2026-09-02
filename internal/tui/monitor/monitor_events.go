@@ -266,10 +266,6 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		// single step's transition, so they would otherwise vanish. Retain the
 		// most recent one for the summary.
 		m.runErr = ev.Err
-		// The run handle is no longer useful after a terminal error; clear it so
-		// ctrl+h shows the "unavailable" message instead of trying to dispatch
-		// recovery actions against a dead run.
-		m.run = nil
 
 	case engine.RunFinished:
 		if ev.RunID != m.RunID {

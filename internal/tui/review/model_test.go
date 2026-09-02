@@ -372,6 +372,41 @@ func TestSummaryProducesStructuredSubmission(t *testing.T) {
 	}
 }
 
+func TestSummaryRequiresEveryDocumentAcknowledged(t *testing.T) {
+	m, err := New(testSession())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = update(m, "S")
+	m.SetVerdict("approve")
+	next, cmd := m.Update(press("enter"))
+	if cmd != nil {
+		t.Fatal("incomplete acknowledgement submitted a review")
+	}
+	if next.Mode() != ModeSummary {
+		t.Fatalf("mode = %v, want summary", next.Mode())
+	}
+	if got := next.error; got != "acknowledge 2 remaining document(s) before submitting" {
+		t.Fatalf("submission error = %q", got)
+	}
+}
+
+func TestSummaryDoesNotCountUnknownDraftAcknowledgements(t *testing.T) {
+	m, err := NewWithDraft(testSession(), domain.Draft{Reviewed: []string{"unknown", "01-plan"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = update(m, "S")
+	m.SetVerdict("approve")
+	next, cmd := m.Update(press("enter"))
+	if cmd != nil {
+		t.Fatal("unknown acknowledgement allowed a review submission")
+	}
+	if got := next.error; got != "acknowledge 1 remaining document(s) before submitting" {
+		t.Fatalf("submission error = %q", got)
+	}
+}
+
 func TestSummaryDisplaysNumberedVerdictChoices(t *testing.T) {
 	m, err := New(testSession())
 	if err != nil {

@@ -183,6 +183,16 @@ func (m Model) Verdict() string { return m.verdict }
 
 func (m Model) Reviewed(documentID string) bool { return m.reviewed[documentID] }
 
+func (m Model) reviewedDocumentCount() int {
+	count := 0
+	for _, d := range m.docs {
+		if m.reviewed[d.meta.ID] {
+			count++
+		}
+	}
+	return count
+}
+
 func (m Model) Draft() domain.Draft {
 	docs := m.Documents()
 	reviewed := make([]string, 0, len(m.reviewed))

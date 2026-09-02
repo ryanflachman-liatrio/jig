@@ -25,7 +25,7 @@ func (m *Model) view(withFooter bool) string {
 	if len(m.docs) == 0 {
 		return "No documents to review"
 	}
-	header := fmt.Sprintf("Review: %s · %d / %d reviewed · %d comments", m.session.StepID, len(m.reviewed), len(m.docs), len(m.comments))
+	header := fmt.Sprintf("Review: %s · %d / %d reviewed · %d comments", m.session.StepID, m.reviewedDocumentCount(), len(m.docs), len(m.comments))
 	if m.error != "" {
 		header += " · " + m.error
 	}

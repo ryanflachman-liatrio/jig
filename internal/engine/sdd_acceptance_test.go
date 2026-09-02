@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -239,4 +240,167 @@ func containsRoute(events []Event, stepID, target string) bool {
 		}
 	}
 	return false
+}
+
+const (
+	acceptanceSpec  = "# Run specification\n\nThis is the integrated specification.\n"
+	acceptanceTasks = "# Implementation tasks\n\n1. Implement the run snapshot.\n"
+	acceptanceAudit = "Audit passed: the specification and task plan agree.\n"
+)
+
+// snapshotReviewExec models the three production roles in the smallest useful
+// fixture: two mutating authors and a read-only auditor. The auditor reads from
+// its dispatch directory, so a fallback to the user's checkout fails the test.
+type snapshotReviewExec struct {
+	mu       sync.Mutex
+	auditDir string
+}
+
+func (e *snapshotReviewExec) Execute(_ context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
+	structured := func(values map[string]string) (*step.Result, error) {
+		data, err := json.Marshal(values)
+		if err != nil {
+			return nil, err
+		}
+		return &step.Result{Status: step.StatusSucceeded, Structured: data}, nil
+	}
+	write := func(path, content string) error {
+		if req.Worktree == "" {
+			return fmt.Errorf("%s has no mutable worktree", req.Step.ID)
+		}
+		path = filepath.Join(req.Worktree, path)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte(content), 0o644)
+	}
+
+	switch req.Step.ID {
+	case "write_spec":
+		if err := write("docs/spec.md", acceptanceSpec); err != nil {
+			return nil, err
+		}
+		return structured(map[string]string{"spec_path": "docs/spec.md"})
+	case "write_tasks":
+		if err := write("docs/tasks.md", acceptanceTasks); err != nil {
+			return nil, err
+		}
+		return structured(map[string]string{"task_path": "docs/tasks.md"})
+	case "audit":
+		if req.Worktree != "" {
+			return nil, fmt.Errorf("read-only audit received mutable worktree %q", req.Worktree)
+		}
+		if req.ExecutionDir == "" {
+			return nil, fmt.Errorf("read-only audit has no execution snapshot")
+		}
+		for path, want := range map[string]string{
+			"docs/spec.md":  acceptanceSpec,
+			"docs/tasks.md": acceptanceTasks,
+		} {
+			data, err := os.ReadFile(filepath.Join(req.ExecutionDir, path))
+			if err != nil {
+				return nil, fmt.Errorf("audit read %q: %w", path, err)
+			}
+			if got := string(data); got != want {
+				return nil, fmt.Errorf("audit read %q = %q, want run snapshot %q", path, got, want)
+			}
+		}
+		e.mu.Lock()
+		e.auditDir = req.ExecutionDir
+		e.mu.Unlock()
+		return structured(map[string]string{"audit_report": acceptanceAudit})
+	default:
+		return nil, fmt.Errorf("unexpected acceptance step %q", req.Step.ID)
+	}
+}
+
+// TestRunSnapshotFileReviewAcceptance proves the boundary shared by workers and
+// human reviews: both consume the files integrated into the run branch, never
+// coincidentally matching files in the user's checkout.
+func TestRunSnapshotFileReviewAcceptance(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/sdd-acceptance/run-snapshots-review.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf, err := workflow.Decode(string(fixture), "")
+	if err != nil {
+		t.Fatalf("decode acceptance fixture: %v", err)
+	}
+
+	repo := t.TempDir()
+	initRepo(t, repo)
+	userPath := filepath.Join(repo, "docs", "spec.md")
+	if err := os.MkdirAll(filepath.Dir(userPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userPath, []byte("# User checkout\n\nWrong document.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	exec := &snapshotReviewExec{}
+	mgr := NewManager(exec, filepath.Join(repo, ".jig"))
+	_, events := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	wantDocs := []struct {
+		label, source, content string
+	}{
+		{"Audit report", "@audit.audit_report", acceptanceAudit},
+		{"Specification", "@write_spec.spec_path (docs/spec.md)", acceptanceSpec},
+		{"Task plan", "@write_tasks.task_path (docs/tasks.md)", acceptanceTasks},
+	}
+	var observed []Event
+	deadline := time.After(15 * time.Second)
+	for {
+		select {
+		case event := <-events:
+			observed = append(observed, event)
+			switch event := event.(type) {
+			case ReviewRequest:
+				if event.StepID != "review" {
+					t.Fatalf("review step = %q, want review", event.StepID)
+				}
+				if len(event.Documents) != len(wantDocs) {
+					t.Fatalf("review documents = %#v", event.Documents)
+				}
+				for i, want := range wantDocs {
+					doc := event.Documents[i]
+					if doc.Label != want.label || doc.Source != want.source || doc.Content != want.content {
+						t.Fatalf("document %d = %#v, want label=%q source=%q content=%q", i, doc, want.label, want.source, want.content)
+					}
+					data, err := os.ReadFile(doc.SnapshotPath)
+					if err != nil || string(data) != want.content {
+						t.Fatalf("snapshot %q = %q, %v; want %q", doc.SnapshotPath, data, err, want.content)
+					}
+				}
+				run.Resolve("review", "approve")
+			case FinalMergeRequest:
+				run.FinalMerge(false)
+			case RunFinished:
+				if event.Failed {
+					t.Fatal("acceptance run finished failed")
+				}
+				goto finished
+			}
+		case <-deadline:
+			t.Fatal("timeout waiting for run snapshot review acceptance")
+		}
+	}
+
+finished:
+	exec.mu.Lock()
+	auditDir := exec.auditDir
+	exec.mu.Unlock()
+	if auditDir == "" {
+		t.Fatal("audit did not receive an execution snapshot")
+	}
+	if got, err := os.ReadFile(userPath); err != nil || strings.Contains(string(got), "integrated specification") {
+		t.Fatalf("user checkout document changed to %q, %v", got, err)
+	}
+	if statuses := findStatus(observed, "review"); len(statuses) == 0 || statuses[len(statuses)-1] != step.StatusSucceeded {
+		t.Fatalf("review statuses = %v, want final succeeded", statuses)
+	}
 }

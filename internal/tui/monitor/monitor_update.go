@@ -126,7 +126,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			entry := &m.inputQueue[i]
 			if entry.kind == inputKindReview && entry.stepID == msg.Submission.StepID {
 				runID := m.RunID
-				m.removeEntryAt(i)
+				// Keep the review workspace until the engine accepts the submission and
+				// transitions the step. Rejections leave the gate available to reopen.
+				m.reviewOpen = false
 				m.refreshPanels()
 				return m, func() tea.Msg {
 					return ReviewSubmissionMsg{RunID: runID, StepID: msg.Submission.StepID, Submission: msg.Submission}

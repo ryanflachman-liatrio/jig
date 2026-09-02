@@ -139,6 +139,31 @@ func TestReviewWorkspaceSubmitsNarrowDecisionWithComment(t *testing.T) {
 	}
 }
 
+func TestReviewWorkspaceKeepsGateOpenUntilEngineAcceptsSubmission(t *testing.T) {
+	m := monitorWithReviewWorkspace(t)
+	m, _ = m.Update(key("enter"))
+	m, _ = m.Update(key("r"))
+	m, _ = m.Update(key("S"))
+	m, _ = m.Update(key("1"))
+	m, cmd := m.Update(key("enter"))
+	for _, msg := range runBatch(cmd) {
+		m, _ = m.Update(msg)
+	}
+	if len(m.inputQueue) != 1 {
+		t.Fatalf("review entry count = %d, want 1 until engine acceptance", len(m.inputQueue))
+	}
+	if m.reviewOpen {
+		t.Fatal("review workspace remained open while its submission is in flight")
+	}
+
+	m, _ = m.Update(EngineEventMsg{Event: engine.RunError{RunID: "run-1", Err: "submission rejected"}})
+	m.focus = focusGate
+	m, _ = m.Update(key("enter"))
+	if !m.reviewOpen {
+		t.Fatal("rejected review could not be reopened")
+	}
+}
+
 func TestReviewWorkspaceStartsCompactAndReplacesMonitorBodyWhenOpened(t *testing.T) {
 	m := monitorWithReviewWorkspace(t)
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 180, Height: 45})
