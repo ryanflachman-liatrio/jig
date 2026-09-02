@@ -1,0 +1,32 @@
+# Minimal ACP implementation/review loop for exercising tool-call telemetry in
+# the run monitor. Supply one concrete, bounded edit request when starting it.
+[workflow]
+name        = "implementation-review"
+version     = "1"
+description = "One Codex ACP implementation step followed by human diff review."
+
+[defaults]
+backend         = "codex"
+transport       = "acp"
+permission_mode = "acceptEdits"
+max_turns       = 30
+
+[[step]]
+id        = "implement"
+type      = "agent"
+skill     = "../skills/implement"
+isolation = "worktree"
+inputs = [
+  { from = "user", label = "Describe one concrete implementation change to make:", as = "implementation_request" },
+]
+allowed_tools = ["Read", "Grep", "Glob", "Edit", "Write", "Bash"]
+
+[[step]]
+id          = "validate_diff"
+type        = "review"
+depends_on  = ["implement"]
+output_type = { enum = ["approve", "revise"] }
+
+[[step.review]]
+source = "diff"
+label  = "Implementation diff"

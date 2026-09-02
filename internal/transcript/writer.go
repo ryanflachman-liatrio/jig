@@ -9,6 +9,8 @@ import (
 	"os"
 	"time"
 	"unicode/utf8"
+
+	"jig/internal/toolcall"
 )
 
 // DefaultMaxBlockBytes is the write-time hard cap applied to a block's text,
@@ -71,6 +73,7 @@ func (w *Writer) Append(e Entry) (int, error) {
 		cap = DefaultMaxBlockBytes
 	}
 	for i := range e.Blocks {
+		normalizeLegacyBlock(&e.Blocks[i])
 		clampBlock(&e.Blocks[i], cap)
 	}
 
@@ -99,10 +102,9 @@ func (w *Writer) Close() error {
 	return w.f.Close()
 }
 
-// clampBlock truncates the sizeable field of a block to at most max bytes,
-// backing off to a UTF-8 rune boundary, and marks it truncated. thinking and
-// text share Text; tool_result uses Content. Other fields (tool input) are
-// bounded by their producers and left alone.
+// clampBlock bounds every persisted tool value as well as text blocks. A tool
+// receives an aggregate cap so a many-file edit cannot sidestep the per-value
+// limit by spreading a payload across content items.
 func clampBlock(b *Block, max int) {
 	switch b.Type {
 	case BlockText, BlockThinking:
@@ -110,12 +112,95 @@ func clampBlock(b *Block, max int) {
 			b.Text = clampString(b.Text, max)
 			b.Truncated = true
 		}
-	case BlockToolResult:
-		if len(b.Content) > max {
-			b.Content = clampString(b.Content, max)
+	case BlockToolUse, BlockToolResult:
+		if clampActivity(b.Tool, max) {
 			b.Truncated = true
 		}
 	}
+}
+
+func clampActivity(a *toolcall.Activity, max int) bool {
+	if a == nil {
+		return false
+	}
+	// Individual values get a quarter of the block limit. The final aggregate
+	// pass enforces the full cap across all strings and raw JSON values.
+	perValue := max / 4
+	if perValue < 1 {
+		perValue = 1
+	}
+	truncated := false
+	clamp := func(s *string, limit int) {
+		if len(*s) > limit {
+			*s = clampString(*s, limit)
+			truncated = true
+		}
+	}
+	clamp(&a.Title, perValue)
+	clamp(&a.Kind, perValue)
+	clamp(&a.Status, perValue)
+	clampRaw := func(raw *json.RawMessage, limit int) {
+		if len(*raw) > limit {
+			*raw = json.RawMessage(clampString(string(*raw), limit))
+			truncated = true
+		}
+	}
+	clampRaw(&a.Input, perValue)
+	clampRaw(&a.Output, perValue)
+	for i := range a.Locations {
+		clamp(&a.Locations[i].Path, perValue)
+	}
+	for i := range a.Content {
+		c := &a.Content[i]
+		clamp(&c.Type, perValue)
+		clamp(&c.Text, perValue)
+		clampRaw(&c.Raw, perValue)
+		if c.Diff != nil {
+			clamp(&c.Diff.Path, perValue)
+			clamp(&c.Diff.NewText, perValue)
+			if c.Diff.OldText != nil {
+				clamp(c.Diff.OldText, perValue)
+			}
+		}
+	}
+	remaining := max
+	consume := func(s *string) {
+		if len(*s) > remaining {
+			limit := remaining
+			if limit < 0 {
+				limit = 0
+			}
+			*s = clampString(*s, limit)
+			truncated = true
+		}
+		remaining -= len(*s)
+		if remaining < 0 {
+			remaining = 0
+		}
+	}
+	consume(&a.Title)
+	consume(&a.Kind)
+	consume(&a.Status)
+	consumeRaw := func(raw *json.RawMessage) { s := string(*raw); consume(&s); *raw = json.RawMessage(s) }
+	consumeRaw(&a.Input)
+	consumeRaw(&a.Output)
+	for i := range a.Locations {
+		consume(&a.Locations[i].Path)
+	}
+	for i := range a.Content {
+		c := &a.Content[i]
+		consume(&c.Type)
+		consume(&c.Text)
+		consumeRaw(&c.Raw)
+		if c.Diff != nil {
+			consume(&c.Diff.Path)
+			if c.Diff.OldText != nil {
+				consume(c.Diff.OldText)
+			}
+			consume(&c.Diff.NewText)
+		}
+	}
+	return truncated
 }
 
 // clampString returns the longest prefix of s that is at most max bytes and

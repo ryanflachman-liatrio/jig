@@ -25,7 +25,11 @@
 // file; entries are distinguished by Attempt and Iteration.
 package transcript
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"jig/internal/toolcall"
+)
 
 // Role identifies the source of an Entry's blocks.
 type Role string
@@ -53,33 +57,112 @@ const (
 //
 //	text        – Text
 //	thinking    – Text (may be empty or redacted)
-//	tool_use    – ToolUseID, Name, Input (raw JSON of the tool arguments)
-//	tool_result – ToolUseID, Content, IsError, Truncated
+//	tool_use    – Tool
+//	tool_result – Tool, Truncated
 type Block struct {
 	Type BlockType `json:"type"`
 
 	// Text carries text and thinking block content.
 	Text string `json:"text,omitempty"`
 
-	// ToolUseID correlates a tool_use with its tool_result.
-	ToolUseID string `json:"tool_use_id,omitempty"`
+	// Tool carries the full normalized tool state. Tool-use and tool-result
+	// blocks for the same call share its ID but may have snapshots from
+	// different points in the tool lifecycle.
+	Tool *toolcall.Activity `json:"tool,omitempty"`
 
-	// Name is the tool name on a tool_use block.
-	Name string `json:"name,omitempty"`
-
-	// Input is the raw JSON of a tool_use block's arguments.
-	Input json.RawMessage `json:"input,omitempty"`
-
-	// Content is the tool_result payload, always a string (structured content
-	// is JSON-encoded by the writer before storage).
-	Content string `json:"content,omitempty"`
-
-	// IsError marks a tool_result that reported failure.
-	IsError bool `json:"is_error,omitempty"`
+	// Deprecated construction-only fields keep in-package fixtures source
+	// compatible; Writer normalizes them into Tool and never persists them.
+	ToolUseID string          `json:"-"`
+	Name      string          `json:"-"`
+	Input     json.RawMessage `json:"-"`
+	Content   string          `json:"-"`
+	IsError   bool            `json:"-"`
 
 	// Truncated marks a block whose text/content exceeded MaxBlockBytes and was
 	// clipped at write time (distinct from the render-time 80-char collapse).
 	Truncated bool `json:"truncated,omitempty"`
+}
+
+func normalizeLegacyBlock(b *Block) {
+	if b.Tool != nil || (b.Type != BlockToolUse && b.Type != BlockToolResult) {
+		return
+	}
+	status := ""
+	if b.Type == BlockToolResult {
+		status = "completed"
+		if b.IsError {
+			status = "failed"
+		}
+	}
+	b.Tool = &toolcall.Activity{ID: b.ToolUseID, Title: b.Name, Input: append(json.RawMessage(nil), b.Input...), Status: status}
+	if b.Content != "" {
+		b.Tool.Content = []toolcall.Content{{Type: "text", Text: b.Content}}
+	}
+}
+
+// Activity returns the normalized tool snapshot, including for in-memory
+// legacy fixtures. Persisted records always use Tool.
+func (b Block) Activity() *toolcall.Activity {
+	if b.Tool != nil {
+		return b.Tool
+	}
+	if b.ToolUseID == "" && b.Name == "" && len(b.Input) == 0 && b.Content == "" && !b.IsError {
+		return nil
+	}
+	copy := b
+	if copy.Type != BlockToolUse && copy.Type != BlockToolResult {
+		copy.Type = BlockToolUse
+	}
+	normalizeLegacyBlock(&copy)
+	return copy.Tool
+}
+
+func populateLegacyFields(b *Block) {
+	if b.Tool == nil {
+		return
+	}
+	b.ToolUseID, b.Name, b.Input = b.Tool.ID, b.Tool.Title, append(json.RawMessage(nil), b.Tool.Input...)
+	b.IsError = b.Tool.Status == "failed"
+	for _, content := range b.Tool.Content {
+		if content.Type == "text" {
+			b.Content = content.Text
+			break
+		}
+	}
+}
+
+// UnmarshalJSON accepts historical tool blocks and normalizes them into the
+// current activity contract so existing run directories remain readable.
+func (b *Block) UnmarshalJSON(data []byte) error {
+	type current Block
+	var wire struct {
+		current
+		ToolUseID string          `json:"tool_use_id"`
+		Name      string          `json:"name"`
+		Input     json.RawMessage `json:"input"`
+		Content   string          `json:"content"`
+		IsError   bool            `json:"is_error"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*b = Block(wire.current)
+	if b.Tool == nil && (b.Type == BlockToolUse || b.Type == BlockToolResult) {
+		status := ""
+		if b.Type == BlockToolResult {
+			status = "completed"
+			if wire.IsError {
+				status = "failed"
+			}
+		}
+		activity := &toolcall.Activity{ID: wire.ToolUseID, Title: wire.Name, Input: append(json.RawMessage(nil), wire.Input...), Status: status}
+		if wire.Content != "" {
+			activity.Content = []toolcall.Content{{Type: "text", Text: wire.Content}}
+		}
+		b.Tool = activity
+	}
+	populateLegacyFields(b)
+	return nil
 }
 
 // Entry is one line of the transcript: a single message (one model turn, one

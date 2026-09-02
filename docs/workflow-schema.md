@@ -305,6 +305,11 @@ Codex's CLI has no native ACP server. `backend = "codex"` starts the
 Server using the operator's existing Codex login. Do not use `codex exec` or
 Codex's MCP server as a substitute; see [Codex ACP compatibility gate](research/codex-acp.md).
 
+The run monitor shows file patches only when an ACP adapter emits standard
+tool-call diff or location detail. A completed edit with no such detail shows
+`Adapter did not provide edit details.`; jig does not infer patches from tool
+titles or the workspace.
+
 Interactive steps may enable `AskUserQuestion` with either transport. The ACP
 path advertises form elicitation only and supports text, single-select, and
 multi-select questions, including the Claude adapter's “Other” answer fields.

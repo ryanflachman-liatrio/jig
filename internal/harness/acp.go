@@ -13,6 +13,7 @@ import (
 
 	"jig/harness/acp"
 	"jig/internal/interaction"
+	"jig/internal/toolcall"
 )
 
 // AcpHarness drives Claude over the Agent Client Protocol via Zed's npx
@@ -357,21 +358,15 @@ type acpSession struct {
 	// response (after all tool results) is captured.
 	lastText string
 
-	// ACP may send title and raw-input updates separately before completion.
-	// Keeping both together prevents a title-only update from dropping the
-	// input needed by transcript renderers.
-	pendingTools map[string]pendingTool
+	// ACP updates are replacement snapshots for collections. Pending activities
+	// retain that merged state until a terminal update emits the final result.
+	pendingTools map[string]*toolcall.Activity
 
 	// hasTextSinceFlush is true whenever text or thinking events have been
 	// emitted since the last EventAssistantEnd. Used to decide whether to flush
 	// before the first new tool call, and to flush any trailing text after
 	// Prompt returns.
 	hasTextSinceFlush bool
-}
-
-type pendingTool struct {
-	title string
-	input json.RawMessage
 }
 
 func (s *acpSession) Messages() <-chan Event { return s.events }
@@ -573,79 +568,82 @@ func (s *acpSession) onEvent(ev acp.Event) {
 
 	case acp.EventToolCall:
 		if s.pendingTools == nil {
-			s.pendingTools = make(map[string]pendingTool)
+			s.pendingTools = make(map[string]*toolcall.Activity)
 		}
 		tool, existed := s.pendingTools[ev.ToolID]
-		if ev.Title != "" {
-			tool.title = ev.Title
-		}
-		if ev.Input != "" {
-			tool.input = json.RawMessage(ev.Input)
-		}
-		s.pendingTools[ev.ToolID] = tool
 		if !existed {
-			// First time seeing this tool ID: flush any preceding text so it
-			// lands in its own assistant entry, separate from the tool calls.
 			s.flushText()
 			if s.hasSchema {
-				// Reset accumulator so only the final text response (after all
-				// tool results) is captured for JSON extraction.
 				s.lastText = ""
 			}
+			tool = &toolcall.Activity{ID: ev.ToolID}
+			s.pendingTools[ev.ToolID] = tool
 		}
-		// Subsequent EventToolCall events for the same ID are title updates;
-		// they update pendingTools[id] and do nothing else. The EventToolUse
-		// is emitted once, when EventToolCallUpdate arrives with the result.
+		applyACPEvent(tool, ev)
+		if !existed {
+			s.events <- Event{Type: EventToolUse, Tool: tool.Clone()}
+			s.events <- Event{Type: EventAssistantEnd}
+		}
 
 	case acp.EventToolCallUpdate:
-		tool := pendingTool{}
-		if s.pendingTools != nil {
-			tool = s.pendingTools[ev.ToolID]
-			delete(s.pendingTools, ev.ToolID)
+		if s.pendingTools == nil {
+			s.pendingTools = make(map[string]*toolcall.Activity)
 		}
-		if ev.Title != "" {
-			tool.title = ev.Title
+		tool := s.pendingTools[ev.ToolID]
+		if tool == nil {
+			tool = &toolcall.Activity{ID: ev.ToolID}
+			s.pendingTools[ev.ToolID] = tool
 		}
-		if ev.Input != "" {
-			tool.input = json.RawMessage(ev.Input)
+		applyACPEvent(tool, ev)
+		if !terminalACPStatus(tool.Status) {
+			return
 		}
-		name, input := normalizeACPToolCall(tool.title, tool.input)
-		s.events <- Event{Type: EventToolUse, ToolUseID: ev.ToolID, Name: name, Input: input}
-		s.events <- Event{Type: EventAssistantEnd}
-		s.events <- Event{Type: EventToolResult, ToolUseID: ev.ToolID, Content: ev.Status, IsError: ev.Status == "failed"}
+		delete(s.pendingTools, ev.ToolID)
+		s.events <- Event{Type: EventToolResult, Tool: tool.Clone(), IsError: tool.Status == "failed"}
 		s.events <- Event{Type: EventUserEnd}
 	}
 }
 
-// normalizeACPToolCall fills the transcript's structured tool-call contract
-// from an ACP title when an adapter supplies no raw input. Codex ACP currently
-// reports file reads as titles such as "Read file '/path/to/file'", while other
-// adapters often provide the same information in RawInput.
-func normalizeACPToolCall(title string, input json.RawMessage) (string, json.RawMessage) {
-	if len(input) != 0 {
-		return title, input
+func applyACPEvent(tool *toolcall.Activity, ev acp.Event) {
+	if ev.HasTitle || ev.Title != "" {
+		tool.Title = ev.Title
 	}
-
-	const readFilePrefix = "read file "
-	trimmed := strings.TrimSpace(title)
-	if !strings.HasPrefix(strings.ToLower(trimmed), readFilePrefix) {
-		return title, input
+	if ev.HasStatus || ev.Status != "" {
+		tool.Status = ev.Status
 	}
-	path := strings.TrimSpace(trimmed[len(readFilePrefix):])
-	if len(path) >= 2 {
-		if quote := path[0]; (quote == '\'' || quote == '"' || quote == '`') && path[len(path)-1] == quote {
-			path = path[1 : len(path)-1]
+	if ev.HasKind || ev.ToolKind != "" {
+		tool.Kind = ev.ToolKind
+	}
+	if ev.HasInput || len(ev.Input) > 0 {
+		tool.Input = append(json.RawMessage(nil), ev.Input...)
+	}
+	if ev.HasOutput || len(ev.Output) > 0 {
+		tool.Output = append(json.RawMessage(nil), ev.Output...)
+	}
+	if ev.HasLocations {
+		tool.Locations = make([]toolcall.Location, len(ev.Locations))
+		for i, location := range ev.Locations {
+			tool.Locations[i] = toolcall.Location{Path: location.Path, Line: location.Line, Column: location.Column}
 		}
 	}
-	if path == "" {
-		return title, input
+	if ev.HasContent {
+		tool.Content = make([]toolcall.Content, len(ev.Content))
+		for i, content := range ev.Content {
+			tool.Content[i] = toolcall.Content{Type: content.Type, Text: content.Text, Raw: append(json.RawMessage(nil), content.Raw...)}
+			if content.Diff != nil {
+				d := *content.Diff
+				if d.OldText != nil {
+					old := *d.OldText
+					d.OldText = &old
+				}
+				tool.Content[i].Diff = &toolcall.Diff{Path: d.Path, OldText: d.OldText, NewText: d.NewText}
+			}
+		}
 	}
+}
 
-	normalized, err := json.Marshal(map[string]string{"file_path": path})
-	if err != nil {
-		return title, input
-	}
-	return "Read", normalized
+func terminalACPStatus(status string) bool {
+	return status == "completed" || status == "failed" || status == "cancelled"
 }
 
 // toolCallName returns the human-readable tool name a permission decision is

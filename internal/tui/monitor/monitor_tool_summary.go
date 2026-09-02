@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode"
 
+	"jig/internal/toolcall"
 	"jig/internal/transcript"
 	"jig/internal/tui/shared"
 )
@@ -20,8 +21,30 @@ type toolCallSummary struct {
 }
 
 func summarizeToolCall(blk transcript.Block) toolCallSummary {
-	args := decodeToolArgs(blk.Input)
-	kind := canonicalToolName(blk.Name)
+	return summarizeActivity(blk.Activity())
+}
+
+func summarizeActivity(activity *toolcall.Activity) toolCallSummary {
+	if activity == nil {
+		return toolSummary(shared.IconToolCall, "Tool", "")
+	}
+	args := decodeToolArgs(activity.Input)
+	kind := strings.ToLower(strings.TrimSpace(activity.Kind))
+	if kind == "" {
+		kind = canonicalToolName(activity.Title)
+	}
+	if kind == "edit" {
+		for _, content := range activity.Content {
+			if content.Diff != nil {
+				return toolSummary("◈", "Edit", shortFile(content.Diff.Path))
+			}
+		}
+		for _, location := range activity.Locations {
+			if location.Path != "" {
+				return toolSummary("◈", "Edit", shortFile(location.Path))
+			}
+		}
+	}
 	if kind == "" {
 		kind = inferToolKind(args)
 	}
@@ -57,7 +80,7 @@ func summarizeToolCall(blk transcript.Block) toolCallSummary {
 		return toolSummary("⊙", "Use skill", stringArg(args, "skill"))
 	}
 
-	name := displayToolName(blk.Name)
+	name := displayToolName(activity.Title)
 	if name == "" {
 		name = "Tool"
 	}

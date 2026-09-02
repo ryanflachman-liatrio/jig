@@ -214,21 +214,21 @@ func TestOnEvent_ToolCallFlushesText(t *testing.T) {
 	// First EventToolCall for a new ID flushes the preceding text.
 	s.onEvent(acp.Event{Kind: acp.EventToolCall, ToolID: "A", Title: "undefined"})
 	got := drainEvents(s.events)
-	if len(got) != 1 || got[0].Type != EventAssistantEnd {
-		t.Fatalf("first new tool call should flush text via EventAssistantEnd, got %+v", got)
+	if len(got) != 3 || got[0].Type != EventAssistantEnd || got[1].Type != EventToolUse || got[2].Type != EventAssistantEnd {
+		t.Fatalf("first new tool call should flush text and emit a live tool use, got %+v", got)
 	}
 	if s.hasTextSinceFlush {
 		t.Error("hasTextSinceFlush should be false after flush")
 	}
 	// Title buffered.
-	if s.pendingTools["A"].title != "undefined" {
-		t.Errorf("pendingTools[A].title = %q, want %q", s.pendingTools["A"].title, "undefined")
+	if s.pendingTools["A"].Title != "undefined" {
+		t.Errorf("pendingTools[A].Title = %q, want %q", s.pendingTools["A"].Title, "undefined")
 	}
 }
 
 func TestOnEvent_ToolCallTitleUpdates(t *testing.T) {
 	s := newTestSession()
-	s.onEvent(acp.Event{Kind: acp.EventToolCall, ToolID: "A", Title: "undefined", Input: `{"query":"Go 1.25"}`})
+	s.onEvent(acp.Event{Kind: acp.EventToolCall, ToolID: "A", Title: "undefined", Input: json.RawMessage(`{"query":"Go 1.25"}`), HasTitle: true, HasInput: true})
 	drainEvents(s.events) // consume any flush events (empty since no prior text)
 
 	// Second EventToolCall for same ID: only updates title, no extra flush.
@@ -237,11 +237,11 @@ func TestOnEvent_ToolCallTitleUpdates(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatalf("title update should emit nothing, got %+v", got)
 	}
-	if s.pendingTools["A"].title != "Go 1.25 release date" {
-		t.Errorf("pendingTools[A].title = %q after update", s.pendingTools["A"].title)
+	if s.pendingTools["A"].Title != "Go 1.25 release date" {
+		t.Errorf("pendingTools[A].Title = %q after update", s.pendingTools["A"].Title)
 	}
-	if string(s.pendingTools["A"].input) != `{"query":"Go 1.25"}` {
-		t.Errorf("pendingTools[A].input = %s after title-only update", s.pendingTools["A"].input)
+	if string(s.pendingTools["A"].Input) != `{"query":"Go 1.25"}` {
+		t.Errorf("pendingTools[A].Input = %s after title-only update", s.pendingTools["A"].Input)
 	}
 }
 
@@ -250,10 +250,11 @@ func TestOnEvent_ToolCallUpdateEmitsToolUseAndResult(t *testing.T) {
 	s.onEvent(acp.Event{Kind: acp.EventToolCall, ToolID: "A", Title: "Go 1.25 release date"})
 	drainEvents(s.events) // consume any flush events
 
-	s.onEvent(acp.Event{Kind: acp.EventToolCallUpdate, ToolID: "A", Status: "completed", Input: `{"query":"Go 1.25"}`})
+	s.onEvent(acp.Event{Kind: acp.EventToolCallUpdate, ToolID: "A", Status: "completed", Input: json.RawMessage(`{"query":"Go 1.25"}`), HasStatus: true, HasInput: true})
 	got := drainEvents(s.events)
-	// Expect: EventToolUse, EventAssistantEnd, EventToolResult, EventUserEnd.
-	want := []EventType{EventToolUse, EventAssistantEnd, EventToolResult, EventUserEnd}
+	// The live tool-use was emitted at creation; terminal updates produce only
+	// the completed snapshot and its user-turn boundary.
+	want := []EventType{EventToolResult, EventUserEnd}
 	if len(got) != len(want) {
 		t.Fatalf("want %d events, got %d: %+v", len(want), len(got), got)
 	}
@@ -262,16 +263,10 @@ func TestOnEvent_ToolCallUpdateEmitsToolUseAndResult(t *testing.T) {
 			t.Errorf("[%d] type = %v, want %v", i, got[i].Type, w)
 		}
 	}
-	if got[0].Name != "Go 1.25 release date" {
-		t.Errorf("EventToolUse.Name = %q, want %q", got[0].Name, "Go 1.25 release date")
+	if got[0].Tool == nil || got[0].Tool.Title != "Go 1.25 release date" || got[0].Tool.ID != "A" || string(got[0].Tool.Input) != `{"query":"Go 1.25"}` {
+		t.Errorf("terminal tool = %+v, want final title/id/input", got[0].Tool)
 	}
-	if got[0].ToolUseID != "A" {
-		t.Errorf("EventToolUse.ToolUseID = %q, want A", got[0].ToolUseID)
-	}
-	if string(got[0].Input) != `{"query":"Go 1.25"}` {
-		t.Errorf("EventToolUse.Input = %s, want raw query input", got[0].Input)
-	}
-	if got[2].IsError {
+	if got[0].IsError {
 		t.Error("completed status should not be an error")
 	}
 	if _, ok := s.pendingTools["A"]; ok {
@@ -279,26 +274,18 @@ func TestOnEvent_ToolCallUpdateEmitsToolUseAndResult(t *testing.T) {
 	}
 }
 
-func TestOnEvent_NormalizesTitleOnlyFileRead(t *testing.T) {
+func TestOnEvent_TitleOnlyToolDoesNotFabricateInput(t *testing.T) {
 	s := newTestSession()
 	const path = "/workspace/internal/tui/monitor/monitor_transcript.go"
 	s.onEvent(acp.Event{Kind: acp.EventToolCall, ToolID: "read-1", Title: "Read file '" + path + "'"})
-	drainEvents(s.events)
+	initial := drainEvents(s.events)
 
 	s.onEvent(acp.Event{Kind: acp.EventToolCallUpdate, ToolID: "read-1", Status: "completed"})
-	got := drainEvents(s.events)
-	if len(got) == 0 || got[0].Type != EventToolUse {
-		t.Fatalf("first event = %+v, want tool use", got)
+	if len(initial) < 2 || initial[0].Type != EventToolUse || initial[0].Tool == nil {
+		t.Fatalf("initial events = %+v, want tool use", initial)
 	}
-	if got[0].Name != "Read" {
-		t.Errorf("EventToolUse.Name = %q, want Read", got[0].Name)
-	}
-	var input map[string]string
-	if err := json.Unmarshal(got[0].Input, &input); err != nil {
-		t.Fatalf("EventToolUse.Input = %q, want JSON: %v", got[0].Input, err)
-	}
-	if input["file_path"] != path {
-		t.Errorf("EventToolUse.Input[file_path] = %q, want %q", input["file_path"], path)
+	if initial[0].Tool.Title != "Read file '"+path+"'" || len(initial[0].Tool.Input) != 0 {
+		t.Errorf("initial activity = %+v, title-only input must remain absent", initial[0].Tool)
 	}
 }
 
@@ -309,12 +296,30 @@ func TestOnEvent_ToolCallUpdateFailed(t *testing.T) {
 
 	s.onEvent(acp.Event{Kind: acp.EventToolCallUpdate, ToolID: "B", Status: "failed"})
 	got := drainEvents(s.events)
-	// [EventToolUse, EventAssistantEnd, EventToolResult(isError=true), EventUserEnd]
-	if len(got) < 3 {
+	if len(got) != 2 {
 		t.Fatalf("too few events: %+v", got)
 	}
-	if !got[2].IsError {
+	if !got[0].IsError {
 		t.Error("failed status should set IsError=true")
+	}
+}
+
+func TestOnEvent_TerminalUpdateCarriesReplacementDiff(t *testing.T) {
+	s := newTestSession()
+	s.onEvent(acp.Event{Kind: acp.EventToolCall, ToolID: "edit-1", Title: "Editing files", ToolKind: "edit", HasTitle: true, HasKind: true})
+	initial := drainEvents(s.events)
+	if len(initial) < 1 || initial[0].Tool == nil || initial[0].Tool.ID != "edit-1" {
+		t.Fatalf("initial events = %+v", initial)
+	}
+	old := "before\n"
+	s.onEvent(acp.Event{Kind: acp.EventToolCallUpdate, ToolID: "edit-1", Status: "completed", HasStatus: true, HasContent: true, Content: []acp.Content{{Type: "diff", Diff: &acp.Diff{Path: "main.go", OldText: &old, NewText: "after\n"}}}})
+	got := drainEvents(s.events)
+	if len(got) != 2 || got[0].Tool == nil || len(got[0].Tool.Content) != 1 {
+		t.Fatalf("terminal events = %+v", got)
+	}
+	diff := got[0].Tool.Content[0].Diff
+	if got[0].Tool.Status != "completed" || diff == nil || diff.Path != "main.go" || diff.OldText == nil || *diff.OldText != old || diff.NewText != "after\n" {
+		t.Fatalf("terminal activity = %+v", got[0].Tool)
 	}
 }
 

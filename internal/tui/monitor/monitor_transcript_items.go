@@ -29,7 +29,11 @@ func buildTranscriptItems(entries []transcript.Entry, stepRunning bool) []transc
 				continue
 			}
 
-			coord := toolCorrelationKey{generation: entry.Generation, iteration: entry.Iteration, attempt: entry.Attempt, toolUseID: block.ToolUseID}
+			toolID := ""
+			if activity := block.Activity(); activity != nil {
+				toolID = activity.ID
+			}
+			coord := toolCorrelationKey{generation: entry.Generation, iteration: entry.Iteration, attempt: entry.Attempt, toolUseID: toolID}
 			if coord.toolUseID == "" {
 				items = append(items, standaloneToolItem(ref, entry.Role, coord, block, stepRunning))
 				continue
@@ -181,7 +185,7 @@ func standaloneToolItem(ref transcriptBlockRef, role transcript.Role, coord tool
 		return transcriptItem{key: transcriptItemKey{anchor: ref.key, kind: transcriptItemToolExchange}, kind: transcriptItemToolExchange, role: role, primary: ref, toolUse: &ref, displayState: state, coord: coord}
 	}
 	state := toolDisplayUnknownResult
-	if block.IsError {
+	if activity := block.Activity(); (activity != nil && activity.Status == "failed") || block.IsError {
 		state = toolDisplayError
 	}
 	return transcriptItem{key: transcriptItemKey{anchor: ref.key, kind: transcriptItemToolResult}, kind: transcriptItemToolResult, role: role, primary: ref, toolResult: &ref, displayState: state, coord: coord}
@@ -195,7 +199,7 @@ func toolStateForResult(entries []transcript.Entry, ref *transcriptBlockRef) too
 }
 
 func toolStateForBlock(block transcript.Block) toolDisplayState {
-	if block.IsError {
+	if activity := block.Activity(); (activity != nil && activity.Status == "failed") || block.IsError {
 		return toolDisplayError
 	}
 	return toolDisplaySuccess

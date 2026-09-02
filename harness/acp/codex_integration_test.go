@@ -56,6 +56,26 @@ func TestCodexACPIntegration(t *testing.T) {
 	if len(conn.client.Events()) == 0 {
 		t.Fatal("Codex ACP emitted no transcript events")
 	}
+	const editPath = "telemetry.txt"
+	if _, err := conn.Prompt(ctx, sessionID, "Create telemetry.txt containing exactly structured edit telemetry followed by a newline."); err != nil {
+		t.Fatalf("Prompt edit: %v", err)
+	}
+	if content, err := os.ReadFile(dir + "/" + editPath); err != nil || string(content) != "structured edit telemetry\n" {
+		t.Fatalf("adapter edit = %q, %v", content, err)
+	}
+	var structuredEdit bool
+	for _, event := range conn.client.Events() {
+		if event.Kind != EventToolCallUpdate || event.Status != "completed" || event.ToolKind != "edit" {
+			continue
+		}
+		if len(event.Content) > 0 || len(event.Locations) > 0 {
+			structuredEdit = true
+			break
+		}
+	}
+	if !structuredEdit {
+		t.Fatal("Codex ACP made the edit but did not emit terminal standard structured edit telemetry")
+	}
 	if err := conn.Close(); err != nil {
 		t.Fatalf("Close initial connection: %v", err)
 	}

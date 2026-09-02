@@ -10,6 +10,7 @@ import (
 	claudecode "github.com/severity1/claude-agent-sdk-go"
 
 	"jig/internal/interaction"
+	"jig/internal/toolcall"
 )
 
 // ClaudeHarness wraps github.com/severity1/claude-agent-sdk-go, translating
@@ -65,6 +66,7 @@ func (h *ClaudeHarness) Open(ctx context.Context, spec SessionSpec) (Session, er
 		client: client,
 		sendCh: sendCh,
 		events: make(chan Event, 16),
+		tools:  make(map[string]*toolcall.Activity),
 	}
 	go sess.pump(client.ReceiveMessages(ctx))
 	return sess, nil
@@ -322,6 +324,7 @@ type claudeSession struct {
 	client claudecode.Client
 	sendCh chan claudecode.StreamMessage
 	events chan Event
+	tools  map[string]*toolcall.Activity
 }
 
 func (s *claudeSession) Messages() <-chan Event { return s.events }
@@ -378,7 +381,9 @@ func (s *claudeSession) pump(msgChan <-chan claudecode.Message) {
 					if raw, err := json.Marshal(b.Input); err == nil {
 						input = raw
 					}
-					s.events <- Event{Type: EventToolUse, ToolUseID: b.ToolUseID, Name: b.Name, Input: input}
+					tool := &toolcall.Activity{ID: b.ToolUseID, Title: b.Name, Input: input}
+					s.tools[b.ToolUseID] = tool.Clone()
+					s.events <- Event{Type: EventToolUse, Tool: tool.Clone()}
 				}
 			}
 			s.events <- Event{Type: EventAssistantEnd}
@@ -392,12 +397,17 @@ func (s *claudeSession) pump(msgChan <-chan claudecode.Message) {
 					if !ok {
 						continue
 					}
-					s.events <- Event{
-						Type:      EventToolResult,
-						ToolUseID: tr.ToolUseID,
-						Content:   toolResultContent(tr.Content),
-						IsError:   tr.IsError != nil && *tr.IsError,
+					tool := s.tools[tr.ToolUseID].Clone()
+					if tool == nil {
+						tool = &toolcall.Activity{ID: tr.ToolUseID}
 					}
+					tool.Status = "completed"
+					isError := tr.IsError != nil && *tr.IsError
+					if isError {
+						tool.Status = "failed"
+					}
+					tool.Content = []toolcall.Content{{Type: "text", Text: toolResultContent(tr.Content)}}
+					s.events <- Event{Type: EventToolResult, Tool: tool, IsError: isError}
 				}
 			}
 			s.events <- Event{Type: EventUserEnd}

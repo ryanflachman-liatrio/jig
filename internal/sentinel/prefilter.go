@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"jig/internal/toolcall"
 	"jig/internal/transcript"
 )
 
@@ -31,14 +32,14 @@ func ExfilPrefilter(entries []transcript.Entry) bool {
 		for _, b := range e.Blocks {
 			switch b.Type {
 			case transcript.BlockToolResult:
-				if containsSecret(b.Content) {
+				if containsSecret(toolText(b.Activity())) {
 					sawSecret = true
 				}
 			case transcript.BlockToolUse:
 				if !sawSecret {
 					continue
 				}
-				if isOutboundCall(b.Name, b.Input) {
+				if activity := b.Activity(); activity != nil && isOutboundCall(activity.Title, activity.Input) {
 					return true
 				}
 			}
@@ -56,7 +57,7 @@ func consecutiveErrors(entries []transcript.Entry) int {
 			if b.Type != transcript.BlockToolResult {
 				continue
 			}
-			if b.IsError {
+			if activity := b.Activity(); (activity != nil && activity.Status == "failed") || b.IsError {
 				run++
 				if run > max {
 					max = run
@@ -79,7 +80,11 @@ func repeatedToolCall(entries []transcript.Entry) int {
 			if b.Type != transcript.BlockToolUse {
 				continue
 			}
-			key := b.Name + "\x00" + normalizeInput(b.Input)
+			activity := b.Activity()
+			if activity == nil {
+				continue
+			}
+			key := activity.Title + "\x00" + normalizeInput(activity.Input)
 			counts[key]++
 			if counts[key] > max {
 				max = counts[key]
@@ -87,6 +92,26 @@ func repeatedToolCall(entries []transcript.Entry) int {
 		}
 	}
 	return max
+}
+
+func toolText(activity *toolcall.Activity) string {
+	if activity == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.Write(activity.Output)
+	for _, content := range activity.Content {
+		b.WriteString(content.Text)
+		b.Write(content.Raw)
+		if content.Diff != nil {
+			b.WriteString(content.Diff.Path)
+			if content.Diff.OldText != nil {
+				b.WriteString(*content.Diff.OldText)
+			}
+			b.WriteString(content.Diff.NewText)
+		}
+	}
+	return b.String()
 }
 
 // normalizeInput produces a canonical string from a tool_use input for

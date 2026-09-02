@@ -872,12 +872,19 @@ func (m Model) writeBlock(b *strings.Builder, key blockKey, blk transcript.Block
 	case transcript.BlockThinking:
 		m.writeCollapsible(b, key, shared.Theme.Chat.Thinking, shared.Theme.Chat.BarThinking, shared.IconThinking+" reasoning", blk.Text, blk.Text, "", false, blk.Truncated)
 	case transcript.BlockToolUse:
-		inp := expandView(string(blk.Input))
+		inp := ""
+		if blk.Activity() != nil {
+			inp = expandView(string(blk.Activity().Input))
+		}
 		summary := summarizeToolCall(blk)
 		m.writeCollapsible(b, key, shared.Theme.Chat.ToolCall, shared.Theme.Chat.BarToolCall, summary.label, summary.preview, inp, fenceJSON(inp), false, false)
 	case transcript.BlockToolResult:
-		res := expandView(blk.Content)
-		m.writeCollapsible(b, key, shared.Theme.Chat.ToolResult, shared.Theme.Chat.BarToolResult, shared.IconToolResult+" result", res, res, fenceJSON(res), blk.IsError, blk.Truncated)
+		res := ""
+		failed := blk.Activity() != nil && blk.Activity().Status == "failed"
+		if blk.Activity() != nil {
+			res = expandView(searchableActivity(blk.Activity()))
+		}
+		m.writeCollapsible(b, key, shared.Theme.Chat.ToolResult, shared.Theme.Chat.BarToolResult, shared.IconToolResult+" result", res, res, fenceJSON(res), failed, blk.Truncated)
 	default:
 		b.WriteString("  " + shared.Theme.Question.Render("[unsupported block: "+string(blk.Type)+"]") + "\n")
 	}

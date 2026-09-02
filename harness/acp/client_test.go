@@ -2,6 +2,8 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
+	"reflect"
 	"testing"
 
 	acpsdk "github.com/coder/acp-go-sdk"
@@ -41,7 +43,7 @@ func TestSessionUpdate_CapturesEachEventKind(t *testing.T) {
 					RawInput:   map[string]any{"file_path": "/tmp/file.go"},
 				},
 			}},
-			want: Event{Kind: EventToolCall, ToolID: "call_1", Title: "Read file.go", Status: "pending", Input: `{"file_path":"/tmp/file.go"}`},
+			want: Event{Kind: EventToolCall, ToolID: "call_1", Title: "Read file.go", Status: "pending", Input: json.RawMessage(`{"file_path":"/tmp/file.go"}`), HasTitle: true, HasStatus: true, HasKind: true, HasInput: true},
 		},
 		{
 			name: "tool call update",
@@ -52,7 +54,7 @@ func TestSessionUpdate_CapturesEachEventKind(t *testing.T) {
 					RawInput:   map[string]any{"file_path": "/tmp/file.go"},
 				},
 			}},
-			want: Event{Kind: EventToolCallUpdate, ToolID: "call_1", Status: "completed", Input: `{"file_path":"/tmp/file.go"}`},
+			want: Event{Kind: EventToolCallUpdate, ToolID: "call_1", Status: "completed", Input: json.RawMessage(`{"file_path":"/tmp/file.go"}`), HasStatus: true, HasInput: true},
 		},
 	}
 
@@ -66,10 +68,30 @@ func TestSessionUpdate_CapturesEachEventKind(t *testing.T) {
 			if len(got) != 1 {
 				t.Fatalf("Events() = %v, want exactly 1 event", got)
 			}
-			if got[0] != tt.want {
+			if !reflect.DeepEqual(got[0], tt.want) {
 				t.Errorf("Events()[0] = %+v, want %+v", got[0], tt.want)
 			}
 		})
+	}
+}
+
+func TestSessionUpdate_PreservesStructuredDiff(t *testing.T) {
+	old := "before\n"
+	c := &Client{}
+	err := c.SessionUpdate(context.Background(), acpsdk.SessionNotification{Update: acpsdk.SessionUpdate{ToolCallUpdate: &acpsdk.SessionToolCallUpdate{
+		ToolCallId: "edit-1", Status: statusPtr(acpsdk.ToolCallStatusCompleted),
+		Content: []acpsdk.ToolCallContent{{Diff: &acpsdk.ToolCallContentDiff{Type: "diff", Path: "main.go", OldText: &old, NewText: "after\n"}}},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := c.Events()
+	if len(got) != 1 || !got[0].HasContent || len(got[0].Content) != 1 || got[0].Content[0].Diff == nil {
+		t.Fatalf("events = %+v", got)
+	}
+	diff := got[0].Content[0].Diff
+	if diff.Path != "main.go" || diff.OldText == nil || *diff.OldText != old || diff.NewText != "after\n" {
+		t.Fatalf("diff = %+v", diff)
 	}
 }
 

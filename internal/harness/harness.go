@@ -11,6 +11,8 @@ package harness
 import (
 	"context"
 	"encoding/json"
+
+	"jig/internal/toolcall"
 )
 
 // EventType is the discriminator for an Event, mirroring transcript.BlockType
@@ -74,17 +76,16 @@ type Event struct {
 	// Text carries text/thinking/text_delta event content.
 	Text string
 
-	// ToolUseID correlates a tool_use event with its tool_result.
+	// Tool carries a complete snapshot for tool-use and tool-result events.
+	// Event producers must not mutate it after sending the event.
+	Tool *toolcall.Activity
+
+	// Deprecated construction-only fields are normalized by AgentExecutor.
+	// Harness implementations emit Tool.
 	ToolUseID string
-
-	// Name is the tool name on a tool_use event.
-	Name string
-
-	// Input is the raw JSON of a tool_use event's arguments.
-	Input json.RawMessage
-
-	// Content is the tool_result payload.
-	Content string
+	Name      string
+	Input     json.RawMessage
+	Content   string
 
 	// IsError marks a tool_result or result event that reported failure.
 	IsError bool

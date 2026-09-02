@@ -14,6 +14,7 @@ import (
 	"jig/internal/harness"
 	"jig/internal/sentinel"
 	"jig/internal/step"
+	"jig/internal/toolcall"
 	"jig/internal/transcript"
 	"jig/internal/workflow"
 )
@@ -297,17 +298,13 @@ func captureStream(
 			buf = appendStreamBlock(buf, transcript.Block{Type: transcript.BlockThinking, Text: ev.Text})
 		case harness.EventToolUse:
 			buf = append(buf, transcript.Block{
-				Type:      transcript.BlockToolUse,
-				ToolUseID: ev.ToolUseID,
-				Name:      ev.Name,
-				Input:     ev.Input,
+				Type: transcript.BlockToolUse,
+				Tool: eventToolActivity(ev, false),
 			})
 		case harness.EventToolResult:
 			buf = append(buf, transcript.Block{
-				Type:      transcript.BlockToolResult,
-				ToolUseID: ev.ToolUseID,
-				Content:   ev.Content,
-				IsError:   ev.IsError,
+				Type: transcript.BlockToolResult,
+				Tool: eventToolActivity(ev, true),
 			})
 		case harness.EventAssistantEnd:
 			blocks := guardBlocks(buf, req, rep, fw)
@@ -421,6 +418,21 @@ func captureStream(
 	return res, nil
 }
 
+func eventToolActivity(ev harness.Event, result bool) *toolcall.Activity {
+	if ev.Tool != nil {
+		return ev.Tool.Clone()
+	}
+	activity := &toolcall.Activity{ID: ev.ToolUseID, Title: ev.Name, Input: append(json.RawMessage(nil), ev.Input...)}
+	if result {
+		activity.Status = "completed"
+		if ev.IsError {
+			activity.Status = "failed"
+		}
+		activity.Content = []toolcall.Content{{Type: "text", Text: ev.Content}}
+	}
+	return activity
+}
+
 func explicitOutputPath(req engine.StepRequest) (string, error) {
 	return workflow.ExecutionPath(req.ExecutionDir, req.Step.Output)
 }
@@ -459,12 +471,46 @@ func appendStreamBlock(blocks []transcript.Block, next transcript.Block) []trans
 func redactTranscriptBlocks(req engine.StepRequest, blocks []transcript.Block) []transcript.Block {
 	for i := range blocks {
 		blocks[i].Text = redactSecrets(req, blocks[i].Text)
-		blocks[i].Content = redactSecrets(req, blocks[i].Content)
-		if len(blocks[i].Input) > 0 {
-			blocks[i].Input = []byte(redactSecrets(req, string(blocks[i].Input)))
-		}
+		blocks[i].Tool = redactToolActivity(req, blocks[i].Tool)
 	}
 	return blocks
+}
+
+func redactToolActivity(req engine.StepRequest, activity *toolcall.Activity) *toolcall.Activity {
+	activity = activity.Clone()
+	if activity == nil {
+		return nil
+	}
+	activity.Title = redactSecrets(req, activity.Title)
+	activity.Kind = redactSecrets(req, activity.Kind)
+	activity.Status = redactSecrets(req, activity.Status)
+	activity.Input = redactRaw(req, activity.Input)
+	activity.Output = redactRaw(req, activity.Output)
+	for i := range activity.Locations {
+		activity.Locations[i].Path = redactSecrets(req, activity.Locations[i].Path)
+	}
+	for i := range activity.Content {
+		content := &activity.Content[i]
+		content.Type = redactSecrets(req, content.Type)
+		content.Text = redactSecrets(req, content.Text)
+		content.Raw = redactRaw(req, content.Raw)
+		if content.Diff != nil {
+			content.Diff.Path = redactSecrets(req, content.Diff.Path)
+			content.Diff.NewText = redactSecrets(req, content.Diff.NewText)
+			if content.Diff.OldText != nil {
+				value := redactSecrets(req, *content.Diff.OldText)
+				content.Diff.OldText = &value
+			}
+		}
+	}
+	return activity
+}
+
+func redactRaw(req engine.StepRequest, raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	return json.RawMessage(redactSecrets(req, string(raw)))
 }
 
 // guardBlocks scans every tool_use block's input for policy violations when
@@ -478,20 +524,20 @@ func guardBlocks(blocks []transcript.Block, req engine.StepRequest, rep engine.R
 		return blocks
 	}
 	for i, b := range blocks {
-		if b.Type != transcript.BlockToolUse || b.Input == nil {
+		if b.Type != transcript.BlockToolUse || b.Tool == nil || b.Tool.Input == nil {
 			continue
 		}
 		var input map[string]any
-		if err := json.Unmarshal(b.Input, &input); err != nil {
+		if err := json.Unmarshal(b.Tool.Input, &input); err != nil {
 			continue
 		}
 		// Redact secrets before the block is appended to transcript.jsonl.
-		if redacted := sentinel.RedactJSON(b.Name, b.Input); !bytes.Equal(redacted, b.Input) {
-			blocks[i].Input = redacted
+		if redacted := sentinel.RedactJSON(b.Tool.Title, b.Tool.Input); !bytes.Equal(redacted, b.Tool.Input) {
+			blocks[i].Tool.Input = redacted
 		}
-		dec := req.Guard.Check(b.Name, input)
+		dec := req.Guard.Check(b.Tool.Title, input)
 		if !dec.Allow {
-			evidenceKey := "tool:" + b.Name + ":" + b.ToolUseID
+			evidenceKey := "tool:" + b.Tool.Title + ":" + b.Tool.ID
 			fp := sentinel.NewFingerprint(req.Step.ID, dec.Monitor, evidenceKey)
 			sev := sentinel.SeverityHigh
 			if dec.Action == sentinel.ActionEscalated {

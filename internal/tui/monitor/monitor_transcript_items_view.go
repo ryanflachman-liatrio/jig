@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"jig/internal/toolcall"
 	"jig/internal/transcript"
 	"jig/internal/tui/shared"
 )
@@ -54,7 +55,24 @@ func (m *Model) itemTranscriptBody() string {
 			if item.toolUse != nil {
 				use = m.chatEntries[item.toolUse.entryIdx].Blocks[item.toolUse.blockIdx]
 			}
-			s := summarizeToolCall(use)
+			activity := use.Activity()
+			detailActivity := activity
+			if item.toolResult != nil {
+				result := m.chatEntries[item.toolResult.entryIdx].Blocks[item.toolResult.blockIdx]
+				if result.Activity() != nil {
+					detailActivity = result.Activity().Clone()
+					if detailActivity.Title == "" && activity != nil {
+						detailActivity.Title, detailActivity.Kind = activity.Title, activity.Kind
+					}
+					if detailActivity.ID == "" && activity != nil {
+						detailActivity.ID = activity.ID
+					}
+					if detailActivity.Title != "" || detailActivity.Kind != "" || len(detailActivity.Locations) > 0 || len(detailActivity.Output) > 0 {
+						activity = detailActivity
+					}
+				}
+			}
+			s := summarizeActivity(activity)
 			label := s.label
 			if item.toolUse == nil {
 				label = shared.IconToolResult + " Result (unknown origin)"
@@ -79,15 +97,9 @@ func (m *Model) itemTranscriptBody() string {
 				b.WriteString(prefix + shared.Theme.Chat.TranscriptActivity.Render(row) + "\n")
 			}
 			if expanded {
-				if item.toolUse != nil {
-					m.writeItemDetail(&b, "Input", prettyToolInput(use.Input))
-				}
-				if item.toolResult != nil {
-					r := m.chatEntries[item.toolResult.entryIdx].Blocks[item.toolResult.blockIdx]
-					m.writeItemDetail(&b, "Output", r.Content)
-					if r.Truncated {
-						b.WriteString("      " + shared.Theme.Chat.Hint.Render("… capture truncated at write") + "\n")
-					}
+				m.writeToolActivityDetails(&b, detailActivity, item.displayState == toolDisplaySuccess)
+				if (item.toolUse != nil && use.Truncated) || (item.toolResult != nil && m.chatEntries[item.toolResult.entryIdx].Blocks[item.toolResult.blockIdx].Truncated) {
+					b.WriteString("      " + shared.Theme.Chat.Hint.Render("… capture truncated at write") + "\n")
 				}
 			}
 		case transcriptItemThinking:
@@ -123,12 +135,74 @@ func (m *Model) writeItemDetail(b *strings.Builder, label, content string) {
 	}
 }
 
+func (m *Model) writeToolActivityDetails(b *strings.Builder, activity *toolcall.Activity, completed bool) {
+	if activity == nil {
+		return
+	}
+	hasDetail := false
+	for _, content := range activity.Content {
+		if content.Diff == nil {
+			continue
+		}
+		hasDetail = true
+		old := "(new file)"
+		if content.Diff.OldText != nil {
+			old = *content.Diff.OldText
+		}
+		m.writeItemDetail(b, "Diff "+content.Diff.Path, "old:\n"+old+"\nnew:\n"+content.Diff.NewText)
+	}
+	if !hasDetail && len(activity.Locations) > 0 {
+		hasDetail = true
+		var locations []string
+		for _, location := range activity.Locations {
+			value := location.Path
+			if location.Line != nil {
+				value += fmt.Sprintf(":%d", *location.Line)
+			}
+			locations = append(locations, value)
+		}
+		m.writeItemDetail(b, "Locations", strings.Join(locations, "\n"))
+	}
+	if len(activity.Input) > 0 {
+		hasDetail = true
+		m.writeItemDetail(b, "Input", prettyToolInput(activity.Input))
+	}
+	if len(activity.Output) > 0 {
+		hasDetail = true
+		m.writeItemDetail(b, "Output", prettyToolInput(activity.Output))
+	}
+	for _, content := range activity.Content {
+		if content.Diff != nil {
+			continue
+		}
+		if content.Text != "" {
+			hasDetail = true
+			m.writeItemDetail(b, "Content", content.Text)
+		}
+		if len(content.Raw) > 0 {
+			hasDetail = true
+			m.writeItemDetail(b, "Content", prettyToolInput(content.Raw))
+		}
+	}
+	if completed && activity.IsEdit() && !hasDetail {
+		m.writeItemDetail(b, "Edit", "Adapter did not provide edit details.")
+	}
+}
+
 func toolErrorHint(m *Model, item transcriptItem) string {
 	if item.toolResult == nil {
 		return "error"
 	}
 	block := m.chatEntries[item.toolResult.entryIdx].Blocks[item.toolResult.blockIdx]
-	line, _, _ := strings.Cut(block.Content, "\n")
+	line := ""
+	if block.Activity() != nil {
+		for _, content := range block.Activity().Content {
+			if content.Type == "text" {
+				line, _, _ = strings.Cut(content.Text, "\n")
+				break
+			}
+		}
+	}
 	if line = sanitizeToolSummary(line); line != "" {
 		return line
 	}
@@ -136,7 +210,11 @@ func toolErrorHint(m *Model, item transcriptItem) string {
 }
 
 func unsupportedBlockContent(block transcript.Block) string {
-	return strings.TrimSpace(block.Text + "\n" + block.Name + "\n" + string(block.Input) + "\n" + block.Content)
+	if block.Activity() == nil {
+		return block.Text
+	}
+	activity := block.Activity()
+	return strings.TrimSpace(block.Text + "\n" + activity.Title + "\n" + string(activity.Input) + "\n" + string(activity.Output))
 }
 
 func prettyToolInput(raw []byte) string {

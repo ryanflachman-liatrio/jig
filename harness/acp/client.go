@@ -37,12 +37,37 @@ const (
 // Event is one captured entry from the session/update notification stream,
 // recorded in the order it was received.
 type Event struct {
-	Kind   EventKind
-	Text   string
-	ToolID string
-	Title  string
-	Status string
-	Input  string
+	Kind      EventKind
+	Text      string
+	ToolID    string
+	Title     string
+	Status    string
+	ToolKind  string
+	Input     json.RawMessage
+	Output    json.RawMessage
+	Locations []Location
+	Content   []Content
+
+	// Update fields are optional in ACP. These flags distinguish an omitted
+	// field from a present empty collection, which replaces prior state.
+	HasTitle, HasStatus, HasKind, HasInput, HasOutput, HasLocations, HasContent bool
+}
+
+type Location struct {
+	Path   string
+	Line   *int
+	Column *int
+}
+type Content struct {
+	Type string
+	Text string
+	Diff *Diff
+	Raw  json.RawMessage
+}
+type Diff struct {
+	Path    string
+	OldText *string
+	NewText string
 }
 
 // Client implements acp.Client, capturing every session/update into an
@@ -148,11 +173,12 @@ func (c *Client) SessionUpdate(_ context.Context, params acpsdk.SessionNotificat
 		ev = Event{Kind: EventUserMessage, Text: textOf(u.UserMessageChunk.Content)}
 	case u.ToolCall != nil:
 		ev = Event{
-			Kind:   EventToolCall,
-			ToolID: string(u.ToolCall.ToolCallId),
-			Title:  u.ToolCall.Title,
-			Status: string(u.ToolCall.Status),
-			Input:  marshalToolInput(u.ToolCall.RawInput),
+			Kind: EventToolCall, ToolID: string(u.ToolCall.ToolCallId), Title: u.ToolCall.Title,
+			Status: string(u.ToolCall.Status), ToolKind: string(u.ToolCall.Kind),
+			Input: marshalToolValue(u.ToolCall.RawInput), Output: marshalToolValue(u.ToolCall.RawOutput),
+			Locations: convertLocations(u.ToolCall.Locations), Content: convertContent(u.ToolCall.Content),
+			HasTitle: true, HasStatus: true, HasKind: true, HasInput: u.ToolCall.RawInput != nil,
+			HasOutput: u.ToolCall.RawOutput != nil, HasLocations: u.ToolCall.Locations != nil, HasContent: u.ToolCall.Content != nil,
 		}
 	case u.ToolCallUpdate != nil:
 		status := ""
@@ -163,12 +189,17 @@ func (c *Client) SessionUpdate(_ context.Context, params acpsdk.SessionNotificat
 		if u.ToolCallUpdate.Title != nil {
 			title = *u.ToolCallUpdate.Title
 		}
+		toolKind := ""
+		if u.ToolCallUpdate.Kind != nil {
+			toolKind = string(*u.ToolCallUpdate.Kind)
+		}
 		ev = Event{
-			Kind:   EventToolCallUpdate,
-			ToolID: string(u.ToolCallUpdate.ToolCallId),
-			Title:  title,
-			Status: status,
-			Input:  marshalToolInput(u.ToolCallUpdate.RawInput),
+			Kind: EventToolCallUpdate, ToolID: string(u.ToolCallUpdate.ToolCallId), Title: title, Status: status, ToolKind: toolKind,
+			Input: marshalToolValue(u.ToolCallUpdate.RawInput), Output: marshalToolValue(u.ToolCallUpdate.RawOutput),
+			Locations: convertLocations(u.ToolCallUpdate.Locations), Content: convertContent(u.ToolCallUpdate.Content),
+			HasTitle: u.ToolCallUpdate.Title != nil, HasStatus: u.ToolCallUpdate.Status != nil, HasKind: u.ToolCallUpdate.Kind != nil,
+			HasInput: u.ToolCallUpdate.RawInput != nil, HasOutput: u.ToolCallUpdate.RawOutput != nil,
+			HasLocations: u.ToolCallUpdate.Locations != nil, HasContent: u.ToolCallUpdate.Content != nil,
 		}
 	case u.Plan != nil:
 		ev = Event{Kind: EventPlan}
@@ -191,15 +222,46 @@ func textOf(cb acpsdk.ContentBlock) string {
 	return ""
 }
 
-func marshalToolInput(input any) string {
+func marshalToolValue(input any) json.RawMessage {
 	if input == nil {
-		return ""
+		return nil
 	}
 	raw, err := json.Marshal(input)
 	if err != nil {
-		return ""
+		return nil
 	}
-	return string(raw)
+	return raw
+}
+
+func convertLocations(locations []acpsdk.ToolCallLocation) []Location {
+	if locations == nil {
+		return nil
+	}
+	out := make([]Location, len(locations))
+	for i, location := range locations {
+		out[i] = Location{Path: location.Path, Line: location.Line}
+	}
+	return out
+}
+
+func convertContent(content []acpsdk.ToolCallContent) []Content {
+	if content == nil {
+		return nil
+	}
+	out := make([]Content, 0, len(content))
+	for _, item := range content {
+		if item.Diff != nil {
+			out = append(out, Content{Type: "diff", Diff: &Diff{Path: item.Diff.Path, OldText: item.Diff.OldText, NewText: item.Diff.NewText}})
+			continue
+		}
+		if item.Content != nil && item.Content.Content.Text != nil {
+			out = append(out, Content{Type: "text", Text: item.Content.Content.Text.Text})
+			continue
+		}
+		raw, _ := json.Marshal(item)
+		out = append(out, Content{Type: "unknown", Raw: raw})
+	}
+	return out
 }
 
 // ReadTextFile, WriteTextFile, and the terminal methods are unused by the

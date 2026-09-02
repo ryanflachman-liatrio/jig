@@ -329,7 +329,10 @@ func boundWindow(entries []transcript.Entry) []transcript.Entry {
 func entryByteSize(e transcript.Entry) int {
 	n := 0
 	for _, b := range e.Blocks {
-		n += len(b.Text) + len(b.Content) + len(b.Input)
+		n += len(b.Text)
+		if activity := b.Activity(); activity != nil {
+			n += len(activity.Title) + len(activity.Input) + len(activity.Output) + len(toolText(activity))
+		}
 	}
 	return n
 }
@@ -347,13 +350,17 @@ func renderWindow(entries []transcript.Entry) string {
 				sb.WriteString(b.Text)
 			case transcript.BlockToolUse:
 				sb.WriteString("<tool_use name=\"")
-				sb.WriteString(b.Name)
+				if activity := b.Activity(); activity != nil {
+					sb.WriteString(activity.Title)
+				}
 				sb.WriteString("\">\n")
-				sb.Write(b.Input)
+				if activity := b.Activity(); activity != nil {
+					sb.Write(activity.Input)
+				}
 				sb.WriteString("\n</tool_use>")
 			case transcript.BlockToolResult:
 				sb.WriteString("<tool_result>\n")
-				sb.WriteString(b.Content)
+				sb.WriteString(toolText(b.Activity()))
 				sb.WriteString("\n</tool_result>")
 			}
 			sb.WriteString("\n")

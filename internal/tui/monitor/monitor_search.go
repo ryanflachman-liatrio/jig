@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"jig/internal/toolcall"
 	"jig/internal/transcript"
 )
 
@@ -125,7 +126,8 @@ func contentMatches(role transcript.Role, blk transcript.Block, filters transcri
 	case transcript.BlockToolUse:
 		return filters.tools
 	case transcript.BlockToolResult:
-		return filters.tools || (filters.errors && blk.IsError)
+		activity := blk.Activity()
+		return filters.tools || (filters.errors && ((activity != nil && activity.Status == "failed") || blk.IsError))
 	case transcript.BlockText:
 		return filters.errors && role == transcript.RoleResult
 	default:
@@ -224,13 +226,31 @@ func searchableBlockText(blk transcript.Block) string {
 	switch blk.Type {
 	case transcript.BlockText, transcript.BlockThinking:
 		return blk.Text
-	case transcript.BlockToolUse:
-		return blk.Name + " " + string(blk.Input)
-	case transcript.BlockToolResult:
-		return blk.Content
+	case transcript.BlockToolUse, transcript.BlockToolResult:
+		return searchableActivity(blk.Activity())
 	default:
-		return strings.TrimSpace(blk.Text + " " + blk.Name + " " + string(blk.Input) + " " + blk.Content)
+		return strings.TrimSpace(blk.Text + " " + searchableActivity(blk.Activity()))
 	}
+}
+
+func searchableActivity(activity *toolcall.Activity) string {
+	if activity == nil {
+		return ""
+	}
+	parts := []string{activity.Title, activity.Kind, string(activity.Input), string(activity.Output)}
+	for _, location := range activity.Locations {
+		parts = append(parts, location.Path)
+	}
+	for _, content := range activity.Content {
+		parts = append(parts, content.Type, content.Text, string(content.Raw))
+		if content.Diff != nil {
+			parts = append(parts, content.Diff.Path, content.Diff.NewText)
+			if content.Diff.OldText != nil {
+				parts = append(parts, *content.Diff.OldText)
+			}
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 func searchPreview(text, lowerNeedle string) string {
