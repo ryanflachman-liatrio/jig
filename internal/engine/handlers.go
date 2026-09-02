@@ -146,13 +146,22 @@ func phSquashMergeIntegration(s *scheduler, m stepDoneMsg, _ *workflow.Step) pos
 		paths := mergeConflictPaths(s.runWorktree)
 		from := s.states[m.stepID].Status
 		s.transition(m.stepID, from, step.StatusAwaitingIntegration)
-		s.emit(IntegrationConflictRequest{RunID: s.runID, StepID: m.stepID, Paths: paths})
+		s.emit(s.integrationConflictRequest(m.stepID, paths, ""))
 		return decisionNeedsInput
 	}
 	if sha != "" {
 		s.stepCommits[m.stepID] = sha
 	}
 	return decisionContinue
+}
+
+func (s *scheduler) integrationConflictRequest(stepID string, paths []string, resolution string) IntegrationConflictRequest {
+	st := s.stepByID(stepID)
+	return IntegrationConflictRequest{
+		RunID: s.runID, StepID: stepID, Paths: paths, Worktree: s.runWorktree,
+		CanAgentResolve: s.resolver != nil && st != nil && st.Type == workflow.StepAgent,
+		Resolution:      resolution,
+	}
 }
 
 // ensureResult returns the step's Result, creating a failed-status one if absent

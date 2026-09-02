@@ -2687,9 +2687,10 @@ func TestMonitorResizeRefits(t *testing.T) {
 func TestMonitorIntegrationConflictGate(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	m, _ = m.Update(EngineEventMsg{Event: engine.IntegrationConflictRequest{
-		RunID:  "run-1",
-		StepID: "a",
-		Paths:  []string{"shared.go"},
+		RunID:           "run-1",
+		StepID:          "a",
+		Paths:           []string{"shared.go"},
+		CanAgentResolve: true,
 	}})
 	if len(m.inputQueue) == 0 {
 		t.Fatal("integration conflict event not added to input queue")
@@ -2701,7 +2702,7 @@ func TestMonitorIntegrationConflictGate(t *testing.T) {
 	if !strings.Contains(strip, "shared.go") {
 		t.Fatalf("conflicted path not rendered:\n%s", strip)
 	}
-	if !strings.Contains(strip, "[r] resolve") || !strings.Contains(strip, "[a] abort") {
+	if !strings.Contains(strip, "[r] finalize staged resolution") || !strings.Contains(strip, "[a] abort") {
 		t.Fatalf("integration actions not rendered:\n%s", strip)
 	}
 
@@ -2717,6 +2718,17 @@ func TestMonitorIntegrationConflictGate(t *testing.T) {
 	}
 	if rr.Abort || rr.StepID != "a" {
 		t.Fatalf("got abort=%v stepID=%q; want resolve/a", rr.Abort, rr.StepID)
+	}
+	if len(m.inputQueue) != 1 {
+		t.Fatalf("finalize request removed integration gate; queue len = %d, want 1", len(m.inputQueue))
+	}
+	m.focus = focusGate
+	_, cmd = m.Update(key("g"))
+	if cmd == nil {
+		t.Fatal("g produced no command")
+	}
+	if _, ok := cmd().(ResolveIntegrationWithAgentMsg); !ok {
+		t.Fatalf("expected ResolveIntegrationWithAgentMsg, got %T", cmd())
 	}
 
 	// Abort routes to ResolveIntegrationResponseMsg{abort:true}.

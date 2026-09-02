@@ -58,7 +58,8 @@ type monitorKeys struct {
 	RecoverSkip  keybind.Binding // matched (s, recovery gate: accept failure and continue past it)
 	RecoverAbort keybind.Binding // matched (a, recovery gate: fail the step and abort the run)
 
-	IntegrationResolve keybind.Binding // matched (r, integration-conflict gate: finish the merge from the resolved run worktree)
+	IntegrationResolve keybind.Binding // matched (r, integration-conflict gate: finalize a staged resolution)
+	IntegrationAgent   keybind.Binding // matched (g, integration-conflict gate: ask an agent for a proposal)
 
 	FinalMergeApprove keybind.Binding // matched (y, final-merge gate: land the run branch onto base)
 	FinalMergeDiscard keybind.Binding // matched (d, final-merge gate: leave the run branch, merge nothing)
@@ -120,7 +121,8 @@ func defaultMonitorKeys() monitorKeys {
 		RecoverSkip:  keybind.NewBinding(keybind.WithKeys("s"), keybind.WithHelp("s", "skip")),
 		RecoverAbort: keybind.NewBinding(keybind.WithKeys("a"), keybind.WithHelp("a", "abort")),
 
-		IntegrationResolve: keybind.NewBinding(keybind.WithKeys("r"), keybind.WithHelp("r", "resolve")),
+		IntegrationResolve: keybind.NewBinding(keybind.WithKeys("r"), keybind.WithHelp("r", "finalize")),
+		IntegrationAgent:   keybind.NewBinding(keybind.WithKeys("g"), keybind.WithHelp("g", "agent proposal")),
 
 		FinalMergeApprove: keybind.NewBinding(keybind.WithKeys("y"), keybind.WithHelp("y", "merge")),
 		FinalMergeDiscard: keybind.NewBinding(keybind.WithKeys("d"), keybind.WithHelp("d", "discard")),

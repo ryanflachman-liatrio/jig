@@ -803,6 +803,9 @@ func (m Model) gateHelpSection() shared.HelpSection {
 		}
 	case inputKindIntegrationConflict:
 		sec.Bindings = []keybind.Binding{m.keys.IntegrationResolve, m.keys.RecoverAbort, contextKey, entryNav, escapeKey}
+		if entry.integration.CanAgentResolve {
+			sec.Bindings = append(sec.Bindings, m.keys.IntegrationAgent)
+		}
 	case inputKindFinalMerge, inputKindHelpFinalMerge:
 		sec.Bindings = []keybind.Binding{m.keys.FinalMergeApprove, m.keys.FinalMergeDiscard, contextKey, entryNav, escapeKey}
 	case inputKindResetConfirm:

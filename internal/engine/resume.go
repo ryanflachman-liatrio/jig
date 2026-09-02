@@ -175,6 +175,7 @@ func (m *Manager) Resume(runID string, legacyWorkflow *workflow.Workflow) (*Run,
 		close(run.done)
 	}
 	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir, m.root, repoRoot, onDone)
+	s.resolver = m.resolver
 	s.seq = seq
 	s.states = restored
 	s.reviewSessions = sessions

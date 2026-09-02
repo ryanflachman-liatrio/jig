@@ -42,6 +42,7 @@ type Manager struct {
 	mu       sync.Mutex
 	runs     map[string]*Run
 	exec     Executor
+	resolver IntegrationResolver
 	root     string // .jig/ root (used in Phase 2+ for file I/O)
 	subs     []sub  // manager-level fan-out; TUI subscribes once
 	monitors []sentinel.MonitorDef
@@ -66,6 +67,12 @@ func NewManager(exec Executor, root string) *Manager {
 // out-of-band for every run started by this manager. Call before Start.
 func (m *Manager) SetMonitors(monitors []sentinel.MonitorDef) {
 	m.monitors = monitors
+}
+
+// SetIntegrationResolver installs the agent used by an operator-requested
+// conflict proposal. Without one, integration conflicts remain manual-only.
+func (m *Manager) SetIntegrationResolver(resolver IntegrationResolver) {
+	m.resolver = resolver
 }
 
 // SetSecretResolver configures external secret resolution for subsequent runs.
@@ -185,6 +192,7 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 		close(run.done)
 	}
 	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir, m.root, repoRoot, onDone)
+	s.resolver = m.resolver
 	s.secretResolver = secrets
 	go s.run(ctx)
 
@@ -424,6 +432,13 @@ func (r *Run) ResolveIntegration(stepID string, abort bool) {
 	r.inbox <- resolveIntegrationMsg{stepID: stepID, abort: abort}
 }
 
+// ResolveIntegrationWithAgent asks the configured resolver to prepare a
+// proposal in the conflicted run worktree. Finalization remains a separate,
+// explicit ResolveIntegration call after the operator reviews the result.
+func (r *Run) ResolveIntegrationWithAgent(stepID string) {
+	r.inbox <- resolveIntegrationWithAgentMsg{stepID: stepID}
+}
+
 // FinalMerge delivers the operator's decision for the final-merge gate (spec 06
 // A3): approve=true lands the run branch onto the base working branch; approve=
 // false discards it, leaving the run branch in place. Either way the run settles
@@ -547,6 +562,8 @@ type resolveIntegrationMsg struct {
 	abort  bool
 }
 
+type resolveIntegrationWithAgentMsg struct{ stepID string }
+
 // finalMergeMsg carries the operator's decision for the final-merge gate (spec
 // 06 A3): approve lands the run branch onto the base, discard leaves it.
 type finalMergeMsg struct {
@@ -580,23 +597,24 @@ type retryWakeMsg struct{ stepID string }
 
 type networkRequestMsg struct{ stepID string }
 
-func (stepDoneMsg) isSchedMsg()             {}
-func (reviewSubmissionMsg) isSchedMsg()     {}
-func (userInputMsg) isSchedMsg()            {}
-func (snapshotReqMsg) isSchedMsg()          {}
-func (closureReqMsg) isSchedMsg()           {}
-func (agentInputMsg) isSchedMsg()           {}
-func (agentQuestionRequestMsg) isSchedMsg() {}
-func (agentQuestionAnswerMsg) isSchedMsg()  {}
-func (agentQuestionAbandonMsg) isSchedMsg() {}
-func (recoverMsg) isSchedMsg()              {}
-func (resolveIntegrationMsg) isSchedMsg()   {}
-func (finalMergeMsg) isSchedMsg()           {}
-func (stopMsg) isSchedMsg()                 {}
-func (resumeMsg) isSchedMsg()               {}
-func (resetMsg) isSchedMsg()                {}
-func (retryWakeMsg) isSchedMsg()            {}
-func (networkRequestMsg) isSchedMsg()       {}
+func (stepDoneMsg) isSchedMsg()                    {}
+func (reviewSubmissionMsg) isSchedMsg()            {}
+func (userInputMsg) isSchedMsg()                   {}
+func (snapshotReqMsg) isSchedMsg()                 {}
+func (closureReqMsg) isSchedMsg()                  {}
+func (agentInputMsg) isSchedMsg()                  {}
+func (agentQuestionRequestMsg) isSchedMsg()        {}
+func (agentQuestionAnswerMsg) isSchedMsg()         {}
+func (agentQuestionAbandonMsg) isSchedMsg()        {}
+func (recoverMsg) isSchedMsg()                     {}
+func (resolveIntegrationMsg) isSchedMsg()          {}
+func (resolveIntegrationWithAgentMsg) isSchedMsg() {}
+func (finalMergeMsg) isSchedMsg()                  {}
+func (stopMsg) isSchedMsg()                        {}
+func (resumeMsg) isSchedMsg()                      {}
+func (resetMsg) isSchedMsg()                       {}
+func (retryWakeMsg) isSchedMsg()                   {}
+func (networkRequestMsg) isSchedMsg()              {}
 
 // securityFindingMsg delivers a SecurityFinding to the scheduler inbox so the
 // scheduler can escalate critical findings to the recovery gate without
@@ -662,6 +680,7 @@ type scheduler struct {
 	inbox        chan schedMsg
 	subs         []sub
 	exec         Executor
+	resolver     IntegrationResolver
 	cancel       context.CancelFunc        // cancels the run context; used by abort policy
 	writer       *manifest.Writer          // nil when persistence is disabled (root = "")
 	runDir       string                    // .jig/runs/<runID>/; "" when persistence is disabled
@@ -2045,6 +2064,61 @@ func (s *scheduler) handleResolveIntegration(m resolveIntegrationMsg) {
 	if wfStep != nil {
 		s.recordRoutes(m.stepID, wfStep, "")
 	}
+}
+
+func (s *scheduler) handleResolveIntegrationWithAgent(m resolveIntegrationWithAgentMsg) {
+	state := s.states[m.stepID]
+	st := s.stepByID(m.stepID)
+	if state == nil || state.Status != step.StatusAwaitingIntegration || s.resolver == nil || st == nil || st.Type != workflow.StepAgent {
+		return
+	}
+	paths := mergeConflictPaths(s.runWorktree)
+	if len(paths) == 0 {
+		s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("step %q: no unresolved integration conflict remains", m.stepID)})
+		return
+	}
+	result, err := s.resolver.ResolveIntegration(context.Background(), IntegrationResolutionRequest{
+		RunID: s.runID, Step: st, Worktree: s.runWorktree, Conflicts: paths,
+	}, conflictReporter{})
+	if err != nil || result == nil || result.Status == step.StatusFailed {
+		detail := "agent conflict resolver failed"
+		if err != nil {
+			detail += ": " + err.Error()
+		} else if result != nil && result.Err != "" {
+			detail += ": " + result.Err
+		}
+		s.emit(RunError{RunID: s.runID, Err: detail})
+		return
+	}
+	if unresolved := mergeConflictPaths(s.runWorktree); len(unresolved) > 0 {
+		s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("step %q: agent left unresolved conflicts: %s", m.stepID, strings.Join(unresolved, ", "))})
+		return
+	}
+	if len(st.MutationPaths) > 0 {
+		changed := strings.Fields(strings.TrimSpace(gitOutput(s.runWorktree, "diff", "--name-only", "HEAD")))
+		for _, path := range changed {
+			if !mutationPathAllowed(path, st.MutationPaths) {
+				s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("step %q: agent changed %q outside mutation_paths", m.stepID, path)})
+				return
+			}
+		}
+	}
+	s.emit(s.integrationConflictRequest(m.stepID, paths, "agent proposal staged; review the diff, then finalize"))
+}
+
+func gitOutput(dir string, args ...string) string {
+	out, _ := gitCmd(dir, args...)
+	return out
+}
+
+type conflictReporter struct{}
+
+func (conflictReporter) Output(string)           {}
+func (conflictReporter) ToolCall(string, string) {}
+func (conflictReporter) Message(int, int)        {}
+func (conflictReporter) Finding(SecurityFinding) {}
+func (conflictReporter) Question(_ context.Context, req interaction.QuestionRequest) interaction.QuestionResponse {
+	return interaction.QuestionResponse{RequestID: req.ID, Action: interaction.ActionCancel}
 }
 
 // requestFinalMergeIfNeeded presents the final-merge gate the first time the run

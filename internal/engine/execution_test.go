@@ -99,6 +99,27 @@ isolation = "worktree"
 	if secondMutation != firstMutation {
 		t.Errorf("mutation workspace was recreated: got %#v, want %#v", secondMutation, firstMutation)
 	}
+	if err := os.WriteFile(filepath.Join(firstMutation.Dir, "stale-mutation.txt"), []byte("stale\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(s.runWorktree, "next-iteration.txt"), []byte("new tip\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, s.runWorktree, "add", "next-iteration.txt")
+	mustGit(t, s.runWorktree, "commit", "-m", "advance run branch")
+	thirdMutation, err := s.acquireExecutionWorkspace(mutator)
+	if err != nil {
+		t.Fatalf("recreate stale mutation workspace: %v", err)
+	}
+	if thirdMutation.BaseSHA == firstMutation.BaseSHA {
+		t.Errorf("routed mutation reused base SHA %q; want current run branch tip", thirdMutation.BaseSHA)
+	}
+	if _, err := os.Stat(filepath.Join(thirdMutation.Dir, "stale-mutation.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("recreated mutation workspace retained prior iteration edits: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(thirdMutation.Dir, "next-iteration.txt")); err != nil {
+		t.Errorf("recreated mutation workspace did not include current run branch state: %v", err)
+	}
 
 	s.releaseExecutionWorkspaces()
 	if len(s.executionViews) != 0 {
@@ -110,7 +131,7 @@ isolation = "worktree"
 	if _, err := gitCmd(repo, "rev-parse", "--verify", s.executionViewBranchName(reader.ID)); err == nil {
 		t.Error("reader view branch remains after release")
 	}
-	if _, err := os.Stat(firstMutation.Dir); err != nil {
+	if _, err := os.Stat(thirdMutation.Dir); err != nil {
 		t.Errorf("release removed mutation workspace: %v", err)
 	}
 }

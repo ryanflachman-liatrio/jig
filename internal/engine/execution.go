@@ -24,9 +24,12 @@ type executionWorkspace struct {
 }
 
 // acquireExecutionWorkspace selects the repository view for one dispatch.
-// Mutating steps retain their worktree across retries and loop iterations so
-// their edits accumulate. Read-only views are replaced for every dispatch so a
-// retry observes the current integrated run state instead of a stale snapshot.
+// Mutating steps retain their worktree only while the run branch has not moved.
+// Once an iteration integrates, its squash commit deliberately has different
+// ancestry from the step branch; a routed iteration must start from the new run
+// tip or its already-integrated edits would be merged a second time. Read-only
+// views are replaced for every dispatch so a retry observes the current
+// integrated run state instead of a stale snapshot.
 func (s *scheduler) acquireExecutionWorkspace(st *workflow.Step) (executionWorkspace, error) {
 	kind := executionWorkspaceReadOnlyView
 	if st.Isolation == workflow.IsolationWorktree {
@@ -43,9 +46,23 @@ func (s *scheduler) acquireExecutionWorkspace(st *workflow.Step) (executionWorks
 
 	if kind == executionWorkspaceMutation {
 		if existing, ok := s.worktrees[st.ID]; ok {
-			workspace.Dir = existing
-			workspace.BaseSHA = s.wtBaseSHAs[st.ID]
-			return workspace, nil
+			tip, err := currentHEAD(s.runWorktree)
+			if err != nil {
+				return executionWorkspace{}, fmt.Errorf("read run branch tip for step %q: %w", st.ID, err)
+			}
+			if s.wtBaseSHAs[st.ID] == tip {
+				workspace.Dir = existing
+				workspace.BaseSHA = tip
+				return workspace, nil
+			}
+			if err := removeWorktree(s.repoRoot, existing); err != nil {
+				return executionWorkspace{}, fmt.Errorf("replace stale mutation workspace for step %q: %w", st.ID, err)
+			}
+			if _, err := gitCmd(s.repoRoot, "branch", "-D", s.stepBranchName(st.ID)); err != nil {
+				return executionWorkspace{}, fmt.Errorf("delete stale mutation branch for step %q: %w", st.ID, err)
+			}
+			delete(s.worktrees, st.ID)
+			delete(s.wtBaseSHAs, st.ID)
 		}
 
 		path := filepath.Join(s.jigRoot, "worktrees", s.runID, st.ID)

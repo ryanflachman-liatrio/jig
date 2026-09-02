@@ -121,6 +121,12 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case monitor.ResolveIntegrationWithAgentMsg:
+		if run, ok := m.handles[msg.RunID]; ok {
+			run.ResolveIntegrationWithAgent(msg.StepID)
+		}
+		return m, nil
+
 	case monitor.FinalMergeResponseMsg:
 		if run, ok := m.handles[msg.RunID]; ok {
 			run.FinalMerge(msg.Approve)

@@ -15,6 +15,19 @@ type Executor interface {
 	Execute(ctx context.Context, req StepRequest, report Reporter) (*step.Result, error)
 }
 
+// IntegrationResolver is an optional, operator-invoked agent that prepares a
+// conflicted run worktree for the normal integration finalization path.
+type IntegrationResolver interface {
+	ResolveIntegration(ctx context.Context, req IntegrationResolutionRequest, report Reporter) (*step.Result, error)
+}
+
+type IntegrationResolutionRequest struct {
+	RunID     string
+	Step      *workflow.Step
+	Worktree  string
+	Conflicts []string
+}
+
 // StepRequest is the data a worker needs to execute one step.
 // @ref inputs are resolved to paths / inlined values before dispatch.
 type StepRequest struct {

@@ -77,6 +77,11 @@ type ResolveIntegrationResponseMsg struct {
 	Abort  bool
 }
 
+type ResolveIntegrationWithAgentMsg struct {
+	RunID  string
+	StepID string
+}
+
 // FinalMergeResponseMsg is emitted by the monitor when the user answers the
 // final-merge gate. The root delivers it via Run.FinalMerge: Approve lands the
 // run branch onto the base; discard leaves the run branch in place.

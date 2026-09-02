@@ -435,10 +435,13 @@ func (m Model) updateGateIntegration(msg tea.KeyPressMsg, entry *pendingInputEnt
 	// Resolve: the operator merged the conflict in the run worktree; the engine
 	// finishes the integration. Abort: fail the step (→ recovery gate).
 	if keybind.Matches(msg, m.keys.IntegrationResolve) {
-		m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
-		m.refreshPanels()
 		return m, func() tea.Msg {
 			return ResolveIntegrationResponseMsg{RunID: ic.RunID, StepID: ic.StepID, Abort: false}
+		}
+	}
+	if ic.CanAgentResolve && keybind.Matches(msg, m.keys.IntegrationAgent) {
+		return m, func() tea.Msg {
+			return ResolveIntegrationWithAgentMsg{RunID: ic.RunID, StepID: ic.StepID}
 		}
 	}
 	if keybind.Matches(msg, m.keys.RecoverAbort) {

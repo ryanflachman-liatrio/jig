@@ -125,6 +125,13 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		if ev.RunID != m.RunID {
 			return m, nil
 		}
+		for i := range m.inputQueue {
+			if m.inputQueue[i].kind == inputKindIntegrationConflict && m.inputQueue[i].stepID == ev.StepID {
+				evCopy := ev
+				m.inputQueue[i].integration = &evCopy
+				return m, nil
+			}
+		}
 		// A step's squash-merge conflicted and parked. Append a gate entry; no
 		// focus steal on arrival (Decision 6), consistent with the other kinds.
 		evCopy := ev

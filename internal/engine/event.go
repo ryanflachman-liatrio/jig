@@ -171,9 +171,12 @@ type RecoveryRequest struct {
 // conflicted files the operator must resolve in the run worktree. The decision
 // (resolve or abort) is delivered via Run.ResolveIntegration.
 type IntegrationConflictRequest struct {
-	RunID  string
-	StepID string
-	Paths  []string
+	RunID           string
+	StepID          string
+	Paths           []string
+	Worktree        string
+	CanAgentResolve bool
+	Resolution      string
 }
 
 // FinalMergeRequest is emitted at run end (all steps terminal) when the run

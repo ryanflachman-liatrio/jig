@@ -196,7 +196,16 @@ func (m Model) renderGateIntegration(b *strings.Builder, entry *pendingInputEntr
 			b.WriteString("\n")
 		}
 	}
-	b.WriteString("    [r] resolve (finish merge from run worktree)\n")
+	if entry.integration.Worktree != "" {
+		b.WriteString("  " + shared.Theme.Marker.Render(clipReason("resolve and stage in "+entry.integration.Worktree, m.gateInnerWidth()-2, 1)) + "\n")
+	}
+	if entry.integration.Resolution != "" {
+		b.WriteString("  " + shared.Theme.Marker.Render(clipReason(entry.integration.Resolution, m.gateInnerWidth()-2, 1)) + "\n")
+	}
+	b.WriteString("    [r] finalize staged resolution\n")
+	if entry.integration.CanAgentResolve {
+		b.WriteString("    [g] ask agent for a resolution proposal\n")
+	}
 	b.WriteString("    [a] abort run\n")
 }
 

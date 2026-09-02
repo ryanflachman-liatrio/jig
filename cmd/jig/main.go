@@ -43,6 +43,7 @@ func main() {
 	mux.Register(workflow.StepAgent, runner.NewAgentExecutor(harness.For))
 	mux.Register(workflow.StepReview, runner.NewFakeExecutor(nil, runner.FakeOutcome{}))
 	mgr := engine.NewManager(mux, ".jig")
+	mgr.SetIntegrationResolver(runner.NewIntegrationResolver(harness.For))
 	mgr.SetSecretResolver(resolveNamedSecret)
 
 	// Register Tier-2 monitor agents. Look for .md files in the well-known
