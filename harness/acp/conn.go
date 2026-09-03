@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	acpsdk "github.com/coder/acp-go-sdk"
 )
@@ -111,7 +112,7 @@ func ConnectCodexWithDiagnostics(ctx context.Context, decide Decider, onUpdate f
 	}()
 
 	cmd := exec.CommandContext(ctx, npxPath, "-y", "@agentclientprotocol/codex-acp@1.6.2")
-	diagnostics.Event("adapter_start", nil)
+	diagnostics.Event("adapter_start", map[string]any{"adapter": "@agentclientprotocol/codex-acp@1.6.2"})
 	cmd.Stderr = diagnostics.StderrWriter()
 	configureProcess(cmd)
 	stdin, err := cmd.StdinPipe()
@@ -170,7 +171,7 @@ func clientCapabilities(elicit Elicitor) acpsdk.ClientCapabilities {
 
 // NewSession creates a new ACP session rooted at cwd and returns its id.
 func (c *Conn) NewSession(ctx context.Context, cwd string) (string, error) {
-	c.diagnostic("new_session_started", nil)
+	c.diagnostic("new_session_started", map[string]any{"cwd": cwd})
 	resp, err := c.rpc.NewSession(ctx, acpsdk.NewSessionRequest{Cwd: cwd, McpServers: []acpsdk.McpServer{}})
 	if err != nil {
 		c.diagnostic("new_session_failed", errorFields(err))
@@ -178,7 +179,7 @@ func (c *Conn) NewSession(ctx context.Context, cwd string) (string, error) {
 	}
 	sessionID := string(resp.SessionId)
 	c.setSessionConfig(sessionID, resp.ConfigOptions)
-	c.diagnostic("new_session_finished", map[string]any{"config_options": len(resp.ConfigOptions)})
+	c.diagnostic("new_session_finished", map[string]any{"session_id": sessionID, "config_options": len(resp.ConfigOptions)})
 	return sessionID, nil
 }
 
@@ -225,7 +226,7 @@ func (c *Conn) SetSelectConfig(ctx context.Context, sessionID, configID, value s
 		return fmt.Errorf("set %s %q: %w", configID, value, err)
 	}
 	c.setSessionConfig(sessionID, resp.ConfigOptions)
-	c.diagnostic("set_config_finished", nil)
+	c.diagnostic("set_config_finished", map[string]any{"config_id": configID, "value": value})
 	return nil
 }
 
@@ -313,7 +314,8 @@ func containsConfigValue(values []string, want string) bool {
 // own read loop, concurrently with this call being in flight — Prompt
 // blocking does not delay event delivery.
 func (c *Conn) Prompt(ctx context.Context, sessionID, text string) (acpsdk.StopReason, error) {
-	c.diagnostic("prompt_started", map[string]any{"prompt_bytes": len(text)})
+	start := time.Now()
+	c.diagnostic("prompt_started", map[string]any{"session_id": sessionID, "prompt_bytes": len(text)})
 	resp, err := c.rpc.Prompt(ctx, acpsdk.PromptRequest{
 		SessionId: acpsdk.SessionId(sessionID),
 		Prompt:    []acpsdk.ContentBlock{acpsdk.TextBlock(text)},
@@ -322,7 +324,11 @@ func (c *Conn) Prompt(ctx context.Context, sessionID, text string) (acpsdk.StopR
 		c.diagnostic("prompt_failed", errorFields(err))
 		return "", fmt.Errorf("prompt: %w", err)
 	}
-	c.diagnostic("prompt_finished", map[string]any{"stop_reason": resp.StopReason})
+	c.diagnostic("prompt_finished", map[string]any{
+		"session_id":  sessionID,
+		"stop_reason": resp.StopReason,
+		"elapsed_ms":  time.Since(start).Milliseconds(),
+	})
 	return resp.StopReason, nil
 }
 
@@ -359,7 +365,7 @@ func errorFields(err error) map[string]any {
 	if err == nil {
 		return nil
 	}
-	return map[string]any{"error_type": errorKind(err)}
+	return map[string]any{"error_type": errorKind(err), "error": err.Error()}
 }
 
 func errorKind(err error) string {

@@ -975,6 +975,30 @@ func fenceJSON(s string) string {
 	return "```json\n" + string(pretty) + "\n```"
 }
 
+// jsonlToMarkdown converts a JSONL string into a sequence of fenced JSON
+// blocks so each record gets syntax highlighting via glamour. Lines that are
+// not valid JSON fall back to a plain code fence.
+func jsonlToMarkdown(content string) string {
+	var sb strings.Builder
+	first := true
+	for _, line := range strings.Split(strings.TrimRight(content, "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		if !first {
+			sb.WriteString("\n")
+		}
+		first = false
+		if fenced := fenceJSON(line); fenced != "" {
+			sb.WriteString(fenced)
+		} else {
+			sb.WriteString("```\n" + line + "\n```")
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
 // writeCollapsible renders one collapsible block: a role-colored left bar ("▌")
 // and a labelled header with a ▸/▾ affordance, then either a one-line preview
 // clipped to chatCollapseWidth or the bounded full content (also bar-accented).
@@ -1209,6 +1233,8 @@ func (m Model) fileBody() string {
 			fenced = content
 		}
 		b.WriteString(render(fenced))
+	case kindJSONL:
+		b.WriteString(render(jsonlToMarkdown(content)))
 	default:
 		writeVerbatim(&b, content)
 	}
