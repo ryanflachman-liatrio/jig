@@ -95,7 +95,8 @@ func initRepo(t *testing.T, dir string) {
 // captureExec is a test Executor that records the StepRequest it receives and
 // optionally writes a file into the worktree so there is a diff to capture.
 type captureExec struct {
-	requests map[string]StepRequest // stepID → last received request
+	requests       map[string]StepRequest // stepID → last received request
+	writeUntracked bool
 }
 
 func newCaptureExec() *captureExec {
@@ -104,10 +105,12 @@ func newCaptureExec() *captureExec {
 
 func (e *captureExec) Execute(ctx context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
 	e.requests[req.Step.ID] = req
-	// Modify the tracked seed.txt so the diff is non-empty (new untracked files
-	// don't appear in git-diff without staging; modifying tracked files does).
 	if req.Worktree != "" {
-		_ = os.WriteFile(filepath.Join(req.Worktree, "seed.txt"), []byte("modified by agent"), 0o644)
+		path, content := "seed.txt", "modified by agent"
+		if e.writeUntracked {
+			path, content = "created.go", "package created\n"
+		}
+		_ = os.WriteFile(filepath.Join(req.Worktree, path), []byte(content), 0o644)
 	}
 	return &step.Result{Status: step.StatusSucceeded}, nil
 }
@@ -217,6 +220,7 @@ label = "Code changes"
 	}
 
 	exec := newCaptureExec()
+	exec.writeUntracked = true
 	mgr := NewManager(exec, jigRoot)
 	_, ch := mgr.Subscribe()
 
@@ -252,8 +256,8 @@ done:
 	if !resolved {
 		t.Error("ReviewRequest was never emitted for step 'check'")
 	}
-	if diffSeen == "" {
-		t.Error("ReviewRequest.Diff must be non-empty when predecessor made worktree changes")
+	if !strings.Contains(diffSeen, "created.go") || !strings.Contains(diffSeen, "+package created") {
+		t.Errorf("ReviewRequest.Diff = %q, want the untracked file's patch", diffSeen)
 	}
 
 	// Run must end not-failed.

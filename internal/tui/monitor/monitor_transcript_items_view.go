@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"jig/internal/toolcall"
@@ -139,18 +140,10 @@ func (m *Model) writeToolActivityDetails(b *strings.Builder, activity *toolcall.
 	if activity == nil {
 		return
 	}
-	hasDetail := false
-	for _, content := range activity.Content {
-		if content.Diff == nil {
-			continue
-		}
-		hasDetail = true
-		old := "(new file)"
-		if content.Diff.OldText != nil {
-			old = *content.Diff.OldText
-		}
-		m.writeItemDetail(b, "Diff "+content.Diff.Path, "old:\n"+old+"\nnew:\n"+content.Diff.NewText)
+	if activity.IsEdit() && writeNewCodeCards(m, b, activity) {
+		return
 	}
+	hasDetail := false
 	if !hasDetail && len(activity.Locations) > 0 {
 		hasDetail = true
 		var locations []string
@@ -186,6 +179,78 @@ func (m *Model) writeToolActivityDetails(b *strings.Builder, activity *toolcall.
 	}
 	if completed && activity.IsEdit() && !hasDetail {
 		m.writeItemDetail(b, "Edit", "Adapter did not provide edit details.")
+	}
+}
+
+// writeNewCodeCards deliberately shows the resulting source rather than a
+// before/after patch. The inset Glamour renderer uses the shared Charm v2 code
+// formatter, whose Lip Gloss code-block style owns the rounded card.
+func writeNewCodeCards(m *Model, b *strings.Builder, activity *toolcall.Activity) bool {
+	wrote := false
+	for _, content := range activity.Content {
+		if content.Diff == nil {
+			continue
+		}
+		wrote = true
+		shown, hidden := boundTranscriptDetail(content.Diff.NewText, max(m.transcriptInnerW-8, 1))
+		b.WriteString("    " + shared.Theme.Chat.TranscriptLabel.Render("New code · "+content.Diff.Path) + "\n")
+		for _, line := range strings.Split(strings.TrimRight(m.renderNewCodeCard(content.Diff.Path, shown), "\n"), "\n") {
+			b.WriteString("    " + line + "\n")
+		}
+		if hidden > 0 {
+			b.WriteString("    " + shared.Theme.Chat.Hint.Render(fmt.Sprintf("… %d lines hidden", hidden)) + "\n")
+		}
+	}
+	return wrote
+}
+
+func (m *Model) renderNewCodeCard(path, code string) string {
+	if m.insetRenderer == nil {
+		return shared.Theme.Chat.CodeBlock.Width(max(m.transcriptInnerW-4, 1)).Render(code)
+	}
+	rendered, err := m.insetRenderer.Render(fencedCode(path, code))
+	if err != nil {
+		return shared.Theme.Chat.CodeBlock.Width(max(m.transcriptInnerW-4, 1)).Render(code)
+	}
+	return stripBlankEdges(rendered)
+}
+
+func fencedCode(path, code string) string {
+	delimiter := "```"
+	for strings.Contains(code, delimiter) {
+		delimiter += "`"
+	}
+	return delimiter + codeLanguage(path) + "\n" + code + "\n" + delimiter
+}
+
+func codeLanguage(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".go":
+		return "go"
+	case ".toml":
+		return "toml"
+	case ".json":
+		return "json"
+	case ".yaml", ".yml":
+		return "yaml"
+	case ".md", ".markdown":
+		return "markdown"
+	case ".js", ".mjs", ".cjs":
+		return "javascript"
+	case ".ts", ".mts", ".cts":
+		return "typescript"
+	case ".tsx":
+		return "tsx"
+	case ".jsx":
+		return "jsx"
+	case ".py":
+		return "python"
+	case ".rs":
+		return "rust"
+	case ".sh", ".bash", ".zsh":
+		return "bash"
+	default:
+		return "text"
 	}
 }
 

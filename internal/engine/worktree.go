@@ -109,8 +109,8 @@ func removeWorktree(repoRoot, wtPath string) error {
 }
 
 // captureDiff captures all changes in the worktree relative to baseSHA,
-// covering committed, staged, and unstaged changes so the diff is complete
-// regardless of whether the agent committed its edits.
+// covering committed, staged, unstaged, and untracked files so the diff is
+// complete regardless of whether the agent committed its edits.
 func captureDiff(wtPath, baseSHA string) string {
 	var b strings.Builder
 
@@ -129,6 +129,19 @@ func captureDiff(wtPath, baseSHA string) string {
 	// Unstaged changes.
 	if out, err := gitCmd(wtPath, "diff"); err == nil && len(out) > 0 {
 		b.WriteString(out)
+	}
+
+	// git diff deliberately omits untracked files. Review gates must still show
+	// a newly-created file, so diff each path against /dev/null explicitly.
+	if out, err := gitCmd(wtPath, "ls-files", "--others", "--exclude-standard", "-z"); err == nil {
+		for _, path := range strings.Split(strings.TrimSuffix(out, "\x00"), "\x00") {
+			if path == "" {
+				continue
+			}
+			if diff, _ := gitCmd(wtPath, "diff", "--no-index", "--", "/dev/null", path); len(diff) > 0 {
+				b.WriteString(diff)
+			}
+		}
 	}
 
 	return b.String()

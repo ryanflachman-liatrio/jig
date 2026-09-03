@@ -168,11 +168,39 @@ func (m *Model) setChatPage(page transcript.Page) {
 	m.chatPage = page
 	m.chatEntries = page.Entries
 	m.chatItems = buildTranscriptItems(page.Entries, m.currentChatStepRunning())
+	m.defaultExpandEditCodeItems()
 	m.chatVisibleItems = nil
 	m.prunePageState()
 	m.rebuildLoadedChat(chatItem{})
 	m.rebuildTranscriptItemState(savedItem)
 	m.rerunSearch()
+}
+
+// defaultExpandEditCodeItems opens structured edits until an operator explicitly
+// folds one. The map retains a false value after that action, so transcript
+// reloads do not override the operator's choice.
+func (m *Model) defaultExpandEditCodeItems() {
+	for _, item := range m.chatItems {
+		if _, configured := m.chatItemExpand[item.key]; configured || !itemHasStructuredDiff(m.chatEntries, item) {
+			continue
+		}
+		m.chatItemExpand[item.key] = true
+	}
+}
+
+func itemHasStructuredDiff(entries []transcript.Entry, item transcriptItem) bool {
+	for _, ref := range itemMembers(item) {
+		activity := entries[ref.entryIdx].Blocks[ref.blockIdx].Activity()
+		if activity == nil {
+			continue
+		}
+		for _, content := range activity.Content {
+			if content.Diff != nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // rebuildTranscriptItemState establishes the item list as the page-local
