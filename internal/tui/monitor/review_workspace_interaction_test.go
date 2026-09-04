@@ -39,6 +39,26 @@ func monitorWithReviewWorkspace(t *testing.T) Model {
 	return m
 }
 
+func monitorWithDiffReviewWorkspace(t *testing.T) Model {
+	t.Helper()
+	m := newMonitorWithSteps(t)
+	content := strings.Join([]string{
+		"diff --git a/file.txt b/file.txt", "--- a/file.txt", "+++ b/file.txt",
+		"@@ -1 +1 @@", "-old one", "+new one",
+		"@@ -10 +10 @@", "-old two", "+new two",
+		"@@ -20 +20 @@", "-old three", "+new three",
+	}, "\n")
+	m, _ = m.Update(EngineEventMsg{Event: engine.ReviewRequest{
+		RunID: "run-1", StepID: "a", RoundID: "g000-i000", Choices: []string{"approve", "revise"},
+		Documents: []domainreview.Document{{
+			ID: "diff", Label: "Unified diff", Source: "file.diff", Format: "diff", Content: content,
+			SHA256: domainreview.Digest(content), LineCount: strings.Count(content, "\n") + 1,
+		}},
+	}})
+	m.focus = focusGate
+	return m
+}
+
 func TestReviewWorkspaceComposerReceivesGateKeysAndIsVisible(t *testing.T) {
 	m := monitorWithReviewWorkspace(t)
 	m, _ = m.Update(key("enter"))
@@ -229,6 +249,42 @@ func TestReviewWorkspaceRoutesSourcePanOnlyWhileOpen(t *testing.T) {
 	}
 	if width := lipgloss.Width(m.View()); width > 80 {
 		t.Fatalf("panned workspace width = %d, want <= 80", width)
+	}
+}
+
+func TestReviewWorkspaceRoutesDiffHunksAndPersistsDraftAtTargetSizes(t *testing.T) {
+	for _, size := range []tea.WindowSizeMsg{{Width: 120, Height: 40}, {Width: 80, Height: 24}} {
+		m := monitorWithDiffReviewWorkspace(t)
+		m, _ = m.Update(size)
+		m, _ = m.Update(key("enter"))
+		m, _ = m.Update(key("]"))
+		m, _ = m.Update(key("]"))
+		if view := ansiStrip(m.View()); !strings.Contains(view, "Hunk 2/3") {
+			t.Fatalf("%dx%d hunk navigation did not reach the child workspace:\n%s", size.Width, size.Height, view)
+		}
+		m, _ = m.Update(key("z"))
+		if view := ansiStrip(m.View()); !strings.Contains(view, "patch rows folded; press z to expand") {
+			t.Fatalf("%dx%d fold did not reach the child workspace:\n%s", size.Width, size.Height, view)
+		}
+		keys := map[string]bool{}
+		for _, binding := range m.gateHelpSection().Bindings {
+			keys[binding.Help().Key] = true
+		}
+		for _, key := range []string{"[", "]", "z"} {
+			if !keys[key] {
+				t.Errorf("%dx%d gate help omitted %q", size.Width, size.Height, key)
+			}
+		}
+		m, _ = m.Update(key("c"))
+		m, _ = m.Update(key("x"))
+		m, _ = m.Update(key("enter"))
+		workspace := m.inputQueue[0].workspace
+		if len(workspace.Comments()) != 1 || workspace.Comments()[0].Anchor.StartLine != 7 {
+			t.Fatalf("%dx%d draft comment = %#v", size.Width, size.Height, workspace.Comments())
+		}
+		if width, height := lipgloss.Width(m.View()), lipgloss.Height(m.View()); width > size.Width || height > size.Height {
+			t.Fatalf("diff workspace exceeds %dx%d: got %dx%d", size.Width, size.Height, width, height)
+		}
 	}
 }
 

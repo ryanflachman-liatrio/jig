@@ -3,13 +3,14 @@ package review
 import keybind "charm.land/bubbles/v2/key"
 
 type keyMap struct {
-	Up, Down, First, Last      keybind.Binding
-	PrevDoc, NextDoc, NextOpen keybind.Binding
-	Select, Comment, Reviewed  keybind.Binding
-	ToggleMode, NextComment    keybind.Binding
-	PanLeft, PanRight, PanHome keybind.Binding
-	Edit, Delete, Summary      keybind.Binding
-	Confirm, Cancel, NextKind  keybind.Binding
+	Up, Down, First, Last        keybind.Binding
+	PrevDoc, NextDoc, NextOpen   keybind.Binding
+	Select, Comment, Reviewed    keybind.Binding
+	ToggleMode, NextComment      keybind.Binding
+	PanLeft, PanRight, PanHome   keybind.Binding
+	PrevHunk, NextHunk, FoldHunk keybind.Binding
+	Edit, Delete, Summary        keybind.Binding
+	Confirm, Cancel, NextKind    keybind.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -24,8 +25,10 @@ func defaultKeyMap() keyMap {
 		Comment: b([]string{"c"}, "comment"), Reviewed: b([]string{"r"}, "mark reviewed"),
 		ToggleMode: b([]string{"s"}, "toggle source/preview"), NextComment: b([]string{"n", "N"}, "next comment"),
 		PanLeft: b([]string{"left", "h"}, "pan left"), PanRight: b([]string{"right", "l"}, "pan right"),
-		PanHome: b([]string{"0"}, "first column"),
-		Edit:    b([]string{"e"}, "edit comment"), Delete: b([]string{"x"}, "delete comment"),
+		PanHome:  b([]string{"0"}, "first column"),
+		PrevHunk: b([]string{"["}, "previous hunk"), NextHunk: b([]string{"]"}, "next hunk"),
+		FoldHunk: b([]string{"z"}, "fold hunk"),
+		Edit:     b([]string{"e"}, "edit comment"), Delete: b([]string{"x"}, "delete comment"),
 		Summary: b([]string{"S"}, "finish review"), Confirm: b([]string{"enter"}, "confirm"),
 		Cancel: b([]string{"esc"}, "cancel"), NextKind: b([]string{"tab"}, "next kind"),
 	}
@@ -59,6 +62,9 @@ func (m Model) Help() []KeyHelp {
 	if m.activeDocumentMode() == DocumentSource {
 		help = append(help, KeyHelp{Key: "v", Description: "select range"})
 		help = append(help, KeyHelp{Key: "h/l", Description: "pan source"}, KeyHelp{Key: "0", Description: "first column"})
+		if m.diffNavigationAvailable() {
+			help = append(help, KeyHelp{Key: "[", Description: "previous hunk"}, KeyHelp{Key: "]", Description: "next hunk"}, KeyHelp{Key: "z", Description: "fold hunk"})
+		}
 	}
 	help = append(help,
 		KeyHelp{Key: "c", Description: "new comment"},

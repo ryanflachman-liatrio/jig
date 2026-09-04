@@ -2,13 +2,39 @@ diff --git a/example.txt b/example.txt
 index 1111111..2222222 100644
 --- a/example.txt
 +++ b/example.txt
-@@ -1,4 +1,5 @@
+@@ -1,3 +1,4 @@ first hunk
  context before
 -old line
 +new line
 +another line
  context after
-@@ -12,2 +13,2 @@ second hunk
+@@ -12 +13 @@ second hunk
 -final old line
 +final new line
 \ No newline at end of file
+@@ -30 +31 @@ third hunk
+-third old line
++third new line
+diff --git a/new-file.txt b/new-file.txt
+new file mode 100644
+index 0000000..3333333
+--- /dev/null
++++ b/new-file.txt
+@@ -0,0 +1,2 @@
++first new-file line
++second new-file line
+diff --git a/deleted-file.txt b/deleted-file.txt
+deleted file mode 100644
+index 4444444..0000000
+--- a/deleted-file.txt
++++ /dev/null
+@@ -1,2 +0,0 @@
+-first deleted-file line
+-second deleted-file line
+diff --git a/old-name.txt b/new-name.txt
+similarity index 100%
+rename from old-name.txt
+rename to new-name.txt
+diff --git a/script.sh b/script.sh
+old mode 100644
+new mode 100755

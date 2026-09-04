@@ -143,6 +143,9 @@ func TestDocumentViewReportsRawFallbackForMalformedDiff(t *testing.T) {
 	if !strings.Contains(view, "diff navigation unavailable: parse diff: no file changes found") || !strings.Contains(view, content) {
 		t.Fatalf("raw fallback was not visible:\n%s", view)
 	}
+	if header := ansi.Strip(m.documentHeader(m.docs[m.active])); !strings.Contains(header, "Raw diff") {
+		t.Fatalf("raw diff header = %q", header)
+	}
 }
 
 func TestParsedDiffSourceRowsRenderFixedOldAndNewGutters(t *testing.T) {
@@ -227,10 +230,148 @@ func TestParsedDiffGuttersStayFixedWhenPanningAndAtNarrowWidth(t *testing.T) {
 	if got, want := ansi.Strip(after.String()), ansi.Strip(ansi.Cut(m.sources[0].lines[4], 4, 4+m.sourceContentWidth())); !strings.Contains(got, want) {
 		t.Fatalf("panned content = %q, want ANSI-safe slice %q", got, want)
 	}
+	var hunkHeader strings.Builder
+	m.writeSourceRow(&hunkHeader, 3)
+	if got := ansi.Strip(hunkHeader.String()); !strings.Contains(got, "@@ -1 +1 @@") {
+		t.Fatalf("panned hunk header lost its range: %q", got)
+	}
 	for _, row := range strings.Split(m.documentView(), "\n") {
 		if width := lipgloss.Width(row); width > documentPanelWidth(m.width) {
 			t.Fatalf("narrow diff row width = %d, panel = %d", width, documentPanelWidth(m.width))
 		}
+	}
+}
+
+func hunkedDiffSession() domain.Session {
+	content := strings.Join([]string{
+		"diff --git a/file.txt b/file.txt", "--- a/file.txt", "+++ b/file.txt",
+		"@@ -1 +1 @@", "-old one", "+new one",
+		"@@ -10 +10 @@", "-old two", "+new two",
+		"@@ -20 +20 @@", "-old three", "+new three",
+	}, "\n")
+	return domain.Session{StepID: "review", Documents: []domain.Document{{
+		ID: "diff-one", Label: "Diff one", Source: "one.diff", Format: "diff", Content: content, SHA256: domain.Digest(content),
+	}, {
+		ID: "diff-two", Label: "Diff two", Source: "two.diff", Format: "diff", Content: content, SHA256: domain.Digest(content),
+	}}}
+}
+
+func TestParsedDiffHunkNavigationWrapsAndUpdatesStatus(t *testing.T) {
+	m, err := New(hunkedDiffSession())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.cursor = 5
+	for _, want := range []int{7, 10, 4} {
+		m = update(m, "]")
+		if m.cursor != want || m.rangeEnd != want {
+			t.Fatalf("next hunk = %d-%d, want %d", m.cursor, m.rangeEnd, want)
+		}
+	}
+	m = update(m, "[")
+	if m.cursor != 10 || m.rangeEnd != 10 {
+		t.Fatalf("previous hunk = %d-%d, want 10", m.cursor, m.rangeEnd)
+	}
+	if header := ansi.Strip(m.documentHeader(m.docs[m.active])); !strings.Contains(header, "Hunk 3/3") {
+		t.Fatalf("header = %q", header)
+	}
+	m.cursor = 1
+	if header := ansi.Strip(m.documentHeader(m.docs[m.active])); !strings.Contains(header, "Hunks 3") {
+		t.Fatalf("metadata header = %q", header)
+	}
+	for _, want := range []KeyHelp{{"[", "previous hunk"}, {"]", "next hunk"}, {"z", "fold hunk"}} {
+		found := false
+		for _, item := range m.Help() {
+			if item == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("missing hunk help %#v", want)
+		}
+	}
+}
+
+func TestParsedDiffFoldingKeepsHeadersInteractive(t *testing.T) {
+	m, err := New(hunkedDiffSession())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m.cursor = 5
+	m = update(m, "z")
+	if !m.sources[0].diff.folded[1] || m.cursor != 4 || m.rangeEnd != 4 {
+		t.Fatalf("fold = folded:%t cursor:%d range:%d", m.sources[0].diff.folded[1], m.cursor, m.rangeEnd)
+	}
+	view := ansi.Strip(m.documentView())
+	for _, want := range []string{"@@ -1 +1 @@", "… 2 patch rows folded; press z to expand"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("folded view missing %q:\n%s", want, view)
+		}
+	}
+	for _, hidden := range []string{"-old one", "+new one"} {
+		if strings.Contains(view, hidden) {
+			t.Errorf("folded view retained %q:\n%s", hidden, view)
+		}
+	}
+	m = update(m, "j")
+	if m.cursor != 7 {
+		t.Fatalf("down entered folded hunk: cursor=%d", m.cursor)
+	}
+	m = update(m, "k")
+	if m.cursor != 4 {
+		t.Fatalf("up entered folded hunk: cursor=%d", m.cursor)
+	}
+	m = update(m, "v")
+	if m.mode != ModeSelectRange || m.sources[0].diff.folded[1] {
+		t.Fatalf("range start = mode:%v folded:%t", m.mode, m.sources[0].diff.folded[1])
+	}
+	m.rangeEnd = 6
+	m = update(m, "z")
+	if m.mode != ModeBrowse || !m.sources[0].diff.folded[1] || m.cursor != 4 {
+		t.Fatalf("fold selected range = mode:%v folded:%t cursor:%d", m.mode, m.sources[0].diff.folded[1], m.cursor)
+	}
+	m = update(m, "z")
+	if m.sources[0].diff.folded[1] || m.cursor != 4 {
+		t.Fatalf("unfold = folded:%t cursor:%d", m.sources[0].diff.folded[1], m.cursor)
+	}
+}
+
+func TestParsedDiffCommentNavigationExpandsFoldAndFoldsStayTransient(t *testing.T) {
+	session := hunkedDiffSession()
+	m, err := New(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.comments = []domain.Comment{{ID: "C001", Anchor: domain.Anchor{DocumentID: "diff-one", StartLine: 5, EndLine: 5}}, {ID: "C002", Anchor: domain.Anchor{DocumentID: "diff-one", StartLine: 8, EndLine: 8}}}
+	m.cursor = 5
+	m.activeComment = "C001"
+	m = update(m, "z")
+	if m.activeComment != "C001" || m.cursor != 4 {
+		t.Fatalf("folding active comment = id:%q cursor:%d", m.activeComment, m.cursor)
+	}
+	m.activeComment = ""
+	m = update(m, "n")
+	if m.activeComment != "C001" || m.cursor != 5 || m.sources[0].diff.folded[1] {
+		t.Fatalf("comment navigation = id:%q cursor:%d folded:%t", m.activeComment, m.cursor, m.sources[0].diff.folded[1])
+	}
+	m.cursor = 5
+	m = update(m, "z")
+	m = update(m, "}")
+	if m.sources[1].diff.folded[1] {
+		t.Fatal("fold state leaked to another document")
+	}
+	m = update(m, "}")
+	if !m.sources[0].diff.folded[1] {
+		t.Fatal("fold state was not retained per document")
+	}
+	draft := m.Draft()
+	reopened, err := NewWithDraft(session, draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reopened.sources[0].diff.folded) != 0 {
+		t.Fatalf("reopened folds = %#v, want transient reset", reopened.sources[0].diff.folded)
 	}
 }
 

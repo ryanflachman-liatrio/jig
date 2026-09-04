@@ -173,6 +173,111 @@ func (m Model) previewAvailable() bool {
 		m.previews[m.active].parseErr == nil && len(m.previews[m.active].blocks) > 0
 }
 
+func (m *Model) diffNavigationAvailable() bool {
+	diff := m.parsedDiffPresentation()
+	return m.activeDocumentMode() == DocumentSource && diff != nil && len(diff.hunks) > 0
+}
+
+func (m *Model) hunkForPatchLine(line int) *diffHunk {
+	diff := m.parsedDiffPresentation()
+	if diff == nil {
+		return nil
+	}
+	for i := range diff.hunks {
+		hunk := &diff.hunks[i]
+		if line >= hunk.startPatchLine && line <= hunk.endPatchLine {
+			return hunk
+		}
+	}
+	return nil
+}
+
+func (m *Model) hunkStartingAtPatchLine(line int) *diffHunk {
+	diff := m.parsedDiffPresentation()
+	if diff == nil {
+		return nil
+	}
+	for i := range diff.hunks {
+		if diff.hunks[i].startPatchLine == line {
+			return &diff.hunks[i]
+		}
+	}
+	return nil
+}
+
+func (m *Model) sourceLineHidden(line int) bool {
+	hunk := m.hunkForPatchLine(line)
+	if hunk == nil || hunk.startPatchLine == line {
+		return false
+	}
+	diff := m.parsedDiffPresentation()
+	return diff.folded[hunk.ordinal]
+}
+
+func (m *Model) unfoldHunkForPatchLine(line int) {
+	hunk := m.hunkForPatchLine(line)
+	if hunk == nil {
+		return
+	}
+	delete(m.parsedDiffPresentation().folded, hunk.ordinal)
+}
+
+func (m *Model) navigateHunk(next bool) {
+	diff := m.parsedDiffPresentation()
+	if diff == nil || len(diff.hunks) == 0 {
+		return
+	}
+	current := -1
+	for i, hunk := range diff.hunks {
+		if m.cursor >= hunk.startPatchLine && m.cursor <= hunk.endPatchLine {
+			current = i
+			break
+		}
+	}
+	target := 0
+	if current >= 0 {
+		if next {
+			target = (current + 1) % len(diff.hunks)
+		} else {
+			target = (current - 1 + len(diff.hunks)) % len(diff.hunks)
+		}
+	} else if next {
+		for i, hunk := range diff.hunks {
+			if hunk.startPatchLine > m.cursor {
+				target = i
+				break
+			}
+		}
+	} else {
+		target = len(diff.hunks) - 1
+		for i := len(diff.hunks) - 1; i >= 0; i-- {
+			if diff.hunks[i].startPatchLine < m.cursor {
+				target = i
+				break
+			}
+		}
+	}
+	m.cursor = diff.hunks[target].startPatchLine
+	m.rangeEnd = m.cursor
+}
+
+func (m *Model) toggleActiveHunk() {
+	hunk := m.hunkForPatchLine(m.cursor)
+	if hunk == nil {
+		return
+	}
+	diff := m.parsedDiffPresentation()
+	if diff.folded[hunk.ordinal] {
+		delete(diff.folded, hunk.ordinal)
+	} else {
+		diff.folded[hunk.ordinal] = true
+	}
+	m.cursor, m.rangeEnd = hunk.startPatchLine, hunk.startPatchLine
+	if m.mode == ModeSelectRange {
+		m.mode = ModeBrowse
+	}
+}
+
 // SetVerdict is used by a parent surface when verdict choices are rendered as
 // buttons or a compact selector rather than raw digit key presses.
 func (m *Model) SetVerdict(verdict string) { m.verdict = verdict }

@@ -44,6 +44,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.move(-1)
 	} else if keybind.Matches(k, m.keys.Down) {
 		m.move(1)
+	} else if m.diffNavigationAvailable() && keybind.Matches(k, m.keys.PrevHunk) {
+		m.navigateHunk(false)
+	} else if m.diffNavigationAvailable() && keybind.Matches(k, m.keys.NextHunk) {
+		m.navigateHunk(true)
+	} else if m.diffNavigationAvailable() && keybind.Matches(k, m.keys.FoldHunk) {
+		m.toggleActiveHunk()
 	} else if keybind.Matches(k, m.keys.First) {
 		if m.activeDocumentMode() == DocumentPreview {
 			m.previewBlock = 0
@@ -74,6 +80,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.error = "preview comments use the active block; press c to comment"
 			return m, nil
 		}
+		m.unfoldHunkForPatchLine(m.cursor)
 		m.rangeEnd = m.cursor
 		m.mode = ModeSelectRange
 	} else if keybind.Matches(k, m.keys.Comment) {
@@ -173,7 +180,9 @@ func (m Model) updateSelection(k tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.mode = ModeBrowse
 		return m, nil
 	}
-	if keybind.Matches(k, m.keys.Up) {
+	if m.diffNavigationAvailable() && keybind.Matches(k, m.keys.FoldHunk) {
+		m.toggleActiveHunk()
+	} else if keybind.Matches(k, m.keys.Up) {
 		m.move(-1)
 	} else if keybind.Matches(k, m.keys.Down) {
 		m.move(1)
@@ -253,8 +262,31 @@ func (m *Model) move(delta int) {
 		m.rangeEnd = m.previews[m.active].blocks[m.previewBlock].endLine
 		return
 	}
-	m.cursor += delta
-	m.clampCursor()
+	if delta == 0 {
+		return
+	}
+	step := 1
+	if delta < 0 {
+		step = -1
+	}
+	steps := delta
+	if steps < 0 {
+		steps = -steps
+	}
+	for range steps {
+		next := m.cursor + step
+		if next < 1 || next > len(m.docs[m.active].lines) {
+			return
+		}
+		m.cursor = next
+		for m.sourceLineHidden(m.cursor) {
+			next = m.cursor + step
+			if next < 1 || next > len(m.docs[m.active].lines) {
+				return
+			}
+			m.cursor = next
+		}
+	}
 }
 func (m *Model) changeDoc(delta int) {
 	if len(m.docs) == 0 {
@@ -413,6 +445,7 @@ func (m *Model) nextComment(reverse bool) {
 	}
 	c := m.comments[indices[selected]]
 	m.activeComment = c.ID
+	m.unfoldHunkForPatchLine(c.Anchor.StartLine)
 	m.cursor, m.rangeEnd = c.Anchor.StartLine, c.Anchor.EndLine
 	if m.activeDocumentMode() == DocumentPreview {
 		m.previewBlock = m.blockForLine(c.Anchor.StartLine)

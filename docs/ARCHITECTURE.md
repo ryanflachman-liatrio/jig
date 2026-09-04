@@ -142,20 +142,28 @@ Closing the modal restores the unchanged document viewport, so accumulated
 comments cannot push the editor or active source content outside the workspace.
 
 Source presentation follows a separate, width-independent path. Literal
-`.diff` and `.patch` documents use semantic diff styles; Markdown source uses
-the Markdown lexer; other literal files select Chroma only from the source
+`.diff` and `.patch` documents are parsed into an ephemeral projection that
+keeps every immutable patch row while adding old/new source-file coordinates
+for hunk body rows. Those source gutters are only comprehension and navigation
+aids: cursors, comments, drafts, and submissions remain anchored to one-based
+raw patch lines. `[` and `]` move between parsed hunks; `z` transiently folds
+the active hunk body while retaining its header. Parse failures retain the
+styled raw patch and show that hunk navigation is unavailable. Markdown source
+uses the Markdown lexer; other literal files select Chroma only from the source
 filename; unmatched or known-ambiguous matches such as `go.mod` remain plain
-text. Chroma tokenizes the complete
-immutable document so multiline lexer state survives, then reconstructs
-exactly one styled item for every logical source line. Any tokenizer failure or
-line-count mismatch falls back to the original verbatim lines.
+text. Chroma tokenizes the complete immutable document so multiline lexer state
+survives, then reconstructs exactly one styled item for every logical source
+line. Any tokenizer failure or line-count mismatch falls back to the original
+verbatim lines.
 
 The review view adds the stable line-number gutter, selection rails, and
-comment markers after source highlighting. Only the styled content segment is
+comment markers after source highlighting. Parsed diffs replace the single
+logical-line display with fixed old/new source gutters; metadata and hunk
+headers intentionally leave both blank. Only the styled content segment is
 horizontally clipped: `h`/left and `l`/right pan by four terminal cells, while
-`0` returns to the first column. Offsets are transient and per document. The
-gutter never pans, code never soft-wraps, and anchors continue to quote bytes
-from the immutable document rather than ANSI-rendered output.
+`0` returns to the first column. Offsets and folds are transient and per
+document. Gutters never pan, code never soft-wraps, and anchors continue to
+quote bytes from the immutable document rather than ANSI-rendered output.
 
 Message flow for one exchange: user submits (`ctrl+s`) → append a `turn`, set
 `streaming` → `submitPromptCmd` sends on the persistent client →

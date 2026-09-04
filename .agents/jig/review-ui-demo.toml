@@ -5,6 +5,8 @@ description = "Deterministic visual fixture for the document review workspace."
 
 # Inspect Markdown in preview and source, then use h/l and 0 on the Go, module,
 # and literal-diff documents to verify fixed gutters and horizontal panning.
+# In the diff, [ and ] move between hunks while z folds the active hunk. Source
+# gutters are file coordinates; comments remain anchored to raw patch lines.
 
 [[step]]
 id          = "review_ui"

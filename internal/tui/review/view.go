@@ -11,6 +11,11 @@ import (
 	"jig/internal/tui/shared"
 )
 
+type sourceViewRow struct {
+	patchLine int
+	folded    *diffHunk
+}
+
 func (m *Model) View() string {
 	return m.view(true)
 }
@@ -133,17 +138,12 @@ func (m *Model) documentView() string {
 		b.WriteString(shared.Theme.Review.HorizontalHint.Render(fmt.Sprintf("← col %d →", m.sourceXOffsets[m.active]+1)))
 		b.WriteByte('\n')
 	}
-	start := m.cursor - 8
-	if start < 1 {
-		start = 1
-	}
-	sourceRows := max(1, m.height-10)
-	end := start + sourceRows - 1
-	if end > len(d.lines) {
-		end = len(d.lines)
-	}
-	for i := start; i <= end; i++ {
-		m.writeSourceRow(&b, i)
+	for _, row := range m.sourceWindowRows(max(1, m.height-10)) {
+		if row.folded != nil {
+			m.writeFoldedSourceRow(&b, row.folded)
+		} else {
+			m.writeSourceRow(&b, row.patchLine)
+		}
 	}
 	return shared.Panel(d.meta.Label, b.String(), documentPanelWidth(m.width), max(12, m.height-2), m.mode != ModeSummary)
 }
@@ -170,7 +170,64 @@ func (m *Model) documentHeader(d document) string {
 	b.WriteString(shared.Theme.Review.ModeActive.Render("[ SOURCE ]"))
 	b.WriteString("     ")
 	b.WriteString(shared.Theme.Review.Language.Render(m.sourceLanguage()))
+	if status := m.diffHeaderStatus(); status != "" {
+		b.WriteString(" · ")
+		b.WriteString(shared.Theme.Review.HunkStatus.Render(status))
+	}
 	return b.String()
+}
+
+func (m *Model) diffHeaderStatus() string {
+	if m.active < 0 || m.active >= len(m.sources) || m.sources[m.active].diff == nil {
+		return ""
+	}
+	diff := m.sources[m.active].diff
+	if diff.parseErr != nil {
+		return "Raw diff"
+	}
+	if hunk := m.hunkForPatchLine(m.cursor); hunk != nil {
+		return fmt.Sprintf("Hunk %d/%d", hunk.ordinal, len(diff.hunks))
+	}
+	return fmt.Sprintf("Hunks %d", len(diff.hunks))
+}
+
+func (m *Model) sourceWindowRows(limit int) []sourceViewRow {
+	rows := m.visibleSourceRows()
+	if len(rows) <= limit {
+		return rows
+	}
+	cursor := 0
+	for i, row := range rows {
+		if row.patchLine == m.cursor {
+			cursor = i
+			break
+		}
+	}
+	start := max(0, cursor-8)
+	if start+limit > len(rows) {
+		start = len(rows) - limit
+	}
+	return rows[start : start+limit]
+}
+
+func (m *Model) visibleSourceRows() []sourceViewRow {
+	rows := make([]sourceViewRow, 0, len(m.docs[m.active].lines))
+	if diff := m.parsedDiffPresentation(); diff != nil {
+		for line := 1; line <= len(m.docs[m.active].lines); {
+			if hunk := m.hunkStartingAtPatchLine(line); hunk != nil && diff.folded[hunk.ordinal] {
+				rows = append(rows, sourceViewRow{patchLine: line}, sourceViewRow{folded: hunk})
+				line = hunk.endPatchLine + 1
+				continue
+			}
+			rows = append(rows, sourceViewRow{patchLine: line})
+			line++
+		}
+		return rows
+	}
+	for line := range m.docs[m.active].lines {
+		rows = append(rows, sourceViewRow{patchLine: line + 1})
+	}
+	return rows
 }
 
 func (m *Model) sourceLanguage() string {
@@ -201,7 +258,11 @@ func (m *Model) writeSourceRow(b *strings.Builder, line int) {
 
 	marker, markerStyle := m.sourceCommentMarker(line)
 	contentWidth := m.sourceContentWidth()
-	content := ansi.Cut(m.sources[m.active].lines[line-1], m.sourceXOffsets[m.active], m.sourceXOffsets[m.active]+contentWidth)
+	offset := m.sourceXOffsets[m.active]
+	if diff := m.parsedDiffPresentation(); diff != nil && diff.rows[line-1].kind == diffRowHunkHeader {
+		offset = 0
+	}
+	content := ansi.Cut(m.sources[m.active].lines[line-1], offset, offset+contentWidth)
 	b.WriteString(railStyle.Render(rail))
 	b.WriteByte(' ')
 	b.WriteString(markerStyle.Render(fmt.Sprintf("%-2s", marker)))
@@ -214,6 +275,23 @@ func (m *Model) writeSourceRow(b *strings.Builder, line int) {
 	}
 	b.WriteString(shared.Theme.Review.Gutter.Render(" │ "))
 	b.WriteString(content)
+	b.WriteByte('\n')
+}
+
+func (m *Model) writeFoldedSourceRow(b *strings.Builder, hunk *diffHunk) {
+	if hunk == nil {
+		return
+	}
+	b.WriteString(shared.Theme.Review.Gutter.Render(" "))
+	b.WriteByte(' ')
+	b.WriteString(shared.Theme.Review.Gutter.Render("  "))
+	b.WriteByte(' ')
+	m.writeDiffGutters(b, diffRow{}, false, false)
+	b.WriteString(shared.Theme.Review.Gutter.Render(" │ "))
+	bodyRows := hunk.endPatchLine - hunk.startPatchLine
+	placeholder := fmt.Sprintf("… %d patch rows folded; press z to expand", bodyRows)
+	content := shared.Theme.Review.FoldedPlaceholder.Render(placeholder)
+	b.WriteString(ansi.Cut(content, 0, m.sourceContentWidth()))
 	b.WriteByte('\n')
 }
 
@@ -517,6 +595,9 @@ func (m *Model) footer() string {
 	pan := ""
 	if m.activeDocumentMode() == DocumentSource {
 		pan = " · h/l pan · 0 first col"
+		if m.diffNavigationAvailable() {
+			pan += " · [/] hunk · z fold"
+		}
 	}
 	return "S finish review · j/k move · {/} document · c new comment · enter open comment · r reviewed" + view + pan + " · esc close"
 }
