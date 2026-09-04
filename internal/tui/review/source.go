@@ -8,6 +8,7 @@ import (
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
 
+	"jig/internal/tui/diffview"
 	"jig/internal/tui/shared"
 )
 
@@ -98,28 +99,7 @@ func renderSourceToken(tokenType chroma.TokenType, value string) string {
 func renderDiffLines(lines []string) []string {
 	rendered := make([]string, len(lines))
 	for i, line := range lines {
-		style := shared.Theme.Review.SyntaxBase
-		switch {
-		case strings.HasPrefix(line, "+++"), strings.HasPrefix(line, "---"), isDiffMetadata(line):
-			style = shared.Theme.Review.Gutter
-		case strings.HasPrefix(line, "@@"):
-			style = shared.Theme.Diff.Hunk
-		case strings.HasPrefix(line, "+"):
-			style = shared.Theme.Diff.Add
-		case strings.HasPrefix(line, "-"):
-			style = shared.Theme.Diff.Remove
-		}
-		rendered[i] = style.Render(line)
+		rendered[i] = diffview.RenderRawLine(line)
 	}
 	return rendered
-}
-
-func isDiffMetadata(line string) bool {
-	prefixes := []string{"diff ", "index ", "rename ", "similarity ", "old mode ", "new mode ", "deleted file mode ", "new file mode ", "Binary files ", "\\ No newline"}
-	for _, prefix := range prefixes {
-		if strings.HasPrefix(line, prefix) {
-			return true
-		}
-	}
-	return false
 }

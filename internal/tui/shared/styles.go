@@ -130,6 +130,7 @@ type Styles struct {
 		DiffGutterCursor    lipgloss.Style
 		DiffGutterRange     lipgloss.Style
 		HunkStatus          lipgloss.Style
+		HunkTitle           lipgloss.Style
 		FoldedPlaceholder   lipgloss.Style
 		CursorRail          lipgloss.Style
 		RangeRail           lipgloss.Style
@@ -310,6 +311,7 @@ func DefaultTheme() Styles {
 	s.Review.DiffGutterCursor = lipgloss.NewStyle().Bold(true).Foreground(primary)
 	s.Review.DiffGutterRange = lipgloss.NewStyle().Foreground(secondary)
 	s.Review.HunkStatus = lipgloss.NewStyle().Bold(true).Foreground(info)
+	s.Review.HunkTitle = lipgloss.NewStyle().Bold(true).Foreground(onPrimary).Background(info)
 	s.Review.FoldedPlaceholder = lipgloss.NewStyle().Italic(true).Foreground(fgDim)
 	s.Review.CursorRail = lipgloss.NewStyle().Bold(true).Foreground(primary)
 	s.Review.RangeRail = lipgloss.NewStyle().Foreground(secondary)

@@ -128,6 +128,7 @@ func (m *Model) clampCursor() {
 	if m.cursor > len(m.docs[m.active].lines) {
 		m.cursor = len(m.docs[m.active].lines)
 	}
+	m.ensureVisibleSourceCursor()
 }
 func (m *Model) rebuildComposer() {
 	m.composer = shared.NewInputTextarea("Comment", 0, 4)
@@ -206,12 +207,51 @@ func (m *Model) hunkStartingAtPatchLine(line int) *diffHunk {
 }
 
 func (m *Model) sourceLineHidden(line int) bool {
-	hunk := m.hunkForPatchLine(line)
-	if hunk == nil || hunk.startPatchLine == line {
+	diff := m.parsedDiffPresentation()
+	if diff == nil {
 		return false
 	}
-	diff := m.parsedDiffPresentation()
-	return diff.folded[hunk.ordinal]
+	hunk := m.hunkForPatchLine(line)
+	if hunk == nil || !isVisibleDiffRow(diff.rows[line-1]) {
+		return true
+	}
+	return hunk.startPatchLine != line && diff.folded[hunk.ordinal]
+}
+
+func (m *Model) ensureVisibleSourceCursor() {
+	if m.activeDocumentMode() != DocumentSource || !m.sourceLineHidden(m.cursor) {
+		return
+	}
+	for line := m.cursor + 1; line <= len(m.docs[m.active].lines); line++ {
+		if !m.sourceLineHidden(line) {
+			m.cursor = line
+			return
+		}
+	}
+	for line := m.cursor - 1; line >= 1; line-- {
+		if !m.sourceLineHidden(line) {
+			m.cursor = line
+			return
+		}
+	}
+}
+
+func (m *Model) firstVisibleSourceLine() int {
+	for line := 1; line <= len(m.docs[m.active].lines); line++ {
+		if !m.sourceLineHidden(line) {
+			return line
+		}
+	}
+	return 1
+}
+
+func (m *Model) lastVisibleSourceLine() int {
+	for line := len(m.docs[m.active].lines); line >= 1; line-- {
+		if !m.sourceLineHidden(line) {
+			return line
+		}
+	}
+	return len(m.docs[m.active].lines)
 }
 
 func (m *Model) unfoldHunkForPatchLine(line int) {

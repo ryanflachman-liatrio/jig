@@ -3,6 +3,8 @@ package review
 import (
 	"strings"
 	"testing"
+
+	"github.com/bluekeyes/go-gitdiff/gitdiff"
 )
 
 func TestBuildDiffPresentationProjectsSourceCoordinates(t *testing.T) {
@@ -25,7 +27,7 @@ func TestBuildDiffPresentationProjectsSourceCoordinates(t *testing.T) {
 		t.Fatalf("hunks = %d, want 1", len(presentation.hunks))
 	}
 	hunk := presentation.hunks[0]
-	if hunk.ordinal != 1 || hunk.fileIndex != 0 || hunk.startPatchLine != 5 || hunk.endPatchLine != 9 || hunk.header != "@@ -10,3 +10,3 @@ func example()" {
+	if hunk.ordinal != 1 || hunk.fileIndex != 0 || hunk.fileName != "example.go" || hunk.startPatchLine != 5 || hunk.endPatchLine != 9 || hunk.header != "@@ -10,3 +10,3 @@ func example()" {
 		t.Fatalf("hunk = %#v", hunk)
 	}
 	want := []struct {
@@ -167,6 +169,36 @@ func TestBuildDiffPresentationFallsBackForMalformedPatch(t *testing.T) {
 		t.Fatalf("hunks = %#v, want none", p.hunks)
 	}
 	assertPatchLines(t, p)
+}
+
+func TestHunkSectionTitle(t *testing.T) {
+	tests := map[string]string{
+		"@@ -10,3 +10,3 @@ func example()": "func example()",
+		"@@ -1 +1 @@ section\r":            "section",
+		"@@ -1 +1 @@":                      "",
+		"not a hunk":                       "",
+	}
+	for header, want := range tests {
+		if got := hunkSectionTitle(header); got != want {
+			t.Errorf("hunkSectionTitle(%q) = %q, want %q", header, got, want)
+		}
+	}
+}
+
+func TestDiffFileNamePrefersTheChangedFile(t *testing.T) {
+	tests := []struct {
+		file gitdiff.File
+		want string
+	}{
+		{file: gitdiff.File{OldName: "a/old.go", NewName: "b/new.go"}, want: "new.go"},
+		{file: gitdiff.File{OldName: "a/deleted.go", NewName: "/dev/null"}, want: "deleted.go"},
+		{file: gitdiff.File{}, want: "file"},
+	}
+	for _, tt := range tests {
+		if got := diffFileName(&tt.file); got != tt.want {
+			t.Errorf("diffFileName(%#v) = %q, want %q", tt.file, got, tt.want)
+		}
+	}
 }
 
 func assertPatchLines(t *testing.T, presentation *diffPresentation) {

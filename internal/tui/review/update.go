@@ -55,14 +55,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.previewBlock = 0
 			m.move(0)
 		} else {
-			m.cursor = 1
+			m.cursor = m.firstVisibleSourceLine()
 		}
 	} else if keybind.Matches(k, m.keys.Last) {
 		if m.activeDocumentMode() == DocumentPreview {
 			m.previewBlock = len(m.previews[m.active].blocks) - 1
 			m.move(0)
 		} else {
-			m.cursor = len(m.docs[m.active].lines)
+			m.cursor = m.lastVisibleSourceLine()
 		}
 	} else if m.handleSourcePan(k) {
 	} else if keybind.Matches(k, m.keys.PrevDoc) {
@@ -301,6 +301,7 @@ func (m *Model) activateDocument(index int) {
 	m.previewBlock = 0
 	m.rangeEnd = 0
 	m.activeComment = ""
+	m.ensureVisibleSourceCursor()
 	if m.activeDocumentMode() == DocumentPreview && len(m.previews[m.active].blocks) > 0 {
 		block := m.previews[m.active].blocks[0]
 		m.cursor, m.rangeEnd = block.startLine, block.endLine

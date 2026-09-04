@@ -170,7 +170,7 @@ func TestParsedDiffSourceRowsRenderFixedOldAndNewGutters(t *testing.T) {
 
 	rows := map[int]string{
 		1: "      │ diff --git",
-		4: "      │ @@ -41,3 +41,4 @@ example",
+		4: "      │  Hunk 1  example",
 		5: "41 41 │  context 世界",
 		6: "42    │ -old()",
 		7: "   42 │ +new()",
@@ -232,8 +232,8 @@ func TestParsedDiffGuttersStayFixedWhenPanningAndAtNarrowWidth(t *testing.T) {
 	}
 	var hunkHeader strings.Builder
 	m.writeSourceRow(&hunkHeader, 3)
-	if got := ansi.Strip(hunkHeader.String()); !strings.Contains(got, "@@ -1 +1 @@") {
-		t.Fatalf("panned hunk header lost its range: %q", got)
+	if got := ansi.Strip(hunkHeader.String()); !strings.Contains(got, "Hunk 1") || strings.Contains(got, "@@ -1 +1 @@") {
+		t.Fatalf("panned hunk header = %q, want a concise title", got)
 	}
 	for _, row := range strings.Split(m.documentView(), "\n") {
 		if width := lipgloss.Width(row); width > documentPanelWidth(m.width) {
@@ -292,6 +292,86 @@ func TestParsedDiffHunkNavigationWrapsAndUpdatesStatus(t *testing.T) {
 	}
 }
 
+func TestParsedDiffHunksRenderTitlesWithBlankSeparators(t *testing.T) {
+	content := strings.Join([]string{
+		"diff --git a/file.txt b/file.txt", "--- a/file.txt", "+++ b/file.txt",
+		"@@ -1 +1 @@ first change", "-old one", "+new one",
+		"@@ -10 +10 @@ second change", "-old two", "+new two",
+	}, "\n")
+	m, err := New(domain.Session{StepID: "review", Documents: []domain.Document{{
+		ID: "diff", Label: "Diff", Source: "file.diff", Format: "diff", Content: content, SHA256: domain.Digest(content),
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rows := m.visibleSourceRows()
+	firstHeader, secondHeader := -1, -1
+	for i, row := range rows {
+		switch row.patchLine {
+		case 4:
+			firstHeader = i
+		case 7:
+			secondHeader = i
+		}
+	}
+	if firstHeader < 0 || secondHeader != firstHeader+5 || !rows[secondHeader-1].separator || !rows[secondHeader-2].separator {
+		t.Fatalf("hunk rows = %#v, want two blank rows before the second hunk", rows)
+	}
+
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	view := ansi.Strip(m.documentView())
+	for _, want := range []string{"Hunk 1  file.txt · first change", "Hunk 2  file.txt · second change"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("hunk title missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "@@ -1 +1 @@") || strings.Contains(view, "@@ -10 +10 @@") {
+		t.Fatalf("raw hunk headers remained visible:\n%s", view)
+	}
+	for _, unwanted := range []string{"diff --git", "--- a/file.txt", "+++ b/file.txt"} {
+		if strings.Contains(view, unwanted) {
+			t.Errorf("transport metadata remained visible: %q\n%s", unwanted, view)
+		}
+	}
+}
+
+func TestParsedDiffHidesInterFileMetadataAndSkipsItDuringNavigation(t *testing.T) {
+	content := strings.Join([]string{
+		"diff --git a/first.txt b/first.txt", "--- a/first.txt", "+++ b/first.txt",
+		"@@ -1 +1 @@ first change", "-old", "+new",
+		"diff --git a/second.txt b/second.txt", "new file mode 100644", "--- /dev/null", "+++ b/second.txt",
+		"@@ -0,0 +1 @@ second change", "+added",
+	}, "\n")
+	m, err := New(domain.Session{StepID: "review", Documents: []domain.Document{{
+		ID: "diff", Label: "Diff", Source: "file.diff", Format: "diff", Content: content, SHA256: domain.Digest(content),
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.cursor != 4 {
+		t.Fatalf("initial cursor = %d, want first hunk header", m.cursor)
+	}
+	m.cursor = 6
+	m = update(m, "j")
+	if m.cursor != 11 {
+		t.Fatalf("down cursor = %d, want second hunk header after metadata", m.cursor)
+	}
+
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	view := ansi.Strip(m.documentView())
+	for _, want := range []string{"Hunk 1  first.txt · first change", "Hunk 2  second.txt · second change", "-old", "+added"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("hunk-only view missing %q:\n%s", want, view)
+		}
+	}
+	for _, unwanted := range []string{"diff --git", "new file mode", "--- /dev/null", "+++ b/second.txt"} {
+		if strings.Contains(view, unwanted) {
+			t.Errorf("hunk-only view retained %q:\n%s", unwanted, view)
+		}
+	}
+}
+
 func TestParsedDiffFoldingKeepsHeadersInteractive(t *testing.T) {
 	m, err := New(hunkedDiffSession())
 	if err != nil {
@@ -304,7 +384,7 @@ func TestParsedDiffFoldingKeepsHeadersInteractive(t *testing.T) {
 		t.Fatalf("fold = folded:%t cursor:%d range:%d", m.sources[0].diff.folded[1], m.cursor, m.rangeEnd)
 	}
 	view := ansi.Strip(m.documentView())
-	for _, want := range []string{"@@ -1 +1 @@", "… 2 patch rows folded; press z to expand"} {
+	for _, want := range []string{"Hunk 1", "… 2 patch rows folded; press z to expand"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("folded view missing %q:\n%s", want, view)
 		}

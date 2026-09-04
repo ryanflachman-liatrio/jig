@@ -33,6 +33,7 @@ func TestReviewStylesBelongToThemeAndPreserveVisibleWidth(t *testing.T) {
 		{name: "cursor diff gutter", style: theme.Review.DiffGutterCursor, text: " 42"},
 		{name: "range diff gutter", style: theme.Review.DiffGutterRange, text: " 42"},
 		{name: "hunk status", style: theme.Review.HunkStatus, text: "Hunk 2/5"},
+		{name: "hunk title", style: theme.Review.HunkTitle, text: " Hunk 2 "},
 		{name: "folded placeholder", style: theme.Review.FoldedPlaceholder, text: "… 14 patch rows folded; press z to expand"},
 		{name: "cursor rail", style: theme.Review.CursorRail, text: "▌"},
 		{name: "range rail", style: theme.Review.RangeRail, text: "▌"},

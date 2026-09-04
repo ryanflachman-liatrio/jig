@@ -258,7 +258,6 @@ func TestReviewWorkspaceRoutesDiffHunksAndPersistsDraftAtTargetSizes(t *testing.
 		m, _ = m.Update(size)
 		m, _ = m.Update(key("enter"))
 		m, _ = m.Update(key("]"))
-		m, _ = m.Update(key("]"))
 		if view := ansiStrip(m.View()); !strings.Contains(view, "Hunk 2/3") {
 			t.Fatalf("%dx%d hunk navigation did not reach the child workspace:\n%s", size.Width, size.Height, view)
 		}

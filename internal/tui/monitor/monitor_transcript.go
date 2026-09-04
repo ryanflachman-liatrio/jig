@@ -12,6 +12,7 @@ import (
 	"jig/internal/datastore"
 	"jig/internal/step"
 	"jig/internal/transcript"
+	"jig/internal/tui/diffview"
 	"jig/internal/tui/shared"
 )
 
@@ -1109,27 +1110,54 @@ func clampRunesTail(s string) string {
 	return s
 }
 
-// writeDiff renders a unified diff with +/-/@@ lines styled and indented two
-// spaces, truncated to maxDiffLines.
+// writeDiff renders the same hunk-only diff presentation used by the review
+// workspace, while retaining transcript-specific indentation and truncation.
 func writeDiff(b *strings.Builder, diff string) {
 	b.WriteString("  " + shared.Theme.Question.Render("── diff ─────────────────────────────") + "\n")
 	lines := strings.Split(diff, "\n")
 	const maxDiffLines = 200
-	truncated := len(lines) > maxDiffLines
+	presentation := diffview.Parse(diff)
+	if presentation.ParseErr != nil || len(presentation.Hunks) == 0 {
+		writeRawDiff(b, lines, maxDiffLines)
+		return
+	}
+	rows := presentation.DisplayRows(nil)
+	truncated := len(rows) > maxDiffLines
 	if truncated {
-		lines = lines[:maxDiffLines]
+		rows = rows[:maxDiffLines]
+	}
+	for _, row := range rows {
+		if row.Separator {
+			b.WriteByte('\n')
+			continue
+		}
+		if hunk := hunkAt(presentation.Hunks, row.PatchLine); hunk != nil {
+			b.WriteString("  " + diffview.RenderHunkHeader(*hunk) + "\n")
+			continue
+		}
+		b.WriteString("  " + diffview.RenderRawLine(lines[row.PatchLine-1]) + "\n")
+	}
+	if truncated {
+		b.WriteString("  " + shared.Theme.Question.Render("… diff truncated") + "\n")
+	}
+}
+
+func hunkAt(hunks []diffview.Hunk, line int) *diffview.Hunk {
+	for i := range hunks {
+		if hunks[i].StartPatchLine == line {
+			return &hunks[i]
+		}
+	}
+	return nil
+}
+
+func writeRawDiff(b *strings.Builder, lines []string, maxLines int) {
+	truncated := len(lines) > maxLines
+	if truncated {
+		lines = lines[:maxLines]
 	}
 	for _, line := range lines {
-		switch {
-		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++"):
-			b.WriteString("  " + shared.Theme.Diff.Add.Render(line) + "\n")
-		case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---"):
-			b.WriteString("  " + shared.Theme.Diff.Remove.Render(line) + "\n")
-		case strings.HasPrefix(line, "@@"):
-			b.WriteString("  " + shared.Theme.Diff.Hunk.Render(line) + "\n")
-		default:
-			b.WriteString("  " + line + "\n")
-		}
+		b.WriteString("  " + diffview.RenderRawLine(line) + "\n")
 	}
 	if truncated {
 		b.WriteString("  " + shared.Theme.Question.Render("… diff truncated") + "\n")

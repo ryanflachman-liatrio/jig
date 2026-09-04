@@ -1,40 +1,164 @@
-diff --git a/example.txt b/example.txt
-index 1111111..2222222 100644
---- a/example.txt
-+++ b/example.txt
-@@ -1,3 +1,4 @@ first hunk
- context before
--old line
-+new line
-+another line
- context after
-@@ -12 +13 @@ second hunk
--final old line
-+final new line
-\ No newline at end of file
-@@ -30 +31 @@ third hunk
--third old line
-+third new line
-diff --git a/new-file.txt b/new-file.txt
+diff --git a/internal/tui/review/validation.go b/internal/tui/review/validation.go
+index 2172e5c..8965f9e 100644
+--- a/internal/tui/review/validation.go
++++ b/internal/tui/review/validation.go
+@@ -42,9 +42,21 @@ func validateSubmission(submission domain.Submission) error {
+     if submission.Verdict == "" {
+         return errors.New("choose a verdict before submitting")
+     }
+-	if len(submission.Comments) == 0 {
+-		return nil
+-	}
++	for _, comment := range submission.Comments {
++		if err := validateComment(comment); err != nil {
++			return err
++		}
++	}
++	return nil
++}
++
++func validateComment(comment domain.Comment) error {
++	if comment.Body == "" {
++		return errors.New("comment body is required")
++	}
++	if comment.Anchor.DocumentID == "" {
++		return errors.New("comment document is required")
++	}
+     return nil
+ }
+ func normalizeSummary(summary string) string {
+@@ -101,8 +109,18 @@ func validateAnchor(anchor domain.Anchor, document document) error {
+     if anchor.StartLine < 1 || anchor.EndLine < anchor.StartLine {
+         return fmt.Errorf("invalid line range %d-%d", anchor.StartLine, anchor.EndLine)
+     }
+-	if anchor.EndLine > len(document.lines) {
+-		return fmt.Errorf("line %d is outside %s", anchor.EndLine, document.meta.Source)
++	maxLine := len(document.lines)
++	if document.meta.Format == "diff" {
++		maxLine = len(document.rawLines)
++	}
++	if anchor.EndLine > maxLine {
++		return fmt.Errorf("line %d is outside %s", anchor.EndLine, document.meta.Source)
++	}
++	if anchor.StartColumn < 0 || anchor.EndColumn < anchor.StartColumn {
++		return fmt.Errorf("invalid column range %d-%d", anchor.StartColumn, anchor.EndColumn)
++	}
++	if anchor.Kind == domain.KindBlocking && strings.TrimSpace(anchor.Label) == "" {
++		return errors.New("blocking comments need a label")
+     }
+     return nil
+ }
+diff --git a/internal/tui/monitor/review_summary.go b/internal/tui/monitor/review_summary.go
 new file mode 100644
-index 0000000..3333333
+index 0000000..70e95c1
 --- /dev/null
-+++ b/new-file.txt
-@@ -0,0 +1,2 @@
-+first new-file line
-+second new-file line
-diff --git a/deleted-file.txt b/deleted-file.txt
++++ b/internal/tui/monitor/review_summary.go
+@@ -0,0 +1,32 @@
++package monitor
++
++import (
++	"fmt"
++	"sort"
++
++	domain "jig/internal/review"
++)
++
++type reviewSummary struct {
++	Documents int
++	Reviewed  int
++	Comments  int
++	Blocking  int
++}
++
++func summarizeReview(draft domain.Draft) reviewSummary {
++	summary := reviewSummary{Reviewed: len(draft.Reviewed), Comments: len(draft.Comments)}
++	seen := make(map[string]struct{})
++	for _, comment := range draft.Comments {
++		seen[comment.Anchor.DocumentID] = struct{}{}
++		if comment.Kind == domain.KindBlocking {
++			summary.Blocking++
++		}
++	}
++	summary.Documents = len(seen)
++	return summary
++}
++
++func (s reviewSummary) String() string {
++	return fmt.Sprintf("%d reviewed · %d comments · %d blocking", s.Reviewed, s.Comments, s.Blocking)
++}
+diff --git a/internal/tui/monitor/monitor_gate_view.go b/internal/tui/monitor/monitor_gate_view.go
+index 8ff5f07..17f10b5 100644
+--- a/internal/tui/monitor/monitor_gate_view.go
++++ b/internal/tui/monitor/monitor_gate_view.go
+@@ -138,6 +138,19 @@ func (m Model) renderGateReview(b *strings.Builder, entry *pendingInputEntry) {
+     if entry.workspace == nil {
+         return
+     }
+-	b.WriteString(shared.Theme.Chat.Hint.Render("Open the workspace to review documents."))
++	draft := entry.workspace.Draft()
++	summary := summarizeReview(draft)
++	b.WriteString(shared.Theme.Chat.Hint.Render(summary.String()))
++	b.WriteByte('\n')
++	if summary.Blocking > 0 {
++		b.WriteString(shared.Theme.Badge.Warning.Render(" blocking feedback "))
++		b.WriteString(" Resolve or submit with revise.")
++		return
++	}
++	if summary.Reviewed == 0 {
++		b.WriteString(shared.Theme.Chat.Hint.Render("Open the workspace and inspect each document."))
++		return
++	}
++	b.WriteString(shared.Theme.Chat.Hint.Render("Choose a verdict when the review is complete."))
+ }
+ func (m Model) renderGateRecovery(b *strings.Builder, entry *pendingInputEntry) {
+diff --git a/internal/review/draft.go b/internal/review/draft.go
+index 4d81e93..f3a2d6d 100644
+--- a/internal/review/draft.go
++++ b/internal/review/draft.go
+@@ -15,8 +15,20 @@ type Draft struct {
+     Viewed   ViewState
+ }
+ func (d Draft) SortedComments() []Comment {
+-	comments := append([]Comment(nil), d.Comments...)
+-	sort.Slice(comments, func(i, j int) bool { return comments[i].ID < comments[j].ID })
+-	return comments
++	comments := append([]Comment(nil), d.Comments...)
++	sort.SliceStable(comments, func(i, j int) bool {
++		left, right := comments[i].Anchor, comments[j].Anchor
++		if left.DocumentID != right.DocumentID {
++			return left.DocumentID < right.DocumentID
++		}
++		if left.StartLine != right.StartLine {
++			return left.StartLine < right.StartLine
++		}
++		if left.EndLine != right.EndLine {
++			return left.EndLine < right.EndLine
++		}
++		return comments[i].ID < comments[j].ID
++	})
++	return comments
+ }
+ func (d Draft) HasBlockingComments() bool {
+diff --git a/internal/tui/review/obsolete_status.go b/internal/tui/review/obsolete_status.go
 deleted file mode 100644
-index 4444444..0000000
---- a/deleted-file.txt
+index 2a1d746..0000000
+--- a/internal/tui/review/obsolete_status.go
 +++ /dev/null
-@@ -1,2 +0,0 @@
--first deleted-file line
--second deleted-file line
-diff --git a/old-name.txt b/new-name.txt
-similarity index 100%
-rename from old-name.txt
-rename to new-name.txt
-diff --git a/script.sh b/script.sh
-old mode 100644
-new mode 100755
+@@ -1,13 +0,0 @@
+-package review
+-
+-import "fmt"
+-
+-func legacyStatus(reviewed, total int) string {
+-	if total == 0 {
+-		return "nothing to review"
+-	}
+-	if reviewed == total {
+-		return "complete"
+-	}
+-	return fmt.Sprintf("%d of %d", reviewed, total)
+-}
+diff --git a/internal/tui/review/legacy_status.go b/internal/tui/review/status.go
+similarity index 96%
+rename from internal/tui/review/legacy_status.go
+rename to internal/tui/review/status.go

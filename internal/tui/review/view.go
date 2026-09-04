@@ -8,12 +8,14 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	domain "jig/internal/review"
+	"jig/internal/tui/diffview"
 	"jig/internal/tui/shared"
 )
 
 type sourceViewRow struct {
 	patchLine int
 	folded    *diffHunk
+	separator bool
 }
 
 func (m *Model) View() string {
@@ -139,7 +141,9 @@ func (m *Model) documentView() string {
 		b.WriteByte('\n')
 	}
 	for _, row := range m.sourceWindowRows(max(1, m.height-10)) {
-		if row.folded != nil {
+		if row.separator {
+			b.WriteByte('\n')
+		} else if row.folded != nil {
 			m.writeFoldedSourceRow(&b, row.folded)
 		} else {
 			m.writeSourceRow(&b, row.patchLine)
@@ -213,14 +217,16 @@ func (m *Model) sourceWindowRows(limit int) []sourceViewRow {
 func (m *Model) visibleSourceRows() []sourceViewRow {
 	rows := make([]sourceViewRow, 0, len(m.docs[m.active].lines))
 	if diff := m.parsedDiffPresentation(); diff != nil {
-		for line := 1; line <= len(m.docs[m.active].lines); {
-			if hunk := m.hunkStartingAtPatchLine(line); hunk != nil && diff.folded[hunk.ordinal] {
-				rows = append(rows, sourceViewRow{patchLine: line}, sourceViewRow{folded: hunk})
-				line = hunk.endPatchLine + 1
+		for _, display := range diff.display.DisplayRows(func(hunk diffview.Hunk) bool { return diff.folded[hunk.Ordinal] }) {
+			if display.Separator {
+				rows = append(rows, sourceViewRow{separator: true})
 				continue
 			}
-			rows = append(rows, sourceViewRow{patchLine: line})
-			line++
+			if display.Folded != nil {
+				rows = append(rows, sourceViewRow{patchLine: display.PatchLine, folded: m.hunkStartingAtPatchLine(display.PatchLine)})
+				continue
+			}
+			rows = append(rows, sourceViewRow{patchLine: display.PatchLine})
 		}
 		return rows
 	}
@@ -263,6 +269,9 @@ func (m *Model) writeSourceRow(b *strings.Builder, line int) {
 		offset = 0
 	}
 	content := ansi.Cut(m.sources[m.active].lines[line-1], offset, offset+contentWidth)
+	if diff := m.parsedDiffPresentation(); diff != nil && diff.rows[line-1].kind == diffRowHunkHeader {
+		content = ansi.Cut(m.hunkHeaderContent(line), 0, contentWidth)
+	}
 	b.WriteString(railStyle.Render(rail))
 	b.WriteByte(' ')
 	b.WriteString(markerStyle.Render(fmt.Sprintf("%-2s", marker)))
@@ -276,6 +285,14 @@ func (m *Model) writeSourceRow(b *strings.Builder, line int) {
 	b.WriteString(shared.Theme.Review.Gutter.Render(" │ "))
 	b.WriteString(content)
 	b.WriteByte('\n')
+}
+
+func (m *Model) hunkHeaderContent(line int) string {
+	hunk := m.hunkStartingAtPatchLine(line)
+	if hunk == nil {
+		return ""
+	}
+	return diffview.RenderHunkHeader(diffview.Hunk{Ordinal: hunk.ordinal, FileName: hunk.fileName, Header: hunk.header})
 }
 
 func (m *Model) writeFoldedSourceRow(b *strings.Builder, hunk *diffHunk) {
@@ -399,6 +416,14 @@ func (m *Model) sourceMaxWidth() int {
 		return 0
 	}
 	width := 0
+	if diff := m.parsedDiffPresentation(); diff != nil {
+		for _, row := range diff.rows {
+			if isVisibleDiffRow(row) && row.kind != diffRowHunkHeader {
+				width = max(width, lipgloss.Width(m.sources[m.active].lines[row.patchLine-1]))
+			}
+		}
+		return width
+	}
 	for _, line := range m.sources[m.active].lines {
 		width = max(width, lipgloss.Width(line))
 	}
