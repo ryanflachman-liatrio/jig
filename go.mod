@@ -10,6 +10,7 @@ require (
 	charm.land/glamour/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.5
 	github.com/BurntSushi/toml v1.6.0
+	github.com/bluekeyes/go-gitdiff v0.8.1
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/coder/acp-go-sdk v0.13.5
 	github.com/severity1/claude-agent-sdk-go v0.6.22

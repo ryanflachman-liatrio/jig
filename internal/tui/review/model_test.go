@@ -129,6 +129,22 @@ func TestDocumentModesDefaultByFormatAndRestorePerDocument(t *testing.T) {
 	}
 }
 
+func TestDocumentViewReportsRawFallbackForMalformedDiff(t *testing.T) {
+	content := "+literal patch"
+	session := domain.Session{StepID: "review", Documents: []domain.Document{{
+		ID: "diff", Label: "Diff", Source: "change.diff", Format: "diff", Content: content, SHA256: domain.Digest(content),
+	}}}
+	m, err := New(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})
+	view := ansi.Strip(m.documentView())
+	if !strings.Contains(view, "diff navigation unavailable: parse diff: no file changes found") || !strings.Contains(view, content) {
+		t.Fatalf("raw fallback was not visible:\n%s", view)
+	}
+}
+
 func TestPreviewToggleMapsCursorAndBlockRanges(t *testing.T) {
 	m, err := New(testSession())
 	if err != nil {

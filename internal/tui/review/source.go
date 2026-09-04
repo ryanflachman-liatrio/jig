@@ -15,11 +15,12 @@ type sourcePresentation struct {
 	lines    []string
 	language string
 	err      error
+	diff     *diffPresentation
 }
 
 func buildSourcePresentation(d document) sourcePresentation {
 	if isDiffDocument(d) {
-		return sourcePresentation{lines: renderDiffLines(d.lines), language: "Diff"}
+		return sourcePresentation{lines: renderDiffLines(d.lines), language: "Diff", diff: buildDiffPresentation(d.meta.Content, d.lines)}
 	}
 
 	var lexer chroma.Lexer

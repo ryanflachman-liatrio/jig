@@ -26,9 +26,9 @@ func TestSourcePresentationSelectsDeterministicRenderers(t *testing.T) {
 		{name: "go module plain text", source: "go.mod", format: "text", content: "module jig", language: "Plain text"},
 		{name: "json", source: "data.json", format: "text", content: `{\"ok\":true}`, language: "JSON"},
 		{name: "unknown", source: "artifact.unknown-jig", format: "text", content: "plain", language: "Plain text"},
-		{name: "format diff", source: "captured", format: "diff", content: "+added", language: "Diff"},
-		{name: "diff extension", source: "change.diff", format: "text", content: "+added", language: "Diff"},
-		{name: "patch extension", source: "change.patch", format: "text", content: "-removed", language: "Diff"},
+		{name: "format diff", source: "captured", format: "diff", content: "--- a/file\n+++ b/file\n@@ -1 +1 @@\n-old\n+new", language: "Diff"},
+		{name: "diff extension", source: "change.diff", format: "text", content: "--- a/file\n+++ b/file\n@@ -1 +1 @@\n-old\n+new", language: "Diff"},
+		{name: "patch extension", source: "change.patch", format: "text", content: "--- a/file\n+++ b/file\n@@ -1 +1 @@\n-old\n+new", language: "Diff"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -38,6 +38,40 @@ func TestSourcePresentationSelectsDeterministicRenderers(t *testing.T) {
 			}
 			if presentation.language != tt.language {
 				t.Fatalf("language = %q, want %q", presentation.language, tt.language)
+			}
+			if got := ansi.Strip(strings.Join(presentation.lines, "\n")); got != tt.content {
+				t.Fatalf("visible content = %q, want %q", got, tt.content)
+			}
+		})
+	}
+}
+
+func TestSourcePresentationKeepsRawTextWhenDiffProjectionFails(t *testing.T) {
+	content := "+added\n-literal patch"
+	presentation := buildSourcePresentation(sourceDocument("change.diff", "text", content))
+	if presentation.diff == nil || presentation.diff.parseErr == nil {
+		t.Fatalf("diff projection = %#v, want parse failure", presentation.diff)
+	}
+	if got := ansi.Strip(strings.Join(presentation.lines, "\n")); got != content {
+		t.Fatalf("visible content = %q, want %q", got, content)
+	}
+}
+
+func TestSourcePresentationAddsDiffProjectionOnlyForDiffs(t *testing.T) {
+	validDiff := "--- a/file\n+++ b/file\n@@ -1 +1 @@\n-old\n+new"
+	for _, tt := range []struct {
+		name, source, format, content string
+		wantDiff                      bool
+	}{
+		{name: "plain", source: "main.go", format: "text", content: "package main"},
+		{name: "markdown", source: "README.md", format: "markdown", content: "# Title"},
+		{name: "valid diff", source: "change.diff", format: "text", content: validDiff, wantDiff: true},
+		{name: "invalid diff", source: "change.diff", format: "text", content: "+literal", wantDiff: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			presentation := buildSourcePresentation(sourceDocument(tt.source, tt.format, tt.content))
+			if (presentation.diff != nil) != tt.wantDiff {
+				t.Fatalf("diff projection = %#v, want present %t", presentation.diff, tt.wantDiff)
 			}
 			if got := ansi.Strip(strings.Join(presentation.lines, "\n")); got != tt.content {
 				t.Fatalf("visible content = %q, want %q", got, tt.content)

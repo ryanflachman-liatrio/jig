@@ -125,6 +125,10 @@ func (m *Model) documentView() string {
 		b.WriteString(shared.Theme.Error.Render("syntax highlighting unavailable: " + m.sources[m.active].err.Error()))
 		b.WriteByte('\n')
 	}
+	if diff := m.sources[m.active].diff; diff != nil && diff.parseErr != nil {
+		b.WriteString(shared.Theme.Error.Render("diff navigation unavailable: " + diff.parseErr.Error()))
+		b.WriteByte('\n')
+	}
 	if m.sourceOverflow() {
 		b.WriteString(shared.Theme.Review.HorizontalHint.Render(fmt.Sprintf("← col %d →", m.sourceXOffsets[m.active]+1)))
 		b.WriteByte('\n')
