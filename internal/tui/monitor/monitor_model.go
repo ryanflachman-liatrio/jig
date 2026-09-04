@@ -221,8 +221,17 @@ type Model struct {
 	// len(inputQueue) > 0; an empty queue leaves only the compact, inert input bar.
 	inputQueue     []pendingInputEntry
 	activeInputIdx int
-	reviewOpen     bool
-	gateContext    *gateContextSnapshot
+	// focusNextPromptStep records a submitted from="user" prompt until its
+	// sequential replacement arrives. PromptRequest has no accompanying status
+	// transition, so this distinguishes the next expected prompt from an
+	// unsolicited gate arrival.
+	focusNextPromptStep string
+	// focusInputOnArrival is armed while entering a run before its first input
+	// event reaches the monitor. It preserves entry-time intent without making
+	// ordinary, later arrivals steal focus.
+	focusInputOnArrival bool
+	reviewOpen          bool
+	gateContext         *gateContextSnapshot
 
 	// reviews retains the last ReviewRequest seen per step so the Transcript panel
 	// can show the diff when a review step is selected — review steps have no
@@ -655,6 +664,21 @@ func (m Model) WithJournal(evs []engine.Event) Model {
 		m, _ = m.handleEngineEvent(e)
 	}
 	m.reloadTranscript()
+	return m
+}
+
+// FocusPendingInput moves focus to the input gate when the run has work waiting
+// for the operator. It is called when entering a run; ordinary gate arrivals do
+// not use it so they remain non-disruptive while the monitor is already open.
+func (m Model) FocusPendingInput() Model {
+	if !m.hasGate() {
+		m.focusInputOnArrival = true
+		return m
+	}
+	m.focusInputOnArrival = false
+	m.focus = focusGate
+	m.loadActiveTextarea()
+	m.refreshPanels()
 	return m
 }
 

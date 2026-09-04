@@ -362,6 +362,7 @@ func (m Model) updateGatePrompt(msg tea.KeyPressMsg, entry *pendingInputEntry) (
 			return m, nil
 		}
 		pr := entry.prompt
+		m.focusNextPromptStep = pr.StepID
 		m.removeEntryAt(m.activeInputIdx) // also calls loadActiveTextarea
 		m.refreshPanels()
 		return m, func() tea.Msg {

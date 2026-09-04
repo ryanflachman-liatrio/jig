@@ -48,6 +48,55 @@ func TestInputQueueIngest(t *testing.T) {
 	}
 }
 
+func TestFocusPendingInputOnRunEntry(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	m, _ = m.Update(EngineEventMsg{Event: engine.InputRequest{RunID: "run-1", StepID: "a"}})
+
+	m = m.FocusPendingInput()
+	if m.focus != focusGate {
+		t.Fatalf("focus after entering run with pending input = %v, want focusGate", m.focus)
+	}
+}
+
+func TestFocusPendingInputOnFirstArrivalAfterRunEntry(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	m = m.FocusPendingInput()
+
+	m, _ = m.Update(EngineEventMsg{Event: engine.PromptRequest{
+		RunID: "run-1", StepID: "a", Label: "First", As: "first",
+	}})
+	if m.focus != focusGate {
+		t.Fatalf("focus after first prompt arrived = %v, want focusGate", m.focus)
+	}
+}
+
+func TestSequentialPromptRefocusesGateAfterSubmission(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	m, _ = m.Update(EngineEventMsg{Event: engine.PromptRequest{
+		RunID: "run-1", StepID: "a", Label: "First", As: "first",
+	}})
+	m.focus = focusGate
+	m.promptTextarea.SetValue("one")
+
+	m, cmd := m.Update(key("enter"))
+	if cmd == nil {
+		t.Fatal("submit produced no command")
+	}
+	if _, ok := cmd().(UserInputResponseMsg); !ok {
+		t.Fatalf("submit message = %T, want UserInputResponseMsg", cmd())
+	}
+	if m.focus != focusSteps {
+		t.Fatalf("focus after final queued prompt was removed = %v, want focusSteps", m.focus)
+	}
+
+	m, _ = m.Update(EngineEventMsg{Event: engine.PromptRequest{
+		RunID: "run-1", StepID: "a", Label: "Second", As: "second",
+	}})
+	if m.focus != focusGate {
+		t.Fatalf("focus after sequential prompt = %v, want focusGate", m.focus)
+	}
+}
+
 // TestInputQueueMixedKinds verifies that a ReviewRequest and an AgentQuestion for
 // two distinct steps coexist as two entries with the correct kinds.
 func TestInputQueueMixedKinds(t *testing.T) {

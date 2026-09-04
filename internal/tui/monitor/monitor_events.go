@@ -62,6 +62,9 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		m.steps[i].cost = ev.Cost
 		m.steps[i].tokens = ev.Tokens
 		m.recomputeTotals()
+		if ev.StepID == m.focusNextPromptStep && ev.To != step.StatusAwaitingReview {
+			m.focusNextPromptStep = ""
+		}
 		// Remove every queue entry for a step that is no longer blocked. Prune on
 		// any transition away from a parked state (needs_input, awaiting_recovery)
 		// and on all terminal transitions — but not the entry into a parked state,
@@ -236,7 +239,9 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		if ev.RunID != m.RunID {
 			return m, nil
 		}
-		// Decision 6: no focus steal on arrival.
+		focusPrompt := m.focusNextPromptStep == ev.StepID || m.focusInputOnArrival
+		// Decision 6: no focus steal on arrival, except when this is the next
+		// prompt emitted immediately after the operator submitted one.
 		evCopy := ev
 		wasEmpty := len(m.inputQueue) == 0
 		m.inputQueue = append(m.inputQueue, pendingInputEntry{
@@ -249,6 +254,11 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		// non-empty arrival leaves the active entry's textarea untouched.
 		if wasEmpty {
 			m.loadActiveTextarea()
+		}
+		if focusPrompt {
+			m.focusNextPromptStep = ""
+			m.focusInputOnArrival = false
+			m.focus = focusGate
 		}
 
 	case engine.StepOutput:

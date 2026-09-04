@@ -78,6 +78,7 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.monitor = m.monitor.WithJournal(msg.events)
 		m.monitor.SetRun(msg.run)
 		m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+		m.monitor = m.monitor.FocusPendingInput()
 		m.active = screenMonitor
 		return m, m.monitor.EnsureFrame()
 
@@ -337,6 +338,7 @@ func (m rootModel) openMonitor(runID string) (tea.Model, tea.Cmd) {
 		}
 	}
 	m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+	m.monitor = m.monitor.FocusPendingInput()
 	m.active = screenMonitor
 	// A run seeded from a snapshot/journal may already have a step running (or the
 	// prior frame loop fell silent while off-screen); restart the live clock.
@@ -379,6 +381,7 @@ func (m rootModel) startRun(wf *workflow.Workflow) (tea.Model, tea.Cmd) {
 	m.monitor.RunDir = m.manager.RunDir(run.ID)
 	m.monitor.SetRun(run)
 	m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
+	m.monitor = m.monitor.FocusPendingInput()
 	m.active = screenMonitor
 	return m, nil
 }

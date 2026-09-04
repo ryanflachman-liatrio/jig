@@ -2280,9 +2280,11 @@ func TestGateSubmitRouting(t *testing.T) {
 	if len(m2.inputQueue) != 1 {
 		t.Fatalf("expected queue length 1 after submit, got %d", len(m2.inputQueue))
 	}
+	if m2.focus != focusGate {
+		t.Fatalf("focus with another queued input = %v, want focusGate", m2.focus)
+	}
 
 	// Submit the now-active entry → should route to step "b".
-	m2.focus = focusGate
 	m2.inputQueue[0].draft = "world"
 	m2.loadActiveTextarea()
 	_, cmd2 := m2.Update(key("enter"))
