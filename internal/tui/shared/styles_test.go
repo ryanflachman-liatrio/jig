@@ -5,6 +5,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/alecthomas/chroma/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func TestReviewStylesBelongToThemeAndPreserveVisibleWidth(t *testing.T) {
@@ -25,6 +26,14 @@ func TestReviewStylesBelongToThemeAndPreserveVisibleWidth(t *testing.T) {
 		{name: "gutter", style: theme.Review.Gutter, text: " 42 │"},
 		{name: "cursor gutter", style: theme.Review.GutterCursor, text: " 42 │"},
 		{name: "range gutter", style: theme.Review.GutterRange, text: " 42 │"},
+		{name: "absent diff gutter", style: theme.Review.DiffGutterAbsent, text: "   "},
+		{name: "context diff gutter", style: theme.Review.DiffGutterContext, text: " 42"},
+		{name: "add diff gutter", style: theme.Review.DiffGutterAdd, text: " 42"},
+		{name: "remove diff gutter", style: theme.Review.DiffGutterRemove, text: " 42"},
+		{name: "cursor diff gutter", style: theme.Review.DiffGutterCursor, text: " 42"},
+		{name: "range diff gutter", style: theme.Review.DiffGutterRange, text: " 42"},
+		{name: "hunk status", style: theme.Review.HunkStatus, text: "Hunk 2/5"},
+		{name: "folded placeholder", style: theme.Review.FoldedPlaceholder, text: "… 14 patch rows folded; press z to expand"},
 		{name: "cursor rail", style: theme.Review.CursorRail, text: "▌"},
 		{name: "range rail", style: theme.Review.RangeRail, text: "▌"},
 		{name: "active source comment", style: theme.Review.ActiveCommentMarker, text: "●2"},
@@ -43,6 +52,9 @@ func TestReviewStylesBelongToThemeAndPreserveVisibleWidth(t *testing.T) {
 			}
 			if got, want := lipgloss.Width(tt.style.Render(tt.text)), lipgloss.Width(tt.text); got != want {
 				t.Fatalf("rendered width = %d, want %d", got, want)
+			}
+			if got := ansi.Strip(tt.style.Render(tt.text)); got != tt.text {
+				t.Fatalf("ANSI-stripped text = %q, want %q", got, tt.text)
 			}
 		})
 	}

@@ -199,7 +199,6 @@ func (m *Model) writeSourceRow(b *strings.Builder, line int) {
 		gutterStyle = shared.Theme.Review.GutterCursor
 	}
 
-	digits := len(fmt.Sprint(len(m.docs[m.active].lines)))
 	marker, markerStyle := m.sourceCommentMarker(line)
 	contentWidth := m.sourceContentWidth()
 	content := ansi.Cut(m.sources[m.active].lines[line-1], m.sourceXOffsets[m.active], m.sourceXOffsets[m.active]+contentWidth)
@@ -207,10 +206,75 @@ func (m *Model) writeSourceRow(b *strings.Builder, line int) {
 	b.WriteByte(' ')
 	b.WriteString(markerStyle.Render(fmt.Sprintf("%-2s", marker)))
 	b.WriteByte(' ')
-	b.WriteString(gutterStyle.Render(fmt.Sprintf("%*d", digits, line)))
+	if diff := m.parsedDiffPresentation(); diff != nil {
+		m.writeDiffGutters(b, diff.rows[line-1], selected, line == m.cursor)
+	} else {
+		digits := len(fmt.Sprint(len(m.docs[m.active].lines)))
+		b.WriteString(gutterStyle.Render(fmt.Sprintf("%*d", digits, line)))
+	}
 	b.WriteString(shared.Theme.Review.Gutter.Render(" │ "))
 	b.WriteString(content)
 	b.WriteByte('\n')
+}
+
+func (m *Model) parsedDiffPresentation() *diffPresentation {
+	if m.active < 0 || m.active >= len(m.sources) {
+		return nil
+	}
+	diff := m.sources[m.active].diff
+	if diff == nil || diff.parseErr != nil || len(diff.rows) != len(m.docs[m.active].lines) {
+		return nil
+	}
+	return diff
+}
+
+func (m *Model) writeDiffGutters(b *strings.Builder, row diffRow, selected, cursor bool) {
+	digits := m.diffGutterDigits()
+	b.WriteString(m.diffGutterStyle(row, selected, cursor, row.hasOld).Render(formatDiffCoordinate(row.oldLine, row.hasOld, digits)))
+	b.WriteByte(' ')
+	b.WriteString(m.diffGutterStyle(row, selected, cursor, row.hasNew).Render(formatDiffCoordinate(row.newLine, row.hasNew, digits)))
+}
+
+func (m *Model) diffGutterDigits() int {
+	digits := 1
+	if diff := m.parsedDiffPresentation(); diff != nil {
+		for _, row := range diff.rows {
+			if row.hasOld {
+				digits = max(digits, len(fmt.Sprint(row.oldLine)))
+			}
+			if row.hasNew {
+				digits = max(digits, len(fmt.Sprint(row.newLine)))
+			}
+		}
+	}
+	return digits
+}
+
+func formatDiffCoordinate(line int, present bool, digits int) string {
+	if !present {
+		return strings.Repeat(" ", digits)
+	}
+	return fmt.Sprintf("%*d", digits, line)
+}
+
+func (m *Model) diffGutterStyle(row diffRow, selected, cursor, present bool) lipgloss.Style {
+	if cursor {
+		return shared.Theme.Review.DiffGutterCursor
+	}
+	if selected {
+		return shared.Theme.Review.DiffGutterRange
+	}
+	if !present {
+		return shared.Theme.Review.DiffGutterAbsent
+	}
+	switch row.kind {
+	case diffRowAdd:
+		return shared.Theme.Review.DiffGutterAdd
+	case diffRowDelete:
+		return shared.Theme.Review.DiffGutterRemove
+	default:
+		return shared.Theme.Review.DiffGutterContext
+	}
 }
 
 func (m *Model) sourceCommentMarker(line int) (string, lipgloss.Style) {
@@ -239,6 +303,10 @@ func (m *Model) sourceCommentMarker(line int) (string, lipgloss.Style) {
 }
 
 func (m *Model) sourceGutterWidth() int {
+	if m.parsedDiffPresentation() != nil {
+		digits := m.diffGutterDigits()
+		return lipgloss.Width("  " + "  " + " " + strings.Repeat("0", digits) + " " + strings.Repeat("0", digits) + " │ ")
+	}
 	digits := len(fmt.Sprint(len(m.docs[m.active].lines)))
 	return lipgloss.Width("  " + "  " + " " + strings.Repeat("0", digits) + " │ ")
 }

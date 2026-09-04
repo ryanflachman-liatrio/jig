@@ -145,6 +145,95 @@ func TestDocumentViewReportsRawFallbackForMalformedDiff(t *testing.T) {
 	}
 }
 
+func TestParsedDiffSourceRowsRenderFixedOldAndNewGutters(t *testing.T) {
+	content := strings.Join([]string{
+		"diff --git a/example.go b/example.go",
+		"--- a/example.go",
+		"+++ b/example.go",
+		"@@ -41,3 +41,4 @@ example",
+		" context 世界",
+		"-old()",
+		"+new()",
+		"+added()",
+		" tail",
+	}, "\n")
+	m, err := New(domain.Session{StepID: "review", Documents: []domain.Document{{
+		ID: "diff", Label: "Diff", Source: "example.diff", Format: "diff", Content: content, SHA256: domain.Digest(content),
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+
+	rows := map[int]string{
+		1: "      │ diff --git",
+		4: "      │ @@ -41,3 +41,4 @@ example",
+		5: "41 41 │  context 世界",
+		6: "42    │ -old()",
+		7: "   42 │ +new()",
+		8: "   43 │ +added()",
+		9: "43 44 │  tail",
+	}
+	for line, want := range rows {
+		var rendered strings.Builder
+		m.writeSourceRow(&rendered, line)
+		if got := ansi.Strip(rendered.String()); !strings.Contains(got, want) {
+			t.Errorf("line %d = %q, want %q", line, got, want)
+		}
+	}
+
+	m.cursor = 6
+	m.comments = []domain.Comment{{ID: "C001", Anchor: domain.Anchor{DocumentID: "diff", StartLine: 6, EndLine: 6}}}
+	m.activeComment = "C001"
+	var cursor strings.Builder
+	m.writeSourceRow(&cursor, 6)
+	if got := ansi.Strip(cursor.String()); !strings.Contains(got, "▌ ●  42    │ -old()") {
+		t.Fatalf("cursor/comment row = %q", got)
+	}
+
+	m.mode, m.rangeEnd = ModeSelectRange, 8
+	var selected strings.Builder
+	m.writeSourceRow(&selected, 7)
+	if got := ansi.Strip(selected.String()); !strings.HasPrefix(got, "▌") || !strings.Contains(got, "42 │ +new()") {
+		t.Fatalf("range row = %q", got)
+	}
+}
+
+func TestParsedDiffGuttersStayFixedWhenPanningAndAtNarrowWidth(t *testing.T) {
+	long := strings.Repeat("界", 80)
+	content := "--- a/file.txt\n+++ b/file.txt\n@@ -1 +1 @@\n-old\n+" + long
+	m, err := New(domain.Session{StepID: "review", Documents: []domain.Document{{
+		ID: "diff", Label: "Diff", Source: "file.diff", Format: "diff", Content: content, SHA256: domain.Digest(content),
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m.cursor = 5
+
+	var before strings.Builder
+	m.writeSourceRow(&before, 5)
+	m = update(m, "l")
+	var after strings.Builder
+	m.writeSourceRow(&after, 5)
+	beforeGutter, _, _ := strings.Cut(ansi.Strip(before.String()), "│")
+	afterGutter, _, _ := strings.Cut(ansi.Strip(after.String()), "│")
+	if beforeGutter != afterGutter || !strings.HasPrefix(afterGutter, "▌") || !strings.Contains(afterGutter, "1") {
+		t.Fatalf("panning changed a fixed dual gutter: before=%q after=%q", beforeGutter, afterGutter)
+	}
+	if m.sourceXOffsets[0] != 4 {
+		t.Fatalf("offset = %d, want 4", m.sourceXOffsets[0])
+	}
+	if got, want := ansi.Strip(after.String()), ansi.Strip(ansi.Cut(m.sources[0].lines[4], 4, 4+m.sourceContentWidth())); !strings.Contains(got, want) {
+		t.Fatalf("panned content = %q, want ANSI-safe slice %q", got, want)
+	}
+	for _, row := range strings.Split(m.documentView(), "\n") {
+		if width := lipgloss.Width(row); width > documentPanelWidth(m.width) {
+			t.Fatalf("narrow diff row width = %d, panel = %d", width, documentPanelWidth(m.width))
+		}
+	}
+}
+
 func TestPreviewToggleMapsCursorAndBlockRanges(t *testing.T) {
 	m, err := New(testSession())
 	if err != nil {

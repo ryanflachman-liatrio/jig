@@ -123,6 +123,14 @@ type Styles struct {
 		Gutter              lipgloss.Style
 		GutterCursor        lipgloss.Style
 		GutterRange         lipgloss.Style
+		DiffGutterAbsent    lipgloss.Style
+		DiffGutterContext   lipgloss.Style
+		DiffGutterAdd       lipgloss.Style
+		DiffGutterRemove    lipgloss.Style
+		DiffGutterCursor    lipgloss.Style
+		DiffGutterRange     lipgloss.Style
+		HunkStatus          lipgloss.Style
+		FoldedPlaceholder   lipgloss.Style
 		CursorRail          lipgloss.Style
 		RangeRail           lipgloss.Style
 		ActiveCommentMarker lipgloss.Style
@@ -295,6 +303,14 @@ func DefaultTheme() Styles {
 	s.Review.Gutter = lipgloss.NewStyle().Foreground(fgDim)
 	s.Review.GutterCursor = lipgloss.NewStyle().Bold(true).Foreground(primary)
 	s.Review.GutterRange = lipgloss.NewStyle().Foreground(secondary)
+	s.Review.DiffGutterAbsent = lipgloss.NewStyle().Foreground(fgDim)
+	s.Review.DiffGutterContext = lipgloss.NewStyle().Foreground(fgMuted)
+	s.Review.DiffGutterAdd = lipgloss.NewStyle().Foreground(success)
+	s.Review.DiffGutterRemove = lipgloss.NewStyle().Foreground(danger)
+	s.Review.DiffGutterCursor = lipgloss.NewStyle().Bold(true).Foreground(primary)
+	s.Review.DiffGutterRange = lipgloss.NewStyle().Foreground(secondary)
+	s.Review.HunkStatus = lipgloss.NewStyle().Bold(true).Foreground(info)
+	s.Review.FoldedPlaceholder = lipgloss.NewStyle().Italic(true).Foreground(fgDim)
 	s.Review.CursorRail = lipgloss.NewStyle().Bold(true).Foreground(primary)
 	s.Review.RangeRail = lipgloss.NewStyle().Foreground(secondary)
 	s.Review.ActiveCommentMarker = lipgloss.NewStyle().Bold(true).Foreground(primary)
