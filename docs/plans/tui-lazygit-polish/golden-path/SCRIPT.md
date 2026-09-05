@@ -56,17 +56,19 @@ are absent from the footer but remain in `ctrl+k`. Toggle with `ctrl+shift+a`
 
 ## Reference frames to capture
 
-Save under `docs/plans/tui-lazygit-polish/golden-path/` (screenshots or
-asciinema) and link from the plan README:
+Text proofs (regenerate with `go test ./internal/tui -run TestGoldenPathProofFrames`):
 
-| Shot | Content |
+| Shot | File |
 |---|---|
-| 1 | Home dual pane |
-| 2 | Monitor LIVE / seed running |
-| 3 | Gate needs input (blurred: `GATE · needs input`, Iron) |
-| 4 | Gate focused (`[GATE] · awaiting review`) |
-| 5 | Review embedded wide (≥160) with Steps visible |
-| 6 | Footer `simple` mode tag |
+| 1 Home dual pane | [01-home.txt](01-home.txt) |
+| 2 Monitor LIVE | [02-monitor-live.txt](02-monitor-live.txt) |
+| 3 Gate needs input (blurred) | [03-gate-blurred.txt](03-gate-blurred.txt) |
+| 4 Gate focused | [04-gate-focused.txt](04-gate-focused.txt) |
+| 5 Review embedded wide ≥160 | [05-review-wide.txt](05-review-wide.txt) |
+| 6 Footer simple mode | [06-footer-simple.txt](06-footer-simple.txt) |
+
+Optional: replace with screenshots/asciinema under the same basenames (`.png` / `.cast`).
+
 
 ## PR checklist snippet
 
