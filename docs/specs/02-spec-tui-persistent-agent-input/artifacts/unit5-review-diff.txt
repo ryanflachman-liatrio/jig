@@ -8,8 +8,7 @@
 │                              ││   +new line                                  │
 │                              ││    context                                   │
 │                              ││                                              │
-│                              ││                                              │
-╭─ Review required ────────────────────────────────────────────────────────────╮
+╭─ [GATE] · awaiting review ───────────────────────────────────────────────────╮
 │ [1 / 1]  Step: a                                                             │
 │   Required: Choose a decision  ·  [ctrl+o] view diff                         │
 │     [1] approve                                                              │
@@ -21,4 +20,5 @@
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
   Review required  ·  Step: a  ·  1 pending  ·  esc to blur
+ run-1 · demo · a
   awaiting review  ·  1-9 decision  •  ctrl+o view context  •  ? more

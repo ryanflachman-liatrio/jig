@@ -32,7 +32,10 @@ func (m Model) listBody() string {
 	var b strings.Builder
 
 	if len(m.steps) == 0 {
-		b.WriteString("  " + shared.Theme.Question.Render("Waiting for run to start…") + "\n")
+		b.WriteString(shared.RenderEmptyState(shared.EmptyState{
+			Title: "Loading run…",
+			Body:  "Waiting for the first step event.",
+		}))
 		return b.String()
 	}
 

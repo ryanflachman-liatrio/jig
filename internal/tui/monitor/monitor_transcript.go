@@ -675,11 +675,16 @@ func (m *Model) chatBody() string {
 	i, ok := m.index[m.chatStep]
 	if !ok {
 		if m.chatStep == "" {
-			b.WriteString("  " + shared.Theme.Question.Render("select a step") + "\n")
-		} else {
-			b.WriteString("  " + shared.Theme.Question.Render("no such step") + "\n")
+			return shared.RenderEmptyState(shared.EmptyState{
+				Title: "No step selected",
+				Body:  "Select a step in the Steps panel to view its transcript.",
+				CTA:   "j/k  select · enter  open",
+			})
 		}
-		return b.String()
+		return shared.RenderEmptyState(shared.EmptyState{
+			Title: "Unknown step",
+			Body:  "No step named " + m.chatStep + " in this run.",
+		})
 	}
 	s := m.steps[i]
 	indicator, _ := stepIndicator(s.status)
@@ -744,12 +749,28 @@ func (m *Model) chatBody() string {
 			return b.String()
 		}
 		if m.RunDir == "" {
-			b.WriteString("  " + shared.Theme.Question.Render("transcript unavailable (persistence off)") + "\n")
+			b.WriteString(shared.RenderEmptyState(shared.EmptyState{
+				Title: "Transcript unavailable",
+				Body:  "Persistence is off for this run — nothing was captured.",
+			}))
+		} else if running && !hasTail {
+			b.WriteString(shared.RenderEmptyState(shared.EmptyState{
+				Title: "Waiting for step to start",
+				Body:  "Output will appear here once the step begins writing.",
+			}))
 		} else if !running && !hasTail {
 			if s.err != "" {
 				b.WriteString("  " + shared.Theme.Error.Render(s.err) + "\n")
+			} else if s.status == step.StatusPending {
+				b.WriteString(shared.RenderEmptyState(shared.EmptyState{
+					Title: "Waiting for step to start",
+					Body:  "This step has not begun yet.",
+				}))
 			} else {
-				b.WriteString("  " + shared.Theme.Question.Render("no output yet") + "\n")
+				b.WriteString(shared.RenderEmptyState(shared.EmptyState{
+					Title: "No transcript captured",
+					Body:  "This step finished without recorded output.",
+				}))
 			}
 		}
 	}

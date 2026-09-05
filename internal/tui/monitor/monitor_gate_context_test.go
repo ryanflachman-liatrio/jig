@@ -96,7 +96,7 @@ func TestGateQueueSwitchUpdatesContextWithoutFollowing(t *testing.T) {
 	m.focus = focusGate
 
 	first := ansiStrip(m.gateOverlay())
-	for _, want := range []string{"Review required", "Step: a", "view diff"} {
+	for _, want := range []string{"[GATE] · awaiting review", "Step: a", "view diff"} {
 		if !strings.Contains(first, want) {
 			t.Fatalf("first gate missing %q:\n%s", want, first)
 		}
@@ -110,7 +110,7 @@ func TestGateQueueSwitchUpdatesContextWithoutFollowing(t *testing.T) {
 		t.Fatalf("queue switch followed context: cursor=%d chatStep=%q", m.cursor, m.chatStep)
 	}
 	second := ansiStrip(m.gateOverlay())
-	for _, want := range []string{"Recovery action", "Step: b", "view transcript"} {
+	for _, want := range []string{"[GATE] · step failed — recovery", "Step: b", "view transcript"} {
 		if !strings.Contains(second, want) {
 			t.Fatalf("second gate missing %q:\n%s", want, second)
 		}
@@ -198,8 +198,11 @@ func TestGateContextJumpAndReturnPreserveTranscriptState(t *testing.T) {
 	if got := restored.unseenChatEntries(); got != 1 {
 		t.Fatalf("context return unseen entries = %d, want 1", got)
 	}
-	if title := restored.transcriptPanelTitle(); title != "Transcript · PAUSED · 1 new" {
+	if title := restored.transcriptPanelTitle(); title != "Transcript" {
 		t.Fatalf("context return title = %q", title)
+	}
+	if status := ansiStrip(restored.statusLineView()); !strings.Contains(status, "1 new") {
+		t.Fatalf("context return status missing unseen count:\n%s", status)
 	}
 	if !restored.chatItemExpand[item.key] {
 		t.Fatal("transcript expansion state was not restored")
@@ -235,7 +238,7 @@ func TestRunLevelGateHasNoStepContextAction(t *testing.T) {
 	m.focus = focusGate
 
 	view := ansiStrip(m.gateOverlay())
-	for _, want := range []string{"Merge approval", "Run branch: jig/run", "Required: Merge or discard"} {
+	for _, want := range []string{"[GATE] · awaiting final merge", "Run branch: jig/run", "Required: Merge or discard"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("run-level gate missing %q:\n%s", want, view)
 		}

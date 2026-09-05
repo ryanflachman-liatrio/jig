@@ -730,7 +730,7 @@ func legacyGroupExpandPreservedOnResize(t *testing.T) {
 func TestMonitorChatNoTranscript(t *testing.T) {
 	m := newMonitorWithSteps(t) // runDir stays ""
 	m = enterChatStep(t, m, "a")
-	if !strings.Contains(m.chatBody(), "persistence off") {
+	if !strings.Contains(m.chatBody(), "Transcript unavailable") {
 		t.Fatalf("expected persistence-off placeholder:\n%s", m.chatBody())
 	}
 }
@@ -1263,16 +1263,19 @@ func newFollowMonitor(t *testing.T) (Model, string) {
 
 func TestMonitorFollowIndicatorCountsUnseenEntries(t *testing.T) {
 	m, runDir := newFollowMonitor(t)
-	if title := m.transcriptPanelTitle(); title != "Transcript · LIVE" {
-		t.Fatalf("initial transcript title = %q, want LIVE", title)
+	if status := ansiStrip(m.statusLineView()); !strings.Contains(status, "LIVE") {
+		t.Fatalf("initial status missing LIVE:\n%s", status)
+	}
+	if title := m.transcriptPanelTitle(); title != "Transcript" {
+		t.Fatalf("initial transcript title = %q, want Transcript", title)
 	}
 
 	m, _ = m.Update(key("k"))
 	if m.chatAutoScroll {
 		t.Fatal("scrolling up did not pause transcript follow")
 	}
-	if title := m.transcriptPanelTitle(); title != "Transcript · PAUSED" {
-		t.Fatalf("paused transcript title = %q", title)
+	if status := ansiStrip(m.statusLineView()); strings.Contains(status, "LIVE") {
+		t.Fatalf("paused status still shows LIVE:\n%s", status)
 	}
 	offset := m.chatVP.YOffset()
 
@@ -1295,8 +1298,8 @@ func TestMonitorFollowIndicatorCountsUnseenEntries(t *testing.T) {
 	if got := m.unseenChatEntries(); got != 4 {
 		t.Fatalf("unseen entries = %d, want 4", got)
 	}
-	if title := m.transcriptPanelTitle(); title != "Transcript · PAUSED · 4 new" {
-		t.Fatalf("unseen transcript title = %q", title)
+	if status := ansiStrip(m.statusLineView()); !strings.Contains(status, "4 new") {
+		t.Fatalf("unseen status missing count:\n%s", status)
 	}
 	if got := m.chatVP.YOffset(); got != offset {
 		t.Fatalf("paused transcript moved from offset %d to %d", offset, got)
@@ -1326,8 +1329,11 @@ func TestMonitorFollowResumeClearsUnseen(t *testing.T) {
 			if got := m.unseenChatEntries(); got != 0 {
 				t.Fatalf("%s left %d unseen entries", resumeKey, got)
 			}
-			if title := m.transcriptPanelTitle(); title != "Transcript · LIVE" {
+			if title := m.transcriptPanelTitle(); title != "Transcript" {
 				t.Fatalf("title after %s = %q", resumeKey, title)
+			}
+			if status := ansiStrip(m.statusLineView()); !strings.Contains(status, "LIVE") {
+				t.Fatalf("status after %s missing LIVE:\n%s", resumeKey, status)
 			}
 		})
 	}
@@ -1406,8 +1412,11 @@ func TestMonitorFollowResetsOnStepSwitch(t *testing.T) {
 	if got := m.unseenChatEntries(); got != 0 {
 		t.Fatalf("step switch exposed %d old entries as unseen", got)
 	}
-	if title := m.transcriptPanelTitle(); title != "Transcript · LIVE" {
+	if title := m.transcriptPanelTitle(); title != "Transcript" {
 		t.Fatalf("title after step switch = %q", title)
+	}
+	if status := ansiStrip(m.statusLineView()); !strings.Contains(status, "LIVE") {
+		t.Fatalf("status after step switch missing LIVE:\n%s", status)
 	}
 }
 
@@ -1459,7 +1468,7 @@ func TestMonitorReviewQueued(t *testing.T) {
 	if len(m.inputQueue) == 0 {
 		t.Fatal("review event not added to input queue")
 	}
-	if !strings.Contains(m.gateOverlay(), "Review required") {
+	if !strings.Contains(m.gateOverlay(), "[GATE] · awaiting review") {
 		t.Fatalf("review gate overlay not shown:\n%s", m.gateOverlay())
 	}
 
@@ -1493,7 +1502,7 @@ func TestMonitorRecoveryGate(t *testing.T) {
 		t.Fatal("recovery event not added to input queue")
 	}
 	strip := m.gateOverlay()
-	if !strings.Contains(strip, "Recovery action") {
+	if !strings.Contains(strip, "[GATE] · step failed — recovery") {
 		t.Fatalf("recovery gate strip not shown:\n%s", strip)
 	}
 	if !strings.Contains(strip, "[r] retry") ||
@@ -1740,7 +1749,7 @@ func TestMonitorAgentQuestionShowsPanel(t *testing.T) {
 	}
 
 	body := m.gateOverlay()
-	for _, want := range []string{"Answer required", "Which format should we use?", "[Format]", "JSON", "Text", "structured output"} {
+	for _, want := range []string{"[GATE] · awaiting answer", "Which format should we use?", "[Format]", "JSON", "Text", "structured output"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("question body missing %q:\n%s", want, body)
 		}
@@ -1951,7 +1960,7 @@ func TestMonitorTwoPanel(t *testing.T) {
 
 	top := firstRow(view)
 	plainTop := ansiStrip(top)
-	for _, want := range []string{"run-1 · demo › Steps", "run-1 · demo › a › Transcript · LIVE"} {
+	for _, want := range []string{"run-1 · demo › [STEPS]", "run-1 · demo › a › Transcript"} {
 		if !strings.Contains(plainTop, want) {
 			t.Fatalf("top edge missing hierarchy %q:\n%s", want, plainTop)
 		}
@@ -2698,7 +2707,7 @@ func TestMonitorIntegrationConflictGate(t *testing.T) {
 		t.Fatal("integration conflict event not added to input queue")
 	}
 	strip := m.gateOverlay()
-	if !strings.Contains(strip, "Conflict resolution") {
+	if !strings.Contains(strip, "[GATE] · integration conflict") {
 		t.Fatalf("integration gate strip not shown:\n%s", strip)
 	}
 	if !strings.Contains(strip, "shared.go") {
@@ -2760,7 +2769,7 @@ func TestMonitorFinalMergeGate(t *testing.T) {
 		t.Fatal("final merge event not added to input queue")
 	}
 	strip := m.gateOverlay()
-	if !strings.Contains(strip, "Merge approval") {
+	if !strings.Contains(strip, "[GATE] · awaiting final merge") {
 		t.Fatalf("final-merge gate strip not shown:\n%s", strip)
 	}
 	if !strings.Contains(strip, "main") {

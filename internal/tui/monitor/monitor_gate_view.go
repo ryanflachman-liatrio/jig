@@ -43,7 +43,17 @@ func (m Model) inputBarView() string {
 
 	entry, _ := m.activeEntry()
 	presentation := presentationForGate(entry)
-	label := shared.Theme.Title.Render(presentation.title)
+	// Blurred pending gate: unbracketed GATE · needs input + Iron (title only;
+	// this bar is not a bordered panel). Focused chrome lives on the overlay (C3/E1).
+	var label string
+	if m.focus != focusGate {
+		label = shared.Theme.Title.Render("GATE · needs input")
+		if n := len(m.inputQueue); n > 1 {
+			label = shared.Theme.Title.Render(fmt.Sprintf("GATE · needs input (%d pending)", n))
+		}
+	} else {
+		label = shared.Theme.Title.Render(presentation.title)
+	}
 	subject := shared.Theme.Marker.Render(presentation.subjectLabel + ": " + presentation.subject)
 	count := fmt.Sprintf("%d pending", len(m.inputQueue))
 	action := "tab to open"
@@ -95,7 +105,7 @@ func (m Model) gateOverlay() string {
 		if m.historical {
 			b.WriteString("\n  This workflow is paused because its original jig scheduler is no longer live.\n")
 			b.WriteString("  Return to Runs and press R to resume it.\n")
-			return shared.Panel(presentation.title, b.String(), m.width, fixedH, true)
+			return shared.Panel(m.gatePanelTitle(), b.String(), m.width, fixedH, true)
 		}
 		switch entry.kind {
 		case inputKindRequest:
@@ -119,7 +129,7 @@ func (m Model) gateOverlay() string {
 		}
 	}
 
-	return shared.Panel(presentation.title, b.String(), m.width, fixedH, true)
+	return shared.Panel(m.gatePanelTitle(), b.String(), m.width, fixedH, true)
 }
 
 func (m Model) renderGateRequest(b *strings.Builder, entry *pendingInputEntry) {
