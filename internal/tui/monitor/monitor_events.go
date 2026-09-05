@@ -110,19 +110,22 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 			}
 		}
 		m.inputQueue = append(m.inputQueue, entry)
+		m.consumeFirstWaitFocus()
 
 	case engine.RecoveryRequest:
 		if ev.RunID != m.RunID {
 			return m, nil
 		}
 		// A step failed and parked for a recovery decision. Append a gate entry; no
-		// focus steal on arrival (Decision 6), consistent with the other kinds.
+		// focus steal on later arrivals (Decision 6 / ADR 0002). First wait after
+		// enter/resume still focuses Gate (A5).
 		evCopy := ev
 		m.inputQueue = append(m.inputQueue, pendingInputEntry{
 			kind:     inputKindRecovery,
 			stepID:   ev.StepID,
 			recovery: &evCopy,
 		})
+		m.consumeFirstWaitFocus()
 
 	case engine.IntegrationConflictRequest:
 		if ev.RunID != m.RunID {
@@ -136,20 +139,21 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 			}
 		}
 		// A step's squash-merge conflicted and parked. Append a gate entry; no
-		// focus steal on arrival (Decision 6), consistent with the other kinds.
+		// focus steal on later arrivals (Decision 6), consistent with the other kinds.
 		evCopy := ev
 		m.inputQueue = append(m.inputQueue, pendingInputEntry{
 			kind:        inputKindIntegrationConflict,
 			stepID:      ev.StepID,
 			integration: &evCopy,
 		})
+		m.consumeFirstWaitFocus()
 
 	case engine.FinalMergeRequest:
 		if ev.RunID != m.RunID {
 			return m, nil
 		}
 		// The run reached terminal with a non-empty run branch; the operator lands or
-		// discards it (spec 06 A3). No focus steal on arrival (Decision 6). The entry
+		// discards it (spec 06 A3). No focus steal on later arrivals (Decision 6). The entry
 		// is keyed by the run branch since there is no owning step.
 		evCopy := ev
 		m.inputQueue = append(m.inputQueue, pendingInputEntry{
@@ -157,12 +161,13 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 			stepID:     ev.RunBranch,
 			finalMerge: &evCopy,
 		})
+		m.consumeFirstWaitFocus()
 
 	case engine.InputRequest:
 		if ev.RunID != m.RunID {
 			return m, nil
 		}
-		// Decision 6: no focus steal on arrival.
+		// Decision 6: no focus steal on later arrivals; first wait still focuses.
 		evCopy := ev
 		wasEmpty := len(m.inputQueue) == 0
 		m.inputQueue = append(m.inputQueue, pendingInputEntry{
@@ -176,6 +181,7 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		if wasEmpty {
 			m.loadActiveTextarea()
 		}
+		m.consumeFirstWaitFocus()
 
 	case engine.AgentQuestion:
 		if ev.RunID != m.RunID {
@@ -186,12 +192,13 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		if idx, ok := m.index[ev.StepID]; ok {
 			m.steps[idx].status = step.StatusNeedsInput
 		}
-		// Decision 6: no focus steal on arrival.
+		// Decision 6: no focus steal on later arrivals.
 		m.inputQueue = append(m.inputQueue, pendingInputEntry{
 			kind:     inputKindQuestion,
 			stepID:   ev.StepID,
 			question: questionpanel.New(ev.Request).Resize(m.gateInnerWidth(), m.gateBodyHeight()-gateHeaderRows),
 		})
+		m.consumeFirstWaitFocus()
 
 	case engine.AgentQuestionResolved:
 		if ev.RunID != m.RunID {
@@ -241,7 +248,8 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		}
 		focusPrompt := m.focusNextPromptStep == ev.StepID || m.focusInputOnArrival
 		// Decision 6: no focus steal on arrival, except when this is the next
-		// prompt emitted immediately after the operator submitted one.
+		// prompt emitted immediately after the operator submitted one, or the
+		// first wait after enter/resume (A5).
 		evCopy := ev
 		wasEmpty := len(m.inputQueue) == 0
 		m.inputQueue = append(m.inputQueue, pendingInputEntry{
@@ -319,4 +327,15 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		m.resize()
 	}
 	return m, nil
+}
+
+// consumeFirstWaitFocus focuses Gate once after enter/resume when the first
+// pending input of any kind arrives. Later arrivals leave focus alone (ADR 0002).
+func (m *Model) consumeFirstWaitFocus() {
+	if !m.focusInputOnArrival {
+		return
+	}
+	m.focusInputOnArrival = false
+	m.focus = focusGate
+	m.loadActiveTextarea()
 }

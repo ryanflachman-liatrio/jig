@@ -96,12 +96,12 @@ func TestGateQueueSwitchUpdatesContextWithoutFollowing(t *testing.T) {
 	m.focus = focusGate
 
 	first := ansiStrip(m.gateOverlay())
-	for _, want := range []string{"Review required", "Step: a", "view diff"} {
+	for _, want := range []string{"[GATE] · awaiting review", "Step: a", "view diff"} {
 		if !strings.Contains(first, want) {
 			t.Fatalf("first gate missing %q:\n%s", want, first)
 		}
 	}
-	if bar := ansiStrip(m.inputBarView()); !strings.Contains(bar, "Review required") || !strings.Contains(bar, "Step: a") {
+	if bar := ansiStrip(m.inputBarView()); !strings.Contains(bar, "[GATE] · awaiting review") || !strings.Contains(bar, "Step: a") {
 		t.Fatalf("first input bar is not contextual:\n%s", bar)
 	}
 
@@ -110,12 +110,12 @@ func TestGateQueueSwitchUpdatesContextWithoutFollowing(t *testing.T) {
 		t.Fatalf("queue switch followed context: cursor=%d chatStep=%q", m.cursor, m.chatStep)
 	}
 	second := ansiStrip(m.gateOverlay())
-	for _, want := range []string{"Recovery action", "Step: b", "view transcript"} {
+	for _, want := range []string{"[GATE] · recovery", "Step: b", "view transcript"} {
 		if !strings.Contains(second, want) {
 			t.Fatalf("second gate missing %q:\n%s", want, second)
 		}
 	}
-	if bar := ansiStrip(m.inputBarView()); !strings.Contains(bar, "Recovery action") || !strings.Contains(bar, "Step: b") {
+	if bar := ansiStrip(m.inputBarView()); !strings.Contains(bar, "[GATE] · recovery") || !strings.Contains(bar, "Step: b") {
 		t.Fatalf("second input bar is not contextual:\n%s", bar)
 	}
 }
@@ -235,7 +235,7 @@ func TestRunLevelGateHasNoStepContextAction(t *testing.T) {
 	m.focus = focusGate
 
 	view := ansiStrip(m.gateOverlay())
-	for _, want := range []string{"Merge approval", "Run branch: jig/run", "Required: Merge or discard"} {
+	for _, want := range []string{"[GATE] · awaiting merge", "Run branch: jig/run", "Required: Merge or discard"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("run-level gate missing %q:\n%s", want, view)
 		}

@@ -65,7 +65,7 @@ func TestReviewWorkspaceComposerReceivesGateKeysAndIsVisible(t *testing.T) {
 	if footer := ansiStrip(m.footerView()); !strings.Contains(footer, "j/k move block") || !strings.Contains(footer, "s view") || !strings.Contains(footer, "S finish review") || strings.Contains(footer, "1-9 decision") {
 		t.Fatalf("workspace footer exposes the wrong controls: %q", footer)
 	}
-	if view := ansiStrip(m.View()); strings.Count(view, "Review required") != 1 || strings.Contains(view, "Documents\n") && strings.Contains(view, "Steps") {
+	if view := ansiStrip(m.View()); strings.Count(view, "[GATE]") != 1 || strings.Contains(view, "Documents\n") && strings.Contains(view, "Steps") {
 		t.Fatalf("workspace is still nested over the Monitor panels:\n%s", view)
 	}
 	m, _ = m.Update(key("r"))
@@ -197,7 +197,7 @@ func TestReviewWorkspaceStartsCompactAndReplacesMonitorBodyWhenOpened(t *testing
 	if !strings.Contains(view, "Scope assessment") || !strings.Contains(view, "[ PREVIEW ]") {
 		t.Fatalf("dedicated workspace did not open:\n%s", view)
 	}
-	if strings.Contains(view, "Transcript") || strings.Count(view, "Review required") != 1 {
+	if strings.Contains(view, "Transcript") || strings.Count(view, "[GATE]") != 1 {
 		t.Fatalf("workspace was layered over the Monitor instead of replacing its body:\n%s", view)
 	}
 	if width, height := lipgloss.Width(m.View()), lipgloss.Height(m.View()); width > 180 || height > 45 {

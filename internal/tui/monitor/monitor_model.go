@@ -7,6 +7,7 @@ import (
 	keybind "charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 
 	"jig/internal/engine"
@@ -682,6 +683,39 @@ func (m Model) FocusPendingInput() Model {
 	return m
 }
 
+// leaveMonitor returns to Home, or asks root to confirm when a review compose
+// buffer still has unsaved text (A6).
+func (m Model) leaveMonitor() (Model, tea.Cmd) {
+	if m.hasDirtyCompose() {
+		return m, func() tea.Msg { return RequestLeaveConfirmMsg{} }
+	}
+	return m, func() tea.Msg { return ShowHomeMsg{} }
+}
+
+// hasDirtyCompose reports an open review workspace with unsaved compose text.
+func (m Model) hasDirtyCompose() bool {
+	entry, ok := m.activeEntry()
+	if !ok || entry.workspace == nil || !m.reviewOpen {
+		return false
+	}
+	return entry.workspace.HasDirtyCompose()
+}
+
+// DiscardDirtyCompose clears an unsaved review compose buffer and closes the
+// workspace so leave-to-Home can proceed after the operator confirms.
+func (m Model) DiscardDirtyCompose() Model {
+	entry, ok := m.activeEntry()
+	if !ok || entry.workspace == nil {
+		m.reviewOpen = false
+		return m
+	}
+	ws := entry.workspace.DiscardCompose()
+	m.inputQueue[m.activeInputIdx].workspace = &ws
+	m.reviewOpen = false
+	m.refreshPanels()
+	return m
+}
+
 // HelpSections returns the sections to show for the monitor's current focus and
 // gate state for the help overlay.
 func (m Model) HelpSections() []shared.HelpSection {
@@ -734,8 +768,8 @@ func (m Model) HelpSections() []shared.HelpSection {
 		treeKey := m.keys.ToggleTree
 		treeKey.SetEnabled(!m.cursorIsFileRow())
 		bindings := []keybind.Binding{
-			stopKey, resetKey, resumeKey,
-			m.keys.StepsNav, m.keys.OpenTranscript, treeKey, m.keys.StepsLeave,
+			m.keys.OpenTranscript, stopKey, resetKey, resumeKey,
+			m.keys.StepsNav, treeKey, m.keys.StepsLeave,
 		}
 		if m.gateContext != nil {
 			contextKey := m.keys.GateContext

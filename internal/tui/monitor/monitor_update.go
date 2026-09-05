@@ -329,7 +329,7 @@ func (m Model) aliasPanelFocus(key string) focusRegion {
 
 // updateSteps handles keys when the Steps panel holds focus: j/k move the
 // selection cursor (eagerly reloading the Transcript per Resolved Decision 10),
-// space toggles the file tree expand/collapse, and esc/q leave to the runs list.
+// space toggles the file tree expand/collapse, and esc/q leave to Home.
 func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	rows := m.visibleRows()
 	switch {
@@ -370,7 +370,7 @@ func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 	case keybind.Matches(msg, m.keys.StepsLeave):
-		return m, func() tea.Msg { return ShowRunsMsg{} }
+		return m.leaveMonitor()
 
 	// ── spec 08 C4: stop/reset/resume ─────────────────────────────────────────
 	case keybind.Matches(msg, m.keys.StopStep):
@@ -506,7 +506,7 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.refreshPanels()
 		return m, nil
 	case keybind.Matches(msg, m.keys.TransLeave):
-		return m, func() tea.Msg { return ShowRunsMsg{} }
+		return m.leaveMonitor()
 	case keybind.Matches(msg, m.keys.BlockNav):
 		if m.searchQuery != "" {
 			if msg.String() == "n" {

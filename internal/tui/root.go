@@ -1,7 +1,6 @@
-// Package tui implements jig's Bubble Tea program. It opens on a workflow
-// picker that scans .agents/jig for workflow files; selecting one shows a
-// read-only view of its steps and validation status. Pressing r in the detail
-// view starts a dry run using the FakeExecutor and opens the run monitor.
+// Package tui implements jig's Bubble Tea program. It opens on Home — workflows
+// and runs side-by-side — and enters the run Monitor when a run is started or
+// opened. Detail/chart is a Home overlay, not a root screen.
 package tui
 
 import (
@@ -17,13 +16,13 @@ import (
 	"jig/internal/tui/shared"
 )
 
-// screen identifies which sub-model is currently driving the UI.
+// screen identifies which top-level surface is currently driving the UI.
+// Home owns workflows+runs (and an optional Detail overlay). Monitor is the
+// only other root surface after Phase 0.
 type screen int
 
 const (
-	screenSelector screen = iota
-	screenDetail
-	screenRuns
+	screenHome screen = iota
 	screenMonitor
 )
 
@@ -51,6 +50,12 @@ type rootModel struct {
 	runs     runs.Model
 	monitor  monitor.Model
 
+	// Home dual-pane state. showDetailOverlay layers Detail/chart over Home
+	// without demoting Home as the leave-Monitor destination.
+	homeFocus         homePane
+	showDetailOverlay bool
+	homeSelectedPath  string
+
 	ctx        context.Context
 	manager    *engine.Manager
 	liveEvents <-chan engine.Event
@@ -73,6 +78,10 @@ type rootModel struct {
 	// directory until the scheduler goroutine has stopped writing to it).
 	pendingDeletions map[string]bool
 
+	// leaveConfirm asks before abandoning a dirty review compose buffer when
+	// the operator presses a leave-Monitor chord (0.4 / A6).
+	leaveConfirm bool
+
 	width  int
 	height int
 }
@@ -86,17 +95,10 @@ type helpProvider interface {
 	capturesText() bool
 }
 
-// selectorHelpBridge adapts selector.Model to the local helpProvider interface.
-type selectorHelpBridge struct{ m selector.Model }
+type homeHelpBridge struct{ m rootModel }
 
-func (b selectorHelpBridge) helpSections() []shared.HelpSection { return b.m.HelpSections() }
-func (b selectorHelpBridge) capturesText() bool                 { return b.m.CapturesText() }
-
-// detailHelpBridge adapts detail.Model to the local helpProvider interface.
-type detailHelpBridge struct{ m detail.Model }
-
-func (b detailHelpBridge) helpSections() []shared.HelpSection { return b.m.HelpSections() }
-func (b detailHelpBridge) capturesText() bool                 { return b.m.CapturesText() }
+func (b homeHelpBridge) helpSections() []shared.HelpSection { return b.m.homeHelpSections() }
+func (b homeHelpBridge) capturesText() bool                 { return b.m.homeCapturesText() }
 
 // monitorHelpBridge adapts monitor.Model to the local helpProvider interface.
 type monitorHelpBridge struct{ m monitor.Model }
@@ -104,25 +106,13 @@ type monitorHelpBridge struct{ m monitor.Model }
 func (b monitorHelpBridge) helpSections() []shared.HelpSection { return b.m.HelpSections() }
 func (b monitorHelpBridge) capturesText() bool                 { return b.m.CapturesText() }
 
-// runsHelpBridge adapts runs.Model to the local helpProvider interface.
-type runsHelpBridge struct{ m runs.Model }
-
-func (b runsHelpBridge) helpSections() []shared.HelpSection { return b.m.HelpSections() }
-func (b runsHelpBridge) capturesText() bool                 { return b.m.CapturesText() }
-
 // activeProvider returns the help sections + text-capture state of the screen
 // currently driving the UI.
 func (m rootModel) activeProvider() helpProvider {
-	switch m.active {
-	case screenDetail:
-		return detailHelpBridge{m.detail}
-	case screenRuns:
-		return runsHelpBridge{m.runs}
-	case screenMonitor:
+	if m.active == screenMonitor {
 		return monitorHelpBridge{m.monitor}
-	default:
-		return selectorHelpBridge{m.selector}
 	}
+	return homeHelpBridge{m}
 }
 
 // New returns jig's root TUI model. mgr is the engine manager; it must be
@@ -130,9 +120,10 @@ func (m rootModel) activeProvider() helpProvider {
 func New(ctx context.Context, mgr *engine.Manager) tea.Model {
 	live, ctrl := mgr.Subscribe()
 	return rootModel{
-		active:           screenSelector,
+		active:           screenHome,
 		selector:         selector.New(),
 		runs:             runs.NewModel(),
+		homeFocus:        homeWorkflows,
 		ctx:              ctx,
 		manager:          mgr,
 		liveEvents:       live,
@@ -154,14 +145,10 @@ func (m rootModel) Init() tea.Cmd {
 func (m rootModel) View() tea.View {
 	var content string
 	switch m.active {
-	case screenDetail:
-		content = m.detail.View()
-	case screenRuns:
-		content = m.runs.View()
 	case screenMonitor:
 		content = m.monitor.View()
 	default:
-		content = m.selector.View()
+		content = m.homeView()
 	}
 	// The help overlay is a global modal: composite it over the active screen (via
 	// a lipgloss Canvas) so the screen shows through around the box, and the same
@@ -174,6 +161,10 @@ func (m rootModel) View() tea.View {
 	if m.confirmDelete {
 		body := m.pendingDeleteID + "\n\nRunning steps will be cancelled.\nAll output will be permanently deleted."
 		content = shared.RenderConfirmOverlay(content, "Delete run?", body, m.width, m.height)
+	}
+	if m.leaveConfirm {
+		content = shared.RenderConfirmOverlay(content, "Discard unsaved comment?",
+			"You have an unsaved review comment.\nLeave and discard it?", m.width, m.height)
 	}
 	// v2 declares alt-screen and the full-screen background on the View itself
 	// (the compositor paints BackgroundColor edge-to-edge, so nested styled

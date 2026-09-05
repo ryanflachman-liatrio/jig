@@ -13,9 +13,14 @@ import (
 
 func (m Model) View() string {
 	if len(m.visibleRows()) == 0 {
+		name := m.workflowName
+		if name == "" {
+			name = "this workflow"
+		}
 		return "\n  " + shared.Theme.Title.Render("No runs yet") + "\n\n" +
-			shared.Theme.Question.Render("  Press r in a workflow detail to start a run.") + "\n\n" +
-			shared.Theme.Footer.Render("  "+shared.HintString(m.keys.Back, shared.KeyQuit)) + "\n"
+			shared.Theme.Question.Render("  No runs yet for "+name+".") + "\n\n" +
+			shared.Theme.Question.Render("  Press r to start a run.") + "\n\n" +
+			shared.Theme.Footer.Render("  "+shared.HintString(m.keys.NewRun, m.keys.Back, shared.KeyQuit)) + "\n"
 	}
 
 	footer := m.footerView()
@@ -23,7 +28,11 @@ func (m Model) View() string {
 	if m.ready {
 		content = m.vp.View()
 	}
-	body := shared.Panel("Runs", content, m.width, m.height-lipgloss.Height(footer), true)
+	title := "Runs"
+	if m.workflowName != "" {
+		title = "Runs · " + m.workflowName
+	}
+	body := shared.Panel(title, content, m.width, m.height-lipgloss.Height(footer), true)
 	return body + "\n" + footer
 }
 
@@ -47,10 +56,22 @@ func (m Model) footerView() string {
 }
 
 const (
-	runIDWidth       = 22
-	runWorkflowWidth = 20
+	runIDWidth       = 8
+	runWorkflowWidth = 16
 	runStatusWidth   = 8
 )
+
+// shortRunID returns the trailing 8-character run suffix used in Home lists
+// and status chrome (G1). Full IDs remain the datastore key.
+func shortRunID(id string) string {
+	if i := strings.LastIndex(id, "-"); i >= 0 && len(id)-i-1 >= 8 {
+		return id[i+1 : i+9]
+	}
+	if len(id) <= 8 {
+		return id
+	}
+	return id[len(id)-8:]
+}
 
 // rowsBody renders one line per run with the selected row highlighted; the
 // panel wraps it and the viewport scrolls it.
@@ -67,7 +88,7 @@ func (m Model) rowsBody() string {
 
 		line := fmt.Sprintf("%s%-*s  %-*s  %-*s  %s",
 			cursor,
-			runIDWidth, truncate(row.id, runIDWidth),
+			runIDWidth, shortRunID(row.id),
 			runWorkflowWidth, truncate(row.workflow, runWorkflowWidth),
 			runStatusWidth, status,
 			progress,

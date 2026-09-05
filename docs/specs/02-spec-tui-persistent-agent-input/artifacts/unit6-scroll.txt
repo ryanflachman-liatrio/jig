@@ -9,7 +9,7 @@
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
-╭─ Answer required ────────────────────────────────────────────────────────────╮
+╭─ [GATE] · awaiting answer ───────────────────────────────────────────────────╮
 │ [1 / 1]  Step: a                                                             │
 │   Required: Choose or enter an answer  ·  [ctrl+o] view transcript           │
 │ Pick one                                                                     │
@@ -20,5 +20,5 @@
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-  Answer required  ·  Step: a  ·  1 pending  ·  esc to blur
+  [GATE] · awaiting answer  ·  Step: a  ·  1 pending  ·  esc to blur
   awaiting answer  ·  enter select  •  ↑/↓/j/k navigate  •  d decline  •  ? more
