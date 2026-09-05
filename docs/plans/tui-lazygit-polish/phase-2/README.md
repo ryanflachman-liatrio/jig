@@ -2,7 +2,7 @@
 
 Unify review chrome, quiet titles, progressive disclosure, and dogfood.
 
-**Status:** Implemented (2026-09-05) — see [proofs/](proofs/).
+**Status:** Implemented (2026-09-05) — see [proofs/](proofs/) and [screenshots/](screenshots/).
 
 | Item | Title | Visual | File |
 |---|---|---|---|
