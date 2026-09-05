@@ -96,7 +96,7 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.handles[msg.runID] = msg.run
 		m.runs = m.runs.MarkLive(msg.runID)
-		m.monitor = monitor.New(msg.runID)
+		m.monitor = monitor.New(msg.runID).WithPrefs(m.manager.Root())
 		m.monitor.RunDir = m.manager.RunDir(msg.runID)
 		m.monitor = m.monitor.WithJournal(msg.events)
 		m.monitor.SetRun(msg.run)
@@ -290,10 +290,11 @@ func (m rootModel) handleGlobalKey(msg tea.KeyPressMsg) (rootModel, tea.Cmd, boo
 }
 
 // paletteCommands builds the currently-enabled action catalog from the active
-// screen's help sections (same enablement SOT as the footer).
+// screen's palette sections (full catalog even when Monitor simple mode hides
+// advanced bindings from the footer/help overlay).
 func (m rootModel) paletteCommands() []palette.Command {
 	var out []palette.Command
-	for _, sec := range m.activeProvider().helpSections() {
+	for _, sec := range m.activeProvider().paletteSections() {
 		out = append(out, palette.FromBindings(sec.Title, sec.Bindings)...)
 	}
 	return out
@@ -368,7 +369,7 @@ func (m rootModel) updateEngineEvent(msg monitor.EngineEventMsg) (tea.Model, tea
 // already reflected.
 func (m rootModel) openMonitor(runID string) (tea.Model, tea.Cmd) {
 	if m.monitor.RunID != runID {
-		m.monitor = monitor.New(runID)
+		m.monitor = monitor.New(runID).WithPrefs(m.manager.Root())
 		// RunDir lets the monitor read per-step transcripts from disk. Set it
 		// before WithSnapshot so it preserves it.
 		m.monitor.RunDir = m.manager.RunDir(runID)
@@ -422,7 +423,7 @@ func (m rootModel) startRun(wf *workflow.Workflow) (tea.Model, tea.Cmd) {
 	m.handles[run.ID] = run
 	m.runs = m.runs.WithWorkflow(wf)
 	// Navigate straight to the monitor so prompts and review gates are visible immediately.
-	m.monitor = monitor.New(run.ID)
+	m.monitor = monitor.New(run.ID).WithPrefs(m.manager.Root())
 	m.monitor.RunDir = m.manager.RunDir(run.ID)
 	m.monitor.SetRun(run)
 	m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})

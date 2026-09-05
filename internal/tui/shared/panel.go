@@ -146,6 +146,12 @@ func panelTitleWidth(width int) int {
 	return max(width-5, 0)
 }
 
+// PanelTitleBudget is the visible cells available for a panel title at the
+// given outer panel width (border/decoration reserved).
+func PanelTitleBudget(width int) int {
+	return panelTitleWidth(width)
+}
+
 // PanelTopEdge builds the titled top line `╭─ Title ─────╮` at exactly width
 // visible cells, coloring the corners/dashes with the border's foreground so it
 // joins seamlessly with the box body rendered by the same border style.

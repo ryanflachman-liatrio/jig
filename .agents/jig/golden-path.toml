@@ -1,0 +1,27 @@
+[workflow]
+name        = "golden-path"
+version     = "1"
+description = "Deterministic cold-start → gate demo for TUI Lazygit polish (no live agents)."
+
+# Phase 2.4 / F4: command + review only. Operators dogfood Home → Monitor → Gate
+# → Review → Home without waiting on a model turn.
+
+[[step]]
+id        = "seed"
+type      = "command"
+run       = "printf 'golden-path seed ok\\n'"
+isolation = "none"
+
+[[step]]
+id          = "gate"
+type        = "review"
+depends_on  = ["seed"]
+output_type = { enum = ["accept", "revise"] }
+
+[[step.review]]
+source = "../../docs/ARCHITECTURE.md"
+label  = "Architecture"
+
+[[step.review]]
+source = "../../docs/plans/tui-lazygit-polish/TARGET-COMPOSITION.md"
+label  = "Target composition"

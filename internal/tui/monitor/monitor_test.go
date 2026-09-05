@@ -1960,10 +1960,14 @@ func TestMonitorTwoPanel(t *testing.T) {
 
 	top := firstRow(view)
 	plainTop := ansiStrip(top)
-	for _, want := range []string{"run-1 · demo › [STEPS]", "run-1 · demo › a › Transcript"} {
+	for _, want := range []string{"run-1 › [STEPS]", "a › Transcript"} {
 		if !strings.Contains(plainTop, want) {
 			t.Fatalf("top edge missing hierarchy %q:\n%s", want, plainTop)
 		}
+	}
+	// Workflow name lives on the status line (2.2), not the panel title.
+	if strings.Contains(plainTop, "demo ›") {
+		t.Fatalf("Steps/Transcript titles should not embed workflow:\n%s", plainTop)
 	}
 
 	// Default focus is Steps: the Steps (left) title should carry the primary
@@ -2081,10 +2085,15 @@ func TestMonitorNarrowTitleKeepsRunAndCurrentContent(t *testing.T) {
 	m.focus = focusTranscript
 
 	title := ansiStrip(firstRow(m.View()))
-	for _, want := range []string{"a1b2c3d4", "output.json"} {
+	// 2.2: content panel prefers leaf identity; run id lives on the status line.
+	for _, want := range []string{"output.json"} {
 		if !strings.Contains(title, want) {
 			t.Fatalf("narrow title missing %q:\n%s", want, title)
 		}
+	}
+	status := ansiStrip(m.statusLineView())
+	if !strings.Contains(status, "a1b2c3d4") {
+		t.Fatalf("status missing short run id:\n%s", status)
 	}
 	if lipgloss.Width(firstRow(m.View())) != m.width {
 		t.Fatalf("narrow title row width = %d, want %d", lipgloss.Width(firstRow(m.View())), m.width)
@@ -3264,8 +3273,18 @@ func TestMonitorHelpSections(t *testing.T) {
 			t.Errorf("monitor help missing section %q; got %v", want, titles)
 		}
 	}
+	modeOK := false
+	for title := range titles {
+		if strings.HasPrefix(title, "Mode ·") {
+			modeOK = true
+		}
+	}
+	if !modeOK {
+		t.Errorf("monitor help missing Mode section; got %v", titles)
+	}
 
 	m.focus = focusTranscript
+	m.simpleMode = false // assert full advanced catalog
 	var transcriptKeys []string
 	for _, sec := range m.HelpSections() {
 		if sec.Title != "Transcript" {
@@ -3328,6 +3347,7 @@ func TestMonitorCompactHelpIsContextualAndAtomic(t *testing.T) {
 
 	transcript := newMonitorWithSteps(t)
 	transcript.focus = focusTranscript
+	transcript.simpleMode = false
 
 	tests := []struct {
 		name    string
@@ -3344,6 +3364,12 @@ func TestMonitorCompactHelpIsContextualAndAtomic(t *testing.T) {
 			name:  "transcript",
 			model: transcript,
 			want:  []string{"j/k scroll", "f/G follow", "n/N block", "? more"},
+		},
+		{
+			name:    "transcript simple",
+			model:   func() Model { m := newMonitorWithSteps(t); m.focus = focusTranscript; m.simpleMode = true; return m }(),
+			want:    []string{"j/k scroll", "f/G follow", "simple"},
+			notWant: []string{"n/N block", "/ search", "F filter"},
 		},
 		{
 			name:    "file row",

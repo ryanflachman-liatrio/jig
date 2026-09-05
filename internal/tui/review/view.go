@@ -19,22 +19,39 @@ type sourceViewRow struct {
 }
 
 func (m *Model) View() string {
-	return m.view(true)
+	return m.view(true, true)
 }
 
-// EmbeddedView omits the workspace footer when the Monitor already renders
-// the same contextual bindings in its global footer.
+// EmbeddedView omits the workspace header and footer when the Monitor already
+// owns chrome (panel title + CompactHint footer).
 func (m *Model) EmbeddedView() string {
-	return m.view(false)
+	return m.view(false, false)
 }
 
-func (m *Model) view(withFooter bool) string {
+// TitleSegments are the identity crumbs after the [REVIEW] badge: active doc,
+// progress, and comment count (joined with · by the Monitor panel title).
+func (m Model) TitleSegments() []string {
+	parts := make([]string, 0, 3)
+	if doc := m.ActiveDocument(); doc.Label != "" {
+		parts = append(parts, doc.Label)
+	} else if doc.ID != "" {
+		parts = append(parts, doc.ID)
+	}
+	if n := len(m.docs); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d/%d", m.reviewedDocumentCount(), n))
+	}
+	if c := len(m.comments); c > 0 {
+		parts = append(parts, fmt.Sprintf("%d comments", c))
+	}
+	if m.error != "" {
+		parts = append(parts, m.error)
+	}
+	return parts
+}
+
+func (m *Model) view(withHeader, withFooter bool) string {
 	if len(m.docs) == 0 {
 		return "No documents to review"
-	}
-	header := fmt.Sprintf("Review: %s · %d / %d reviewed · %d comments", m.session.StepID, m.reviewedDocumentCount(), len(m.docs), len(m.comments))
-	if m.error != "" {
-		header += " · " + m.error
 	}
 	left := m.documentList()
 	right := m.documentView()
@@ -45,11 +62,19 @@ func (m *Model) view(withFooter bool) string {
 	if withFooter {
 		footer = "\n" + m.footer()
 	}
-	var base string
+	var body string
 	if m.width > 0 && m.width < 90 {
-		base = strings.Join([]string{header, left, right}, "\n") + footer
+		body = strings.Join([]string{left, right}, "\n")
 	} else {
-		base = lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right) + footer
+		body = lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right)
+	}
+	base := body + footer
+	if withHeader {
+		header := fmt.Sprintf("Review: %s · %d / %d reviewed · %d comments", m.session.StepID, m.reviewedDocumentCount(), len(m.docs), len(m.comments))
+		if m.error != "" {
+			header += " · " + m.error
+		}
+		base = header + "\n" + base
 	}
 	if m.mode == ModeComposeComment || m.mode == ModeEditComment {
 		return m.commentOverlay(base)

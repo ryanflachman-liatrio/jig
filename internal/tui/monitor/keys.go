@@ -74,7 +74,8 @@ type monitorKeys struct {
 	ResetStep  keybind.Binding // matched (r, steps panel: reset to a quiescent step)
 	ResumeStep keybind.Binding // matched (ctrl+r, steps panel: resume a stopped step)
 
-	ToggleHelp keybind.Binding // matched (ctrl+\: open/close the help agent modal)
+	ToggleHelp   keybind.Binding // matched (ctrl+\: open/close the help agent modal)
+	ToggleSimple keybind.Binding // matched (ctrl+shift+a: simple/advanced chrome)
 }
 
 func defaultMonitorKeys() monitorKeys {
@@ -101,7 +102,7 @@ func defaultMonitorKeys() monitorKeys {
 		ExpandAll:    keybind.NewBinding(keybind.WithKeys("o"), keybind.WithHelp("o", "all")),
 		GotoTop:      keybind.NewBinding(keybind.WithKeys("g"), keybind.WithHelp("gg", "top")),
 		Follow:       keybind.NewBinding(keybind.WithKeys("f", "G"), keybind.WithHelp("f/G", "follow")),
-		Search:       keybind.NewBinding(keybind.WithKeys("/"), keybind.WithHelp("/", "search")),
+		Search:       keybind.NewBinding(keybind.WithKeys("/"), keybind.WithHelp("/", "search transcript")),
 		Filters:      keybind.NewBinding(keybind.WithKeys("F"), keybind.WithHelp("F", "filters")),
 		ClearView:    keybind.NewBinding(keybind.WithKeys("c"), keybind.WithHelp("c", "clear")),
 		PageOlder:    keybind.NewBinding(keybind.WithKeys("["), keybind.WithHelp("[", "older")),
@@ -133,6 +134,7 @@ func defaultMonitorKeys() monitorKeys {
 		ResetStep:  keybind.NewBinding(keybind.WithKeys("r"), keybind.WithHelp("r", "reset")),
 		ResumeStep: keybind.NewBinding(keybind.WithKeys("ctrl+r"), keybind.WithHelp("ctrl+r", "resume")),
 
-		ToggleHelp: keybind.NewBinding(keybind.WithKeys("ctrl+\\"), keybind.WithHelp("ctrl+\\", "help agent")),
+		ToggleHelp:   keybind.NewBinding(keybind.WithKeys("ctrl+\\"), keybind.WithHelp("ctrl+\\", "help agent")),
+		ToggleSimple: keybind.NewBinding(keybind.WithKeys("ctrl+shift+a"), keybind.WithHelp("ctrl+shift+a", "simple/advanced")),
 	}
 }

@@ -142,6 +142,11 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if keybind.Matches(msg, m.keys.ToggleHelp) {
 			return m.toggleHelpChat()
 		}
+		// ctrl+shift+a toggles simple/advanced chrome (G6); keys still work either way.
+		if !m.CapturesText() && keybind.Matches(msg, m.keys.ToggleSimple) {
+			m = m.ToggleSimpleMode()
+			return m, nil
+		}
 		// When the help modal is open and captures text, route all key input to it.
 		if m.helpOpen {
 			if keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("esc"))) &&

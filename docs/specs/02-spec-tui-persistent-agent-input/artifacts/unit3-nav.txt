@@ -1,4 +1,4 @@
-╭─ run-1 · demo › Steps ───────────────╮╭─ run-1 · demo › a › Transcript ──────────────────────────────────────────────╮
+╭─ run-1 › Steps ──────────────────────╮╭─ a › Transcript › LIVE ──────────────────────────────────────────────────────╮
 │ ▌  ○  a   pending                    ││   ○  pending                                                                 │
 │      —                               ││                                                                              │
 │    ○  b   pending                    ││                                                                              │
@@ -27,11 +27,11 @@
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
   [GATE] · awaiting agent input (2 pending)  ·  Step: a  ·  2 pending  ·  esc to blur
  run-1 · demo · a · LIVE
-  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ctrl+o view context  •  F1 more
+  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ctrl+o view context  •  F1 more  ·  simple
 
 --- frame ---
 
-╭─ run-1 · demo › Steps ───────────────╮╭─ run-1 · demo › a › Transcript ──────────────────────────────────────────────╮
+╭─ run-1 › Steps ──────────────────────╮╭─ a › Transcript › LIVE ──────────────────────────────────────────────────────╮
 │ ▌  ○  a   pending                    ││   ○  pending                                                                 │
 │      —                               ││                                                                              │
 │    ○  b   pending                    ││                                                                              │
@@ -60,11 +60,11 @@
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
   [GATE] · awaiting agent input (2 pending)  ·  Step: b  ·  2 pending  ·  esc to blur
  run-1 · demo · b · LIVE
-  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ctrl+o view context  •  F1 more
+  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ctrl+o view context  •  F1 more  ·  simple
 
 --- frame ---
 
-╭─ run-1 · demo › Steps ───────────────╮╭─ run-1 · demo › a › Transcript ──────────────────────────────────────────────╮
+╭─ run-1 › Steps ──────────────────────╮╭─ a › Transcript › LIVE ──────────────────────────────────────────────────────╮
 │ ▌  ○  a   pending                    ││   ○  pending                                                                 │
 │      —                               ││                                                                              │
 │    ○  b   pending                    ││                                                                              │
@@ -93,4 +93,4 @@
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
   [GATE] · awaiting agent input (2 pending)  ·  Step: a  ·  2 pending  ·  esc to blur
  run-1 · demo · a · LIVE
-  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ctrl+o view context  •  F1 more
+  awaiting agent input (2 pending)  ·  enter submit  •  alt+enter newline  •  ctrl+o view context  •  F1 more  ·  simple

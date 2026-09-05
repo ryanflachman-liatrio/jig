@@ -1,0 +1,24 @@
+╭─ Workflows ──────────────────────────╮╭─ Runs · feature ─────────────────────────────────────────╮
+│                                      ││   No runs yet for feature.                               │
+│ │ feature                            ││                                                          │
+│ │ feature demo                       ││   Press r to start a run.                                │
+│                                      ││                                                          │
+│   golden-path                        ││                                                          │
+│   golden-path demo                   ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+│                                      ││                                                          │
+╰──────────────────────────────────────╯╰──────────────────────────────────────────────────────────╯
+  j/k move  •  enter focus runs  •  r new run  •  d detail  •  / filter  •  tab pane  •  ? more

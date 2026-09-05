@@ -1,11 +1,11 @@
-╭─ cd1234ef › [STEPS] ──────────╮╭─ plan › Transcript › LIVE ──────────────────────────────────────╮
-│ ▌  ✓  plan       succeeded    ││   ✓  succeeded                                                  │
-│      12.4k tok · $0.0800 · —  ││                                                                 │
-│    ●  implement  running      ││                                                                 │
-│      0s                       ││   Transcript unavailable                                        │
-│    ○  review     pending      ││                                                                 │
-│      —                        ││   Persistence is off for this run — nothing was captured.       │
-│   Total  12.4k tok  $0.0800   ││                                                                 │
+╭─ cd1234ef › [STEPS] ──────────╮╭─ seed › Transcript › LIVE ──────────────────────────────────────╮
+│ ▌  ●  seed  running           ││   ●  running                                                    │
+│      1.2k tok · $0.0200 · 0s  ││                                                                 │
+│    ○  gate  pending           ││                                                                 │
+│      —                        ││   Transcript unavailable                                        │
+│   Total  1.2k tok  $0.0200    ││                                                                 │
+│                               ││   Persistence is off for this run — nothing was captured.       │
+│                               ││                                                                 │
 │                               ││                                                                 │
 │                               ││                                                                 │
 │                               ││                                                                 │
@@ -23,6 +23,6 @@
 │                               ││                                                                 │
 │                               ││                                                                 │
 ╰───────────────────────────────╯╰─────────────────────────────────────────────────────────────────╯
-  Human actions  ·  no pending actions                                                              
- cd1234ef · feature · plan · 12.4k tok · $0.0800 · LIVE                                             
-  running  ·  enter transcript  •  j/k select  •  space expand/collapse  •  ? more  ·  simple       
+  GATE · needs input  ·  Step: gate  ·  1 pending  ·  tab to open                                   
+ cd1234ef · golden-path · gate · 1.2k tok · $0.0200 · LIVE                                          
+  awaiting review  ·  tab gate  •  enter transcript  •  j/k select  •  ? more  ·  simple            

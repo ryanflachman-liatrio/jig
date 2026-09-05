@@ -1,4 +1,4 @@
-╭─ run-1 · demo › Steps ───────╮╭─ run-1 · demo › a › Review diff ─────────────╮
+╭─ run-1 › Steps ──────────────╮╭─ a › Review diff ────────────────────────────╮
 │ ▌  ○  a   pending            ││   ○  pending                                 │
 │      —                       ││                                              │
 │    ○  b   pending            ││   ── diff ─────────────────────────────      │
@@ -21,4 +21,4 @@
 ╰──────────────────────────────────────────────────────────────────────────────╯
   [GATE] · awaiting review  ·  Step: a  ·  1 pending  ·  esc to blur
  run-1 · demo · a
-  awaiting review  ·  1-9 decision  •  ctrl+o view context  •  ? more
+  awaiting review  ·  1-9 decision  •  ctrl+o view context  •  ? more  ·  simple

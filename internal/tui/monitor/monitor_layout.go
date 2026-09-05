@@ -54,9 +54,48 @@ func (m Model) verticalLayout() verticalLayout {
 	}
 }
 
-func (m Model) reviewWorkspaceBodyHeight() int {
+// reviewEmbedMinWidth is the terminal width at which Steps stay visible beside
+// an open review workspace (E3). Below this, review is full-width.
+const reviewEmbedMinWidth = 160
+
+func (m Model) reviewEmbedWide() bool {
+	return m.width >= reviewEmbedMinWidth
+}
+
+// reviewPanelOuter returns the outer width/height of the Monitor panel that
+// hosts EmbeddedView (transcript slot when wide; full width when narrow).
+func (m Model) reviewPanelOuter() (width, height int) {
 	layout := m.verticalLayout()
-	return max(layout.panelH+layout.securityH, 1)
+	height = max(layout.panelH, 1)
+	if m.reviewEmbedWide() {
+		_, transcriptW, _ := panelSplit(m.width)
+		return transcriptW, height
+	}
+	return m.width, height
+}
+
+// reviewWorkspaceInnerSize is the content box inside the Monitor review panel
+// chrome — what WindowSizeMsg should hand the workspace.
+func (m Model) reviewWorkspaceInnerSize() (width, height int) {
+	outerW, outerH := m.reviewPanelOuter()
+	hFrame, vFrame := shared.PanelFrame()
+	return max(outerW-hFrame, 1), max(outerH-vFrame, 1)
+}
+
+func (m Model) reviewWorkspaceBodyHeight() int {
+	_, h := m.reviewWorkspaceInnerSize()
+	return h
+}
+
+func (m *Model) resizeReviewWorkspaces() {
+	w, h := m.reviewWorkspaceInnerSize()
+	for i := range m.inputQueue {
+		if m.inputQueue[i].workspace == nil {
+			continue
+		}
+		workspace, _ := m.inputQueue[i].workspace.Update(tea.WindowSizeMsg{Width: w, Height: h})
+		m.inputQueue[i].workspace = &workspace
+	}
 }
 
 // panelSplit computes the two panels' outer widths for the given total width per
@@ -131,11 +170,8 @@ func (m *Model) resize() {
 	if m.searchOpen {
 		m.searchInput.SetWidth(max(1, m.transcriptInnerW-6))
 	}
+	m.resizeReviewWorkspaces()
 	for i := range m.inputQueue {
-		if m.inputQueue[i].workspace != nil {
-			workspace, _ := m.inputQueue[i].workspace.Update(tea.WindowSizeMsg{Width: m.width, Height: m.reviewWorkspaceBodyHeight()})
-			m.inputQueue[i].workspace = &workspace
-		}
 		if m.inputQueue[i].kind == inputKindQuestion {
 			m.inputQueue[i].question = m.inputQueue[i].question.Resize(
 				m.gateInnerWidth(),

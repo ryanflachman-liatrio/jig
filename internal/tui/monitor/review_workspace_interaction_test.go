@@ -61,12 +61,28 @@ func monitorWithDiffReviewWorkspace(t *testing.T) Model {
 
 func TestReviewWorkspaceComposerReceivesGateKeysAndIsVisible(t *testing.T) {
 	m := monitorWithReviewWorkspace(t)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	m, _ = m.Update(key("enter"))
-	if footer := ansiStrip(m.footerView()); !strings.Contains(footer, "j/k move block") || !strings.Contains(footer, "s view") || !strings.Contains(footer, "S finish review") || strings.Contains(footer, "1-9 decision") {
+	if footer := ansiStrip(m.footerView()); !strings.Contains(footer, "j/k move block") || !strings.Contains(footer, "S finish review") || strings.Contains(footer, "1-9 decision") {
 		t.Fatalf("workspace footer exposes the wrong controls: %q", footer)
 	}
-	if view := ansiStrip(m.View()); strings.Count(view, "[GATE]") != 1 || strings.Contains(view, "Documents\n") && strings.Contains(view, "Steps") {
-		t.Fatalf("workspace is still nested over the Monitor panels:\n%s", view)
+	// Full review help catalog (including s view) is in HelpSections even when
+	// CompactHint width-truncates the footer.
+	foundView := false
+	for _, b := range m.gateHelpSection().Bindings {
+		if b.Help().Key == "s" && b.Help().Desc == "view" {
+			foundView = true
+		}
+	}
+	if !foundView {
+		t.Fatal("review help missing s view binding")
+	}
+	view := ansiStrip(m.View())
+	if !strings.Contains(view, "[REVIEW]") {
+		t.Fatalf("open workspace missing [REVIEW] badge:\n%s", view)
+	}
+	if strings.Contains(view, "[GATE]") {
+		t.Fatalf("open workspace should move focus badge off [GATE]:\n%s", view)
 	}
 	m, _ = m.Update(key("r"))
 	if !m.inputQueue[0].workspace.Reviewed("scope") {
@@ -112,6 +128,7 @@ func TestReviewWorkspaceEscapeCancelsEditorBeforeBlurringGate(t *testing.T) {
 
 func TestReviewWorkspaceSummaryShowsDecisionsAndSubmissionHelp(t *testing.T) {
 	m := monitorWithReviewWorkspace(t)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	m, _ = m.Update(key("enter"))
 	m, _ = m.Update(key("S"))
 
@@ -121,11 +138,19 @@ func TestReviewWorkspaceSummaryShowsDecisionsAndSubmissionHelp(t *testing.T) {
 			t.Fatalf("review summary missing %q:\n%s", want, view)
 		}
 	}
-	footer := ansiStrip(m.footerView())
-	for _, want := range []string{"1-9 choose decision", "enter submit review"} {
-		if !strings.Contains(footer, want) {
-			t.Fatalf("review summary footer missing %q: %q", want, footer)
+	foundSubmit := false
+	for _, b := range m.gateHelpSection().Bindings {
+		help := b.Help()
+		if help.Key == "enter" && strings.Contains(help.Desc, "submit") {
+			foundSubmit = true
 		}
+	}
+	if !foundSubmit {
+		t.Fatal("review summary help missing enter submit binding")
+	}
+	footer := ansiStrip(m.footerView())
+	if !strings.Contains(footer, "1-9 choose decision") {
+		t.Fatalf("review summary footer missing decision binding: %q", footer)
 	}
 }
 
@@ -184,7 +209,7 @@ func TestReviewWorkspaceKeepsGateOpenUntilEngineAcceptsSubmission(t *testing.T) 
 	}
 }
 
-func TestReviewWorkspaceStartsCompactAndReplacesMonitorBodyWhenOpened(t *testing.T) {
+func TestReviewWorkspaceStartsCompactAndEmbedsInMonitor(t *testing.T) {
 	m := monitorWithReviewWorkspace(t)
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 180, Height: 45})
 	compact := ansiStrip(m.gateOverlay())
@@ -192,16 +217,48 @@ func TestReviewWorkspaceStartsCompactAndReplacesMonitorBodyWhenOpened(t *testing
 		t.Fatalf("review gate is not compact before opening:\n%s", compact)
 	}
 
+	beforeBarH := lipgloss.Height(m.inputBarView())
 	m, _ = m.Update(key("enter"))
 	view := ansiStrip(m.View())
 	if !strings.Contains(view, "Scope assessment") || !strings.Contains(view, "[ PREVIEW ]") {
 		t.Fatalf("dedicated workspace did not open:\n%s", view)
 	}
-	if strings.Contains(view, "Transcript") || strings.Count(view, "[GATE]") != 1 {
-		t.Fatalf("workspace was layered over the Monitor instead of replacing its body:\n%s", view)
+	if !strings.Contains(view, "[REVIEW]") {
+		t.Fatalf("wide embed missing [REVIEW] badge:\n%s", view)
+	}
+	if !strings.Contains(view, "Steps") {
+		t.Fatalf("wide embed (≥160) should keep Steps visible:\n%s", view)
+	}
+	if strings.Contains(view, "[TRANSCRIPT]") || strings.Contains(view, "› Transcript") {
+		t.Fatalf("open review should replace transcript slot, not keep Transcript chrome:\n%s", view)
+	}
+	if afterBarH := lipgloss.Height(m.inputBarView()); afterBarH != beforeBarH {
+		t.Fatalf("gate bar height changed when opening review: before=%d after=%d", beforeBarH, afterBarH)
+	}
+	if bar := ansiStrip(m.inputBarView()); !strings.Contains(bar, "workspace open") || strings.Contains(bar, "[GATE]") {
+		t.Fatalf("open-review gate bar chrome wrong:\n%s", bar)
 	}
 	if width, height := lipgloss.Width(m.View()), lipgloss.Height(m.View()); width > 180 || height > 45 {
 		t.Fatalf("workspace exceeds terminal: got %dx%d, max 180x45", width, height)
+	}
+
+	// Narrow: full-width review, Steps hidden until Esc.
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	narrow := ansiStrip(m.View())
+	if !strings.Contains(narrow, "[REVIEW]") {
+		t.Fatalf("narrow review missing [REVIEW]:\n%s", narrow)
+	}
+	// Steps panel title crumb should not appear as a second bordered panel.
+	if strings.Contains(narrow, "› Steps") || strings.Contains(narrow, "[STEPS]") {
+		t.Fatalf("narrow (<160) review should hide Steps panel:\n%s", narrow)
+	}
+	m, _ = m.Update(key("esc"))
+	if m.reviewOpen {
+		t.Fatal("esc should close review back to gate")
+	}
+	restored := ansiStrip(m.View())
+	if !strings.Contains(restored, "Steps") {
+		t.Fatalf("closing narrow review should restore Steps:\n%s", restored)
 	}
 }
 

@@ -1,4 +1,4 @@
-╭─ cd1234ef · feature › Steps ──╮╭─ cd1234ef · feature › plan › Transcript ────────────────────────╮
+╭─ cd1234ef › Steps ────────────╮╭─ plan › Transcript › LIVE ──────────────────────────────────────╮
 │ ▌  ✓  plan       succeeded    ││   ✓  succeeded                                                  │
 │      12.4k tok · $0.0800 · —  ││                                                                 │
 │    ●  implement  running      ││                                                                 │
@@ -25,4 +25,4 @@
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
   [GATE] · awaiting review  ·  Step: review  ·  1 pending  ·  esc to blur
  cd1234ef · feature · review · 12.4k tok · $0.0800 · LIVE
-  awaiting review  ·  1-9 decision  •  ctrl+o view context  •  esc blur  •  ? more
+  awaiting review  ·  1-9 decision  •  ctrl+o view context  •  esc blur  •  ? more  ·  simple
