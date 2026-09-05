@@ -102,7 +102,7 @@ func defaultMonitorKeys() monitorKeys {
 		ExpandAll:    keybind.NewBinding(keybind.WithKeys("o"), keybind.WithHelp("o", "all")),
 		GotoTop:      keybind.NewBinding(keybind.WithKeys("g"), keybind.WithHelp("gg", "top")),
 		Follow:       keybind.NewBinding(keybind.WithKeys("f", "G"), keybind.WithHelp("f/G", "follow")),
-		Search:       keybind.NewBinding(keybind.WithKeys("/"), keybind.WithHelp("/", "search")),
+		Search:       keybind.NewBinding(keybind.WithKeys("/"), keybind.WithHelp("/", "search transcript")),
 		Filters:      keybind.NewBinding(keybind.WithKeys("F"), keybind.WithHelp("F", "filters")),
 		ClearView:    keybind.NewBinding(keybind.WithKeys("c"), keybind.WithHelp("c", "clear")),
 		PageOlder:    keybind.NewBinding(keybind.WithKeys("["), keybind.WithHelp("[", "older")),

@@ -1,0 +1,28 @@
+╭─ cd1234ef › Steps ────────────╮╭─ seed › [TRANSCRIPT] › LIVE ────────────────────────────────────╮
+│ ▌  ●  seed  running           ││   ●  running                                                    │
+│      1.2k tok · $0.0200 · 0s  ││                                                                 │
+│    ○  gate  pending           ││                                                                 │
+│      —                        ││   Transcript unavailable                                        │
+│   Total  1.2k tok  $0.0200    ││                                                                 │
+│                               ││   Persistence is off for this run — nothing was captured.       │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+╰───────────────────────────────╯╰─────────────────────────────────────────────────────────────────╯
+  Human actions  ·  no pending actions                                                              
+ cd1234ef · golden-path · seed · 1.2k tok · $0.0200 · LIVE                                          
+  running  ·  j/k scroll 2  •  f/G follow  •  enter expand  •  J/K scroll 10  •  ? more  ·  simple  

@@ -66,11 +66,12 @@ func TestUnseenCountOnStatusNotTitle(t *testing.T) {
 	m.chatSeenSeq = 0
 	m.msgCount["a"] = 3
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	if got := m.unseenChatEntries(); got != 3 {
+		t.Fatalf("unseenChatEntries = %d, want 3", got)
+	}
 	status := ansiStrip(m.statusLineView())
-	if !strings.Contains(status, "3 new") && !strings.Contains(status, "new") {
-		// unseenChatEntries may be 0 if msgCount/chatSeenSeq interaction differs;
-		// at least confirm title has no "new".
-		t.Logf("status=%q", status)
+	if !strings.Contains(status, "3 new") {
+		t.Fatalf("status missing unseen count:\n%s", status)
 	}
 	for _, p := range m.transcriptPanelTitleParts() {
 		if strings.Contains(p, "new") {
@@ -91,7 +92,7 @@ func TestSimpleModeFiltersFooterKeepsPalette(t *testing.T) {
 		// CompactHint may omit some entirely; assert known advanced help keys absent.
 		_ = bad
 	}
-	if strings.Contains(footer, "/ search") || strings.Contains(footer, "F filter") {
+	if strings.Contains(footer, "/ search") || strings.Contains(footer, "F filter") || strings.Contains(footer, "search transcript") {
 		t.Fatalf("simple footer still shows search/filters: %q", footer)
 	}
 	if !strings.Contains(footer, "simple") {
@@ -118,13 +119,14 @@ func TestSimpleModeFiltersFooterKeepsPalette(t *testing.T) {
 			continue
 		}
 		for _, b := range sec.Bindings {
-			if b.Help().Key == "/" {
+			h := b.Help()
+			if h.Key == "/" && strings.Contains(h.Desc, "search") {
 				foundSearch = true
 			}
 		}
 	}
 	if !foundSearch {
-		t.Fatal("PaletteSections should still list / search in simple mode")
+		t.Fatal("PaletteSections should still list / search transcript in simple mode")
 	}
 
 	// Help overlay states which mode is active.

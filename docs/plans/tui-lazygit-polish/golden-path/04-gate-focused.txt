@@ -1,0 +1,28 @@
+╭─ cd1234ef › Steps ────────────╮╭─ seed › Transcript › LIVE ──────────────────────────────────────╮
+│ ▌  ●  seed  running           ││   ●  running                                                    │
+│      1.2k tok · $0.0200 · 0s  ││                                                                 │
+│    ○  gate  pending           ││                                                                 │
+│      —                        ││   Transcript unavailable                                        │
+│   Total  1.2k tok  $0.0200    ││                                                                 │
+│                               ││   Persistence is off for this run — nothing was captured.       │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+╭─ [GATE] · awaiting review ───────────────────────────────────────────────────────────────────────╮
+│ [1 / 1]  Step: gate                                                                              │
+│   Required: Review documents and submit feedback                                                 │
+│   0 / 1 documents reviewed · 0 comments                                                          │
+│                                                                                                  │
+│     [enter] open review workspace                                                                │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+  [GATE] · awaiting review  ·  Step: gate  ·  1 pending  ·  enter to open
+ cd1234ef · golden-path · gate · 1.2k tok · $0.0200 · LIVE
+  awaiting review  ·  enter open review  •  esc blur  •  ctrl+k commands  •  ? more  ·  simple
