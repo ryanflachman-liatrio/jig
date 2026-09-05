@@ -11,11 +11,14 @@ Status, focus, commands, and empty states — the “this is a real app” layer
 
 ## Exit criteria
 
-- Identity/health readable without decoding panel titles
+- Identity/cost readable on status line without decoding panel titles
 - Focus answerable without relying on color alone
-- Long-tail actions reachable via palette
+- Long-tail actions reachable via `ctrl+k` palette
 - Empty panes teach one next key
 
 ## Suggested order
 
-`1.2` + `1.4` anytime after Phase 0. `1.1` before `2.2`. `1.3` after `0.3`.
+`1.4` anytime after 0.1. `1.2` anytime after Phase 0 (pairs with 0.2). `1.1`
+after 0.3 (footer state semantics). `1.3` after 0.3 (shared enablement inventory).
+
+One item ≈ one PR.

@@ -11,12 +11,14 @@ Unify review chrome, quiet titles, progressive disclosure, and dogfood.
 
 ## Exit criteria
 
-- Review feels like Monitor, not a different product
-- Titles stay short; status line carries overflow identity
-- New operators default into a quieter key surface
-- Golden path script catches regressions
+- Review feels like Monitor on wide terminals (≥160); full-width below that
+- Titles stay short; status line carries LIVE/unseen/cost overflow
+- New operators default into simple mode (persisted in `.jig/tui.json`)
+- Deterministic golden-path script catches regressions
 
 ## Suggested order
 
-`2.1` after `0.4` + `1.2`. `2.2` after `1.1`. `2.3` after `1.3`. `2.4` last
-(or continuous after Phase 0).
+`2.1` after `0.4` + `1.2`. `2.2` after `1.1` + `1.2`. `2.3` after `0.3` + `1.3`.
+`2.4` last (or continuous after Phase 0) with a deterministic demo workflow.
+
+One item ≈ one PR.
