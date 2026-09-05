@@ -3,6 +3,7 @@ package review
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
@@ -53,6 +54,9 @@ type Model struct {
 	sources                        []sourcePresentation
 	sourceXOffsets                 []int
 	previewBlock                   int
+	// discardConfirm arms a one-shot y/n prompt when Esc would abandon dirty
+	// compose text (Phase 0.4 / A6).
+	discardConfirm bool
 }
 
 func New(session domain.Session) (Model, error) { return NewWithDraft(session, domain.Draft{}) }
@@ -157,6 +161,27 @@ func (m Model) Documents() []domain.Document {
 func (m Model) Comments() []domain.Comment { return append([]domain.Comment(nil), m.comments...) }
 func (m Model) CapturesText() bool {
 	return m.mode == ModeComposeComment || m.mode == ModeEditComment || m.mode == ModeSummary
+}
+
+// HasDirtyCompose reports unsaved text in the comment or summary editors.
+func (m Model) HasDirtyCompose() bool {
+	switch m.mode {
+	case ModeComposeComment, ModeEditComment:
+		return strings.TrimSpace(m.composer.Value()) != "" ||
+			(m.commentKind == domain.KindSuggestion && strings.TrimSpace(m.replacement.Value()) != "")
+	case ModeSummary:
+		return strings.TrimSpace(m.summary.Value()) != ""
+	default:
+		return false
+	}
+}
+
+// DiscardCompose clears compose/edit state and returns to browse without saving.
+func (m Model) DiscardCompose() Model {
+	m.mode = ModeBrowse
+	m.rebuildComposer()
+	m.discardConfirm = false
+	return m
 }
 
 func (m Model) PreviewBlock() int { return m.previewBlock }

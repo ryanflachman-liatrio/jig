@@ -1016,8 +1016,8 @@ func TestMonitorEnterAndBack(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("esc with Steps focused produced no command")
 	}
-	if _, ok := cmd().(ShowRunsMsg); !ok {
-		t.Fatalf("esc with Steps focused did not emit showRunsMsg, got %T", cmd())
+	if _, ok := cmd().(ShowHomeMsg); !ok {
+		t.Fatalf("esc with Steps focused did not emit ShowHomeMsg, got %T", cmd())
 	}
 }
 
@@ -1459,7 +1459,7 @@ func TestMonitorReviewQueued(t *testing.T) {
 	if len(m.inputQueue) == 0 {
 		t.Fatal("review event not added to input queue")
 	}
-	if !strings.Contains(m.gateOverlay(), "Review required") {
+	if !strings.Contains(m.gateOverlay(), "GATE · needs input") {
 		t.Fatalf("review gate overlay not shown:\n%s", m.gateOverlay())
 	}
 
@@ -1493,7 +1493,7 @@ func TestMonitorRecoveryGate(t *testing.T) {
 		t.Fatal("recovery event not added to input queue")
 	}
 	strip := m.gateOverlay()
-	if !strings.Contains(strip, "Recovery action") {
+	if !strings.Contains(strip, "GATE · needs input") && !strings.Contains(strip, "[GATE] · recovery") {
 		t.Fatalf("recovery gate strip not shown:\n%s", strip)
 	}
 	if !strings.Contains(strip, "[r] retry") ||
@@ -1740,7 +1740,7 @@ func TestMonitorAgentQuestionShowsPanel(t *testing.T) {
 	}
 
 	body := m.gateOverlay()
-	for _, want := range []string{"Answer required", "Which format should we use?", "[Format]", "JSON", "Text", "structured output"} {
+	for _, want := range []string{"GATE · needs input", "Which format should we use?", "[Format]", "JSON", "Text", "structured output"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("question body missing %q:\n%s", want, body)
 		}
@@ -2698,7 +2698,7 @@ func TestMonitorIntegrationConflictGate(t *testing.T) {
 		t.Fatal("integration conflict event not added to input queue")
 	}
 	strip := m.gateOverlay()
-	if !strings.Contains(strip, "Conflict resolution") {
+	if !strings.Contains(strip, "GATE · needs input") && !strings.Contains(strip, "[GATE] · conflict") {
 		t.Fatalf("integration gate strip not shown:\n%s", strip)
 	}
 	if !strings.Contains(strip, "shared.go") {
@@ -2760,7 +2760,7 @@ func TestMonitorFinalMergeGate(t *testing.T) {
 		t.Fatal("final merge event not added to input queue")
 	}
 	strip := m.gateOverlay()
-	if !strings.Contains(strip, "Merge approval") {
+	if !strings.Contains(strip, "GATE · needs input") && !strings.Contains(strip, "[GATE] · awaiting merge") {
 		t.Fatalf("final-merge gate strip not shown:\n%s", strip)
 	}
 	if !strings.Contains(strip, "main") {

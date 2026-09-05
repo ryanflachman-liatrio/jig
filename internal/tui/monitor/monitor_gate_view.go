@@ -42,9 +42,9 @@ func (m Model) inputBarView() string {
 	}
 
 	entry, _ := m.activeEntry()
-	presentation := presentationForGate(entry)
-	label := shared.Theme.Title.Render(presentation.title)
-	subject := shared.Theme.Marker.Render(presentation.subjectLabel + ": " + presentation.subject)
+	title := m.gateChromeTitle(entry)
+	label := shared.Theme.Title.Render(title)
+	subject := shared.Theme.Marker.Render(presentationForGate(entry).subjectLabel + ": " + presentationForGate(entry).subject)
 	count := fmt.Sprintf("%d pending", len(m.inputQueue))
 	action := "tab to open"
 	if m.historical {
@@ -64,6 +64,39 @@ func (m Model) inputBarView() string {
 		shared.Theme.Chat.Hint.Render("  ·  "+action)
 }
 
+// gateChromeTitle is the panel/bar title for a pending gate (C3 / E1):
+// focused → "[GATE] · …"; blurred → "GATE · needs input" (+ queue depth).
+func (m Model) gateChromeTitle(entry *pendingInputEntry) string {
+	n := len(m.inputQueue)
+	queueSuffix := ""
+	if n > 1 {
+		queueSuffix = fmt.Sprintf(" (%d pending)", n)
+	}
+	if m.focus == focusGate {
+		status := "needs input"
+		switch {
+		case entry != nil && entry.kind == inputKindReview:
+			status = "awaiting review"
+		case entry != nil && entry.kind == inputKindQuestion:
+			status = "awaiting answer"
+		case entry != nil && entry.kind == inputKindPrompt:
+			status = "awaiting user input"
+		case entry != nil && entry.kind == inputKindRequest:
+			status = "awaiting agent input"
+		case entry != nil && entry.kind == inputKindRecovery:
+			status = "recovery"
+		case entry != nil && entry.kind == inputKindIntegrationConflict:
+			status = "conflict"
+		case entry != nil && (entry.kind == inputKindFinalMerge || entry.kind == inputKindHelpFinalMerge):
+			status = "awaiting merge"
+		case entry != nil && entry.kind == inputKindResetConfirm:
+			status = "confirm reset"
+		}
+		return "[GATE] · " + status + queueSuffix
+	}
+	return "GATE · needs input" + queueSuffix
+}
+
 // gateOverlay keeps the input controls out of vertical layout calculations, so
 // focusing a gate cannot resize or move either transcript viewport.
 func (m Model) gateOverlay() string {
@@ -76,6 +109,8 @@ func (m Model) gateOverlay() string {
 	fixedH := m.gateBodyHeight() + vFrame
 	var b strings.Builder
 	presentation := presentationForGate(entry)
+	title := m.gateChromeTitle(entry)
+	focused := m.focus == focusGate
 
 	if entry != nil {
 		n := len(m.inputQueue)
@@ -94,8 +129,8 @@ func (m Model) gateOverlay() string {
 		b.WriteString("  " + shared.Theme.Chat.Hint.Render(action) + "\n")
 		if m.historical {
 			b.WriteString("\n  This workflow is paused because its original jig scheduler is no longer live.\n")
-			b.WriteString("  Return to Runs and press R to resume it.\n")
-			return shared.Panel(presentation.title, b.String(), m.width, fixedH, true)
+			b.WriteString("  Return to Home and press R to resume it.\n")
+			return shared.Panel(title, b.String(), m.width, fixedH, focused)
 		}
 		switch entry.kind {
 		case inputKindRequest:
@@ -119,7 +154,7 @@ func (m Model) gateOverlay() string {
 		}
 	}
 
-	return shared.Panel(presentation.title, b.String(), m.width, fixedH, true)
+	return shared.Panel(title, b.String(), m.width, fixedH, focused)
 }
 
 func (m Model) renderGateRequest(b *strings.Builder, entry *pendingInputEntry) {

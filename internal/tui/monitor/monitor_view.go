@@ -165,7 +165,7 @@ func (m Model) statusLabel() string {
 	case inputKindPrompt:
 		return shared.Theme.Marker.Render("awaiting user input" + queueSuffix)
 	case inputKindReview:
-		return shared.Theme.Marker.Render("awaiting review")
+		return shared.Theme.Marker.Render("awaiting review" + queueSuffix)
 	case inputKindRecovery:
 		if entry.composing {
 			return shared.Theme.Marker.Render("composing guidance")

@@ -25,11 +25,11 @@ type monitorKeys struct {
 	StepsNav       keybind.Binding // display-only ("j/k select")
 	OpenTranscript keybind.Binding // matched (enter/l → Transcript)
 	ToggleTree     keybind.Binding // matched (space → expand/collapse file tree)
-	StepsLeave     keybind.Binding // matched (esc/q/backspace/h → runs list)
+	StepsLeave     keybind.Binding // matched (esc/q → Home)
 
 	// Transcript panel
-	TransToSteps keybind.Binding // matched (esc/h → Steps)
-	TransLeave   keybind.Binding // matched (q → runs list)
+	TransToSteps keybind.Binding // matched (esc → Steps)
+	TransLeave   keybind.Binding // matched (q → Home)
 	Scroll       keybind.Binding // matched (j/k — scroll viewport)
 	ScrollFast   keybind.Binding // matched (J/K — scroll viewport by 10 rows)
 	BlockNav     keybind.Binding // matched (n/N — next/previous collapsible block)
@@ -90,10 +90,10 @@ func defaultMonitorKeys() monitorKeys {
 		StepsNav:       keybind.NewBinding(keybind.WithKeys("j", "k"), keybind.WithHelp("j/k", "select")),
 		OpenTranscript: keybind.NewBinding(keybind.WithKeys("enter", "l"), keybind.WithHelp("enter", "transcript")),
 		ToggleTree:     keybind.NewBinding(keybind.WithKeys("space"), keybind.WithHelp("space", "expand/collapse")),
-		StepsLeave:     keybind.NewBinding(keybind.WithKeys("esc", "q", "backspace", "h"), keybind.WithHelp("esc", "runs list")),
+		StepsLeave:     keybind.NewBinding(keybind.WithKeys("esc", "q"), keybind.WithHelp("esc/q", "home")),
 
-		TransToSteps: keybind.NewBinding(keybind.WithKeys("esc", "h"), keybind.WithHelp("esc", "steps")),
-		TransLeave:   keybind.NewBinding(keybind.WithKeys("q"), keybind.WithHelp("q", "runs list")),
+		TransToSteps: keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "steps")),
+		TransLeave:   keybind.NewBinding(keybind.WithKeys("q"), keybind.WithHelp("q", "home")),
 		Scroll:       keybind.NewBinding(keybind.WithKeys("j", "k"), keybind.WithHelp("j/k", "scroll 2")),
 		ScrollFast:   keybind.NewBinding(keybind.WithKeys("J", "K"), keybind.WithHelp("J/K", "scroll 10")),
 		BlockNav:     keybind.NewBinding(keybind.WithKeys("n", "N"), keybind.WithHelp("n/N", "block")),

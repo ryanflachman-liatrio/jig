@@ -19,10 +19,64 @@ import (
 	"jig/internal/workflow"
 )
 
-// TestSelectToDetailFlow drives the root model without a terminal: discover a
-// workflow, render the picker, press Enter, and render the detail screen —
-// asserting the visible content at each step.
-func TestSelectToDetailFlow(t *testing.T) {
+// TestHomeColdStartAutoSelectsFirstWorkflow drives Home without a terminal:
+// discover workflows, assert the first is selected and its runs pane is labeled.
+func TestHomeColdStartAutoSelectsFirstWorkflow(t *testing.T) {
+	dir := t.TempDir()
+	writeWF := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name+".toml"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeWF("alpha", `
+[workflow]
+name = "alpha"
+version = "1"
+description = "first"
+[[step]]
+id = "hello"
+type = "command"
+run = "echo hi"
+`)
+	writeWF("beta", `
+[workflow]
+name = "beta"
+version = "1"
+description = "second"
+[[step]]
+id = "hello"
+type = "command"
+run = "echo hi"
+`)
+
+	exec := runner.NewFakeExecutor(nil, runner.FakeOutcome{})
+	mgr := engine.NewManager(exec, "")
+	var m tea.Model = New(context.Background(), mgr)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m, cmd := m.Update(selector.DiscoverCmd(dir)())
+	if cmd != nil {
+		m, _ = m.Update(cmd())
+	}
+
+	root := m.(rootModel)
+	path, ok := root.selector.SelectedPath()
+	if !ok || !strings.Contains(path, "alpha") {
+		t.Fatalf("expected first workflow alpha selected, path=%q ok=%v", path, ok)
+	}
+	view := m.View().Content
+	for _, want := range []string{"Workflows", "Runs", "alpha", "No runs yet"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("home view missing %q:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "Press r in a workflow detail") {
+		t.Fatalf("empty CTA still points at Detail:\n%s", view)
+	}
+}
+
+// TestHomeEnterFocusesRunsAndDOpensDetailOverlay covers G2/A2.
+func TestHomeEnterFocusesRunsAndDOpensDetailOverlay(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "mini.toml")
 	os.WriteFile(path, []byte(`
@@ -30,7 +84,6 @@ func TestSelectToDetailFlow(t *testing.T) {
 name = "mini"
 version = "1"
 description = "a tiny workflow"
-
 [[step]]
 id = "hello"
 type = "command"
@@ -40,55 +93,60 @@ run = "echo hi"
 	exec := runner.NewFakeExecutor(nil, runner.FakeOutcome{})
 	mgr := engine.NewManager(exec, "")
 	var m tea.Model = New(context.Background(), mgr)
-	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m, _ = m.Update(selector.DiscoverCmd(dir)())
-
-	if view := m.View().Content; !strings.Contains(view, "mini") {
-		t.Fatalf("selector view missing workflow name:\n%s", view)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m, cmd := m.Update(selector.DiscoverCmd(dir)())
+	if cmd != nil {
+		m, _ = m.Update(cmd())
 	}
 
-	// Enter emits a showDetailMsg via its command; run it and deliver it.
-	var cmd tea.Cmd
-	m, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if cmd == nil {
-		t.Fatal("enter produced no command")
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	root := m.(rootModel)
+	if root.homeFocus != homeRuns {
+		t.Fatalf("enter on workflow should focus Runs, got %v", root.homeFocus)
 	}
-	if _, ok := cmd().(selector.ShowDetailMsg); !ok {
-		t.Fatalf("enter did not produce selector.ShowDetailMsg, got %T", cmd())
+	if root.showDetailOverlay {
+		t.Fatal("enter must not open Detail overlay")
 	}
-	m, _ = m.Update(selector.ShowDetailMsg{Path: path})
 
-	// The detail screen loads asynchronously; deliver the load result directly.
-	m, _ = m.Update(detail.New(path).Init()())
-	view := m.View().Content
-	for _, want := range []string{"mini", "valid", "hello", "command"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("detail view missing %q:\n%s", want, view)
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab}) // back to workflows
+	m, cmd = m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
+	root = m.(rootModel)
+	if !root.showDetailOverlay {
+		t.Fatal("d on Workflows should open Detail overlay")
+	}
+	// Deliver the async workflow load into the overlay's detail model.
+	if cmd != nil {
+		if msg := cmd(); msg != nil {
+			m, _ = m.Update(msg)
 		}
 	}
+	m, _ = m.Update(detail.New(path).Init()())
+	view := m.View().Content
+	if !strings.Contains(view, "mini") || !strings.Contains(view, "hello") {
+		t.Fatalf("detail overlay missing content:\n%s", view)
+	}
 
-	// esc returns to the picker.
 	m, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEsc})
-	if cmd == nil {
-		t.Fatal("esc produced no command")
+	if cmd != nil {
+		m, _ = m.Update(cmd())
 	}
-	if _, ok := cmd().(detail.BackMsg); !ok {
-		t.Fatalf("esc did not produce detail.BackMsg, got %T", cmd())
+	root = m.(rootModel)
+	if root.showDetailOverlay {
+		t.Fatal("esc should close Detail overlay only")
 	}
-	m, _ = m.Update(detail.BackMsg{})
-	if view := m.View().Content; !strings.Contains(view, "mini") {
-		t.Fatalf("did not return to selector:\n%s", view)
+	if root.active != screenHome {
+		t.Fatalf("still on Home after closing overlay, active=%v", root.active)
 	}
 }
 
-func TestRunsScreenShowsOnlySelectedWorkflow(t *testing.T) {
+func TestHomeRunsFilterBySelectedWorkflow(t *testing.T) {
 	exec := runner.NewFakeExecutor(nil, runner.FakeOutcome{})
 	mgr := engine.NewManager(exec, "")
 	var m tea.Model = New(context.Background(), mgr)
-	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
 	for _, started := range []engine.RunStarted{
-		{RunID: "alpha-run", Workflow: "alpha", Steps: []string{"step"}},
-		{RunID: "beta-run", Workflow: "beta", Steps: []string{"step"}},
+		{RunID: "20260101-000000-alpha001", Workflow: "alpha", Steps: []string{"step"}},
+		{RunID: "20260101-000000-beta0001", Workflow: "beta", Steps: []string{"step"}},
 	} {
 		m, _ = m.Update(monitor.EngineEventMsg{Event: started})
 	}
@@ -96,11 +154,11 @@ func TestRunsScreenShowsOnlySelectedWorkflow(t *testing.T) {
 	wf := &workflow.Workflow{Meta: workflow.Meta{Name: "alpha"}}
 	m, _ = m.Update(detail.ShowRunsMsg{Workflow: "alpha", Wf: wf})
 	view := m.View().Content
-	if !strings.Contains(view, "alpha-run") {
-		t.Fatalf("runs screen missing selected workflow run:\n%s", view)
+	if !strings.Contains(view, "alpha001") {
+		t.Fatalf("home runs missing selected workflow run:\n%s", view)
 	}
-	if strings.Contains(view, "beta-run") {
-		t.Fatalf("runs screen included another workflow's run:\n%s", view)
+	if strings.Contains(view, "beta0001") {
+		t.Fatalf("home runs included another workflow's run:\n%s", view)
 	}
 }
 
@@ -127,9 +185,9 @@ run = "true"
 	}
 }
 
-// TestHelpOverlayGlobal drives the real root model: "?" opens a modal on the
-// selector, it renders the selector's sections plus Global, an unrelated key is
-// swallowed (no navigation behind it), and "?"/esc dismiss it.
+// TestHelpOverlayGlobal drives the real root model: "?" opens a modal on Home,
+// it renders Home sections plus Global, an unrelated key is swallowed, and
+// "?"/esc dismiss it.
 func TestHelpOverlayGlobal(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "mini.toml"), []byte(`
@@ -148,9 +206,11 @@ run = "echo hi"
 	mgr := engine.NewManager(exec, "")
 	var m tea.Model = New(context.Background(), mgr)
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m, _ = m.Update(selector.DiscoverCmd(dir)())
+	m, cmd := m.Update(selector.DiscoverCmd(dir)())
+	if cmd != nil {
+		m, _ = m.Update(cmd())
+	}
 
-	// "?" opens the overlay over the selector.
 	m, _ = m.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
 	view := m.View().Content
 	for _, want := range []string{"jig · help", "Workflows", "Global", "?/F1/esc close"} {
@@ -158,25 +218,20 @@ run = "echo hi"
 			t.Fatalf("help overlay missing %q:\n%s", want, view)
 		}
 	}
-	// The modal is composited over the live screen (not replacing it): the
-	// selector beneath must still show through around the centered box.
 	if !strings.Contains(view, "mini") {
-		t.Fatalf("expected the selector to show through beneath the modal:\n%s", view)
+		t.Fatalf("expected Home to show through beneath the modal:\n%s", view)
 	}
 
-	// An unrelated key is swallowed; the overlay stays up.
 	m, _ = m.Update(tea.KeyPressMsg{Code: 'j', Text: "j"})
 	if !strings.Contains(m.View().Content, "jig · help") {
 		t.Fatal("expected overlay to stay open on an unrelated key")
 	}
 
-	// "?" closes it and the selector returns.
 	m, _ = m.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
 	if v := m.View().Content; strings.Contains(v, "jig · help") || !strings.Contains(v, "mini") {
-		t.Fatalf("expected ? to close overlay and restore selector:\n%s", v)
+		t.Fatalf("expected ? to close overlay and restore Home:\n%s", v)
 	}
 
-	// The shift+/ fallback also opens it, and esc closes it.
 	m, _ = m.Update(tea.KeyPressMsg{Code: '/', Mod: tea.ModShift})
 	if !strings.Contains(m.View().Content, "jig · help") {
 		t.Fatal("expected shift+/ to open the overlay")
@@ -186,7 +241,6 @@ run = "echo hi"
 		t.Fatal("expected esc to close the overlay")
 	}
 
-	// While filtering, "?" remains text and F1 owns the global help chord.
 	m, _ = m.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
 	m, _ = m.Update(tea.KeyPressMsg{Code: '?', Text: "?"})
 	if strings.Contains(m.View().Content, "jig · help") {
@@ -207,12 +261,9 @@ run = "echo hi"
 }
 
 // TestHelpOverlayCompositesOverBase verifies renderHelpOverlay layers the modal
-// on top of the base screen rather than replacing it: base cells the box does not
-// cover survive in the output (lipgloss Canvas show-through).
+// on top of the base screen rather than replacing it.
 func TestHelpOverlayCompositesOverBase(t *testing.T) {
 	const w, h = 60, 20
-	// A base filled edge-to-edge with a distinctive rune; whatever the centered
-	// box does not cover must remain.
 	row := strings.Repeat("X", w)
 	rows := make([]string, h)
 	for i := range rows {
@@ -229,7 +280,6 @@ func TestHelpOverlayCompositesOverBase(t *testing.T) {
 	if !strings.Contains(out, "X") {
 		t.Fatalf("base did not show through the composite:\n%s", out)
 	}
-	// Top-left corner is outside the centered box, so it must still be a base cell.
 	if first := strings.SplitN(out, "\n", 2)[0]; !strings.HasPrefix(first, "X") {
 		t.Fatalf("expected base at top-left corner, got line: %q", first)
 	}
