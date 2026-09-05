@@ -263,7 +263,8 @@ func (m Model) updateGate(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		if !m.reviewOpen {
 			if keybind.Matches(msg, m.keys.ReviewOpen) {
 				m.reviewOpen = true
-				workspace, _ := entry.workspace.Update(tea.WindowSizeMsg{Width: m.width, Height: m.reviewWorkspaceBodyHeight()})
+				w, h := m.reviewWorkspaceInnerSize()
+				workspace, _ := entry.workspace.Update(tea.WindowSizeMsg{Width: w, Height: h})
 				m.inputQueue[m.activeInputIdx].workspace = &workspace
 				m.refreshPanels()
 				return m, nil

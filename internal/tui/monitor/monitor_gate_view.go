@@ -72,6 +72,11 @@ func (m Model) gateChromeTitle(entry *pendingInputEntry) string {
 	if n > 1 {
 		queueSuffix = fmt.Sprintf(" (%d pending)", n)
 	}
+	// While the review workspace owns chrome, keep a stable one-line bar with
+	// unbracketed GATE (focus badge lives on the [REVIEW] panel — E2 / 2.1).
+	if m.reviewOpen {
+		return "GATE · awaiting review · workspace open" + queueSuffix
+	}
 	if m.focus == focusGate {
 		status := "needs input"
 		switch {

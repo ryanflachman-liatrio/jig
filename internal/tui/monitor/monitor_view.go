@@ -199,15 +199,31 @@ func (m Model) hintLabel(width int) string {
 
 func (m Model) footerView() string {
 	status := m.statusLabel()
+	modeTag := "simple"
+	if !m.simpleMode {
+		modeTag = "advanced"
+	}
 	prefix := "  " + status + "  ·  "
-	hint := m.hintLabel(max(m.width-lipgloss.Width(prefix), 0))
+	suffix := "  ·  " + modeTag
+	hintBudget := max(m.width-lipgloss.Width(prefix)-lipgloss.Width(suffix), 0)
+	hint := m.hintLabel(hintBudget)
 	// Identity/cost live on the status line (Phase 1.1); the footer keeps state
-	// words + keybindings only (C1).
+	// words + keybindings only (C1). Quiet mode tag is a 2.3 affordance.
 	f := shared.Theme.Footer
 	if m.width > 0 {
 		f = f.MaxWidth(m.width)
 	}
-	return f.Render(prefix + hint)
+	line := prefix + hint
+	if hintBudget > 0 && lipgloss.Width(line)+lipgloss.Width(suffix) <= m.width {
+		line += suffix
+	} else if m.width > lipgloss.Width(prefix+modeTag) {
+		// Prefer keeping the tag when CompactHint already spilled to "? more".
+		line = prefix + hint
+		if lipgloss.Width(line)+lipgloss.Width(suffix) <= m.width {
+			line += suffix
+		}
+	}
+	return f.Render(line)
 }
 
 // statusLineView is the Lazygit-style identity strip between panels/gate and the
@@ -383,8 +399,6 @@ func shortRunID(runID string) string {
 func (m Model) runIdentity() string {
 	runID := shortRunID(m.RunID)
 	switch {
-	case runID != "" && m.workflow != "":
-		return runID + " · " + m.workflow
 	case runID != "":
 		return runID
 	case m.workflow != "":
@@ -399,17 +413,35 @@ func (m Model) transcriptPanelTitle() string {
 }
 
 // badgeFocus is the region that should show a [NAME] badge. None while the
-// help-agent modal owns chrome; otherwise exactly the focused region.
+// help-agent modal owns chrome; when review is open the review panel owns the
+// badge (even though keys still route through the gate). Otherwise exactly the
+// focused region.
 func (m Model) badgeFocus() focusRegion {
 	if m.helpOpen {
 		return focusRegion(-1) // no badge
 	}
+	if m.reviewOpen {
+		return focusRegion(-2) // review panel badge; not a focusRegion value
+	}
 	return m.focus
 }
 
+const focusReviewBadge focusRegion = -2
+
 func (m Model) stepsPanelTitleParts() []string {
 	leaf := shared.FocusTitle("Steps", m.badgeFocus() == focusSteps)
-	return []string{m.runIdentity(), leaf}
+	// 2.2: titles prefer shortRun · leaf; workflow lives on the status line.
+	// When the Steps panel is very wide, include workflow as an optional middle.
+	runID := shortRunID(m.RunID)
+	if runID == "" {
+		runID = m.runIdentity()
+	}
+	parts := []string{runID}
+	if m.workflow != "" && m.width >= 160 && m.workflow != runID {
+		parts = append(parts, m.workflow)
+	}
+	parts = append(parts, leaf)
+	return parts
 }
 
 func (m Model) transcriptPanelTitleParts() []string {
@@ -418,11 +450,49 @@ func (m Model) transcriptPanelTitleParts() []string {
 	leaf := content.label
 	if content.kind == contentTranscript {
 		leaf = shared.FocusTitle("Transcript", focused)
-	} else if focused {
-		// File/review titles keep their name; focus still shows via border.
-		leaf = content.label
 	}
-	return []string{m.runIdentity(), content.stepID, leaf}
+	// 2.2: stepID · [TRANSCRIPT]; drop run identity (status owns it).
+	parts := make([]string, 0, 3)
+	if content.stepID != "" {
+		parts = append(parts, content.stepID)
+	}
+	parts = append(parts, leaf)
+	// LIVE only when it fits after the badge (optional trailing crumb).
+	if content.kind == contentTranscript && m.showsTranscriptFollow() && m.chatAutoScroll {
+		candidate := append(append([]string{}, parts...), "LIVE")
+		titleW := shared.PanelTitleBudget(m.transcriptOuterWidth())
+		if lipgloss.Width(shared.BreadcrumbTitle(candidate, titleW)) <= titleW {
+			parts = candidate
+		}
+	}
+	return parts
+}
+
+func (m Model) transcriptOuterWidth() int {
+	if m.narrow {
+		return m.width
+	}
+	_, transcriptW, _ := panelSplit(m.width)
+	return transcriptW
+}
+
+// reviewPanelTitle is a ·-joined Monitor chrome title for the open workspace
+// (not breadcrumb ›), matching TARGET / 2.1 frames.
+func (m Model) reviewPanelTitle() string {
+	focused := m.badgeFocus() == focusReviewBadge
+	parts := []string{shared.FocusTitle("Review", focused)}
+	if entry, ok := m.activeEntry(); ok && entry.workspace != nil {
+		parts = append(parts, entry.workspace.TitleSegments()...)
+	}
+	return strings.Join(parts, " · ")
+}
+
+func (m Model) reviewPanelBody() string {
+	entry, ok := m.activeEntry()
+	if !ok || entry.workspace == nil {
+		return ""
+	}
+	return entry.workspace.EmbeddedView()
 }
 
 // View lays the monitor out as two side-by-side titled panels (Steps + the
@@ -430,6 +500,9 @@ func (m Model) transcriptPanelTitleParts() []string {
 // beneath. Below the narrow threshold only the focused panel renders
 // full-width (Resolved Decision 14). Only the focused region's border is drawn
 // primary.
+//
+// An open review workspace is a mode of the content panel (2.1): wide terminals
+// keep Steps | Review; narrower ones show full-width Review until Esc.
 func (m Model) View() string {
 	if !m.ready {
 		return shared.RenderEmptyState(shared.EmptyState{
@@ -445,37 +518,29 @@ func (m Model) View() string {
 	footer := fitBlock(m.footerView(), m.width, layout.footerH)
 	status := fitBlock(m.statusLineView(), m.width, layout.statusH)
 	inputBar := fitBlock(m.inputBarView(), m.width, layout.inputH)
-	if m.reviewOpen {
-		entry, ok := m.activeEntry()
-		if ok && entry.workspace != nil {
-			workspace := fitBlock(entry.workspace.EmbeddedView(), m.width, layout.panelH+layout.securityH)
-			base := fitBlock(joinVertical(workspace, inputBar, status, footer), m.width, m.height)
-			if m.helpOpen {
-				return m.helpOverlay(base)
-			}
-			return base
-		}
-	}
-
-	leftTitle := m.stepsPanelTitleParts()
-	rightTitle := m.transcriptPanelTitleParts()
 
 	var panels string
-	if layout.panelH == 0 {
+	if m.reviewOpen {
+		panels = m.reviewPanelsView(layout)
+	} else if layout.panelH == 0 {
 		panels = ""
-	} else if m.narrow {
-		// Single-panel fallback: render only the focused panel full-width.
-		if m.focus == focusTranscript {
-			panels = shared.BreadcrumbPanel(rightTitle, m.chatVP.View(), m.width, layout.panelH, true)
-		} else {
-			// Steps or Gate focus shows the Steps panel (the gate has its own strip).
-			panels = shared.BreadcrumbPanel(leftTitle, m.vp.View(), m.width, layout.panelH, m.focus == focusSteps)
-		}
 	} else {
-		stepsW, transcriptW, _ := panelSplit(m.width)
-		left := shared.BreadcrumbPanel(leftTitle, m.vp.View(), stepsW, layout.panelH, m.focus == focusSteps)
-		right := shared.BreadcrumbPanel(rightTitle, m.chatVP.View(), transcriptW, layout.panelH, m.focus == focusTranscript)
-		panels = lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+		leftTitle := m.stepsPanelTitleParts()
+		rightTitle := m.transcriptPanelTitleParts()
+		if m.narrow {
+			// Single-panel fallback: render only the focused panel full-width.
+			if m.focus == focusTranscript {
+				panels = shared.BreadcrumbPanel(rightTitle, m.chatVP.View(), m.width, layout.panelH, true)
+			} else {
+				// Steps or Gate focus shows the Steps panel (the gate has its own strip).
+				panels = shared.BreadcrumbPanel(leftTitle, m.vp.View(), m.width, layout.panelH, m.focus == focusSteps)
+			}
+		} else {
+			stepsW, transcriptW, _ := panelSplit(m.width)
+			left := shared.BreadcrumbPanel(leftTitle, m.vp.View(), stepsW, layout.panelH, m.focus == focusSteps)
+			right := shared.BreadcrumbPanel(rightTitle, m.chatVP.View(), transcriptW, layout.panelH, m.focus == focusTranscript)
+			panels = lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+		}
 	}
 	panels = fitBlock(panels, m.width, layout.panelH)
 
@@ -486,4 +551,26 @@ func (m Model) View() string {
 		return m.helpOverlay(base)
 	}
 	return base
+}
+
+func (m Model) reviewPanelsView(layout verticalLayout) string {
+	if layout.panelH == 0 {
+		return ""
+	}
+	body := m.reviewPanelBody()
+	title := m.reviewPanelTitle()
+	focused := m.badgeFocus() == focusReviewBadge
+	hFrame, vFrame := shared.PanelFrame()
+	if m.reviewEmbedWide() {
+		stepsW, transcriptW, _ := panelSplit(m.width)
+		leftTitle := m.stepsPanelTitleParts()
+		left := shared.BreadcrumbPanel(leftTitle, m.vp.View(), stepsW, layout.panelH, false)
+		innerW := max(transcriptW-hFrame, 1)
+		innerH := max(layout.panelH-vFrame, 1)
+		right := shared.Panel(title, fitBlock(body, innerW, innerH), transcriptW, layout.panelH, focused)
+		return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+	}
+	innerW := max(m.width-hFrame, 1)
+	innerH := max(layout.panelH-vFrame, 1)
+	return shared.Panel(title, fitBlock(body, innerW, innerH), m.width, layout.panelH, focused)
 }

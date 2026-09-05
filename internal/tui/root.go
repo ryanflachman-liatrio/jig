@@ -94,22 +94,26 @@ type rootModel struct {
 // helpProvider is implemented by every screen model that contributes a help
 // overlay. capturesText reports whether the screen is currently capturing free
 // text (a list filter, a gate textarea), in which case "?" is a literal
-// character and must not open the overlay.
+// character and must not open the overlay. paletteSections may expose a fuller
+// catalog than helpSections (Monitor simple mode).
 type helpProvider interface {
 	helpSections() []shared.HelpSection
+	paletteSections() []shared.HelpSection
 	capturesText() bool
 }
 
 type homeHelpBridge struct{ m rootModel }
 
-func (b homeHelpBridge) helpSections() []shared.HelpSection { return b.m.homeHelpSections() }
-func (b homeHelpBridge) capturesText() bool                 { return b.m.homeCapturesText() }
+func (b homeHelpBridge) helpSections() []shared.HelpSection    { return b.m.homeHelpSections() }
+func (b homeHelpBridge) paletteSections() []shared.HelpSection { return b.m.homeHelpSections() }
+func (b homeHelpBridge) capturesText() bool                    { return b.m.homeCapturesText() }
 
 // monitorHelpBridge adapts monitor.Model to the local helpProvider interface.
 type monitorHelpBridge struct{ m monitor.Model }
 
-func (b monitorHelpBridge) helpSections() []shared.HelpSection { return b.m.HelpSections() }
-func (b monitorHelpBridge) capturesText() bool                 { return b.m.CapturesText() }
+func (b monitorHelpBridge) helpSections() []shared.HelpSection    { return b.m.HelpSections() }
+func (b monitorHelpBridge) paletteSections() []shared.HelpSection { return b.m.PaletteSections() }
+func (b monitorHelpBridge) capturesText() bool                    { return b.m.CapturesText() }
 
 // activeProvider returns the help sections + text-capture state of the screen
 // currently driving the UI.

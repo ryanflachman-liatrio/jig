@@ -15,6 +15,7 @@ import (
 	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/transcript"
+	"jig/internal/tui/prefs"
 	questionpanel "jig/internal/tui/question"
 	reviewworkspace "jig/internal/tui/review"
 	"jig/internal/tui/shared"
@@ -289,6 +290,11 @@ type Model struct {
 	width  int
 	height int
 
+	// simpleMode hides advanced transcript affordances from footer/help (2.3).
+	// Default true; loaded from .jig/tui.json when jigRoot is set.
+	simpleMode bool
+	jigRoot    string // .jig/ root for prefs persistence; "" = in-memory only
+
 	// Help agent modal (ctrl+h). helpOpen/helpReady are the open/connected flags;
 	// helpModel is preserved across open/close cycles for the run's lifetime.
 	// helpGateReq/helpGateAns are the rendezvous channels for the final-merge gate.
@@ -555,7 +561,26 @@ func New(runID string) Model {
 		chatAutoScroll:     true,
 		expanded:           make(map[string]bool),
 		stepFiles:          make(map[string][]outputFile),
+		simpleMode:         true, // C5 default; WithPrefs overrides from disk
 	}
+}
+
+// WithPrefs loads simple-mode preference from jigRoot (.jig/). Empty root keeps
+// the in-memory default (simple ON).
+func (m Model) WithPrefs(jigRoot string) Model {
+	m.jigRoot = jigRoot
+	m.simpleMode = prefs.Load(jigRoot).SimpleMode
+	return m
+}
+
+// SimpleMode reports whether advanced transcript chrome is hidden.
+func (m Model) SimpleMode() bool { return m.simpleMode }
+
+// ToggleSimpleMode flips simple/advanced and persists to .jig/tui.json.
+func (m Model) ToggleSimpleMode() Model {
+	m.simpleMode = !m.simpleMode
+	_ = prefs.Save(m.jigRoot, prefs.Prefs{SimpleMode: m.simpleMode})
+	return m
 }
 
 // SetRun wires the live engine handle so the help agent can read run state and
@@ -717,8 +742,19 @@ func (m Model) DiscardDirtyCompose() Model {
 }
 
 // HelpSections returns the sections to show for the monitor's current focus and
-// gate state for the help overlay.
+// gate state for the help overlay. In simple mode, advanced transcript
+// affordances are omitted (still available via the command palette).
 func (m Model) HelpSections() []shared.HelpSection {
+	return m.helpSections(m.simpleMode)
+}
+
+// PaletteSections is the full action catalog for ctrl+k — never filtered by
+// simple mode so advanced commands stay discoverable (D10 / 2.3).
+func (m Model) PaletteSections() []shared.HelpSection {
+	return m.helpSections(false)
+}
+
+func (m Model) helpSections(simple bool) []shared.HelpSection {
 	var sections []shared.HelpSection
 
 	switch {
@@ -741,11 +777,21 @@ func (m Model) HelpSections() []shared.HelpSection {
 			pageNewer.SetEnabled(m.chatPage.HasLater)
 			clearView := m.keys.ClearView
 			clearView.SetEnabled(m.searchQuery != "" || m.filters.active())
-			bindings = []keybind.Binding{
-				m.keys.Scroll, m.keys.Follow, blockNav, m.keys.Toggle, m.keys.ScrollFast,
-				m.keys.GotoTop, pageOlder, pageNewer,
-				m.keys.Search, m.keys.Filters, clearView, m.keys.ExpandAll,
-				m.keys.TransToSteps, m.keys.TransLeave,
+			if simple {
+				// Keep scroll / follow / expand / leave; hide paging, filters,
+				// search, expand-all, and block-nav from footer/help.
+				bindings = []keybind.Binding{
+					m.keys.Scroll, m.keys.Follow, m.keys.Toggle, m.keys.ScrollFast,
+					m.keys.GotoTop,
+					m.keys.TransToSteps, m.keys.TransLeave,
+				}
+			} else {
+				bindings = []keybind.Binding{
+					m.keys.Scroll, m.keys.Follow, blockNav, m.keys.Toggle, m.keys.ScrollFast,
+					m.keys.GotoTop, pageOlder, pageNewer,
+					m.keys.Search, m.keys.Filters, clearView, m.keys.ExpandAll,
+					m.keys.TransToSteps, m.keys.TransLeave,
+				}
 			}
 		}
 		if m.gateContext != nil {
@@ -781,6 +827,19 @@ func (m Model) HelpSections() []shared.HelpSection {
 			Bindings: bindings,
 		})
 	}
+
+	modeTitle := "Mode · simple"
+	modeDesc := "enable advanced"
+	if !m.simpleMode {
+		modeTitle = "Mode · advanced"
+		modeDesc = "enable simple"
+	}
+	toggleSimple := m.keys.ToggleSimple
+	toggleSimple.SetHelp("ctrl+shift+a", modeDesc)
+	sections = append(sections, shared.HelpSection{
+		Title:    modeTitle,
+		Bindings: []keybind.Binding{toggleSimple},
+	})
 
 	// Focus + Global sections are shown on every screen.
 	sections = append(sections, shared.HelpSection{

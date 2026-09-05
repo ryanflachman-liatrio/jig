@@ -1,4 +1,4 @@
-╭─ cd1234ef · feature › [STEPS] ╮╭─ cd1234ef · feature › plan › Transcript ────────────────────────╮
+╭─ cd1234ef › [STEPS] ──────────╮╭─ plan › Transcript › LIVE ──────────────────────────────────────╮
 │ ▌  ✓  plan       succeeded    ││   ✓  succeeded                                                  │
 │      12.4k tok · $0.0800 · —  ││                                                                 │
 │    ●  implement  running      ││                                                                 │
@@ -25,4 +25,4 @@
 ╰───────────────────────────────╯╰─────────────────────────────────────────────────────────────────╯
   Human actions  ·  no pending actions                                                              
  cd1234ef · feature · plan · 12.4k tok · $0.0800 · LIVE                                             
-  running  ·  enter transcript  •  j/k select  •  space expand/collapse  •  esc/q home  •  ? more   
+  running  ·  enter transcript  •  j/k select  •  space expand/collapse  •  ? more  ·  simple       

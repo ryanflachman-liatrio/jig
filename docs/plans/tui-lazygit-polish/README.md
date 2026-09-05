@@ -44,7 +44,7 @@ layers when nested.
 |---|---|---|
 | **0 — Happy path** | Make the primary loop obvious | [phase README](phase-0/README.md) · [0.1](phase-0/0.1-flatten-home-navigation.md) · [0.2](phase-0/0.2-gate-first-wait-attention.md) · [0.3](phase-0/0.3-context-footer-actions.md) · [0.4](phase-0/0.4-unified-esc-back.md) |
 | **1 — Lazygit feel** | Status, focus, commands, empty states | [phase README](phase-1/README.md) · [1.1](phase-1/1.1-persistent-status-line.md) · [1.2](phase-1/1.2-panel-focus-badges.md) · [1.3](phase-1/1.3-command-palette.md) · [1.4](phase-1/1.4-empty-states-cta.md) |
-| **2 — Remaining friction** | Unify chrome, simplify, dogfood | [phase README](phase-2/README.md) · [2.1](phase-2/2.1-unify-review-panel-chrome.md) · [2.2](phase-2/2.2-breadcrumb-truncation.md) · [2.3](phase-2/2.3-simple-mode.md) · [2.4](phase-2/2.4-golden-path-demo-dogfood.md) |
+| **2 — Remaining friction** | Unify chrome, simplify, dogfood | [phase README](phase-2/README.md) · [2.1](phase-2/2.1-unify-review-panel-chrome.md) · [2.2](phase-2/2.2-breadcrumb-truncation.md) · [2.3](phase-2/2.3-simple-mode.md) · [2.4](phase-2/2.4-golden-path-demo-dogfood.md) · [golden-path](golden-path/) |
 
 End-state visual: [TARGET-COMPOSITION.md](TARGET-COMPOSITION.md).  
 Locked choices: [DECISIONS.md](DECISIONS.md).
