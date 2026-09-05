@@ -166,7 +166,7 @@ func (m Model) statusLabel() string {
 	case inputKindPrompt:
 		return shared.Theme.Marker.Render("awaiting user input" + queueSuffix)
 	case inputKindReview:
-		return shared.Theme.Marker.Render("awaiting review")
+		return shared.Theme.Marker.Render("awaiting review" + queueSuffix)
 	case inputKindRecovery:
 		if entry.composing {
 			return shared.Theme.Marker.Render("composing guidance")
@@ -423,48 +423,6 @@ func (m Model) transcriptPanelTitleParts() []string {
 		leaf = content.label
 	}
 	return []string{m.runIdentity(), content.stepID, leaf}
-}
-
-// gatePanelTitle is the focused gate overlay title: `[GATE] · <state phrase>` (C3).
-func (m Model) gatePanelTitle() string {
-	phrase := m.gateStatusPhrase()
-	badge := shared.FocusTitle("Gate", true)
-	if phrase == "" {
-		return badge
-	}
-	return badge + " · " + phrase
-}
-
-// gateStatusPhrase is the unstyled state fragment used in gate titles (not the
-// footer statusLabel, which carries color).
-func (m Model) gateStatusPhrase() string {
-	entry, ok := m.activeEntry()
-	if !ok {
-		return ""
-	}
-	switch entry.kind {
-	case inputKindRequest:
-		return "awaiting agent input"
-	case inputKindQuestion:
-		return "awaiting answer"
-	case inputKindPrompt:
-		return "awaiting user input"
-	case inputKindReview:
-		return "awaiting review"
-	case inputKindRecovery:
-		if entry.composing {
-			return "composing guidance"
-		}
-		return "step failed — recovery"
-	case inputKindIntegrationConflict:
-		return "integration conflict"
-	case inputKindFinalMerge, inputKindHelpFinalMerge:
-		return "awaiting final merge"
-	case inputKindResetConfirm:
-		return "awaiting reset confirmation"
-	default:
-		return "needs input"
-	}
 }
 
 // View lays the monitor out as two side-by-side titled panels (Steps + the

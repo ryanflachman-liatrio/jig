@@ -654,6 +654,7 @@ func TestEnterOpensCommentOnActiveLineOrRange(t *testing.T) {
 		t.Fatalf("line did not open comment modal: mode=%v editing=%q body=%q", m.mode, m.editing, m.composer.Value())
 	}
 	m = update(m, "esc")
+	m = update(m, "y") // dirty compose requires confirm (Phase 0.4 / A6)
 	if m.mode != ModeBrowse || strings.Contains(ansi.Strip(m.View()), "Please revise these lines") {
 		t.Fatalf("closing modal left comment detail visible:\n%s", ansi.Strip(m.View()))
 	}

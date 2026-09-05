@@ -22,8 +22,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, m.list.SetItems(msg.items)
 
 	case tea.KeyPressMsg:
-		// While the filter input is open, let the list consume Enter (it applies
-		// the filter) rather than treating it as a selection.
+		// Standalone Open still emits ShowDetailMsg for tests that drive the
+		// selector alone. Home intercepts enter before forwarding here.
 		if keybind.Matches(msg, m.keys.Open) && m.list.FilterState() != list.Filtering {
 			if item, ok := m.list.SelectedItem().(workflowItem); ok {
 				return m, func() tea.Msg { return ShowDetailMsg{Path: item.path} }

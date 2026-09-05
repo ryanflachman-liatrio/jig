@@ -8,8 +8,16 @@ import (
 	"jig/internal/review"
 )
 
-// ShowRunsMsg asks the root to switch to the runs list.
+// ShowHomeMsg asks the root to return to Home (workflows + runs).
+type ShowHomeMsg struct{}
+
+// ShowRunsMsg is retained as a deprecated alias of ShowHomeMsg for older
+// call sites; root treats both as leave-Monitor → Home.
 type ShowRunsMsg struct{}
+
+// RequestLeaveConfirmMsg asks root to confirm discarding a dirty review
+// compose buffer before leaving Monitor (0.4 / A6).
+type RequestLeaveConfirmMsg struct{}
 
 // ReviewVerdictMsg is emitted by the monitor when the user selects a verdict
 // for a review step. The root delivers it to the run via Run.Resolve.

@@ -8,7 +8,7 @@
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
-╭─ [GATE] · awaiting agent input ──────────────────────────────────────────────╮
+╭─ [GATE] · awaiting agent input (2 pending) ──────────────────────────────────╮
 │ [1 / 2]  Step: a                                                             │
 │   Required: Enter a message to continue  ·  [ctrl+o] view transcript         │
 │ ┃ Message to agent…                                                          │
@@ -19,7 +19,7 @@
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-  Agent input required  ·  Step: a  ·  2 pending  ·  esc to blur
+  [GATE] · awaiting agent input (2 pending)  ·  Step: a  ·  2 pending  ·  esc to
  run-1 · demo · a · LIVE
   awaiting agent input (2 pending)  ·  enter submit  •  [/] entries  •  F1 more
 --- frame ---
@@ -45,7 +45,7 @@
 │                                                                              │
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
-  Agent input required  ·  Step: b  ·  1 pending  ·  esc to blur
+  [GATE] · awaiting agent input  ·  Step: b  ·  1 pending  ·  esc to blur
  run-1 · demo · b · LIVE
   awaiting agent input  ·  enter submit  •  alt+enter newline  •  F1 more
 --- frame ---
@@ -73,4 +73,4 @@
 ╰──────────────────────────────╯╰──────────────────────────────────────────────╯
   Human actions  ·  no pending actions
  run-1 · demo · a · LIVE
-  running  ·  j/k select  •  enter transcript  •  esc runs list  •  ? more
+  running  ·  enter transcript  •  j/k select  •  esc/q home  •  ? more

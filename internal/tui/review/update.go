@@ -18,6 +18,22 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		m.resize()
 		return m, nil
 	}
+	if m.discardConfirm {
+		k, ok := msg.(tea.KeyPressMsg)
+		if !ok {
+			return m, nil
+		}
+		switch k.String() {
+		case "y":
+			m.discardConfirm = false
+			m.mode = ModeBrowse
+			m.rebuildComposer()
+			return m, draftCmd(m)
+		default:
+			m.discardConfirm = false
+			return m, nil
+		}
+	}
 	if m.CapturesText() {
 		return m.updateEditor(msg)
 	}
@@ -115,6 +131,10 @@ func (m Model) updateEditor(msg tea.Msg) (Model, tea.Cmd) {
 		}
 	}
 	if isKey && keybind.Matches(k, m.keys.Cancel) {
+		if m.HasDirtyCompose() {
+			m.discardConfirm = true
+			return m, nil
+		}
 		m.mode = ModeBrowse
 		m.rebuildComposer()
 		return m, draftCmd(m)

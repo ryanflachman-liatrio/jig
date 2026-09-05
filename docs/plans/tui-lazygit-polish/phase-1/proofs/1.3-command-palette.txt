@@ -25,4 +25,4 @@
 ╰───────────────────────────────╯╰─────────────────────────────────────────────────────────────────╯
   GATE · needs input  ·  Step: review  ·  1 pending  ·  tab to open
  cd1234ef · feature · review · 12.4k tok · $0.0800 · LIVE
-  awaiting review  ·  tab gate  •  j/k select  •  enter transcript  •  esc runs list  •  ? more
+  awaiting review  ·  tab gate  •  enter transcript  •  j/k select  •  esc/q home  •  ? more

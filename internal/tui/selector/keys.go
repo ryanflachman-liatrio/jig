@@ -18,7 +18,7 @@ func defaultKeys() selectorKeys {
 	return selectorKeys{
 		Nav:    keybind.NewBinding(keybind.WithKeys("up", "down", "k", "j"), keybind.WithHelp("↑/↓", "navigate")),
 		Filter: keybind.NewBinding(keybind.WithKeys("/"), keybind.WithHelp("/", "filter")),
-		Open:   keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "open")),
+		Open:   keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "focus runs")),
 		Apply:  keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "apply")),
 		Clear:  keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "clear filter")),
 	}

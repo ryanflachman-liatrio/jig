@@ -70,6 +70,33 @@ func TestFocusPendingInputOnFirstArrivalAfterRunEntry(t *testing.T) {
 	}
 }
 
+func TestFocusPendingInputOnFirstReviewAfterRunEntry(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	m = m.FocusPendingInput()
+	m.focus = focusSteps
+
+	m, _ = m.Update(EngineEventMsg{Event: engine.ReviewRequest{
+		RunID: "run-1", StepID: "a", Choices: []string{"approve"},
+	}})
+	if m.focus != focusGate {
+		t.Fatalf("focus after first review arrived = %v, want focusGate", m.focus)
+	}
+
+	m.focus = focusTranscript
+	m, _ = m.Update(EngineEventMsg{Event: questionEvent(
+		"run-1", "b", "q1",
+		selectQuestion("f", "", "More?", false,
+			interaction.QuestionOption{Value: "y", Label: "Yes"},
+		),
+	)})
+	if m.focus != focusTranscript {
+		t.Fatalf("later gate stole focus = %v, want focusTranscript", m.focus)
+	}
+	if title := m.gateChromeTitle(&m.inputQueue[0]); !strings.Contains(title, "GATE · needs input") {
+		t.Fatalf("blurred pending title = %q", title)
+	}
+}
+
 func TestSequentialPromptRefocusesGateAfterSubmission(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	m, _ = m.Update(EngineEventMsg{Event: engine.PromptRequest{
@@ -454,7 +481,7 @@ func TestGateDraftPreservation(t *testing.T) {
 }
 
 // TestGateEscBlurs verifies that esc while focusGate sets m.focus == focusSteps,
-// leaves the queue unchanged, and emits no showRunsMsg (Decision 6 / ADR 0005).
+// leaves the queue unchanged, and emits no leave-Monitor message (Decision 6).
 func TestGateEscBlurs(t *testing.T) {
 	m := newMonitorWithSteps(t)
 
@@ -464,13 +491,15 @@ func TestGateEscBlurs(t *testing.T) {
 	}
 	m.focus = focusGate
 
-	var runsNavigated bool
+	var leftMonitor bool
 	m2, cmd := m.Update(key("esc"))
 	if cmd != nil {
-		// Execute the command and check it does not produce a showRunsMsg.
 		result := cmd()
+		if _, ok := result.(ShowHomeMsg); ok {
+			leftMonitor = true
+		}
 		if _, ok := result.(ShowRunsMsg); ok {
-			runsNavigated = true
+			leftMonitor = true
 		}
 	}
 
@@ -480,8 +509,8 @@ func TestGateEscBlurs(t *testing.T) {
 	if got := len(m2.inputQueue); got != 1 {
 		t.Fatalf("after esc: inputQueue len = %d, want 1 (queue must not be cleared)", got)
 	}
-	if runsNavigated {
-		t.Fatal("esc emitted showRunsMsg — gate blur must not navigate away")
+	if leftMonitor {
+		t.Fatal("esc left Monitor — gate blur must not navigate away")
 	}
 }
 

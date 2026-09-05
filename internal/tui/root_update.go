@@ -39,37 +39,59 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// ── navigation ────────────────────────────────────────────────────────
 	case selector.ShowDetailMsg:
-		return m.openDetail(msg.Path)
+		// Standalone selector emit (tests); Home uses openDetailOverlay instead.
+		return m.openDetailOverlay(msg.Path)
 
 	case detail.BackMsg:
-		m.active = screenSelector
+		if m.showDetailOverlay {
+			m.showDetailOverlay = false
+			return m, nil
+		}
+		m.active = screenHome
 		return m, nil
 
 	case detail.ShowRunsMsg:
+		// Legacy detail→runs: keep filtering Home's runs pane and stay on Home.
 		m.runs = m.runs.WithWorkflowContext(msg.Workflow, msg.Wf)
-		m.active = screenRuns
+		m.homeFocus = homeRuns
+		m.showDetailOverlay = false
+		m.active = screenHome
 		return m, nil
 
 	case runs.BackMsg:
-		// Go back to whatever workflow's detail we came from; if none, selector.
-		if m.detail.Loaded {
-			m.active = screenDetail
-		} else {
-			m.active = screenSelector
-		}
+		m.homeFocus = homeWorkflows
+		m.active = screenHome
 		return m, nil
 
+	case monitor.RequestLeaveConfirmMsg:
+		m.leaveConfirm = true
+		return m, nil
+
+	case monitor.ShowHomeMsg:
+		m.active = screenHome
+		m.showDetailOverlay = false
+		m.leaveConfirm = false
+		return m, nil
+
+	// Backward-compatible alias: older monitor leave still typed ShowRunsMsg.
 	case monitor.ShowRunsMsg:
-		m.active = screenRuns
+		m.active = screenHome
+		m.showDetailOverlay = false
+		m.leaveConfirm = false
 		return m, nil
 
 	case runsHydratedMsg:
 		m.runs = m.runs.Hydrate(msg.runs)
 		return m, nil
 
+	case homeWorkflowLoadedMsg:
+		return m.updateHome(msg)
+
 	case runResumedMsg:
 		if msg.err != nil {
 			m.runs = m.runs.SetNotice(msg.err.Error())
+			m.active = screenHome
+			m.homeFocus = homeRuns
 			return m, nil
 		}
 		m.handles[msg.runID] = msg.run
@@ -180,12 +202,8 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// All other messages go to the active screen.
 	var cmd tea.Cmd
 	switch m.active {
-	case screenSelector:
-		m.selector, cmd = m.selector.Update(msg)
-	case screenDetail:
-		m.detail, cmd = m.detail.Update(msg)
-	case screenRuns:
-		m.runs, cmd = m.runs.Update(msg)
+	case screenHome:
+		m, cmd = m.updateHome(msg)
 	case screenMonitor:
 		m.monitor, cmd = m.monitor.Update(msg)
 	}
@@ -198,6 +216,19 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m rootModel) handleGlobalKey(msg tea.KeyPressMsg) (rootModel, tea.Cmd, bool) {
 	if keybind.Matches(msg, shared.KeyQuit) {
 		return m, tea.Quit, true
+	}
+	// Dirty-leave confirm (0.4 A6): y leaves to Home; anything else cancels.
+	if m.leaveConfirm {
+		switch msg.String() {
+		case "y":
+			m.leaveConfirm = false
+			m.monitor = m.monitor.DiscardDirtyCompose()
+			m.active = screenHome
+			m.showDetailOverlay = false
+		default:
+			m.leaveConfirm = false
+		}
+		return m, nil, true
 	}
 	// Delete-confirm is a blocking modal: it swallows every key except y/n/esc.
 	// Checked before help so "?" is also swallowed while the confirm is open.
@@ -271,8 +302,8 @@ func (m rootModel) paletteCommands() []palette.Command {
 // handleDeleteConfirmed executes a confirmed run deletion: removes the row
 // from the runs list, cancels the run if it is still live (deferring the
 // directory delete until RunFinished arrives), or deletes the directory
-// immediately for a finished run.  If the monitor is currently showing the
-// deleted run, navigates back to the runs list.
+// immediately for a finished run. If the monitor is currently showing the
+// deleted run, navigates back to Home.
 func (m rootModel) handleDeleteConfirmed() (rootModel, tea.Cmd) {
 	m.confirmDelete = false
 	runID := m.pendingDeleteID
@@ -281,7 +312,7 @@ func (m rootModel) handleDeleteConfirmed() (rootModel, tea.Cmd) {
 	m.runs = m.runs.DeleteRun(runID)
 
 	if m.monitor.RunID == runID {
-		m.active = screenRuns
+		m.active = screenHome
 	}
 
 	if run, ok := m.handles[runID]; ok {
@@ -298,11 +329,12 @@ func (m rootModel) updateWindowSize(msg tea.WindowSizeMsg) (tea.Model, tea.Cmd) 
 	m.width, m.height = msg.Width, msg.Height
 	var sc, dc, rc, mc tea.Cmd
 	m.selector, sc = m.selector.Update(msg)
-	if m.detail.Ready {
+	if m.detail.Ready || m.showDetailOverlay {
 		m.detail, dc = m.detail.Update(msg)
 	}
 	m.runs, rc = m.runs.Update(msg)
 	m.monitor, mc = m.monitor.Update(msg)
+	m = m.sizeHomeChildren()
 	if m.showHelp {
 		m.helpOffset = min(m.helpOffset, shared.HelpOverlayMaxOffset(m.width, m.height, m.activeProvider().helpSections()))
 	}
@@ -328,14 +360,6 @@ func (m rootModel) updateEngineEvent(msg monitor.EngineEventMsg) (tea.Model, tea
 		}
 	}
 	return m, tea.Batch(rearm, rc, mc)
-}
-
-func (m rootModel) openDetail(path string) (tea.Model, tea.Cmd) {
-	m.detail = detail.New(path)
-	var sizeCmd tea.Cmd
-	m.detail, sizeCmd = m.detail.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
-	m.active = screenDetail
-	return m, tea.Batch(sizeCmd, m.detail.Init())
 }
 
 // openMonitor navigates to the monitor for runID, seeding it from a live
@@ -404,5 +428,6 @@ func (m rootModel) startRun(wf *workflow.Workflow) (tea.Model, tea.Cmd) {
 	m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 	m.monitor = m.monitor.FocusPendingInput()
 	m.active = screenMonitor
+	m.showDetailOverlay = false
 	return m, nil
 }
