@@ -11,6 +11,7 @@ import (
 	"jig/internal/engine"
 	"jig/internal/tui/detail"
 	"jig/internal/tui/monitor"
+	"jig/internal/tui/palette"
 	"jig/internal/tui/runs"
 	"jig/internal/tui/selector"
 	"jig/internal/tui/shared"
@@ -66,6 +67,10 @@ type rootModel struct {
 	// screen underneath; F1 remains available while that screen captures text.
 	showHelp   bool
 	helpOffset int
+
+	// Command palette (ctrl+k) is root-owned like help so every screen shares
+	// one overlay and CapturesText gating (Phase 1.3).
+	palette palette.Model
 
 	// confirmDelete and pendingDeleteID drive the delete-confirmation overlay.
 	// Root owns this (mirroring showHelp) so it can cancel live runs directly
@@ -155,6 +160,9 @@ func (m rootModel) View() tea.View {
 	// "?" chord surfaces context-appropriate keys everywhere.
 	if m.showHelp {
 		content = shared.RenderHelpOverlay(content, m.width, m.height, m.activeProvider().helpSections(), m.helpOffset)
+	}
+	if m.palette.Open() {
+		content = m.palette.View(content, m.width, m.height)
 	}
 	// The delete-confirm overlay is also root-owned so it can swallow all keys
 	// and call run.Cancel() directly without a round-trip message.

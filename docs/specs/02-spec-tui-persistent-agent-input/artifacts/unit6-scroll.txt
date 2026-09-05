@@ -1,11 +1,10 @@
-╭─ run-1 · demo › Steps ───────╮╭─ run-1 · demo › a › Transcript · LIVE ───────╮
+╭─ run-1 · demo › Steps ───────╮╭─ run-1 · demo › a › Transcript ──────────────╮
 │ ▌  ⊙  a   needs_input        ││   ⊙  needs_input                             │
 │      —                       ││                                              │
-│    ○  b   pending            ││   transcript unavailable (persistence off)   │
-│      —                       ││                                              │
+│    ○  b   pending            ││                                              │
+│      —                       ││   Transcript unavailable                     │
 │    ○  c   pending            ││                                              │
-│      —                       ││                                              │
-│                              ││                                              │
+│      —                       ││   Persistence is off for this run — nothing  │
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
@@ -21,4 +20,5 @@
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
   [GATE] · awaiting answer  ·  Step: a  ·  1 pending  ·  esc to blur
+ run-1 · demo · a · LIVE
   awaiting answer  ·  enter select  •  ↑/↓/j/k navigate  •  d decline  •  ? more

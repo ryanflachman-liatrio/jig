@@ -32,15 +32,24 @@ var KeyHelpTyping = keybind.NewBinding(
 	keybind.WithHelp("F1", "help"),
 )
 
+// KeyPalette opens the command palette (Phase 1.3 / E4: ctrl+k only, no ":").
+// Disabled while CapturesText so free-text editors keep their chords.
+var KeyPalette = keybind.NewBinding(
+	keybind.WithKeys("ctrl+k"),
+	keybind.WithHelp("ctrl+k", "commands"),
+)
+
 func GlobalHelpBindings(capturesText bool, extra ...keybind.Binding) []keybind.Binding {
 	regular := KeyHelp
 	regular.SetEnabled(!capturesText)
 	typing := KeyHelpTyping
 	typing.SetEnabled(capturesText)
+	palette := KeyPalette
+	palette.SetEnabled(!capturesText)
 
-	bindings := make([]keybind.Binding, 0, len(extra)+3)
+	bindings := make([]keybind.Binding, 0, len(extra)+4)
 	bindings = append(bindings, extra...)
-	bindings = append(bindings, regular, typing, KeyQuit)
+	bindings = append(bindings, palette, regular, typing, KeyQuit)
 	return bindings
 }
 

@@ -1,0 +1,28 @@
+╭─ cd1234ef · feature › Steps ──╮╭─ cd1234ef · feature › plan › Transcript ────────────────────────╮
+│ ▌  ✓  plan       succeeded    ││   ✓  succeeded                                                  │
+│      12.4k tok · $0.0800 · —  ││                                                                 │
+│    ●  implement  running      ││                                                                 │
+│      0s                       ││   Transcript unavailable                                        │
+│    ○  review     pending      ││                                                                 │
+│      —                        ││   Persistence is off for this run — nothing was captured.       │
+│   Total  12.4k tok  $0.0800   ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+│                               ││                                                                 │
+╭─ [GATE] · awaiting review ───────────────────────────────────────────────────────────────────────╮
+│ [1 / 1]  Step: review                                                                            │
+│   Required: Choose a decision  ·  [ctrl+o] view diff                                             │
+│     [1] approve                                                                                  │
+│     [2] revise                                                                                   │
+│     [3] abort                                                                                    │
+│                                                                                                  │
+│     [ctrl+o] view diff                                                                           │
+│                                                                                                  │
+│                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+  [GATE] · awaiting review  ·  Step: review  ·  1 pending  ·  esc to blur
+ cd1234ef · feature · review · 12.4k tok · $0.0800 · LIVE
+  awaiting review  ·  1-9 decision  •  ctrl+o view context  •  esc blur  •  ? more

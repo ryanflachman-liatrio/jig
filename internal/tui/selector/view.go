@@ -11,13 +11,18 @@ import (
 func (m Model) View() string {
 	switch {
 	case m.loading:
-		return "\n  Scanning " + workflowsDir + "…\n"
+		return shared.RenderEmptyState(shared.EmptyState{
+			Title: "Loading workflows…",
+			Body:  "Scanning " + workflowsDir + ".",
+		})
 	case m.err != nil:
 		return "\n  " + shared.Theme.Error.Render("Failed to scan "+workflowsDir+": "+m.err.Error()) + "\n"
 	case len(m.list.Items()) == 0:
-		return "\n  " + shared.Theme.Title.Render("No workflows found") + "\n\n" +
-			shared.Theme.Question.Render("  Add a <name>.toml with a [workflow] table under "+workflowsDir+"/.") +
-			"\n\n" + shared.Theme.Footer.Render("  "+shared.HintString(shared.KeyQuit)) + "\n"
+		return shared.RenderEmptyState(shared.EmptyState{
+			Title: "No workflows found",
+			Body:  "Add a <name>.toml with a [workflow] table under " + workflowsDir + ".",
+			CTA:   "?  open help",
+		}) + "\n" + shared.Theme.Footer.Render("  "+shared.HintString(shared.KeyHelp, shared.KeyQuit)) + "\n"
 	}
 	footer := m.footerView()
 	body := shared.Panel("Workflows", m.list.View(), m.width, m.height-lipgloss.Height(footer), true)

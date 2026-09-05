@@ -1,0 +1,7 @@
+
+  No workflows found
+
+  Add a <name>.toml with a [workflow] table under .agents/jig.
+
+  ?  open help
+

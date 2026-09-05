@@ -198,8 +198,11 @@ func TestGateContextJumpAndReturnPreserveTranscriptState(t *testing.T) {
 	if got := restored.unseenChatEntries(); got != 1 {
 		t.Fatalf("context return unseen entries = %d, want 1", got)
 	}
-	if title := restored.transcriptPanelTitle(); title != "Transcript · PAUSED · 1 new" {
+	if title := restored.transcriptPanelTitle(); title != "Transcript" {
 		t.Fatalf("context return title = %q", title)
+	}
+	if status := ansiStrip(restored.statusLineView()); !strings.Contains(status, "1 new") {
+		t.Fatalf("context return status missing unseen count:\n%s", status)
 	}
 	if !restored.chatItemExpand[item.key] {
 		t.Fatal("transcript expansion state was not restored")

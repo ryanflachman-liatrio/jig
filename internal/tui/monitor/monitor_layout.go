@@ -14,8 +14,13 @@ type verticalLayout struct {
 	panelH    int
 	securityH int
 	inputH    int
+	statusH   int
 	footerH   int
 }
+
+// statusLineMinHeight is the terminal height below which the identity/cost
+// status strip is hidden so the panels and footer keep working room.
+const statusLineMinHeight = 12
 
 // verticalLayout gives the compact input bar and footer priority, then lets a bounded
 // security summary consume space without collapsing the main panels entirely.
@@ -23,6 +28,12 @@ func (m Model) verticalLayout() verticalLayout {
 	height := max(m.height, 0)
 	footerH := min(lipgloss.Height(m.footerView()), height)
 	remaining := height - footerH
+
+	statusH := 0
+	if height >= statusLineMinHeight {
+		statusH = min(lipgloss.Height(m.statusLineView()), remaining)
+		remaining -= statusH
+	}
 
 	inputH := min(lipgloss.Height(m.inputBarView()), remaining)
 	remaining -= inputH
@@ -38,6 +49,7 @@ func (m Model) verticalLayout() verticalLayout {
 		panelH:    remaining - securityH,
 		securityH: securityH,
 		inputH:    inputH,
+		statusH:   statusH,
 		footerH:   footerH,
 	}
 }

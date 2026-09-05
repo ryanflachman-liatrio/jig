@@ -12,7 +12,6 @@ import (
 
 	"jig/internal/engine"
 	"jig/internal/runner"
-	"jig/internal/step"
 	"jig/internal/tui"
 	"jig/internal/tui/monitor"
 	"jig/internal/tui/selector"

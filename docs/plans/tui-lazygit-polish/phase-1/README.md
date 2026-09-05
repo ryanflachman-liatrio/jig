@@ -2,12 +2,14 @@
 
 Status, focus, commands, and empty states — the “this is a real app” layer.
 
-| Item | Title | Visual | File |
-|---|---|---|---|
-| 1.1 | Persistent status line | Yes | [1.1-persistent-status-line.md](1.1-persistent-status-line.md) |
-| 1.2 | Panel focus badges | Yes | [1.2-panel-focus-badges.md](1.2-panel-focus-badges.md) |
-| 1.3 | Command palette | Yes | [1.3-command-palette.md](1.3-command-palette.md) |
-| 1.4 | Empty states with CTA | Yes | [1.4-empty-states-cta.md](1.4-empty-states-cta.md) |
+| Item | Title | Visual | File | Status |
+|---|---|---|---|---|
+| 1.1 | Persistent status line | Yes | [1.1-persistent-status-line.md](1.1-persistent-status-line.md) | Implemented |
+| 1.2 | Panel focus badges | Yes | [1.2-panel-focus-badges.md](1.2-panel-focus-badges.md) | Implemented |
+| 1.3 | Command palette | Yes | [1.3-command-palette.md](1.3-command-palette.md) | Implemented |
+| 1.4 | Empty states with CTA | Yes | [1.4-empty-states-cta.md](1.4-empty-states-cta.md) | Implemented |
+
+Proof frames: [proofs/](proofs/).
 
 ## Exit criteria
 

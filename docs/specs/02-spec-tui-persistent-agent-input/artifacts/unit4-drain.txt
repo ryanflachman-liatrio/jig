@@ -1,11 +1,10 @@
-╭─ run-1 · demo › Steps ───────╮╭─ run-1 · demo › a › Transcript · LIVE ───────╮
+╭─ run-1 · demo › Steps ───────╮╭─ run-1 · demo › a › Transcript ──────────────╮
 │ ▌  ○  a   pending            ││   ○  pending                                 │
 │      —                       ││                                              │
-│    ○  b   pending            ││   transcript unavailable (persistence off)   │
-│      —                       ││                                              │
+│    ○  b   pending            ││                                              │
+│      —                       ││   Transcript unavailable                     │
 │    ○  c   pending            ││                                              │
-│      —                       ││                                              │
-│                              ││                                              │
+│      —                       ││   Persistence is off for this run — nothing  │
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
@@ -21,17 +20,17 @@
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
   [GATE] · awaiting agent input (2 pending)  ·  Step: a  ·  2 pending  ·  esc to
+ run-1 · demo · a · LIVE
   awaiting agent input (2 pending)  ·  enter submit  •  [/] entries  •  F1 more
 --- frame ---
 
-╭─ run-1 · demo › Steps ───────╮╭─ run-1 · demo › a › Transcript · LIVE ───────╮
+╭─ run-1 · demo › Steps ───────╮╭─ run-1 · demo › a › Transcript ──────────────╮
 │ ▌  ○  a   pending            ││   ○  pending                                 │
 │      —                       ││                                              │
-│    ○  b   pending            ││   transcript unavailable (persistence off)   │
-│      —                       ││                                              │
+│    ○  b   pending            ││                                              │
+│      —                       ││   Transcript unavailable                     │
 │    ○  c   pending            ││                                              │
-│      —                       ││                                              │
-│                              ││                                              │
+│      —                       ││   Persistence is off for this run — nothing  │
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
@@ -47,17 +46,17 @@
 │                                                                              │
 ╰──────────────────────────────────────────────────────────────────────────────╯
   [GATE] · awaiting agent input  ·  Step: b  ·  1 pending  ·  esc to blur
+ run-1 · demo · b · LIVE
   awaiting agent input  ·  enter submit  •  alt+enter newline  •  F1 more
 --- frame ---
 
-╭─ run-1 · demo › Steps ───────╮╭─ run-1 · demo › a › Transcript · LIVE ───────╮
+╭─ run-1 · demo › [STEPS] ─────╮╭─ run-1 · demo › a › Transcript ──────────────╮
 │ ▌  ○  a   pending            ││   ○  pending                                 │
 │      —                       ││                                              │
-│    ○  b   pending            ││   transcript unavailable (persistence off)   │
-│      —                       ││                                              │
+│    ○  b   pending            ││                                              │
+│      —                       ││   Transcript unavailable                     │
 │    ○  c   pending            ││                                              │
-│      —                       ││                                              │
-│                              ││                                              │
+│      —                       ││   Persistence is off for this run — nothing  │
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
@@ -73,4 +72,5 @@
 │                              ││                                              │
 ╰──────────────────────────────╯╰──────────────────────────────────────────────╯
   Human actions  ·  no pending actions
+ run-1 · demo · a · LIVE
   running  ·  enter transcript  •  j/k select  •  esc/q home  •  ? more

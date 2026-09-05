@@ -8,6 +8,7 @@ import (
 	"jig/internal/engine"
 	"jig/internal/tui/detail"
 	"jig/internal/tui/monitor"
+	"jig/internal/tui/palette"
 	"jig/internal/tui/runs"
 	"jig/internal/tui/selector"
 	"jig/internal/tui/shared"
@@ -242,6 +243,12 @@ func (m rootModel) handleGlobalKey(msg tea.KeyPressMsg) (rootModel, tea.Cmd, boo
 		}
 		return m, nil, true
 	}
+	// Palette owns its keys while open (filter / navigate / run / esc).
+	if m.palette.Open() {
+		var cmd tea.Cmd
+		m.palette, cmd, _ = m.palette.Update(msg)
+		return m, cmd, true
+	}
 	// Help owns its scrolling keys while open, so the screen underneath cannot
 	// move. F1 opens it during text capture without stealing a printable "?".
 	if m.showHelp {
@@ -275,7 +282,21 @@ func (m rootModel) handleGlobalKey(msg tea.KeyPressMsg) (rootModel, tea.Cmd, boo
 		m.helpOffset = 0
 		return m, nil, true
 	}
+	if !capturesText && keybind.Matches(msg, shared.KeyPalette) {
+		m.palette = m.palette.Show(m.paletteCommands())
+		return m, nil, true
+	}
 	return m, nil, false
+}
+
+// paletteCommands builds the currently-enabled action catalog from the active
+// screen's help sections (same enablement SOT as the footer).
+func (m rootModel) paletteCommands() []palette.Command {
+	var out []palette.Command
+	for _, sec := range m.activeProvider().helpSections() {
+		out = append(out, palette.FromBindings(sec.Title, sec.Bindings)...)
+	}
+	return out
 }
 
 // handleDeleteConfirmed executes a confirmed run deletion: removes the row

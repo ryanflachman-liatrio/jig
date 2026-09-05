@@ -48,10 +48,30 @@ func BreadcrumbPanel(parts []string, body string, width, height int, focused boo
 	return Panel(BreadcrumbTitle(parts, panelTitleWidth(width)), body, width, height, focused)
 }
 
+// FocusTitle returns the Lazygit-style panel role label. When focused the name
+// is uppercased and bracketed (`[STEPS]`) so focus is legible from title text,
+// not only from border color. Blurred panels keep the plain name.
+func FocusTitle(name string, focused bool) string {
+	name = sanitizeTitleSegment(name)
+	if name == "" {
+		return ""
+	}
+	if !focused {
+		return name
+	}
+	return "[" + strings.ToUpper(name) + "]"
+}
+
+// IsFocusBadge reports whether s is a FocusTitle badge (`[NAME]`).
+func IsFocusBadge(s string) bool {
+	return len(s) >= 3 && s[0] == '[' && s[len(s)-1] == ']'
+}
+
 // BreadcrumbTitle preserves the run identity and current content when the
 // intermediate hierarchy cannot fit. This is preferable to trailing
 // truncation, which would hide the leaf that tells the operator what they are
-// currently viewing.
+// currently viewing. When the leaf is a focus badge, truncation prefers keeping
+// the badge over a long run-id root (Phase 1.2).
 func BreadcrumbTitle(parts []string, maxWidth int) string {
 	clean := make([]string, 0, len(parts))
 	for _, part := range parts {
@@ -85,7 +105,16 @@ func BreadcrumbTitle(parts []string, maxWidth int) string {
 	// When the leaf itself is long, reserve a compact root prefix before
 	// truncating the leaf. Run IDs lead the root segment, so this still exposes
 	// both pieces of information at practical narrow widths.
+	// Focus badges are never truncated away in favor of a long root — shrink
+	// the root harder and keep the full badge when it fits alone.
 	separatorWidth := lipgloss.Width(BreadcrumbSeparator)
+	if IsFocusBadge(leaf) && lipgloss.Width(leaf) <= maxWidth {
+		rootBudget := maxWidth - lipgloss.Width(leaf) - separatorWidth
+		if rootBudget >= 1 {
+			return TruncateTitle(root, rootBudget) + BreadcrumbSeparator + leaf
+		}
+		return TruncateTitle(leaf, maxWidth)
+	}
 	if maxWidth > separatorWidth+2 {
 		rootWidth = min(lipgloss.Width(root), 8, maxWidth-separatorWidth-1)
 		root = TruncateTitle(root, rootWidth)

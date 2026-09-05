@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"jig/internal/sentinel"
+	"jig/internal/step"
 	"jig/internal/tui/shared"
 )
 
@@ -48,7 +49,7 @@ func (m Model) gateOverlayView(base string, layout verticalLayout) string {
 		return base
 	}
 
-	available := max(m.height-layout.inputH-layout.footerH, 0)
+	available := max(m.height-layout.inputH-layout.statusH-layout.footerH, 0)
 	gate := m.gateOverlay()
 	overlayH := min(lipgloss.Height(gate), available)
 	if overlayH < 1 {
@@ -190,6 +191,9 @@ func (m Model) hintLabel(width int) string {
 		gate.SetHelp("tab", "gate")
 		bindings = append([]keybind.Binding{gate}, bindings...)
 	}
+	palette := shared.KeyPalette
+	palette.SetEnabled(!m.CapturesText())
+	bindings = append(bindings, palette)
 	return shared.CompactHint(width, shared.MoreHelpBinding(m.CapturesText()), bindings...)
 }
 
@@ -197,13 +201,121 @@ func (m Model) footerView() string {
 	status := m.statusLabel()
 	prefix := "  " + status + "  ·  "
 	hint := m.hintLabel(max(m.width-lipgloss.Width(prefix), 0))
-	// The per-run cost/token total lives at the bottom of the Steps panel
-	// (listBody's Total row), not the footer.
+	// Identity/cost live on the status line (Phase 1.1); the footer keeps state
+	// words + keybindings only (C1).
 	f := shared.Theme.Footer
 	if m.width > 0 {
 		f = f.MaxWidth(m.width)
 	}
 	return f.Render(prefix + hint)
+}
+
+// statusLineView is the Lazygit-style identity strip between panels/gate and the
+// keybinding footer: run · workflow · step · tokens/cost (+ LIVE / N new).
+// State words stay in the footer — never duplicate them here (C1).
+func (m Model) statusLineView() string {
+	parts := make([]string, 0, 6)
+	if id := shortRunID(m.RunID); id != "" {
+		parts = append(parts, id)
+	}
+	if m.workflow != "" {
+		parts = append(parts, m.workflow)
+	}
+	if step := m.statusStepID(); step != "" {
+		parts = append(parts, step)
+	}
+	if m.totalTokens > 0 {
+		parts = append(parts, humanTokens(m.totalTokens)+" tok")
+	}
+	if m.totalCost > 0 {
+		parts = append(parts, fmt.Sprintf("$%.4f", m.totalCost))
+	}
+	if m.showsTranscriptFollow() {
+		switch {
+		case m.chatAutoScroll:
+			parts = append(parts, "LIVE")
+		case m.unseenChatEntries() > 0:
+			parts = append(parts, fmt.Sprintf("%d new", m.unseenChatEntries()))
+		}
+	}
+	line := " " + strings.Join(parts, " · ")
+	line = truncateStatusLine(line, m.width)
+	style := shared.Theme.StatusLine
+	if m.width > 0 {
+		style = style.MaxWidth(m.width)
+	}
+	return style.Render(line)
+}
+
+// statusStepID picks the step field for the status line (G4): pending gate's
+// step if any, else the selected Steps cursor step, else a running step.
+func (m Model) statusStepID() string {
+	if entry, ok := m.activeEntry(); ok && entry.stepID != "" {
+		return entry.stepID
+	}
+	if rows := m.visibleRows(); m.cursor >= 0 && m.cursor < len(rows) {
+		if id := rows[m.cursor].stepID; id != "" {
+			return id
+		}
+	}
+	for _, s := range m.steps {
+		if s.status == step.StatusRunning {
+			return s.id
+		}
+	}
+	if m.chatStep != "" {
+		return m.chatStep
+	}
+	return ""
+}
+
+// truncateStatusLine drops cost first, then shortens workflow, then step; the
+// run id is never dropped (1.1).
+func truncateStatusLine(line string, width int) string {
+	if width < 1 || lipgloss.Width(line) <= width {
+		return line
+	}
+	parts := strings.Split(strings.TrimLeft(line, " "), " · ")
+	if len(parts) == 0 {
+		return ansi.Truncate(line, width, "…")
+	}
+	dropCost := func(p []string) []string {
+		out := make([]string, 0, len(p))
+		for _, part := range p {
+			if strings.HasPrefix(part, "$") || strings.HasSuffix(part, " tok") {
+				continue
+			}
+			out = append(out, part)
+		}
+		return out
+	}
+	parts = dropCost(parts)
+	rebuild := func(p []string) string { return " " + strings.Join(p, " · ") }
+	if lipgloss.Width(rebuild(parts)) <= width {
+		return rebuild(parts)
+	}
+	// Shorten workflow (index 1 when run id is present).
+	if len(parts) >= 2 {
+		keep := lipgloss.Width(parts[0]) + 3 // " · "
+		for i := 2; i < len(parts); i++ {
+			keep += lipgloss.Width(parts[i]) + 3
+		}
+		budget := width - keep - 1 // leading space
+		if budget > 1 {
+			parts[1] = shared.TruncateTitle(parts[1], budget)
+		} else if len(parts) > 2 {
+			parts = append(parts[:1], parts[2:]...)
+		}
+	}
+	if lipgloss.Width(rebuild(parts)) <= width {
+		return rebuild(parts)
+	}
+	// Drop step (and later adornments) until run id fits.
+	for len(parts) > 1 && lipgloss.Width(rebuild(parts)) > width {
+		// Prefer dropping LIVE/N new, then rightmost identity fields after run id.
+		parts = parts[:len(parts)-1]
+	}
+	return ansi.Truncate(rebuild(parts), width, "…")
 }
 
 type contentKind uint8
@@ -237,18 +349,9 @@ func (m Model) selectedContent() contentContext {
 		return contentContext{kind: contentReview, stepID: m.chatStep, label: "Review"}
 	}
 
-	label := "Transcript"
-	if m.showsTranscriptFollow() {
-		switch {
-		case m.chatAutoScroll:
-			label += " · LIVE"
-		case m.unseenChatEntries() > 0:
-			label += fmt.Sprintf(" · PAUSED · %d new", m.unseenChatEntries())
-		default:
-			label += " · PAUSED"
-		}
-	}
-	return contentContext{kind: contentTranscript, stepID: m.chatStep, label: label}
+	// LIVE / N new live on the status line (1.1 / G5); panel leaf stays the
+	// role word so focus badges can replace it cleanly (1.2).
+	return contentContext{kind: contentTranscript, stepID: m.chatStep, label: "Transcript"}
 }
 
 func (m Model) selectedOutputFile() (string, outputFile, bool) {
@@ -295,22 +398,44 @@ func (m Model) transcriptPanelTitle() string {
 	return m.selectedContent().label
 }
 
+// badgeFocus is the region that should show a [NAME] badge. None while the
+// help-agent modal owns chrome; otherwise exactly the focused region.
+func (m Model) badgeFocus() focusRegion {
+	if m.helpOpen {
+		return focusRegion(-1) // no badge
+	}
+	return m.focus
+}
+
 func (m Model) stepsPanelTitleParts() []string {
-	return []string{m.runIdentity(), "Steps"}
+	leaf := shared.FocusTitle("Steps", m.badgeFocus() == focusSteps)
+	return []string{m.runIdentity(), leaf}
 }
 
 func (m Model) transcriptPanelTitleParts() []string {
 	content := m.selectedContent()
-	return []string{m.runIdentity(), content.stepID, content.label}
+	focused := m.badgeFocus() == focusTranscript
+	leaf := content.label
+	if content.kind == contentTranscript {
+		leaf = shared.FocusTitle("Transcript", focused)
+	} else if focused {
+		// File/review titles keep their name; focus still shows via border.
+		leaf = content.label
+	}
+	return []string{m.runIdentity(), content.stepID, leaf}
 }
 
 // View lays the monitor out as two side-by-side titled panels (Steps + the
-// selected step's transcript) with the input bar and footer beneath. Below the
-// narrow threshold only the focused panel renders full-width (Resolved
-// Decision 14). Only the focused region's border is drawn primary.
+// selected step's transcript) with the input bar, status line, and footer
+// beneath. Below the narrow threshold only the focused panel renders
+// full-width (Resolved Decision 14). Only the focused region's border is drawn
+// primary.
 func (m Model) View() string {
 	if !m.ready {
-		return "\n  Loading…\n"
+		return shared.RenderEmptyState(shared.EmptyState{
+			Title: "Loading run…",
+			Body:  "Waiting for the run monitor to finish sizing.",
+		})
 	}
 	if m.width < 1 || m.height < 1 {
 		return ""
@@ -318,12 +443,13 @@ func (m Model) View() string {
 
 	layout := m.verticalLayout()
 	footer := fitBlock(m.footerView(), m.width, layout.footerH)
+	status := fitBlock(m.statusLineView(), m.width, layout.statusH)
 	inputBar := fitBlock(m.inputBarView(), m.width, layout.inputH)
 	if m.reviewOpen {
 		entry, ok := m.activeEntry()
 		if ok && entry.workspace != nil {
 			workspace := fitBlock(entry.workspace.EmbeddedView(), m.width, layout.panelH+layout.securityH)
-			base := fitBlock(joinVertical(workspace, inputBar, footer), m.width, m.height)
+			base := fitBlock(joinVertical(workspace, inputBar, status, footer), m.width, m.height)
 			if m.helpOpen {
 				return m.helpOverlay(base)
 			}
@@ -354,7 +480,7 @@ func (m Model) View() string {
 	panels = fitBlock(panels, m.width, layout.panelH)
 
 	sec := fitBlock(m.securityView(layout.securityH), m.width, layout.securityH)
-	base := fitBlock(joinVertical(panels, sec, inputBar, footer), m.width, m.height)
+	base := fitBlock(joinVertical(panels, sec, inputBar, status, footer), m.width, m.height)
 	base = m.gateOverlayView(base, layout)
 	if m.helpOpen {
 		return m.helpOverlay(base)

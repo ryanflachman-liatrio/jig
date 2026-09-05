@@ -17,10 +17,16 @@ func (m Model) View() string {
 		if name == "" {
 			name = "this workflow"
 		}
-		return "\n  " + shared.Theme.Title.Render("No runs yet") + "\n\n" +
-			shared.Theme.Question.Render("  No runs yet for "+name+".") + "\n\n" +
-			shared.Theme.Question.Render("  Press r to start a run.") + "\n\n" +
-			shared.Theme.Footer.Render("  "+shared.HintString(m.keys.NewRun, m.keys.Back, shared.KeyQuit)) + "\n"
+		body := "No runs yet."
+		if m.filtered && m.workflowName != "" {
+			body = "No runs for " + m.workflowName + " yet."
+		}
+		empty := shared.RenderEmptyState(shared.EmptyState{
+			Title: body,
+			Body:  "Press r to start a new run for " + name + ".",
+			CTA:   "r  start a run",
+		})
+		return empty + "\n" + shared.Theme.Footer.Render("  "+shared.HintString(m.keys.NewRun, m.keys.Back, shared.KeyHelp, shared.KeyQuit)) + "\n"
 	}
 
 	footer := m.footerView()
