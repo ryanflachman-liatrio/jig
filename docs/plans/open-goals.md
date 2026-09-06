@@ -27,7 +27,7 @@ and comparison to high-rated TUIs (lazygit, k9s, yazi, btop) plus agent peers
 
 | ID | Goal | Kind | Notes |
 |----|------|------|-------|
-| A1 | **Headless `jig run`** — non-interactive / CI runner for a workflow TOML | S | Engine designed for it; CLI today is TUI + `validate` + `prune` only (`cmd/jig/main.go`). |
+| A1 | **Headless `jig run`** — non-interactive / CI runner for a workflow TOML | S | Engine designed for it; CLI today is TUI + `validate` + `prune` only (`cmd/jig/main.go`). Plan: [`docs/specs/19-spec-headless-run/19-implementation-plan.md`](../specs/19-spec-headless-run/19-implementation-plan.md). |
 | A2 | **Thin ops CLI** — `status`, `logs`, `doctor`, `reset`, maybe `diff` | C+S | Complements A1; stop forcing every op through the TUI. |
 | A3 | **Mid-execution crash recovery** — restart workers interrupted mid-agent | S | Gate-parked resume exists; process death mid-step does not. |
 | A4 | **Cursor harness parity** — `CapSessionResume`, `CapUserQuestion`, `CapPartialStreaming` | S | Today fail-closed on resume / block_on (`internal/harness/cursor.go`). |
