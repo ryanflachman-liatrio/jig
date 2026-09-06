@@ -65,6 +65,10 @@ guaranteed well-formed: unique ids, a real DAG (back-edges only via
 `[[step.route]]`), every `@ref` and `.field` path resolves, every guard comparison
 is legal for the type it tests, and every loop is bounded.
 
+Object composition and the TOML load call graph (including module expansion
+and custom `UnmarshalTOML` hooks) are diagrammed in
+[`workflow-object-graph.md`](workflow-object-graph.md).
+
 File-by-file:
 
 | File | Responsibility |
