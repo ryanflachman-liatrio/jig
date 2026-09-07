@@ -49,20 +49,39 @@ func TestRunRun_LoadErrorExit1(t *testing.T) {
 	}
 }
 
-func TestReorderRunArgs(t *testing.T) {
-	got, err := reorderRunArgs([]string{"wf.toml", "--ci", "--timeout", "5m"})
+func TestParseRecoveryAndConflict(t *testing.T) {
+	for _, ok := range []string{"abort", "retry", "skip"} {
+		if err := parseRecoveryAction(ok); err != nil {
+			t.Errorf("parseRecoveryAction(%q): %v", ok, err)
+		}
+	}
+	if err := parseRecoveryAction("resume"); err == nil {
+		t.Fatal("resume should be rejected")
+	}
+	if err := parseConflictAction("abort"); err != nil {
+		t.Fatal(err)
+	}
+	if err := parseConflictAction("agent"); err == nil {
+		t.Fatal("agent should be rejected")
+	}
+}
+
+func TestRunRun_BadOnRecoveryExit2(t *testing.T) {
+	if code := runRun([]string{"--on-recovery", "resume", "x.toml"}); code != headless.ExitUsage {
+		t.Fatalf("exit=%d want %d", code, headless.ExitUsage)
+	}
+	if code := runRun([]string{"--on-conflict", "agent", "x.toml"}); code != headless.ExitUsage {
+		t.Fatalf("exit=%d want %d", code, headless.ExitUsage)
+	}
+}
+
+func TestReorderRunArgs_PolicyFlags(t *testing.T) {
+	got, err := reorderRunArgs([]string{"wf.toml", "--on-recovery", "skip", "--on-conflict", "abort"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"--ci", "--timeout", "5m", "wf.toml"}
-	if strings.Join(got, " ") != strings.Join(want, " ") {
-		t.Fatalf("got %v want %v", got, want)
-	}
-	got, err = reorderRunArgs([]string{"--ci", "wf.toml"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Join(got, " ") != "--ci wf.toml" {
-		t.Fatalf("got %v", got)
+	want := "--on-recovery skip --on-conflict abort wf.toml"
+	if strings.Join(got, " ") != want {
+		t.Fatalf("got %v want %s", got, want)
 	}
 }

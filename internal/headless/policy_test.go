@@ -91,10 +91,26 @@ func TestPolicy_MergeRequiresFlags(t *testing.T) {
 }
 
 func TestEffectiveCIFlags(t *testing.T) {
-	s := EffectiveCIFlags(OutputJSON, true, "45m0s")
-	for _, part := range []string{"--output", "json", "--discard-merge", "--on-recovery", "abort", "--timeout"} {
+	s := EffectiveCIFlags(OutputJSON, true, RecoveryAbort, ConflictAbort, "45m0s")
+	for _, part := range []string{"--output", "json", "--discard-merge", "--on-recovery", "abort", "--on-conflict", "abort", "--timeout"} {
 		if !strings.Contains(s, part) {
 			t.Fatalf("missing %q in %s", part, s)
 		}
+	}
+}
+
+func TestPolicy_RecoveryUsesConfiguredAction(t *testing.T) {
+	// Policy.recoveryAction maps CLI strings onto engine Recover* constants.
+	p := &Policy{OnRecovery: RecoverySkip}
+	if got := p.recoveryAction(); got != engine.RecoverSkip {
+		t.Fatalf("recoveryAction=%q want %q", got, engine.RecoverSkip)
+	}
+	p.OnRecovery = RecoveryRetry
+	if got := p.recoveryAction(); got != engine.RecoverRetry {
+		t.Fatalf("recoveryAction=%q want %q", got, engine.RecoverRetry)
+	}
+	p.OnRecovery = ""
+	if got := p.recoveryAction(); got != engine.RecoverAbort {
+		t.Fatalf("default recoveryAction=%q want %q", got, engine.RecoverAbort)
 	}
 }

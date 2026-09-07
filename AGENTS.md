@@ -81,7 +81,7 @@ Plan: [`docs/specs/14-spec-per-step-harness/14-implementation-plan.md`](docs/spe
 - `internal/harness` — `Harness` seam (`ClaudeHarness`, `AcpHarness`, `CursorHarness`, `CodexHarness`)
 - `internal/transcript` — per-step `transcript.jsonl` (file is truth)
 - `internal/tui` — Bubble Tea UI (transcript-only; backend-agnostic)
-- `cmd/jig` — `validate` + TUI entry
+- `cmd/jig` — `validate` + `run` (headless) + TUI entry
 
 ## Commands
 
@@ -89,12 +89,15 @@ Plan: [`docs/specs/14-spec-per-step-harness/14-implementation-plan.md`](docs/spe
 go build ./cmd/jig
 go run ./cmd/jig
 go run ./cmd/jig validate <workflow.toml>
+go run ./cmd/jig run examples/headless-smoke.toml --ci
 go test ./...
 gofmt -l -w .
 go vet ./...
 ```
 
 Go 1.25 (see `mise.toml`).
+
+Headless / CI contract: [`docs/headless.md`](docs/headless.md).
 
 ## Conventions that matter for every change
 

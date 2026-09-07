@@ -32,6 +32,8 @@ func Run(ctx context.Context, opts Options) Result {
 		ApproveMerge: opts.ApproveMerge,
 		DiscardMerge: opts.DiscardMerge,
 		CI:           opts.CI,
+		OnRecovery:   opts.OnRecovery,
+		OnConflict:   opts.OnConflict,
 	}
 	hasMerge := opts.ApproveMerge || opts.DiscardMerge || opts.CI
 	w.emitGateWarnings(wf, opts.Manager.Root(), hasMerge)

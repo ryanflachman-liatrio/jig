@@ -64,7 +64,8 @@ before assuming a feature is missing — this list drifts.
 - `internal/tui` — Bubble Tea: a streaming chat client plus a navigable
   master–detail **run monitor** (step list → per-step chat chain read from the
   transcript). See `docs/run-monitor-transcript-plan.md` for the epic.
-- `cmd/jig` — entry point: `jig validate <file>` and the TUI.
+- `cmd/jig` — entry point: `jig validate <file>`, `jig run <file>` (headless),
+  and the TUI.
 
 **File is truth, bus is liveness.** The per-step `transcript.jsonl` (written
 directly by the runner) is the durable source of truth for step output. The
@@ -90,7 +91,10 @@ go run ./cmd/jig
 # Validate a workflow file
 go run ./cmd/jig validate .agents/jig/feature.toml
 
-# Test (workflow, engine, runner, transcript, datastore, tui are covered)
+# Headless / CI run (see docs/headless.md)
+go run ./cmd/jig run examples/headless-smoke.toml --ci
+
+# Test (workflow, engine, runner, transcript, datastore, tui, headless are covered)
 go test ./...
 go test ./internal/workflow -run TestDecodeValid -v
 
