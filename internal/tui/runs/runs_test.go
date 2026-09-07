@@ -131,11 +131,16 @@ func TestRunsHydrate(t *testing.T) {
 			engine.StepStatus{RunID: "paused-1", StepID: "a", To: step.StatusSucceeded},
 			engine.StepStatus{RunID: "paused-1", StepID: "gate", To: step.StatusAwaitingReview},
 		},
+		// Crash-interrupted mid-worker run (Spec 20).
+		{
+			engine.RunStarted{RunID: "crash-1", Workflow: "wf", Steps: []string{"agent"}},
+			engine.StepStatus{RunID: "crash-1", StepID: "agent", To: step.StatusRunning},
+		},
 	}
 	m = m.Hydrate(past)
 
-	if len(m.rows) != 3 {
-		t.Fatalf("rows: want 3 (live + finished + paused), got %d", len(m.rows))
+	if len(m.rows) != 4 {
+		t.Fatalf("rows: want 4 (live + finished + paused + interrupted), got %d", len(m.rows))
 	}
 
 	// The live run must not have been marked done/failed by the duplicate group.
@@ -157,18 +162,38 @@ func TestRunsHydrate(t *testing.T) {
 	}
 
 	paused := m.rows[m.index["paused-1"]]
-	if !paused.paused || paused.done {
-		t.Fatalf("historical unfinished run: paused=%v done=%v", paused.paused, paused.done)
+	if !paused.paused || paused.done || paused.interrupted {
+		t.Fatalf("historical unfinished run: paused=%v interrupted=%v done=%v", paused.paused, paused.interrupted, paused.done)
 	}
 	if got := runRowStatus(paused); !strings.Contains(got, "paused") {
 		t.Errorf("paused run status render: want paused, got %q", got)
 	}
-	m.cursor = m.index["paused-1"]
+	crash := m.rows[m.index["crash-1"]]
+	if !crash.paused || !crash.interrupted || crash.done {
+		t.Fatalf("interrupted run: paused=%v interrupted=%v done=%v", crash.paused, crash.interrupted, crash.done)
+	}
+	if got := runRowStatus(crash); !strings.Contains(got, "interrupted") {
+		t.Errorf("interrupted run status render: want interrupted, got %q", got)
+	}
+	m.cursor = m.index["crash-1"]
 	m, cmd := m.Update(tea.KeyPressMsg{Code: 'R', Text: "R"})
+	if cmd == nil {
+		t.Fatal("R on interrupted run produced no resume command")
+	}
+	msg, ok := cmd().(ResumeRunMsg)
+	if !ok || msg.RunID != "crash-1" || msg.Workflow != "wf" {
+		t.Fatalf("resume message = %#v", msg)
+	}
+	m = m.MarkLive("crash-1")
+	if got := runRowStatus(m.rows[m.index["crash-1"]]); !strings.Contains(got, "running") {
+		t.Errorf("resumed crash run status: want running, got %q", got)
+	}
+	m.cursor = m.index["paused-1"]
+	m, cmd = m.Update(tea.KeyPressMsg{Code: 'R', Text: "R"})
 	if cmd == nil {
 		t.Fatal("R on paused run produced no resume command")
 	}
-	msg, ok := cmd().(ResumeRunMsg)
+	msg, ok = cmd().(ResumeRunMsg)
 	if !ok || msg.RunID != "paused-1" || msg.Workflow != "wf" {
 		t.Fatalf("resume message = %#v", msg)
 	}

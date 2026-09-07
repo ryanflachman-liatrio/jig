@@ -31,7 +31,7 @@ func ReplayJournal(runDir string) ([]Event, error) {
 		return nil, err
 	}
 	events = hydrateReviewDocuments(runDir, events)
-	return reconcileInterruptedRun(events), nil
+	return reconcileInterruptedRun(runDir, events), nil
 }
 
 // ReplayJournalRaw returns only events durably written by the original
@@ -105,12 +105,11 @@ func readJournal(runDir string) (int, []Event, error) {
 }
 
 // reconcileInterruptedRun supplies terminal events that could not be journaled
-// when the jig process disappeared while an SDK-backed step was in flight. The
-// returned events are deliberately virtual: the original journal remains an
-// accurate record of what was durably observed, while every replay consumer
-// gets a truthful terminal state instead of displaying a permanently-running
-// step with no owner left to update it.
-func reconcileInterruptedRun(events []Event) []Event {
+// when the jig process disappeared while an SDK-backed step was in flight — but
+// only for **orphaned** runs that cannot reopen (Spec 20 D7). Reopenable runs
+// (workflow.json present with a RunStarted) stay unfinished so Monitor / Runs
+// can offer Resume instead of a virtual RunFinished.
+func reconcileInterruptedRun(runDir string, events []Event) []Event {
 	var started *RunStarted
 	finished := false
 	states := make(map[string]step.Status)
@@ -129,6 +128,10 @@ func reconcileInterruptedRun(events []Event) []Event {
 		}
 	}
 	if started == nil || finished {
+		return events
+	}
+	// Reopenable: durable workflow snapshot exists. Do not invent terminal events.
+	if fileExists(datastore.WorkflowSnapshotPath(runDir)) {
 		return events
 	}
 

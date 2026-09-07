@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"jig/internal/datastore"
 	"jig/internal/engine"
 	"jig/internal/harness"
 	"jig/internal/sentinel"
@@ -120,6 +121,13 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 		return failResult(fmt.Sprintf("input artifact: %v", err), start), nil
 	}
 
+	// Fresh attempts must not resume a stale crash-durable session id. Resume
+	// dispatches keep the existing file so crash reopen and live Recover(resume)
+	// share one identity on disk.
+	if req.ResumeSessionID == "" {
+		_ = datastore.ClearSession(sessionRunDir(req), req.Step.ID)
+	}
+
 	sess, err := h.Open(ctx, spec)
 	if err != nil {
 		return failResult(fmt.Sprintf("agent open: %v", err), start), nil
@@ -131,6 +139,38 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 		initialMsg = req.Message
 	}
 	return captureStream(sess.Messages(), req, rep, start, initialMsg)
+}
+
+// SupportsSessionResume reports whether the step's backend/transport honors
+// ResumeSessionID (CapSessionResume). Used by the engine for honest CanResume.
+func (e *AgentExecutor) SupportsSessionResume(backend, transport string) bool {
+	h, err := e.forHarness(backend, transport)
+	if err != nil {
+		return false
+	}
+	return h.Capabilities().Has(harness.CapSessionResume)
+}
+
+func sessionRunDir(req engine.StepRequest) string {
+	if req.TranscriptPath == "" {
+		return ""
+	}
+	// transcript.jsonl lives at steps/<id>/transcript.jsonl → run dir is two up.
+	return filepath.Dir(filepath.Dir(filepath.Dir(req.TranscriptPath)))
+}
+
+func persistSessionID(req engine.StepRequest, sessionID string) {
+	if sessionID == "" || req.TranscriptPath == "" || req.Step == nil {
+		return
+	}
+	_ = datastore.WriteSession(sessionRunDir(req), req.Step.ID, datastore.SessionInfo{
+		SessionID:  sessionID,
+		Backend:    req.Step.Backend,
+		Transport:  req.Step.Transport,
+		Attempt:    req.Attempt,
+		Iteration:  req.Iteration,
+		Generation: req.Generation,
+	})
 }
 
 func outboundToolCall(tool string, input map[string]any) bool {
@@ -269,11 +309,13 @@ func captureStream(
 	// terminal EventResult. Recording it here means a step stopped mid-turn
 	// still returns a resumable session id (see the connection-closed path
 	// below), where capturing only on EventResult would leave a cancelled step
-	// with SessionID == "".
+	// with SessionID == "". Spec 20 also persists the first id to session.json
+	// so process death mid-flight can still offer Recover(resume).
 	sessionID := ""
 	noteSession := func(id string) {
 		if id != "" && sessionID == "" {
 			sessionID = id
+			persistSessionID(req, id)
 		}
 	}
 
@@ -342,6 +384,10 @@ func captureStream(
 				// recovery that resumes this exact conversation (feeding the error
 				// back in) rather than starting over blind.
 				res.SessionID = ev.SessionID
+				if res.SessionID == "" {
+					res.SessionID = sessionID
+				}
+				noteSession(res.SessionID)
 				return res, nil
 			}
 			result := &step.Result{
@@ -352,6 +398,10 @@ func captureStream(
 				TotalCostUSD: ev.TotalCostUSD,
 				Usage:        ev.Usage,
 			}
+			if result.SessionID == "" {
+				result.SessionID = sessionID
+			}
+			noteSession(result.SessionID)
 
 			// Structured output carries only brief metadata fields; large prose
 			// lives in raw_result.md, written by the engine from the agent's text
@@ -679,4 +729,7 @@ func containsStr(ss []string, s string) bool {
 }
 
 // Ensure AgentExecutor satisfies engine.Executor at compile time.
-var _ engine.Executor = (*AgentExecutor)(nil)
+var (
+	_ engine.Executor             = (*AgentExecutor)(nil)
+	_ engine.SessionResumeSupport = (*AgentExecutor)(nil)
+)

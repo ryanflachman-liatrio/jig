@@ -113,6 +113,12 @@ func (m Model) Hydrate(runs [][]engine.Event) Model {
 		if rs, ok := evs[0].(engine.RunStarted); ok {
 			if i, exists := m.index[rs.RunID]; exists && !m.rows[i].done {
 				m.rows[i].paused = true
+				switch engine.ClassifyUnfinished(evs) {
+				case engine.UnfinishedInterrupted:
+					m.rows[i].interrupted = true
+				default:
+					m.rows[i].interrupted = false
+				}
 			}
 		}
 	}
@@ -167,6 +173,7 @@ func (m Model) handleEngineEvent(e engine.Event) Model {
 		m.rows[i].done = true
 		m.rows[i].failed = ev.Failed
 		m.rows[i].paused = false
+		m.rows[i].interrupted = false
 	}
 	return m
 }
@@ -175,6 +182,7 @@ func (m Model) handleEngineEvent(e engine.Event) Model {
 func (m Model) MarkLive(runID string) Model {
 	if i, ok := m.index[runID]; ok {
 		m.rows[i].paused = false
+		m.rows[i].interrupted = false
 	}
 	m.notice = ""
 	return m.syncViewport()

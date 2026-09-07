@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"jig/internal/datastore"
 	"jig/internal/engine"
 	"jig/internal/harness"
 	"jig/internal/interaction"
@@ -779,6 +780,119 @@ func TestSessionIDCapturedAtStart(t *testing.T) {
 	}
 	if res.SessionID != "sess-early" {
 		t.Fatalf("SessionID = %q, want sess-early (captured at start, survives a stop)", res.SessionID)
+	}
+}
+
+func TestSessionIDPersistedToSessionJSON(t *testing.T) {
+	runDir, err := datastore.RunDir(t.TempDir(), "run1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := datastore.StepDir(runDir, "agent"); err != nil {
+		t.Fatal(err)
+	}
+	tPath := datastore.TranscriptPath(runDir, "agent")
+	req := engine.StepRequest{
+		Step: &workflow.Step{
+			ID:        "agent",
+			Backend:   "claude",
+			Transport: "sdk",
+		},
+		TranscriptPath: tPath,
+		Attempt:        1,
+	}
+	res, err := captureStream(scriptChan(
+		harness.Event{Type: harness.EventSessionID, SessionID: "sess-disk"},
+	), req, &captureReporter{}, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.SessionID != "sess-disk" {
+		t.Fatalf("SessionID = %q", res.SessionID)
+	}
+	info, err := datastore.ReadSession(runDir, "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.SessionID != "sess-disk" || info.Backend != "claude" || info.Transport != "sdk" {
+		t.Fatalf("session.json = %+v", info)
+	}
+}
+
+func TestFreshDispatchClearsSessionJSON(t *testing.T) {
+	runDir, err := datastore.RunDir(t.TempDir(), "run1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{SessionID: "stale"}); err != nil {
+		t.Fatal(err)
+	}
+	tPath := datastore.TranscriptPath(runDir, "agent")
+	h := &harness.FakeHarness{
+		NameVal: "claude",
+		Caps:    harness.NewCapabilitySet(harness.CapSessionResume),
+		Sess:    harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}}),
+	}
+	_, err = NewAgentExecutorFixed(h).Execute(context.Background(), engine.StepRequest{
+		Step:           &workflow.Step{ID: "agent", Type: workflow.StepAgent},
+		TranscriptPath: tPath,
+	}, &captureReporter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := datastore.ReadSession(runDir, "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.SessionID != "" {
+		t.Fatalf("fresh dispatch left stale session %q", info.SessionID)
+	}
+}
+
+func TestResumeDispatchKeepsSessionJSON(t *testing.T) {
+	runDir, err := datastore.RunDir(t.TempDir(), "run1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{SessionID: "keep-me"}); err != nil {
+		t.Fatal(err)
+	}
+	tPath := datastore.TranscriptPath(runDir, "agent")
+	h := &harness.FakeHarness{
+		NameVal: "claude",
+		Caps:    harness.NewCapabilitySet(harness.CapSessionResume),
+		Sess: harness.NewFakeSession([]harness.Event{
+			{Type: harness.EventSessionID, SessionID: "keep-me"},
+			{Type: harness.EventResult},
+		}),
+	}
+	_, err = NewAgentExecutorFixed(h).Execute(context.Background(), engine.StepRequest{
+		Step:            &workflow.Step{ID: "agent", Type: workflow.StepAgent},
+		TranscriptPath:  tPath,
+		ResumeSessionID: "keep-me",
+		Message:         "continue",
+	}, &captureReporter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, err := datastore.ReadSession(runDir, "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.SessionID != "keep-me" {
+		t.Fatalf("resume dispatch SessionID = %q", info.SessionID)
+	}
+}
+
+func TestSessionJSONPersistenceOffNoWrite(t *testing.T) {
+	res, err := captureStream(scriptChan(
+		harness.Event{Type: harness.EventSessionID, SessionID: "sess"},
+	), engine.StepRequest{Step: &workflow.Step{ID: "agent"}}, &captureReporter{}, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.SessionID != "sess" {
+		t.Fatalf("SessionID = %q", res.SessionID)
 	}
 }
 

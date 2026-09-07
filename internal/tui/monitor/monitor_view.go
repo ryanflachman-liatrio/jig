@@ -149,8 +149,14 @@ func (m Model) statusLabel() string {
 		}
 		return shared.Theme.Valid.Render("done")
 	}
+	if m.historical && m.interrupted && !m.hasGate() {
+		return shared.Theme.Warning.Render("interrupted")
+	}
 	entry, ok := m.activeEntry()
 	if !ok {
+		if m.historical {
+			return shared.Theme.Question.Render("paused")
+		}
 		return shared.Theme.Running.Render("running")
 	}
 	n := len(m.inputQueue)

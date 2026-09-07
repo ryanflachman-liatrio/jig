@@ -18,7 +18,7 @@ func defaultKeys() runsKeys {
 		Down:   keybind.NewBinding(keybind.WithKeys("down", "j"), keybind.WithHelp("↓/j", "down")),
 		Open:   keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "monitor")),
 		NewRun: keybind.NewBinding(keybind.WithKeys("r"), keybind.WithHelp("r", "new run")),
-		Resume: keybind.NewBinding(keybind.WithKeys("R"), keybind.WithHelp("R", "resume paused")),
+		Resume: keybind.NewBinding(keybind.WithKeys("R"), keybind.WithHelp("R", "resume paused/interrupted")),
 		Delete: keybind.NewBinding(keybind.WithKeys("d"), keybind.WithHelp("d", "delete")),
 		Back:   keybind.NewBinding(keybind.WithKeys("esc", "q", "backspace", "h", "left"), keybind.WithHelp("esc", "back")),
 	}

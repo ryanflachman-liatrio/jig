@@ -853,6 +853,26 @@ func TestMonitorWithJournal_RendersInterruptedSDKSessionFailure(t *testing.T) {
 	}
 }
 
+func TestMonitorWithJournal_InterruptedStaysUnfinished(t *testing.T) {
+	runDir := writeTranscript(t, "synthesize", nil)
+	m := New("r1")
+	m.RunDir = runDir
+	m = m.WithJournal([]engine.Event{
+		engine.RunStarted{RunID: "r1", Workflow: "feature", Steps: []string{"synthesize"}},
+		engine.StepStatus{RunID: "r1", StepID: "synthesize", To: step.StatusRunning},
+	})
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	if m.done || m.failed {
+		t.Fatalf("reopenable interrupted run must stay unfinished: done=%v failed=%v", m.done, m.failed)
+	}
+	if !m.interrupted || !m.historical {
+		t.Fatalf("interrupted=%v historical=%v", m.interrupted, m.historical)
+	}
+	if got := ansiStrip(m.statusLabel()); !strings.Contains(got, "interrupted") {
+		t.Fatalf("status label = %q, want interrupted", got)
+	}
+}
+
 // TestMonitorCostTokens verifies that StepStatus events drive the per-step
 // token/cost metadata line and the run-total row, that both survive the narrow
 // (80-col) Steps panel without being clipped, and that a re-run accumulates

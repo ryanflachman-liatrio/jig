@@ -4,6 +4,7 @@ import (
 	"path"
 	"strings"
 
+	"jig/internal/datastore"
 	"jig/internal/step"
 	"jig/internal/workflow"
 )
@@ -86,6 +87,18 @@ func mutationPathAllowed(changed string, allowed []string) bool {
 func phRunValidateGate(s *scheduler, m stepDoneMsg, wfStep *workflow.Step) postExecDecision {
 	if wfStep == nil || wfStep.Validate == nil {
 		return decisionContinue
+	}
+	// Spec 20 D9: flush SessionID to session.json before entering validating so a
+	// crash in this narrow window still leaves a durable resume identity.
+	if res := s.states[m.stepID].Result; res != nil && res.SessionID != "" && s.runDir != "" {
+		_ = datastore.WriteSession(s.runDir, m.stepID, datastore.SessionInfo{
+			SessionID:  res.SessionID,
+			Backend:    wfStep.Backend,
+			Transport:  wfStep.Transport,
+			Attempt:    s.states[m.stepID].Attempt,
+			Iteration:  s.states[m.stepID].Iteration,
+			Generation: s.states[m.stepID].Generation,
+		})
 	}
 	from := s.states[m.stepID].Status
 	s.transition(m.stepID, from, step.StatusValidating)

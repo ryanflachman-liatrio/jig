@@ -64,8 +64,24 @@ func (m Model) footerView() string {
 const (
 	runIDWidth       = 8
 	runWorkflowWidth = 16
-	runStatusWidth   = 8
+	runStatusWidth   = 12
 )
+
+func runRowStatus(row runRow) string {
+	if row.failed {
+		return shared.Theme.Error.Render("failed")
+	}
+	if row.done {
+		return shared.Theme.Valid.Render("done")
+	}
+	if row.interrupted {
+		return shared.Theme.Warning.Render("interrupted")
+	}
+	if row.paused {
+		return shared.Theme.Question.Render("paused")
+	}
+	return shared.Theme.Running.Render("running")
+}
 
 // shortRunID returns the trailing 8-character run suffix used in Home lists
 // and status chrome (G1). Full IDs remain the datastore key.
@@ -106,19 +122,6 @@ func (m Model) rowsBody() string {
 		}
 	}
 	return b.String()
-}
-
-func runRowStatus(row runRow) string {
-	if row.failed {
-		return shared.Theme.Error.Render("failed")
-	}
-	if row.done {
-		return shared.Theme.Valid.Render("done")
-	}
-	if row.paused {
-		return shared.Theme.Question.Render("paused")
-	}
-	return shared.Theme.Running.Render("running")
 }
 
 func runRowProgress(row runRow) string {

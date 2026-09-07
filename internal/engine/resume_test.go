@@ -1,9 +1,11 @@
 package engine
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -134,7 +136,7 @@ depends_on = ["scope", "gate"]
 	}
 }
 
-func TestResumeRejectsInterruptedWorker(t *testing.T) {
+func TestResumeParksInterruptedWorkerOnRecovery(t *testing.T) {
 	wf, err := workflow.Decode(`
 [workflow]
 name = "worker"
@@ -152,14 +154,425 @@ skill = "agent"
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
+		t.Fatal(err)
+	}
+	if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{
+		SessionID: "sess-crash", Backend: "claude", Transport: "sdk",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	writeJournal(t, runDir, []Event{
 		RunStarted{RunID: "interrupted", Workflow: "worker", Steps: []string{"agent"}},
-		StepStatus{RunID: "interrupted", StepID: "agent", From: step.StatusPending, To: step.StatusRunning},
+		StepStatus{RunID: "interrupted", StepID: "agent", From: step.StatusPending, To: step.StatusRunning, Attempt: 1},
+	})
+	exec := &testExec{}
+	mgr := NewManager(exec, root)
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Resume("interrupted", wf)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	recovery := waitRecoveryRequest(t, ch, 2*time.Second)
+	if recovery.StepID != "agent" {
+		t.Fatalf("RecoveryRequest.StepID = %q", recovery.StepID)
+	}
+	if recovery.Err != processInterruptedErr {
+		t.Fatalf("Err = %q, want %q", recovery.Err, processInterruptedErr)
+	}
+	// testExec does not implement SessionResumeSupport → SessionID alone allows resume.
+	if !recovery.CanResume {
+		t.Fatal("CanResume should be true with durable session.json")
+	}
+	snap := run.Snapshot()
+	agentState := snapshotStep(snap, "agent")
+	if agentState.Status != step.StatusAwaitingRecovery {
+		t.Fatalf("status = %s, want awaiting_recovery", agentState.Status)
+	}
+	if agentState.Attempt != 1 {
+		t.Fatalf("Attempt = %d, want 1 (not bumped until Recover)", agentState.Attempt)
+	}
+
+	run.Recover("agent", RecoverRetry, "")
+	events := collectEvents(t, ch, 5*time.Second)
+	if got := findStatus(events, "agent"); len(got) < 1 || got[len(got)-1] != step.StatusSucceeded {
+		t.Fatalf("after retry statuses = %v, want succeeded", got)
+	}
+	info, err := datastore.ReadSession(runDir, "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.SessionID != "" {
+		t.Fatalf("Recover(retry) left session.json %q", info.SessionID)
+	}
+	final := run.Snapshot()
+	if !final.Done || final.Failed {
+		t.Fatalf("snapshot = %+v, want successful completion", final)
+	}
+}
+
+func TestResumeInterruptedValidatingParksRecovery(t *testing.T) {
+	wf, err := workflow.Decode(`
+[workflow]
+name = "validate-crash"
+version = "1"
+[[step]]
+id = "cmd"
+type = "command"
+run = "true"
+`, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), ".jig")
+	runDir, err := datastore.RunDir(root, "validating")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
+		t.Fatal(err)
+	}
+	writeJournal(t, runDir, []Event{
+		RunStarted{RunID: "validating", Workflow: "validate-crash", Steps: []string{"cmd"}},
+		StepStatus{RunID: "validating", StepID: "cmd", From: step.StatusPending, To: step.StatusRunning},
+		StepStatus{RunID: "validating", StepID: "cmd", From: step.StatusRunning, To: step.StatusValidating},
 	})
 	mgr := NewManager(&testExec{}, root)
-	if _, err := mgr.Resume("interrupted", wf); err == nil || !strings.Contains(err.Error(), "only quiescent review gates") {
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Resume("validating", wf)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	rr := waitRecoveryRequest(t, ch, 2*time.Second)
+	if rr.StepID != "cmd" {
+		t.Fatalf("StepID = %q", rr.StepID)
+	}
+	if rr.CanResume {
+		t.Fatal("command interrupt must not CanResume")
+	}
+	run.Recover("cmd", RecoverRetry, "")
+	collectEvents(t, ch, 5*time.Second)
+	if snap := run.Snapshot(); !snap.Done || snap.Failed {
+		t.Fatalf("snapshot = %+v", snap)
+	}
+}
+
+func TestResumeMixedReviewAndInterruptedWorker(t *testing.T) {
+	const source = `
+[workflow]
+name = "mixed"
+version = "1"
+[[step]]
+id = "writer"
+type = "agent"
+skill = "writer"
+[[step]]
+id = "gate"
+type = "review"
+depends_on = ["writer"]
+output_type = { enum = ["proceed"] }
+  [[step.review]]
+  source = "@writer.summary"
+  label = "Doc"
+[[step]]
+id = "worker"
+type = "command"
+run = "true"
+depends_on = ["gate"]
+`
+	wf, err := workflow.Decode(source, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoRoot := t.TempDir()
+	initRepo(t, repoRoot)
+	root := filepath.Join(repoRoot, ".jig")
+	runID := "mixed-crash"
+	runDir, err := datastore.RunDir(root, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	branch := runBranchName(wf.Meta.Name, runID)
+	if out, err := gitCmd(repoRoot, "branch", branch, "HEAD"); err != nil {
+		t.Fatalf("branch: %v — %s", err, out)
+	}
+	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := datastore.StepDir(runDir, "writer"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(datastore.OutputJSONPath(runDir, "writer"), []byte(`{"summary":"hi"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(datastore.OutputPath(runDir, "writer"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	docContent := "hi"
+	doc := review.Document{
+		ID: "01-doc", Label: "Doc", Source: "@writer.summary", Format: "markdown",
+		SHA256: review.Digest(docContent), LineCount: 1,
+	}
+	docDir := datastore.ReviewDocumentsDir(runDir, "gate", "g000-i000")
+	if err := os.MkdirAll(docDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	doc.SnapshotPath = filepath.Join(docDir, doc.ID+".md")
+	if err := os.WriteFile(doc.SnapshotPath, []byte(docContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeJournal(t, runDir, []Event{
+		RunStarted{RunID: runID, Workflow: wf.Meta.Name, Steps: []string{"writer", "gate", "worker"}},
+		StepStatus{RunID: runID, StepID: "writer", From: step.StatusPending, To: step.StatusRunning},
+		StepStatus{RunID: runID, StepID: "writer", From: step.StatusRunning, To: step.StatusSucceeded},
+		StepStatus{RunID: runID, StepID: "gate", From: step.StatusPending, To: step.StatusAwaitingReview},
+		ReviewRequest{RunID: runID, StepID: "gate", RoundID: "g000-i000", Choices: []string{"proceed"}, Documents: []review.Document{doc}, DraftPath: datastore.ReviewDraftPath(runDir, "gate", "g000-i000")},
+		StepStatus{RunID: runID, StepID: "worker", From: step.StatusPending, To: step.StatusRunning},
+	})
+	mgr := NewManager(&testExec{}, root)
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Resume(runID, wf)
+	if err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	rr := waitRecoveryRequest(t, ch, 2*time.Second)
+	if rr.StepID != "worker" {
+		t.Fatalf("RecoveryRequest.StepID = %q", rr.StepID)
+	}
+	snap := run.Snapshot()
+	if snapshotStep(snap, "gate").Status != step.StatusAwaitingReview {
+		t.Fatalf("gate = %s, want awaiting_review", snapshotStep(snap, "gate").Status)
+	}
+	if snapshotStep(snap, "worker").Status != step.StatusAwaitingRecovery {
+		t.Fatalf("worker = %s, want awaiting_recovery", snapshotStep(snap, "worker").Status)
+	}
+	run.Recover("worker", RecoverRetry, "")
+	run.ResolveReview("gate", review.Submission{
+		StepID: "gate", RoundID: "g000-i000", Verdict: "proceed",
+		Documents: []review.DocumentRecord{doc.Record()}, Reviewed: []string{doc.ID},
+	})
+	collectEvents(t, ch, 5*time.Second)
+	if final := run.Snapshot(); !final.Done || final.Failed {
+		t.Fatalf("final = %+v", final)
+	}
+}
+
+func TestResumeRejectsSpec21Parks(t *testing.T) {
+	wf, err := workflow.Decode(`
+[workflow]
+name = "parked"
+version = "1"
+[[step]]
+id = "agent"
+type = "agent"
+skill = "agent"
+`, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), ".jig")
+	runDir, err := datastore.RunDir(root, "needs-input")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeJournal(t, runDir, []Event{
+		RunStarted{RunID: "needs-input", Workflow: "parked", Steps: []string{"agent"}},
+		StepStatus{RunID: "needs-input", StepID: "agent", From: step.StatusPending, To: step.StatusNeedsInput},
+	})
+	mgr := NewManager(&testExec{}, root)
+	if _, err := mgr.Resume("needs-input", wf); err == nil || !strings.Contains(err.Error(), "Spec 21") {
+		t.Fatalf("Resume error = %v, want Spec 21 reject", err)
+	}
+}
+
+func TestResumeRejectsFinishedRun(t *testing.T) {
+	wf, err := workflow.Decode(`
+[workflow]
+name = "done"
+version = "1"
+[[step]]
+id = "a"
+type = "command"
+run = "true"
+`, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), ".jig")
+	runDir, err := datastore.RunDir(root, "finished")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeJournal(t, runDir, []Event{
+		RunStarted{RunID: "finished", Workflow: "done", Steps: []string{"a"}},
+		StepStatus{RunID: "finished", StepID: "a", From: step.StatusPending, To: step.StatusSucceeded},
+		RunFinished{RunID: "finished", Failed: false},
+	})
+	mgr := NewManager(&testExec{}, root)
+	if _, err := mgr.Resume("finished", wf); err == nil || !strings.Contains(err.Error(), "already finished") {
 		t.Fatalf("Resume error = %v", err)
 	}
+}
+
+func TestResumeRecoverResumeUsesDurableSession(t *testing.T) {
+	wf, err := workflow.Decode(`
+[workflow]
+name = "resume-sess"
+version = "1"
+[[step]]
+id = "agent"
+type = "agent"
+skill = "agent"
+`, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), ".jig")
+	runDir, err := datastore.RunDir(root, "sess")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
+		t.Fatal(err)
+	}
+	if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{SessionID: "durable-1"}); err != nil {
+		t.Fatal(err)
+	}
+	writeJournal(t, runDir, []Event{
+		RunStarted{RunID: "sess", Workflow: "resume-sess", Steps: []string{"agent"}},
+		StepStatus{RunID: "sess", StepID: "agent", From: step.StatusPending, To: step.StatusRunning},
+	})
+	exec := &crashRecordingExec{result: &step.Result{Status: step.StatusSucceeded, SessionID: "durable-1"}}
+	mgr := NewManager(exec, root)
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Resume("sess", wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = waitRecoveryRequest(t, ch, 2*time.Second)
+	run.Recover("agent", RecoverResume, "keep going")
+	collectEvents(t, ch, 5*time.Second)
+	exec.mu.Lock()
+	defer exec.mu.Unlock()
+	if len(exec.reqs) != 1 {
+		t.Fatalf("dispatch count = %d", len(exec.reqs))
+	}
+	if exec.reqs[0].ResumeSessionID != "durable-1" {
+		t.Fatalf("ResumeSessionID = %q", exec.reqs[0].ResumeSessionID)
+	}
+	if !strings.Contains(exec.reqs[0].Message, "process exited while step was running") {
+		t.Fatalf("recovery message = %q", exec.reqs[0].Message)
+	}
+}
+
+func waitRecoveryRequest(t *testing.T, ch <-chan Event, timeout time.Duration) RecoveryRequest {
+	t.Helper()
+	deadline := time.After(timeout)
+	for {
+		select {
+		case e := <-ch:
+			switch ev := e.(type) {
+			case RecoveryRequest:
+				return ev
+			case RunFinished:
+				t.Fatal("run finished before RecoveryRequest")
+			}
+		case <-deadline:
+			t.Fatal("timeout waiting for RecoveryRequest")
+		}
+	}
+}
+
+func snapshotStep(snap RunSnapshot, id string) step.State {
+	for _, st := range snap.Steps {
+		if st.ID == id {
+			return st
+		}
+	}
+	return step.State{}
+}
+
+type crashRecordingExec struct {
+	mu     sync.Mutex
+	reqs   []StepRequest
+	result *step.Result
+}
+
+func (e *crashRecordingExec) Execute(_ context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
+	e.mu.Lock()
+	e.reqs = append(e.reqs, req)
+	e.mu.Unlock()
+	res := e.result
+	if res == nil {
+		res = &step.Result{Status: step.StatusSucceeded}
+	}
+	copy := *res
+	return &copy, nil
+}
+
+type capAwareExec struct {
+	canResume bool
+	failOnce  bool
+	mu        sync.Mutex
+	calls     int
+}
+
+func (e *capAwareExec) SupportsSessionResume(_, _ string) bool { return e.canResume }
+
+func (e *capAwareExec) Execute(_ context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
+	e.mu.Lock()
+	n := e.calls
+	e.calls++
+	e.mu.Unlock()
+	if e.failOnce && n == 0 {
+		return &step.Result{Status: step.StatusFailed, Err: "boom", SessionID: "sess"}, nil
+	}
+	return &step.Result{Status: step.StatusSucceeded, SessionID: "sess"}, nil
+}
+
+func TestEnterRecoveryRespectsCapSessionResume(t *testing.T) {
+	wf, err := workflow.Decode(`
+[workflow]
+name = "cap"
+version = "1"
+[[step]]
+id = "agent"
+type = "agent"
+skill = "agent"
+`, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &capAwareExec{canResume: false, failOnce: true}
+	mgr := NewManager(exec, "")
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rr *RecoveryRequest
+	deadline := time.After(3 * time.Second)
+loop:
+	for {
+		select {
+		case e := <-ch:
+			switch ev := e.(type) {
+			case RecoveryRequest:
+				got := ev
+				rr = &got
+				break loop
+			case RunFinished:
+				t.Fatal("run finished before RecoveryRequest")
+			}
+		case <-deadline:
+			t.Fatal("timeout waiting for RecoveryRequest")
+		}
+	}
+	if rr.CanResume {
+		t.Fatal("CanResume must be false without CapSessionResume")
+	}
+	run.Recover("agent", RecoverAbort, "")
+	collectEvents(t, ch, 2*time.Second)
 }
 
 func TestStartPersistsWorkflowSnapshotForFutureResume(t *testing.T) {

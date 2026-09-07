@@ -8,6 +8,7 @@ import (
 	"jig/internal/datastore"
 	"jig/internal/review"
 	"jig/internal/step"
+	"jig/internal/workflow"
 )
 
 // writeJournal marshals evs (seq starting at 1) into runDir's journal.jsonl,
@@ -85,6 +86,7 @@ func TestReplayJournal_MissingJournal(t *testing.T) {
 }
 
 func TestReplayJournal_RecoversRunningStepWithoutTerminalEvent(t *testing.T) {
+	// Orphan path: no workflow.json → virtual fail for display (Spec 20 D7).
 	runDir := t.TempDir()
 	writeJournal(t, runDir, []Event{
 		RunStarted{RunID: "r1", Workflow: "feature", Steps: []string{"synthesize"}},
@@ -111,6 +113,42 @@ func TestReplayJournal_RecoversRunningStepWithoutTerminalEvent(t *testing.T) {
 	finished, ok := got[3].(RunFinished)
 	if !ok || !finished.Failed {
 		t.Errorf("event[3] = %#v, want failed RunFinished", got[3])
+	}
+}
+
+func TestReplayJournal_ReopenableInterruptedStaysUnfinished(t *testing.T) {
+	wf, err := workflow.Decode(`
+[workflow]
+name = "feature"
+version = "1"
+[[step]]
+id = "synthesize"
+type = "command"
+run = "true"
+`, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runDir := t.TempDir()
+	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
+		t.Fatal(err)
+	}
+	writeJournal(t, runDir, []Event{
+		RunStarted{RunID: "r1", Workflow: "feature", Steps: []string{"synthesize"}},
+		StepStatus{RunID: "r1", StepID: "synthesize", From: step.StatusPending, To: step.StatusRunning},
+	})
+
+	got, err := ReplayJournal(runDir)
+	if err != nil {
+		t.Fatalf("ReplayJournal: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("event count = %d, want 2 durable events (no virtual finish)", len(got))
+	}
+	for _, event := range got {
+		if _, ok := event.(RunFinished); ok {
+			t.Fatal("reopenable interrupted run must not invent RunFinished")
+		}
 	}
 }
 

@@ -49,6 +49,9 @@ func (m Model) inputBarView() string {
 	action := "tab to open"
 	if m.historical {
 		action = "paused · press R in Runs to resume"
+		if m.interrupted {
+			action = "interrupted · press R in Runs to reopen"
+		}
 	} else if m.focus == focusGate {
 		switch {
 		case m.reviewOpen:
@@ -133,8 +136,13 @@ func (m Model) gateOverlay() string {
 		}
 		b.WriteString("  " + shared.Theme.Chat.Hint.Render(action) + "\n")
 		if m.historical {
-			b.WriteString("\n  This workflow is paused because its original jig scheduler is no longer live.\n")
-			b.WriteString("  Return to Home and press R to resume it.\n")
+			if m.interrupted {
+				b.WriteString("\n  This run was interrupted mid-step when the jig process exited.\n")
+				b.WriteString("  Return to Home and press R to reopen it on the recovery gate.\n")
+			} else {
+				b.WriteString("\n  This workflow is paused because its original jig scheduler is no longer live.\n")
+				b.WriteString("  Return to Home and press R to resume it.\n")
+			}
 			return shared.Panel(title, b.String(), m.width, fixedH, focused)
 		}
 		switch entry.kind {

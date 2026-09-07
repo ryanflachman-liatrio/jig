@@ -105,9 +105,12 @@ func releaseRunLock(f *os.File) {
 	_ = f.Close()
 }
 
-// Resume restores an unfinished run parked exclusively on document-review
-// gates. The narrow boundary is intentional: no worker or backend session is
-// alive after the owning process exits, while review gates are fully durable.
+// Resume restores an unfinished run whose durable parks are reopenable under
+// Spec 20: document-review gates and/or workers interrupted mid-flight
+// (running / validating). Interrupted workers are journaled onto the recovery
+// gate before the scheduler loop starts. Non-worker parks (needs_input,
+// pre-crash awaiting_recovery, stopped, awaiting_integration) are rejected
+// until Spec 21.
 func (m *Manager) Resume(runID string, legacyWorkflow *workflow.Workflow) (*Run, error) {
 	if runID == "" || filepath.Base(runID) != runID || strings.ContainsAny(runID, `/\\`) {
 		return nil, fmt.Errorf("engine: invalid run id %q", runID)
@@ -140,7 +143,7 @@ func (m *Manager) Resume(runID string, legacyWorkflow *workflow.Workflow) (*Run,
 		}
 		wf = legacyWorkflow
 	}
-	restored, sessions, err := restoreReviewCheckpoint(runDir, wf, events)
+	restored, sessions, interrupted, err := restoreUnfinishedCheckpoint(runDir, wf, events)
 	if err != nil {
 		return fail(err)
 	}
@@ -192,13 +195,22 @@ func (m *Manager) Resume(runID string, legacyWorkflow *workflow.Workflow) (*Run,
 		cancel()
 		return fail(fmt.Errorf("restore run branch: %w", err))
 	}
+	// Journal recovery parks before runLoop so a crash during reopen cannot lose
+	// the decision surface (Spec 20 D18).
+	for _, stepID := range interrupted {
+		s.parkInterruptedWorker(stepID)
+	}
 	go s.runLoop(ctx)
 	return run, nil
 }
 
-func restoreReviewCheckpoint(runDir string, wf *workflow.Workflow, events []Event) (map[string]*step.State, map[string]review.Session, error) {
+// processInterruptedErr is the durable sentinel written when Resume parks a
+// worker that was mid-flight when the owning jig process exited (Spec 20 D14).
+const processInterruptedErr = "process exited while step was running"
+
+func restoreUnfinishedCheckpoint(runDir string, wf *workflow.Workflow, events []Event) (map[string]*step.State, map[string]review.Session, []string, error) {
 	if wf == nil {
-		return nil, nil, fmt.Errorf("resume: workflow is unavailable")
+		return nil, nil, nil, fmt.Errorf("resume: workflow is unavailable")
 	}
 	states := make(map[string]*step.State, len(wf.Steps))
 	for i := range wf.Steps {
@@ -213,11 +225,11 @@ func restoreReviewCheckpoint(runDir string, wf *workflow.Workflow, events []Even
 			copy := event
 			started = &copy
 		case RunFinished:
-			return nil, nil, fmt.Errorf("resume: run is already finished")
+			return nil, nil, nil, fmt.Errorf("resume: run is already finished")
 		case StepStatus:
 			state := states[event.StepID]
 			if state == nil {
-				return nil, nil, fmt.Errorf("resume: workflow no longer contains step %q", event.StepID)
+				return nil, nil, nil, fmt.Errorf("resume: workflow no longer contains step %q", event.StepID)
 			}
 			state.Status = event.To
 			state.Attempt = event.Attempt
@@ -243,11 +255,11 @@ func restoreReviewCheckpoint(runDir string, wf *workflow.Workflow, events []Even
 		}
 	}
 	if started == nil || started.Workflow != wf.Meta.Name || len(started.Steps) != len(wf.Steps) {
-		return nil, nil, fmt.Errorf("resume: workflow does not match the historical run")
+		return nil, nil, nil, fmt.Errorf("resume: workflow does not match the historical run")
 	}
 	for i, id := range started.Steps {
 		if wf.Steps[i].ID != id {
-			return nil, nil, fmt.Errorf("resume: workflow step order changed at %q", id)
+			return nil, nil, nil, fmt.Errorf("resume: workflow step order changed at %q", id)
 		}
 	}
 	for id, verdict := range verdicts {
@@ -260,27 +272,116 @@ func restoreReviewCheckpoint(runDir string, wf *workflow.Workflow, events []Even
 	}
 
 	sessions := make(map[string]review.Session)
+	var interrupted []string
 	for id, state := range states {
 		switch state.Status {
-		case step.StatusPending, step.StatusSucceeded, step.StatusSkipped:
+		case step.StatusPending, step.StatusSucceeded, step.StatusSkipped, step.StatusFailed:
 		case step.StatusAwaitingReview:
 			req, ok := requests[id]
 			if !ok {
-				return nil, nil, fmt.Errorf("resume: step %q is waiting for non-review input", id)
+				return nil, nil, nil, fmt.Errorf("resume: step %q is waiting for non-review input", id)
 			}
 			sess, err := restoreReviewSession(runDir, req)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			sessions[id] = sess
+		case step.StatusRunning, step.StatusValidating:
+			interrupted = append(interrupted, id)
+		case step.StatusNeedsInput, step.StatusAwaitingRecovery, step.StatusAwaitingIntegration, step.StatusStopped:
+			return nil, nil, nil, fmt.Errorf("resume: step %q is %s; reopen of this park requires Spec 21 unfinished-park restore", id, state.Status)
 		default:
-			return nil, nil, fmt.Errorf("resume: step %q is %s; only quiescent review gates can resume", id, state.Status)
+			return nil, nil, nil, fmt.Errorf("resume: step %q is %s; only review gates and interrupted workers can resume", id, state.Status)
 		}
 	}
-	if len(sessions) == 0 {
-		return nil, nil, fmt.Errorf("resume: run has no pending review gate")
+	if len(sessions) == 0 && len(interrupted) == 0 {
+		return nil, nil, nil, fmt.Errorf("resume: run has no reopenable park")
 	}
-	return states, sessions, nil
+	// Stable order matches workflow step order for deterministic RecoveryRequest fan-out.
+	ordered := make([]string, 0, len(interrupted))
+	for i := range wf.Steps {
+		id := wf.Steps[i].ID
+		for _, interruptedID := range interrupted {
+			if interruptedID == id {
+				ordered = append(ordered, id)
+				break
+			}
+		}
+	}
+	return states, sessions, ordered, nil
+}
+
+// parkInterruptedWorker transitions a durable running/validating step onto the
+// recovery gate, loading crash-durable SessionID when present. Attempt is not
+// bumped here (Spec 20 D15) — that waits for Recover(retry|resume).
+func (s *scheduler) parkInterruptedWorker(stepID string) {
+	state := s.states[stepID]
+	if state == nil {
+		return
+	}
+	from := state.Status
+	if from != step.StatusRunning && from != step.StatusValidating {
+		return
+	}
+	if state.Result == nil {
+		state.Result = &step.Result{Status: step.StatusFailed}
+	}
+	if info, err := datastore.ReadSession(s.runDir, stepID); err == nil && info.SessionID != "" {
+		state.Result.SessionID = info.SessionID
+	}
+	state.Result.Err = processInterruptedErr
+	state.Result.Status = step.StatusFailed
+
+	// Re-attach surviving mutator worktrees so Recover(resume) continues against
+	// the same dirty tree when possible (Spec 20 D10).
+	if st := s.stepByID(stepID); st != nil && st.Isolation == workflow.IsolationWorktree && s.jigRoot != "" {
+		path := filepath.Join(s.jigRoot, "worktrees", s.runID, stepID)
+		if fileExists(path) {
+			s.worktrees[stepID] = path
+			if tip, err := currentHEAD(s.runWorktree); err == nil {
+				s.wtBaseSHAs[stepID] = tip
+			}
+		}
+	}
+
+	s.transition(stepID, from, step.StatusAwaitingRecovery)
+	s.emit(RecoveryRequest{
+		RunID:     s.runID,
+		StepID:    stepID,
+		Err:       processInterruptedErr,
+		CanResume: s.stepCanResume(stepID, state.Result.SessionID),
+	})
+}
+
+// stepCanResume reports whether Recover(resume) should be offered: durable
+// SessionID plus CapSessionResume when the executor can answer, and a present
+// mutator worktree when the step requires one (D5 / D10).
+func (s *scheduler) stepCanResume(stepID, sessionID string) bool {
+	if sessionID == "" {
+		return false
+	}
+	if s.failedSessionResume[stepID] {
+		return false
+	}
+	st := s.stepByID(stepID)
+	if st == nil || st.Type != workflow.StepAgent {
+		return false
+	}
+	if support, ok := s.exec.(SessionResumeSupport); ok {
+		if !support.SupportsSessionResume(st.Backend, st.Transport) {
+			return false
+		}
+	}
+	if st.Isolation == workflow.IsolationWorktree {
+		path := s.worktrees[stepID]
+		if path == "" && s.jigRoot != "" {
+			path = filepath.Join(s.jigRoot, "worktrees", s.runID, stepID)
+		}
+		if path == "" || !fileExists(path) {
+			return false
+		}
+	}
+	return true
 }
 
 func terminalStatus(status step.Status) bool {

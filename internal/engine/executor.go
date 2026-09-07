@@ -15,6 +15,15 @@ type Executor interface {
 	Execute(ctx context.Context, req StepRequest, report Reporter) (*step.Result, error)
 }
 
+// SessionResumeSupport is an optional Executor capability: whether a
+// backend/transport pair honors ResumeSessionID (harness CapSessionResume).
+// Managers use it for honest RecoveryRequest.CanResume without importing
+// internal/harness. Executors that omit it keep SessionID-only CanResume
+// (test fakes).
+type SessionResumeSupport interface {
+	SupportsSessionResume(backend, transport string) bool
+}
+
 // IntegrationResolver is an optional, operator-invoked agent that prepares a
 // conflicted run worktree for the normal integration finalization path.
 type IntegrationResolver interface {

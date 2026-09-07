@@ -772,6 +772,11 @@ type scheduler struct {
 	// recovery gate: tracks retry/resume rounds per step so the human-driven
 	// recovery loop stays bounded (maxRecoverRounds).
 	recoverCount map[string]int // stepID → recovery rounds taken so far
+	// sessionResumeInFlight marks steps whose current dispatch used
+	// ResumeSessionID. A failure re-parks with CanResume=false (Spec 20 D19).
+	sessionResumeInFlight map[string]bool
+	// failedSessionResume forces CanResume=false after a dead-session resume.
+	failedSessionResume map[string]bool
 
 	// seenEscalations deduplicates critical-finding recovery escalations by
 	// Fingerprint. A fingerprint that already triggered enterRecovery must not
@@ -834,44 +839,46 @@ func newScheduler(
 		states[s.ID] = &step.State{ID: s.ID, Status: step.StatusPending}
 	}
 	return &scheduler{
-		wf:                  wf,
-		runID:               runID,
-		states:              states,
-		inbox:               inbox,
-		subs:                subs,
-		exec:                exec,
-		cancel:              cancel,
-		writer:              writer,
-		runDir:              runDir,
-		structured:          make(map[string]map[string]any),
-		stepFeedback:        make(map[string]string),
-		rerunSource:         make(map[string]string),
-		rerunMax:            make(map[string]int),
-		pendingLoops:        make(map[string]*loopIntent),
-		classInFlight:       make(map[string]int),
-		retryNotBefore:      make(map[string]time.Time),
-		jigRoot:             jigRoot,
-		repoRoot:            repoRoot,
-		worktrees:           make(map[string]string),
-		wtBaseSHAs:          make(map[string]string),
-		diffs:               make(map[string]string),
-		executionViews:      make(map[string]executionWorkspace),
-		stepCommits:         make(map[string]string),
-		pendingUserInputs:   make(map[string][]workflow.Input),
-		collectedUserInputs: make(map[string][]ResolvedInput),
-		preResolvedInputs:   make(map[string][]ResolvedInput),
-		stickyUserInputs:    make(map[string][]ResolvedInput),
-		resumeSessions:      make(map[string]string),
-		stepMessage:         make(map[string]string),
-		reviewSessions:      make(map[string]review.Session),
-		stepInputCount:      make(map[string]int),
-		recoverCount:        make(map[string]int),
-		seenEscalations:     make(map[string]bool),
-		skippedByOperator:   make(map[string]bool),
-		skippedByGuard:      make(map[string]bool),
-		pendingQuestions:    make(map[string]map[string]pendingQuestion),
-		stepCancels:         make(map[string]context.CancelFunc),
-		stopping:            make(map[string]bool),
+		wf:                    wf,
+		runID:                 runID,
+		states:                states,
+		inbox:                 inbox,
+		subs:                  subs,
+		exec:                  exec,
+		cancel:                cancel,
+		writer:                writer,
+		runDir:                runDir,
+		structured:            make(map[string]map[string]any),
+		stepFeedback:          make(map[string]string),
+		rerunSource:           make(map[string]string),
+		rerunMax:              make(map[string]int),
+		pendingLoops:          make(map[string]*loopIntent),
+		classInFlight:         make(map[string]int),
+		retryNotBefore:        make(map[string]time.Time),
+		jigRoot:               jigRoot,
+		repoRoot:              repoRoot,
+		worktrees:             make(map[string]string),
+		wtBaseSHAs:            make(map[string]string),
+		diffs:                 make(map[string]string),
+		executionViews:        make(map[string]executionWorkspace),
+		stepCommits:           make(map[string]string),
+		pendingUserInputs:     make(map[string][]workflow.Input),
+		collectedUserInputs:   make(map[string][]ResolvedInput),
+		preResolvedInputs:     make(map[string][]ResolvedInput),
+		stickyUserInputs:      make(map[string][]ResolvedInput),
+		resumeSessions:        make(map[string]string),
+		stepMessage:           make(map[string]string),
+		reviewSessions:        make(map[string]review.Session),
+		stepInputCount:        make(map[string]int),
+		recoverCount:          make(map[string]int),
+		sessionResumeInFlight: make(map[string]bool),
+		failedSessionResume:   make(map[string]bool),
+		seenEscalations:       make(map[string]bool),
+		skippedByOperator:     make(map[string]bool),
+		skippedByGuard:        make(map[string]bool),
+		pendingQuestions:      make(map[string]map[string]pendingQuestion),
+		stepCancels:           make(map[string]context.CancelFunc),
+		stopping:              make(map[string]bool),
 		postExecChain: []postExecHandler{
 			phCaptureWorktreeDiff,
 			phValidateMutationPaths,
@@ -1477,6 +1484,12 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 		req.Message = s.stepMessage[st.ID]
 		delete(s.resumeSessions, st.ID)
 		delete(s.stepMessage, st.ID)
+		s.sessionResumeInFlight[st.ID] = true
+	} else {
+		delete(s.sessionResumeInFlight, st.ID)
+		// A fresh attempt may resume after a prior dead-session park; clear the
+		// force-false flag so a newly captured SessionID can offer resume again.
+		delete(s.failedSessionResume, st.ID)
 	}
 	// Clear the structured-output cache so block_on and when-guards always
 	// see fresh output after a re-run rather than a stale cached decode.
@@ -1756,12 +1769,18 @@ func (s *scheduler) enterRecovery(stepID string) {
 	if state.Result == nil {
 		state.Result = &step.Result{Status: step.StatusFailed}
 	}
+	if s.sessionResumeInFlight[stepID] {
+		// Spec 20 D19: a failed Recover(resume) must not keep advertising resume
+		// of a likely-dead backend session.
+		s.failedSessionResume[stepID] = true
+		delete(s.sessionResumeInFlight, stepID)
+	}
 	s.transition(stepID, state.Status, step.StatusAwaitingRecovery)
 	s.emit(RecoveryRequest{
 		RunID:     s.runID,
 		StepID:    stepID,
 		Err:       state.Result.Err,
-		CanResume: state.Result.SessionID != "",
+		CanResume: s.stepCanResume(stepID, state.Result.SessionID),
 	})
 }
 
@@ -1994,11 +2013,20 @@ func (s *scheduler) handleRecover(m recoverMsg) {
 		if m.action == RecoverResume {
 			// Resume requires a captured session. Without one, the TUI should not
 			// have offered resume; ignore rather than silently doing a fresh retry.
-			if state.Result == nil || state.Result.SessionID == "" {
+			if state.Result == nil || state.Result.SessionID == "" || !s.stepCanResume(m.stepID, state.Result.SessionID) {
 				return
 			}
 			s.resumeSessions[m.stepID] = state.Result.SessionID
 			s.stepMessage[m.stepID] = composeRecoveryMessage(state.Result.Err, m.text)
+		} else {
+			// Spec 20 D20: fresh retry must not resume a stale backend session.
+			delete(s.resumeSessions, m.stepID)
+			delete(s.stepMessage, m.stepID)
+			delete(s.failedSessionResume, m.stepID)
+			if state.Result != nil {
+				state.Result.SessionID = ""
+			}
+			_ = datastore.ClearSession(s.runDir, m.stepID)
 		}
 		s.recoverCount[m.stepID]++
 		state.Attempt++
@@ -2186,20 +2214,29 @@ func (s *scheduler) handleFinalMerge(m finalMergeMsg) {
 
 // composeRecoveryMessage builds the resume prompt for RecoverResume: the failed
 // step's captured error plus any operator guidance, framed so the agent revisits
-// its approach instead of repeating the mistake.
+// its approach instead of repeating the mistake. Crash reopen uses a distinct
+// preamble so the agent knows the process died mid-flight (Spec 20).
 func composeRecoveryMessage(errText, guidance string) string {
 	var b strings.Builder
-	b.WriteString("Your previous attempt failed with this error:\n\n")
-	if strings.TrimSpace(errText) != "" {
-		b.WriteString(errText)
+	if strings.TrimSpace(errText) == processInterruptedErr {
+		b.WriteString("The jig process exited while this step was running (")
+		b.WriteString(processInterruptedErr)
+		b.WriteString("). Partial transcript may exist on disk. Continue from the prior agent session; do not redo completed work unless necessary.\n\n")
 	} else {
-		b.WriteString("(no error detail was captured)")
+		b.WriteString("Your previous attempt failed with this error:\n\n")
+		if strings.TrimSpace(errText) != "" {
+			b.WriteString(errText)
+		} else {
+			b.WriteString("(no error detail was captured)")
+		}
+		b.WriteString("\n\n")
 	}
 	if strings.TrimSpace(guidance) != "" {
-		b.WriteString("\n\nAdditional guidance from the operator:\n")
+		b.WriteString("Additional guidance from the operator:\n")
 		b.WriteString(guidance)
+		b.WriteString("\n\n")
 	}
-	b.WriteString("\n\nReview what went wrong and take a different approach to complete the task.")
+	b.WriteString("Review what went wrong and take a different approach to complete the task.")
 	return b.String()
 }
 

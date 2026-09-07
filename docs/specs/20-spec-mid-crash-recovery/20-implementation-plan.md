@@ -1,6 +1,6 @@
 # Implementation Plan: Mid-execution crash recovery
 
-**Status:** Decisions locked (open goal A3 — P0) — ready for implementation
+**Status:** Implemented (open goal A3 — P0) — Spec 21 residual parks remain
 **Depends on:** Journal-before-fan-out (`docs/engine-design.md` §3); review-gate
 `Manager.Resume` (review restore path); early `EventSessionID` capture (Spec 07 B2);
 TOML-only harness selection (Spec 14); headless `jig run` settle contract
@@ -387,12 +387,12 @@ Interrupted mutating steps may leave dirty step worktrees. On reopen:
 
 **Packages:** `internal/datastore`, `internal/runner`, tests
 
-- [ ] `datastore.SessionPath(runDir, stepID)` + atomic write/read/clear helpers
-- [ ] Agent runner: on first non-empty `EventSessionID`, write `session.json`
-- [ ] Flush SessionID from Result into `session.json` when entering validate
-- [ ] Clear session file when dispatching a fresh attempt (no `ResumeSessionID`)
-- [ ] Persistence-off no-op tests
-- [ ] Unit test: after successful session write, cancel/teardown still leaves
+- [x] `datastore.SessionPath(runDir, stepID)` + atomic write/read/clear helpers
+- [x] Agent runner: on first non-empty `EventSessionID`, write `session.json`
+- [x] Flush SessionID from Result into `session.json` when entering validate
+- [x] Clear session file when dispatching a fresh attempt (no `ResumeSessionID`)
+- [x] Persistence-off no-op tests
+- [x] Unit test: after successful session write, cancel/teardown still leaves
       `session.json` readable (do not assert mid-write kill -9)
 
 **Exit criteria:** A live Stop/crash simulation leaves `session.json` readable
@@ -402,20 +402,20 @@ after process-equivalent teardown; no engine Resume changes yet.
 
 **Packages:** `internal/engine`
 
-- [ ] Generalize checkpoint restore allow-list (review + running/validating)
-- [ ] On Resume: for each interrupted worker status, **journal** transition →
+- [x] Generalize checkpoint restore allow-list (review + running/validating)
+- [x] On Resume: for each interrupted worker status, **journal** transition →
       `awaiting_recovery` + emit `RecoveryRequest` **before** `runLoop`
       (`CanResume` from session.json ∧ harness capability)
-- [ ] Load SessionID into `state.Result` / resume maps so `Recover(resume)` works
-- [ ] Tighten live `enterRecovery` CanResume to SessionID ∧ CapSessionResume (D5)
-- [ ] `Recover(retry)` clears session.json + resume maps (D20)
-- [ ] Dead-session resume → re-park `CanResume=false` (D19)
-- [ ] Reject Resume when Spec 21 parks present (clear error)
-- [ ] Replace/extend `TestResumeRejectsInterruptedWorker`
-- [ ] Tests: review-only; running-only; validating; mixed review+running;
+- [x] Load SessionID into `state.Result` / resume maps so `Recover(resume)` works
+- [x] Tighten live `enterRecovery` CanResume to SessionID ∧ CapSessionResume (D5)
+- [x] `Recover(retry)` clears session.json + resume maps (D20)
+- [x] Dead-session resume → re-park `CanResume=false` (D19)
+- [x] Reject Resume when Spec 21 parks present (clear error)
+- [x] Replace/extend `TestResumeRejectsInterruptedWorker`
+- [x] Tests: review-only; running-only; validating; mixed review+running;
       finished rejected; Spec 21 park rejected; lock contention; CanResume
       true/false; Recover resume uses durable id; Recover retry clears file
-- [ ] Adjust `reconcileInterruptedRun` / Monitor consumers per D7
+- [x] Adjust `reconcileInterruptedRun` / Monitor consumers per D7
 
 **Exit criteria:** `go test ./internal/engine` — interrupted journal can Resume
 and park recovery without a live worker; orphans alone still display-reconcile.
@@ -424,29 +424,29 @@ and park recovery without a live worker; orphans alone still display-reconcile.
 
 **Packages:** `internal/tui`
 
-- [ ] Runs list: distinguish "paused (review)" vs "interrupted (crash)" using
+- [x] Runs list: distinguish "paused (review)" vs "interrupted (crash)" using
       raw journal (not virtual finish)
-- [ ] Resume key `R` — verify interrupted path; surface Spec 21 reject errors
-- [ ] Monitor: historical+interrupted before resume → banner (no fake finish);
+- [x] Resume key `R` — verify interrupted path; surface Spec 21 reject errors
+- [x] Monitor: historical+interrupted before resume → banner (no fake finish);
       after resume → live recovery overlay
-- [ ] Crash-specific recovery preamble in gate copy
-- [ ] Footer / help text for interrupted runs
-- [ ] Golden / model tests for list + gate
+- [x] Crash-specific recovery preamble in gate copy
+- [x] Footer / help text for interrupted runs
+- [x] Golden / model tests for list + gate
 
 **Exit criteria:** Manual dogfood: start agent step, `kill -9` jig, reopen,
 `R`, recover retry and resume (Claude SDK).
 
 ### Phase 4 — Docs + headless hook readiness
 
-- [ ] `docs/workflow-schema.md` — rewrite MVP deferred sentence; document crash
+- [x] `docs/workflow-schema.md` — rewrite MVP deferred sentence; document crash
       reopen + session.json
-- [ ] `docs/engine-design.md` — move mid-execution crash recovery out of Deferred;
+- [x] `docs/engine-design.md` — move mid-execution crash recovery out of Deferred;
       describe Resume classes (review / interrupted-worker); point Spec 21 at
       remaining parks
-- [ ] `CONTEXT.md` — crash reopen vs Stop/Resume
-- [ ] `docs/headless.md` — note A2 `jig resume` will call Manager.Resume then
+- [x] `CONTEXT.md` — crash reopen vs Stop/Resume
+- [x] `docs/headless.md` — note A2 `jig resume` will call Manager.Resume then
       consume RecoveryRequest (Spec 19 `--on-recovery` alone is not reopen)
-- [ ] `docs/plans/open-goals.md` — A3 → planned/in-progress (Spec 20); link Spec 21
+- [x] `docs/plans/open-goals.md` — A3 → planned/in-progress (Spec 20); link Spec 21
 - [ ] Example or script under `examples/` optional smoke (command step kill)
 
 ### Out of scope here (tracked elsewhere)

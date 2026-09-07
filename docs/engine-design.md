@@ -45,8 +45,8 @@ manifest, and TUI (D). Alternatives considered and rejected:
 3. **Journal before fan-out.** Events are appended to `journal.jsonl`
    *synchronously, before* publishing to subscribers. In-memory state is
    always `fold(journal)`; the TUI can never have seen something the journal
-   missed; crash-recovery/resume (deferred, MVP-1) becomes "replay the
-   journal" later with no redesign.
+   missed; crash reopen (Spec 20) and review-gate resume are "replay the
+   journal" under `scheduler.lock` with no redesign.
 4. **The engine never imports Bubble Tea; the TUI never mutates engine
    state.** Events out through channels; verdicts in through `Run.Resolve`.
    Keeps `jig run` (headless / CI) possible and engine tests terminal-free.
@@ -581,7 +581,9 @@ diff, `revise` loops with feedback, `approve` triggers the final merge gate.
 
 ### Deferred (matches workflow-schema.md MVP-1 scope)
 
-Resume-from-journal (the journal already makes it possible), map/fan-out over
-dynamic lists, secrets, remote execution. Also deferred: journaling
-`StepOutput` deltas in full (decided to skip at Phase 4 — the transcript carries
-the full content). Reopening a fully-settled run for reset is also deferred.
+Map/fan-out over dynamic lists, secrets, remote execution. Also deferred:
+journaling `StepOutput` deltas in full (decided to skip at Phase 4 — the
+transcript carries the full content). Reopening a fully-settled run for reset
+is also deferred (A12 / ADR 0008). Mid-execution **worker** crash reopen and
+review-gate resume ship in Spec 20 (`Manager.Resume` + `session.json`); other
+unfinished parks after process death are Spec 21.

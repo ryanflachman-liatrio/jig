@@ -30,14 +30,15 @@ type Model struct {
 }
 
 type runRow struct {
-	id       string
-	workflow string
-	statuses map[string]step.Status // stepID → current status
-	total    int
-	done     bool
-	failed   bool
-	paused   bool
-	started  time.Time
+	id          string
+	workflow    string
+	statuses    map[string]step.Status // stepID → current status
+	total       int
+	done        bool
+	failed      bool
+	paused      bool // unfinished historical run (review and/or crash)
+	interrupted bool // Spec 20: unfinished with running/validating workers
+	started     time.Time
 }
 
 func NewModel() Model {

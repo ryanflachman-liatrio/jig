@@ -8,6 +8,7 @@
 //	    <step-id>/
 //	      input.md           – assembled agent prompt for the latest dispatch
 //	      result.json        – written on terminal step status events
+//	      session.json       – mid-flight agent SessionID (crash reopen)
 //	      transcript.jsonl    – append-only agent/command conversation
 //	  artifacts/             – agent output (Phase 4+)
 //
@@ -192,11 +193,11 @@ func DeleteRun(root, runID string) error {
 }
 
 // ClearStepOutputs removes the derived per-step inputs and outputs for stepID —
-// input.md, result.json, output.md, and output.json — so a reset step starts fresh.
-// transcript.jsonl is intentionally left intact: it is append-only and a
-// re-run appends a new generation rather than overwriting history.
-// No-ops silently when runDir is empty (persistence-off path) or when any
-// individual file does not exist.
+// input.md, result.json, output.md, output.json, and session.json — so a reset
+// step starts fresh. transcript.jsonl is intentionally left intact: it is
+// append-only and a re-run appends a new generation rather than overwriting
+// history. No-ops silently when runDir is empty (persistence-off path) or when
+// any individual file does not exist.
 func ClearStepOutputs(runDir, stepID string) error {
 	if runDir == "" {
 		return nil
@@ -206,6 +207,7 @@ func ClearStepOutputs(runDir, stepID string) error {
 		ResultPath(runDir, stepID),
 		OutputPath(runDir, stepID),
 		OutputJSONPath(runDir, stepID),
+		SessionPath(runDir, stepID),
 	} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("datastore: clear step %q artifact %q: %w", stepID, path, err)

@@ -138,6 +138,9 @@ type Model struct {
 	done       bool
 	failed     bool
 	historical bool
+	// interrupted is set for historical journals whose last durable worker
+	// status is running/validating (Spec 20 crash reopen).
+	interrupted bool
 	// runErr is an engine-level failure (worktree setup, max_iterations) that is
 	// not attributable to a single step. Set by the engine.RunError event.
 	runErr string
@@ -686,6 +689,7 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 // read-only because no scheduler exists to receive a response.
 func (m Model) WithJournal(evs []engine.Event) Model {
 	m.historical = true
+	m.interrupted = engine.ClassifyUnfinished(evs) == engine.UnfinishedInterrupted
 	for _, e := range evs {
 		m, _ = m.handleEngineEvent(e)
 	}

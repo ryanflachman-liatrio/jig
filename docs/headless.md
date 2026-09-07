@@ -126,6 +126,14 @@ off `RunFinished` / `Run.Wait`, never `Done` alone.
 `RecoveryRequest`. Headless then applies `--on-recovery`. Do not claim
 `--on-conflict abort` alone settles the run.
 
+### Crash reopen vs `--on-recovery`
+
+Spec 19 `--on-recovery` settles gates **during** an active `jig run`. It does
+**not** reopen a dead process. After a host OOM / `kill -9`, A2's future
+`jig resume <run-id> [--on-recovery …]` must call `Manager.Resume` first
+(Spec 20 parks interrupted workers on `RecoveryRequest`); only then does the
+same `--on-recovery` policy apply. TUI `R` is the interactive client today.
+
 ## Authoring CI-safe workflows
 
 - Prefer `jig run … --ci` (or the expanded flag set)
