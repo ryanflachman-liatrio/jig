@@ -332,6 +332,14 @@ type Run struct {
 // Cancel terminates the run. In-flight workers receive context cancellation.
 func (r *Run) Cancel() { r.cancel() }
 
+// Wait blocks until the scheduler goroutine exits and returns the final
+// snapshot. It is safe to call after Cancel — headless clients must wait for
+// settle rather than returning on the cancel alone (ctrl channels never close).
+func (r *Run) Wait() RunSnapshot {
+	<-r.done
+	return r.finalSnap
+}
+
 // Stop halts one running step's worker without ending the run (spec 07 B1). The
 // step's partial work is preserved and it parks at step.StatusStopped; the run
 // stays alive and becomes quiescent (no worker in flight). Stopping a step that
