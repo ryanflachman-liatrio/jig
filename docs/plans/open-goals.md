@@ -27,7 +27,7 @@ and comparison to high-rated TUIs (lazygit, k9s, yazi, btop) plus agent peers
 
 | ID | Goal | Kind | Notes |
 |----|------|------|-------|
-| A1 | **Headless `jig run`** — non-interactive / CI runner for a workflow TOML | S | Engine designed for it; CLI today is TUI + `validate` + `prune` only (`cmd/jig/main.go`). Plan: [`docs/specs/19-spec-headless-run/19-implementation-plan.md`](../specs/19-spec-headless-run/19-implementation-plan.md). |
+| A1 | **Headless `jig run`** — non-interactive / CI runner for a workflow TOML | S | **Done** (Spec 19). `jig run` + `internal/headless`; contract in [`docs/headless.md`](../headless.md). Plan: [`docs/specs/19-spec-headless-run/19-implementation-plan.md`](../specs/19-spec-headless-run/19-implementation-plan.md). |
 | A2 | **Thin ops CLI** — `status`, `logs`, `doctor`, `reset`, maybe `diff` | C+S | Complements A1; stop forcing every op through the TUI. |
 | A3 | **Mid-execution crash recovery** — restart workers interrupted mid-agent | S | Gate-parked resume exists; process death mid-step does not. |
 | A4 | **Cursor harness parity** — `CapSessionResume`, `CapUserQuestion`, `CapPartialStreaming` | S | Today fail-closed on resume / block_on (`internal/harness/cursor.go`). |
@@ -188,7 +188,7 @@ the default view stays conversation-first.
 
 If only twenty goals get attention:
 
-1. A1 Headless `jig run`
+1. ~~A1 Headless `jig run`~~ **done** — see [`docs/headless.md`](../headless.md)
 2. **T1 Transcript streaming polish**
 3. **T2 Clipboard yank**
 4. A6 Restore Tier-2 monitors

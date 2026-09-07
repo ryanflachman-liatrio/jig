@@ -22,6 +22,10 @@ The engine is a **DAG plus a small set of labeled, bounded back-edges** — not 
 free-form state machine. That preserves static validation, visualization, and a
 termination guarantee.
 
+**Running workflows:** interactive TUI is bare `jig`; unattended / CI is
+[`jig run`](headless.md) (`docs/headless.md`). Both share the same engine and
+`.jig/runs/<id>/` layout.
+
 ---
 
 ## Top-level structure

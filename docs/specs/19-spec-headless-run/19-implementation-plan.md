@@ -1,6 +1,6 @@
 # Implementation Plan: Headless `jig run`
 
-**Status:** Plan locked (open goal A1 — P0) — decisions resolved 2026-09-07
+**Status:** Phase 1 + Phase 2 shipped (open goal A1 done) — decisions resolved 2026-09-07
 **Depends on:** Engine Manager/Run APIs (`internal/engine`), transcript-as-truth,
 TOML-only harness selection (Spec 14)
 **Complements:** A2 thin ops CLI (`status` / `logs` / `doctor`); A3 mid-crash recovery
@@ -577,6 +577,8 @@ Extract from `cmd/jig/main.go` into `wire.go` (or `internal/app`):
 5. Docs: `docs/headless.md`, schema pointer, replace `jig run --headless` in
    engine-design, AGENTS/CLAUDE commands
 6. Update `open-goals.md` A1 → done when shipped
+
+**Status:** shipped (Phase 1 + Phase 2).
 
 ### Phase 3 — Operator amenity
 

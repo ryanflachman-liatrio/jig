@@ -71,7 +71,8 @@ func isGitRepo(dir string) bool {
 }
 
 // EffectiveCIFlags is the documented --ci expansion printed once on stderr.
-func EffectiveCIFlags(output OutputMode, discardMerge bool, timeout string) string {
+// recovery/conflict default to abort when empty (matches CLI defaults).
+func EffectiveCIFlags(output OutputMode, discardMerge bool, onRecovery, onConflict, timeout string) string {
 	parts := []string{"--ci"}
 	if output != "" {
 		parts = append(parts, "--output", string(output))
@@ -79,7 +80,13 @@ func EffectiveCIFlags(output OutputMode, discardMerge bool, timeout string) stri
 	if discardMerge {
 		parts = append(parts, "--discard-merge")
 	}
-	parts = append(parts, "--on-recovery", "abort", "--on-conflict", "abort")
+	if onRecovery == "" {
+		onRecovery = RecoveryAbort
+	}
+	if onConflict == "" {
+		onConflict = ConflictAbort
+	}
+	parts = append(parts, "--on-recovery", onRecovery, "--on-conflict", onConflict)
 	if timeout != "" {
 		parts = append(parts, "--timeout", timeout)
 	}

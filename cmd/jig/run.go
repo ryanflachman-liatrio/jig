@@ -28,6 +28,8 @@ func runRun(args []string) int {
 	ci := fs.Bool("ci", false, "unattended preset (json + discard-merge + abort policies + 45m timeout)")
 	approveMerge := fs.Bool("approve-merge", false, "answer FinalMergeRequest with approve")
 	discardMerge := fs.Bool("discard-merge", false, "answer FinalMergeRequest with discard")
+	onRecovery := fs.String("on-recovery", headless.RecoveryAbort, "recovery action: abort|retry|skip (default abort)")
+	onConflict := fs.String("on-conflict", headless.ConflictAbort, "integration conflict action: abort only (abort→recovery cascade)")
 
 	// flag.Parse stops at the first non-flag; documented UX is
 	// `jig run file.toml --ci`, so reorder flags ahead of the positional path.
@@ -59,13 +61,27 @@ func runRun(args []string) int {
 		if !explicit["timeout"] {
 			*timeout = 45 * time.Minute
 		}
+		if !explicit["on-recovery"] {
+			*onRecovery = headless.RecoveryAbort
+		}
+		if !explicit["on-conflict"] {
+			*onConflict = headless.ConflictAbort
+		}
 		fmt.Fprintf(os.Stderr, "ci: %s\n", headless.EffectiveCIFlags(
-			headless.OutputMode(*output), *discardMerge, timeout.String(),
+			headless.OutputMode(*output), *discardMerge, *onRecovery, *onConflict, timeout.String(),
 		))
 	}
 
 	mode, err := parseOutputMode(*output)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return headless.ExitUsage
+	}
+	if err := parseRecoveryAction(*onRecovery); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return headless.ExitUsage
+	}
+	if err := parseConflictAction(*onConflict); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return headless.ExitUsage
 	}
@@ -101,6 +117,8 @@ func runRun(args []string) int {
 		Timeout:      *timeout,
 		ApproveMerge: *approveMerge,
 		DiscardMerge: *discardMerge,
+		OnRecovery:   *onRecovery,
+		OnConflict:   *onConflict,
 		CI:           *ci,
 		Stdout:       os.Stdout,
 		Stderr:       os.Stderr,
@@ -121,10 +139,29 @@ func parseOutputMode(s string) (headless.OutputMode, error) {
 	}
 }
 
+func parseRecoveryAction(s string) error {
+	switch s {
+	case headless.RecoveryAbort, headless.RecoveryRetry, headless.RecoverySkip:
+		return nil
+	default:
+		return fmt.Errorf("invalid --on-recovery %q (want abort|retry|skip)", s)
+	}
+}
+
+func parseConflictAction(s string) error {
+	switch s {
+	case headless.ConflictAbort:
+		return nil
+	default:
+		return fmt.Errorf("invalid --on-conflict %q (want abort; agent is not supported in headless)", s)
+	}
+}
+
 // runFlagsTakingValue names flags that consume the next argv token. Keep in
 // sync with runRun's FlagSet.
 var runFlagsTakingValue = map[string]bool{
 	"root": true, "output": true, "o": true, "timeout": true,
+	"on-recovery": true, "on-conflict": true,
 }
 
 // reorderRunArgs moves the single positional workflow path to the end so

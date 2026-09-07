@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -434,6 +435,152 @@ isolation = "worktree"
 	if result.ExitCode != headless.ExitFailed {
 		t.Fatalf("exit=%d want %d err=%v envelope=%+v", result.ExitCode, headless.ExitFailed, result.Err, result.Envelope)
 	}
+}
+
+func TestHeadless_JSONLOutput(t *testing.T) {
+	wf := decodeWF(t, `
+[workflow]
+name = "jsonl-ok"
+version = "0.1"
+
+[[step]]
+id = "a"
+type = "command"
+run = "echo a"
+`)
+	mux := runner.NewMux()
+	mux.Register(workflow.StepCommand, fastFake(nil))
+	mgr := testMgr(t, mux)
+
+	opts := runOpts(wf, mgr)
+	opts.Output = headless.OutputJSONL
+	stdout := opts.Stdout.(*bytes.Buffer)
+	result := headless.Run(context.Background(), opts)
+	if result.ExitCode != headless.ExitOK {
+		t.Fatalf("exit=%d err=%v", result.ExitCode, result.Err)
+	}
+	lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected event lines + result, got %q", stdout.String())
+	}
+	var last struct {
+		Type string            `json:"type"`
+		Data headless.Envelope `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &last); err != nil {
+		t.Fatalf("last line: %v — %s", err, lines[len(lines)-1])
+	}
+	if last.Type != "result" || !last.Data.OK || last.Data.Workflow != "jsonl-ok" {
+		t.Fatalf("final envelope: %+v", last)
+	}
+}
+
+func TestHeadless_QuietSuppressesProgress(t *testing.T) {
+	wf := decodeWF(t, `
+[workflow]
+name = "quiet"
+version = "0.1"
+
+[[step]]
+id = "a"
+type = "command"
+run = "echo a"
+`)
+	mux := runner.NewMux()
+	mux.Register(workflow.StepCommand, fastFake(nil))
+	mgr := testMgr(t, mux)
+
+	opts := runOpts(wf, mgr)
+	opts.Quiet = true
+	stderr := opts.Stderr.(*bytes.Buffer)
+	result := headless.Run(context.Background(), opts)
+	if result.ExitCode != headless.ExitOK {
+		t.Fatalf("exit=%d err=%v", result.ExitCode, result.Err)
+	}
+	out := stderr.String()
+	if !strings.Contains(out, "run_id:") {
+		t.Fatalf("quiet must still print run_id: %q", out)
+	}
+	if strings.Contains(out, "a succeeded") || strings.Contains(out, "a "+string(step.StatusSucceeded)) {
+		t.Fatalf("quiet leaked progress: %q", out)
+	}
+	// Progress format is "<step> <status>"; ensure no bare step status line.
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "a ") {
+			t.Fatalf("quiet leaked step progress line: %q", line)
+		}
+	}
+}
+
+func TestHeadless_RecoveryRetrySucceeds(t *testing.T) {
+	wf := decodeWF(t, `
+[workflow]
+name = "retry-ok"
+version = "0.1"
+
+[[step]]
+id = "flaky"
+type = "command"
+run = "echo flaky"
+`)
+	mux := runner.NewMux()
+	mux.Register(workflow.StepCommand, &flakyOnce{})
+	mgr := testMgr(t, mux)
+
+	opts := runOpts(wf, mgr)
+	opts.OnRecovery = headless.RecoveryRetry
+	result := headless.Run(context.Background(), opts)
+	if result.ExitCode != headless.ExitOK {
+		t.Fatalf("exit=%d err=%v envelope=%+v", result.ExitCode, result.Err, result.Envelope)
+	}
+}
+
+func TestHeadless_RecoverySkipContinues(t *testing.T) {
+	wf := decodeWF(t, `
+[workflow]
+name = "skip-ok"
+version = "0.1"
+
+[[step]]
+id = "bad"
+type = "command"
+run = "false"
+
+[[step]]
+id = "after"
+type = "command"
+depends_on = ["bad"]
+run = "echo after"
+`)
+	mux := runner.NewMux()
+	mux.Register(workflow.StepCommand, fastFake(map[string]runner.FakeOutcome{
+		"bad": {Delay: time.Millisecond, Fail: true},
+	}))
+	mgr := testMgr(t, mux)
+
+	opts := runOpts(wf, mgr)
+	opts.OnRecovery = headless.RecoverySkip
+	result := headless.Run(context.Background(), opts)
+	// Skip keeps the step failed (honest Failed=true) but lets dependents run.
+	if result.ExitCode != headless.ExitFailed {
+		t.Fatalf("exit=%d want %d err=%v", result.ExitCode, headless.ExitFailed, result.Err)
+	}
+	if result.Envelope.OK {
+		t.Fatal("expected ok=false when a skipped step failed")
+	}
+}
+
+// flakyOnce fails the first Execute and succeeds thereafter (recovery retry).
+type flakyOnce struct {
+	n int
+}
+
+func (e *flakyOnce) Execute(_ context.Context, _ engine.StepRequest, _ engine.Reporter) (*step.Result, error) {
+	e.n++
+	if e.n == 1 {
+		return &step.Result{Status: step.StatusFailed, Err: "boom"}, fmt.Errorf("boom")
+	}
+	return &step.Result{Status: step.StatusSucceeded}, nil
 }
 
 // questionExec blocks on reporter.Question so the engine emits AgentQuestion.

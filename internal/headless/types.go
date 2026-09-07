@@ -10,7 +10,7 @@ import (
 	"jig/internal/workflow"
 )
 
-// Exit codes frozen by Spec 19 (docs/headless.md once Phase 2 docs land).
+// Exit codes frozen by Spec 19 (docs/headless.md).
 const (
 	ExitOK          = 0
 	ExitFailed      = 1 // run failed, or load/validate error before Start
@@ -44,6 +44,11 @@ type Options struct {
 	ApproveMerge bool
 	DiscardMerge bool
 
+	// OnRecovery is abort|retry|skip (default abort). resume is engine/TUI-only.
+	OnRecovery string
+	// OnConflict is abort only in headless (abort→recovery cascade). No agent.
+	OnConflict string
+
 	// CI is true when --ci was requested; used for start-time messaging and
 	// approve-conflict fallback (discard when CI/discard is set).
 	CI bool
@@ -51,6 +56,14 @@ type Options struct {
 	Stdout io.Writer
 	Stderr io.Writer
 }
+
+// Recovery / conflict policy values (CLI + Policy).
+const (
+	RecoveryAbort = "abort"
+	RecoveryRetry = "retry"
+	RecoverySkip  = "skip"
+	ConflictAbort = "abort"
+)
 
 // Result is the settled outcome of a headless run.
 type Result struct {

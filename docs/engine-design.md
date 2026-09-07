@@ -49,7 +49,8 @@ manifest, and TUI (D). Alternatives considered and rejected:
    journal" later with no redesign.
 4. **The engine never imports Bubble Tea; the TUI never mutates engine
    state.** Events out through channels; verdicts in through `Run.Resolve`.
-   Keeps `jig run --headless` possible and engine tests terminal-free.
+   Keeps `jig run` (headless / CI) possible and engine tests terminal-free.
+   See [`docs/headless.md`](headless.md).
 5. **Everything under `.jig/` is engine-written.** Agents only ever write
    inside their worktree, and only mutators can. See "Resolved semantics"
    below — this is load-bearing for gate trust.

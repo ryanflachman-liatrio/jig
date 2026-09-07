@@ -1,0 +1,45 @@
+# Zero-gate CI smoke fixture for `jig run` (Spec 19).
+#
+# Command + check only — no review, from=user, block_on, or agent steps.
+# Use with: jig run examples/headless-smoke.toml --ci
+#
+# Persistence-off / non-git cwd avoids FinalMerge; with --ci, discard-merge
+# settles FinalMerge if a git-backed mutating run still parks.
+
+[workflow]
+name        = "headless-smoke"
+version     = "1"
+description = "Deterministic smoke workflow for headless / CI (no human gates)."
+
+[defaults]
+resource_limits = { checks = 1 }
+
+[[step]]
+id          = "hello"
+type        = "command"
+output_type = "bool"
+run         = "true"
+
+[[step]]
+id             = "smoke_check"
+type           = "check"
+depends_on     = ["hello"]
+applies_when   = "hello"
+resource_class = "checks"
+output_type    = { enum = ["pass", "fail", "skip", "error"] }
+run = """
+mkdir -p .jig
+printf '{"schema_version":1,"outcome":"pass","findings":[{"id":"smoke","severity":"info","message":"ok"}]}' > .jig/smoke.findings.json
+"""
+
+  [step.findings]
+  schema_version = 1
+  file = ".jig/smoke.findings.json"
+  required_tools = ["mkdir", "printf"]
+
+# Automatic remediation covering fail+error (required for check steps).
+# Cap at 1 so a real failure cannot loop forever in CI.
+[[step.route]]
+when           = "smoke_check != 'pass'"
+goto           = "hello"
+max_iterations = 1

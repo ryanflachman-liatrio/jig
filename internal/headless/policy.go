@@ -6,12 +6,17 @@ import (
 	"jig/internal/engine"
 )
 
-// Policy decides how to answer park-path events. Phase 1 hard-codes recovery
-// and conflict to abort; merge requires explicit flags (or --ci → discard).
+// Policy decides how to answer park-path events. Recovery/conflict defaults
+// are abort; merge requires explicit flags (or --ci → discard).
 type Policy struct {
 	ApproveMerge bool
 	DiscardMerge bool
 	CI           bool
+
+	// OnRecovery is abort|retry|skip (default abort). Empty → abort.
+	OnRecovery string
+	// OnConflict is abort only (default). Empty → abort.
+	OnConflict string
 
 	// awaitingApprove is set after FinalMerge(true) so a subsequent RunError
 	// (approve conflict) can discard or fail-closed instead of hanging.
@@ -49,12 +54,13 @@ func (p *Policy) Handle(run *engine.Run, ev engine.Event) error {
 			StepID:  e.StepID,
 		}
 	case engine.RecoveryRequest:
-		// Hard-coded abort in Phase 1 (Spec 19 D4).
-		run.Recover(e.StepID, engine.RecoverAbort, "")
+		run.Recover(e.StepID, p.recoveryAction(), "")
 		return nil
 	case engine.IntegrationConflictRequest:
 		// Abort → recovery cascade (Spec 19 D19). The ensuing RecoveryRequest
 		// is handled above; do not claim conflict abort alone settles the run.
+		// Headless only supports abort (no agent-then-human finalize); CLI
+		// rejects other values before Run.
 		run.ResolveIntegration(e.StepID, true)
 		return nil
 	case engine.FinalMergeRequest:
@@ -63,6 +69,17 @@ func (p *Policy) Handle(run *engine.Run, ev engine.Event) error {
 		return p.handleRunError(run, e)
 	default:
 		return nil
+	}
+}
+
+func (p *Policy) recoveryAction() string {
+	switch p.OnRecovery {
+	case RecoveryRetry:
+		return engine.RecoverRetry
+	case RecoverySkip:
+		return engine.RecoverSkip
+	default:
+		return engine.RecoverAbort
 	}
 }
 
