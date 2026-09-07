@@ -29,7 +29,7 @@ and comparison to high-rated TUIs (lazygit, k9s, yazi, btop) plus agent peers
 |----|------|------|-------|
 | A1 | **Headless `jig run`** — non-interactive / CI runner for a workflow TOML | S | **Done** (Spec 19). `jig run` + `internal/headless`; contract in [`docs/headless.md`](../headless.md). Plan: [`docs/specs/19-spec-headless-run/19-implementation-plan.md`](../specs/19-spec-headless-run/19-implementation-plan.md). |
 | A2 | **Thin ops CLI** — `status`, `logs`, `doctor`, `reset`, maybe `diff` | C+S | Complements A1; stop forcing every op through the TUI. |
-| A3 | **Mid-execution crash recovery** — restart workers interrupted mid-agent | S | Gate-parked resume exists; process death mid-step does not. Plan: [`docs/specs/20-spec-mid-crash-recovery/20-implementation-plan.md`](../specs/20-spec-mid-crash-recovery/20-implementation-plan.md). |
+| A3 | **Mid-execution crash recovery** — restart workers interrupted mid-agent | S | Decisions locked (Spec 20). Worker crash reopen + durable `session.json`; non-worker park reopen carved to Spec 21. Plans: [`20`](../specs/20-spec-mid-crash-recovery/20-implementation-plan.md), [`21`](../specs/21-spec-unfinished-park-reopen/21-implementation-plan.md). |
 | A4 | **Cursor harness parity** — `CapSessionResume`, `CapUserQuestion`, `CapPartialStreaming` | S | Today fail-closed on resume / block_on (`internal/harness/cursor.go`). |
 | A5 | **Claude ACP session resume** — advertise + honor `CapSessionResume` | S | ACP→Claude cannot Stop/Resume or resume `block_on` today. |
 | A6 | **Restore Tier-2 security monitors** — ship `examples/agents/monitors/*.md` (or change discovery) | R | `discoverMonitors` still points at a deleted directory → silent no-op. |
@@ -198,7 +198,7 @@ If only twenty goals get attention:
 8. **T3 Open location**
 9. **T5 Smart burst folding**
 10. B3 Fuzzy palette + richer actions
-11. A3 Mid-crash recovery — plan: [`../specs/20-spec-mid-crash-recovery/20-implementation-plan.md`](../specs/20-spec-mid-crash-recovery/20-implementation-plan.md)
+11. A3 Mid-crash recovery — Spec 20 (workers) locked; Spec 21 (other parks) follow-on: [`../specs/20-spec-mid-crash-recovery/20-implementation-plan.md`](../specs/20-spec-mid-crash-recovery/20-implementation-plan.md), [`../specs/21-spec-unfinished-park-reopen/21-implementation-plan.md`](../specs/21-spec-unfinished-park-reopen/21-implementation-plan.md)
 12. **T4 Inline edit/diff cards**
 13. A8 Map/foreach fan-out
 14. A7 Codex parallel reliability
@@ -231,7 +231,8 @@ If only twenty goals get attention:
 - `docs/specs/15-spec-zed-style-monitor-transcript/` — transcript presentation baseline
 - `docs/specs/14-spec-per-step-harness/` — backend/transport matrix
 - `docs/specs/19-spec-headless-run/` — headless `jig run` (A1 done)
-- `docs/specs/20-spec-mid-crash-recovery/` — mid-execution crash recovery (A3)
+- `docs/specs/20-spec-mid-crash-recovery/` — mid-execution crash recovery / interrupted workers (A3)
+- `docs/specs/21-spec-unfinished-park-reopen/` — reopen needs_input / stopped / integration / pre-crash recovery parks after process death (A3 residual)
 - `docs/plans/tui-lazygit-polish/` — chrome polish (phases 0–2 landed)
 - `docs/plan-codex-acp-concurrency-diagnostics.md`
 - `docs/plan-acp-structured-edit-telemetry.md`
