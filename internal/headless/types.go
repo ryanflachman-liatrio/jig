@@ -1,0 +1,122 @@
+package headless
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"time"
+
+	"jig/internal/engine"
+	"jig/internal/workflow"
+)
+
+// Exit codes frozen by Spec 19 (docs/headless.md once Phase 2 docs land).
+const (
+	ExitOK          = 0
+	ExitFailed      = 1 // run failed, or load/validate error before Start
+	ExitUsage       = 2 // flag/arity errors (never started)
+	ExitGate        = 3 // unexpected human gate / merge-without-policy
+	ExitTimeout     = 4
+	ExitInterrupted = 130 // SIGINT after Cancel+settle; SIGTERM mapped by CLI to 143
+)
+
+// OutputMode selects stdout formatting.
+type OutputMode string
+
+const (
+	OutputText  OutputMode = "text"
+	OutputJSON  OutputMode = "json"
+	OutputJSONL OutputMode = "jsonl"
+)
+
+// Options configures a headless run. Manager must be provided (shared wiring
+// lives in cmd/jig); either Workflow or WorkflowPath is required.
+type Options struct {
+	WorkflowPath string
+	Workflow     *workflow.Workflow
+	Manager      *engine.Manager
+
+	Root    string // informational; Manager already carries the root
+	Output  OutputMode
+	Quiet   bool
+	Timeout time.Duration
+
+	ApproveMerge bool
+	DiscardMerge bool
+
+	// CI is true when --ci was requested; used for start-time messaging and
+	// approve-conflict fallback (discard when CI/discard is set).
+	CI bool
+
+	Stdout io.Writer
+	Stderr io.Writer
+}
+
+// Result is the settled outcome of a headless run.
+type Result struct {
+	ExitCode int
+	Envelope Envelope
+	Err      error // typed gate/timeout errors; nil on clean success
+}
+
+// Envelope is the flat machine-readable result (Spec 19 D16).
+type Envelope struct {
+	OK           bool       `json:"ok"`
+	RunID        string     `json:"run_id"`
+	Workflow     string     `json:"workflow"`
+	Failed       bool       `json:"failed"`
+	TotalCostUSD float64    `json:"total_cost_usd"`
+	TotalTokens  int        `json:"total_tokens"`
+	RunDir       string     `json:"run_dir"`
+	Error        *ErrorInfo `json:"error"`
+}
+
+// ErrorInfo is the typed error carried in the JSON envelope.
+type ErrorInfo struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	StepID  string `json:"step_id,omitempty"`
+}
+
+// GateError is returned (and Cancelled) when an unexpected human gate fires.
+type GateError struct {
+	Code    string
+	Message string
+	StepID  string
+}
+
+func (e *GateError) Error() string {
+	if e.StepID != "" {
+		return fmt.Sprintf("%s: %s (step %q)", e.Code, e.Message, e.StepID)
+	}
+	return fmt.Sprintf("%s: %s", e.Code, e.Message)
+}
+
+// TimeoutError marks a wall-clock expiry.
+type TimeoutError struct {
+	Timeout time.Duration
+}
+
+func (e *TimeoutError) Error() string {
+	return fmt.Sprintf("timeout after %s", e.Timeout)
+}
+
+// InterruptedError marks context cancellation from a signal (not timeout).
+type InterruptedError struct{}
+
+func (e *InterruptedError) Error() string { return "interrupted" }
+
+func isGate(err error) bool {
+	var g *GateError
+	return errors.As(err, &g)
+}
+
+func isTimeout(err error) bool {
+	var t *TimeoutError
+	return errors.As(err, &t)
+}
+
+func isInterrupted(err error) bool {
+	var i *InterruptedError
+	return errors.As(err, &i)
+}
