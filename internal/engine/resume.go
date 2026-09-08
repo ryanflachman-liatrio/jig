@@ -223,6 +223,11 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 // worker that was mid-flight when the owning jig process exited (Spec 20 D14).
 const processInterruptedErr = "process exited while step was running"
 
+// processInterruptedRecoveryAction makes a recovery park idempotently
+// repairable if a process exits between the batch's newline record boundaries.
+// It is internal journal provenance, not an operator-selectable action.
+const processInterruptedRecoveryAction = "process_interrupted"
+
 func restoreUnfinishedCheckpoint(runDir string, wf *workflow.Workflow, events []Event) (map[string]*step.State, map[string]review.Session, []string, map[string]bool, error) {
 	if wf == nil {
 		return nil, nil, nil, nil, fmt.Errorf("resume: workflow is unavailable")
@@ -234,6 +239,7 @@ func restoreUnfinishedCheckpoint(runDir string, wf *workflow.Workflow, events []
 	requests := make(map[string]ReviewRequest)
 	verdicts := make(map[string]string)
 	recoverySkipped := make(map[string]bool)
+	interruptedRecovery := make(map[string]bool)
 	var started *RunStarted
 	for _, event := range events {
 		switch event := event.(type) {
@@ -264,6 +270,11 @@ func restoreUnfinishedCheckpoint(runDir string, wf *workflow.Workflow, events []
 				recoverySkipped[event.StepID] = true
 			} else if event.To != step.StatusFailed {
 				delete(recoverySkipped, event.StepID)
+			}
+			if event.To == step.StatusAwaitingRecovery && event.RecoveryAction == processInterruptedRecoveryAction {
+				interruptedRecovery[event.StepID] = true
+			} else {
+				delete(interruptedRecovery, event.StepID)
 			}
 			if event.To != step.StatusAwaitingReview {
 				delete(requests, event.StepID)
@@ -309,7 +320,12 @@ func restoreUnfinishedCheckpoint(runDir string, wf *workflow.Workflow, events []
 			sessions[id] = sess
 		case step.StatusRunning, step.StatusValidating:
 			interrupted = append(interrupted, id)
-		case step.StatusNeedsInput, step.StatusAwaitingRecovery, step.StatusAwaitingIntegration, step.StatusStopped:
+		case step.StatusAwaitingRecovery:
+			if !interruptedRecovery[id] {
+				return nil, nil, nil, nil, fmt.Errorf("resume: step %q is %s; reopen of this park requires Spec 21 unfinished-park restore", id, state.Status)
+			}
+			interrupted = append(interrupted, id)
+		case step.StatusNeedsInput, step.StatusAwaitingIntegration, step.StatusStopped:
 			return nil, nil, nil, nil, fmt.Errorf("resume: step %q is %s; reopen of this park requires Spec 21 unfinished-park restore", id, state.Status)
 		default:
 			return nil, nil, nil, nil, fmt.Errorf("resume: step %q is %s; only review gates and interrupted workers can resume", id, state.Status)
@@ -342,7 +358,7 @@ func (s *scheduler) parkInterruptedWorker(stepID string) []Event {
 		return nil
 	}
 	from := state.Status
-	if from != step.StatusRunning && from != step.StatusValidating {
+	if from != step.StatusRunning && from != step.StatusValidating && from != step.StatusAwaitingRecovery {
 		return nil
 	}
 	if state.Result == nil {
@@ -360,7 +376,7 @@ func (s *scheduler) parkInterruptedWorker(stepID string) []Event {
 		path := filepath.Join(s.jigRoot, "worktrees", s.runID, stepID)
 		if directoryExists(path) {
 			s.worktrees[stepID] = path
-			if registeredWorktree(s.repoRoot, path) {
+			if registeredWorktree(s.repoRoot, path, s.stepBranchName(stepID)) {
 				if base, err := gitCmd(path, "merge-base", "HEAD", s.runBranch); err == nil {
 					if base = strings.TrimSpace(base); base != "" {
 						s.wtBaseSHAs[stepID] = base
@@ -370,7 +386,7 @@ func (s *scheduler) parkInterruptedWorker(stepID string) []Event {
 		}
 	}
 
-	status := s.transitionEvent(stepID, from, step.StatusAwaitingRecovery, "")
+	status := s.transitionEvent(stepID, from, step.StatusAwaitingRecovery, processInterruptedRecoveryAction)
 	return []Event{status, RecoveryRequest{
 		RunID:     s.runID,
 		StepID:    stepID,

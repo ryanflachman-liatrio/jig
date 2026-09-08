@@ -2071,7 +2071,17 @@ func (s *scheduler) discardMutationWorkspace(stepID string) error {
 	if s.jigRoot == "" || filepath.Clean(path) != expected {
 		return fmt.Errorf("step %q: refuse to discard unexpected worktree path %q", stepID, path)
 	}
-	if err := removeWorktree(s.repoRoot, path); err != nil {
+	leafInfo, leafErr := os.Lstat(path)
+	if leafErr == nil && leafInfo.Mode()&os.ModeSymlink != 0 {
+		// Never pass a leaf symlink to git worktree remove: git may resolve it to
+		// a different registered tree. Remove only the canonical-path residue.
+		if err := os.Remove(path); err != nil {
+			return fmt.Errorf("step %q: discard worktree symlink before retry: %w", stepID, err)
+		}
+		_, _ = gitCmd(s.repoRoot, "worktree", "prune")
+	} else if leafErr != nil && !os.IsNotExist(leafErr) {
+		return fmt.Errorf("step %q: inspect worktree before retry: %w", stepID, leafErr)
+	} else if err := removeWorktree(s.repoRoot, path); err != nil {
 		// A crash can leave a directory at the canonical path without valid git
 		// worktree registration. Fresh retry explicitly discards that residue.
 		info, statErr := os.Stat(path)

@@ -175,6 +175,37 @@ func TestReplayJournal_CorruptSnapshotIsOrphaned(t *testing.T) {
 	}
 }
 
+func TestReplayJournal_OrphanedNonWorkerParksAreTerminalForDisplay(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status step.Status
+	}{
+		{name: "pending", status: step.StatusPending},
+		{name: "review", status: step.StatusAwaitingReview},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runDir := t.TempDir()
+			events := []Event{RunStarted{RunID: "r1", Workflow: "feature", Steps: []string{"gate"}}}
+			if tc.status != step.StatusPending {
+				events = append(events, StepStatus{RunID: "r1", StepID: "gate", From: step.StatusPending, To: tc.status})
+			}
+			writeJournal(t, runDir, events)
+
+			got, err := ReplayJournal(runDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			failed, ok := got[len(got)-2].(StepStatus)
+			if !ok || failed.From != tc.status || failed.To != step.StatusFailed || failed.Err != orphanedRunErr {
+				t.Fatalf("orphan failure = %#v", got[len(got)-2])
+			}
+			if finished, ok := got[len(got)-1].(RunFinished); !ok || !finished.Failed {
+				t.Fatalf("orphan finish = %#v", got[len(got)-1])
+			}
+		})
+	}
+}
+
 func TestReplayJournal_MissingRunStartedIsOrphaned(t *testing.T) {
 	runDir := t.TempDir()
 	writeJournal(t, runDir, []Event{
@@ -245,6 +276,21 @@ func TestReplayJournalHydratesReviewDocumentSnapshot(t *testing.T) {
 
 func TestReplayJournal_ToleratesUnknownKindsAndTornTail(t *testing.T) {
 	runDir := t.TempDir()
+	wf, err := workflow.Decode(`
+[workflow]
+name = "wf"
+version = "1"
+[[step]]
+id = "a"
+type = "command"
+run = "true"
+`, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
+		t.Fatal(err)
+	}
 	good, _ := MarshalEnvelope(1, RunStarted{RunID: "r1", Workflow: "wf", Steps: []string{"a"}})
 
 	// Unknown kinds remain forward-compatible. The final invalid bytes have no

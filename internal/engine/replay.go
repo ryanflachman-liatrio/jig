@@ -14,6 +14,8 @@ import (
 
 const interruptedSDKSessionErr = "agent SDK session terminated abruptly before reporting a terminal result"
 
+const orphanedRunErr = "run cannot be reopened because its durable workflow snapshot or journal is unavailable"
+
 // ReplayJournal reads runDir's journal.jsonl and returns the events it recorded,
 // in seq order. It is the read side of the "state = fold(journal)" invariant:
 // the engine journals every event before fan-out (see internal/manifest), so
@@ -176,6 +178,11 @@ func reconcileInterruptedRun(runDir string, events []Event, forceOrphan bool) []
 	if started != nil {
 		runID = started.RunID
 		ordered = started.Steps
+		for _, stepID := range ordered {
+			if _, ok := states[stepID]; !ok {
+				states[stepID] = step.StatusPending
+			}
+		}
 	}
 	if runID == "" {
 		return events
@@ -184,10 +191,14 @@ func reconcileInterruptedRun(runDir string, events []Event, forceOrphan bool) []
 	var recovered []Event
 	for _, stepID := range ordered {
 		from := states[stepID]
-		if from != step.StatusRunning && from != step.StatusValidating {
+		if terminalStatus(from) {
 			continue
 		}
 		prior := lastStatus[stepID]
+		reason := orphanedRunErr
+		if from == step.StatusRunning || from == step.StatusValidating {
+			reason = interruptedSDKSessionErr
+		}
 		recovered = append(recovered, StepStatus{
 			RunID:      runID,
 			StepID:     stepID,
@@ -196,11 +207,8 @@ func reconcileInterruptedRun(runDir string, events []Event, forceOrphan bool) []
 			Attempt:    prior.Attempt,
 			Iteration:  prior.Iteration,
 			Generation: prior.Generation,
-			Err:        interruptedSDKSessionErr,
+			Err:        reason,
 		})
-	}
-	if len(recovered) == 0 {
-		return events
 	}
 	return append(append([]Event{}, events...), append(recovered, RunFinished{
 		RunID:  runID,

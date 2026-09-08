@@ -43,6 +43,59 @@ func TestResumeRecoveryBatchWriteFailureDoesNotFanOut(t *testing.T) {
 	}
 }
 
+func TestResumeRepairsInterruptedRecoveryTransactionAtEveryRecordBoundary(t *testing.T) {
+	for _, includeRequest := range []bool{false, true} {
+		name := "after tagged status"
+		if includeRequest {
+			name = "after complete batch"
+		}
+		t.Run(name, func(t *testing.T) {
+			wf, err := workflow.Decode(`
+[workflow]
+name = "repair-recovery"
+version = "1"
+[[step]]
+id = "agent"
+type = "agent"
+skill = "agent"
+`, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			root := filepath.Join(t.TempDir(), ".jig")
+			runDir, err := datastore.RunDir(root, "repair-run")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := persistWorkflowSnapshot(runDir, wf); err != nil {
+				t.Fatal(err)
+			}
+			events := []Event{
+				RunStarted{RunID: "repair-run", Workflow: wf.Meta.Name, Steps: []string{"agent"}},
+				StepStatus{RunID: "repair-run", StepID: "agent", From: step.StatusPending, To: step.StatusRunning},
+				StepStatus{RunID: "repair-run", StepID: "agent", From: step.StatusRunning, To: step.StatusAwaitingRecovery, RecoveryAction: processInterruptedRecoveryAction},
+			}
+			if includeRequest {
+				events = append(events, RecoveryRequest{RunID: "repair-run", StepID: "agent", Err: processInterruptedErr})
+			}
+			writeJournal(t, runDir, events)
+
+			mgr := NewManager(&capAwareExec{canResume: true}, root)
+			_, ch := mgr.Subscribe()
+			run, err := mgr.Resume("repair-run")
+			if err != nil {
+				t.Fatalf("Resume: %v", err)
+			}
+			rr := waitRecoveryRequest(t, ch, 2*time.Second)
+			if rr.StepID != "agent" {
+				t.Fatalf("repaired request step = %q", rr.StepID)
+			}
+			run.Recover("agent", RecoverAbort, "")
+			collectEvents(t, ch, 2*time.Second)
+		})
+	}
+}
+
 func TestResumeHistoricalReviewContinuesLoopWithSavedComment(t *testing.T) {
 	const source = `
 [workflow]
@@ -694,6 +747,8 @@ func TestResumeMutationWorktreeRecovery(t *testing.T) {
 		name          string
 		createTree    bool
 		invalidTree   bool
+		wrongBranch   bool
+		symlinkTree   bool
 		advanceBranch bool
 		action        string
 		wantCanResume bool
@@ -703,6 +758,8 @@ func TestResumeMutationWorktreeRecovery(t *testing.T) {
 		{name: "missing tree offers retry only", action: RecoverRetry},
 		{name: "fresh retry discards dirty tree", createTree: true, action: RecoverRetry, wantCanResume: true},
 		{name: "fresh retry discards invalid residue", invalidTree: true, action: RecoverRetry},
+		{name: "fresh retry discards wrong branch tree", createTree: true, wrongBranch: true, action: RecoverRetry},
+		{name: "fresh retry removes worktree symlink only", symlinkTree: true, action: RecoverRetry},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repoRoot := t.TempDir()
@@ -736,6 +793,9 @@ isolation = "worktree"
 			if tc.createTree {
 				wtPath := filepath.Join(root, "worktrees", runID, "agent")
 				stepBranch := (&scheduler{wf: wf, runID: runID}).stepBranchName("agent")
+				if tc.wrongBranch {
+					stepBranch += "-wrong"
+				}
 				if _, err := createWorktreeAt(repoRoot, wtPath, stepBranch, runBranch); err != nil {
 					t.Fatal(err)
 				}
@@ -749,6 +809,18 @@ isolation = "worktree"
 					t.Fatal(err)
 				}
 				if err := os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("invalid residue"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var symlinkTarget string
+			if tc.symlinkTree {
+				symlinkTarget = filepath.Join(root, "worktrees", runID, "actual")
+				wrongBranch := (&scheduler{wf: wf, runID: runID}).stepBranchName("agent") + "-wrong"
+				if _, err := createWorktreeAt(repoRoot, symlinkTarget, wrongBranch, runBranch); err != nil {
+					t.Fatal(err)
+				}
+				wtPath := filepath.Join(root, "worktrees", runID, "agent")
+				if err := os.Symlink(symlinkTarget, wtPath); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -801,6 +873,9 @@ isolation = "worktree"
 			}
 			run.Cancel()
 			run.Wait()
+			if symlinkTarget != "" {
+				_ = removeWorktree(repoRoot, symlinkTarget)
+			}
 		})
 	}
 }

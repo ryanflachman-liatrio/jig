@@ -45,6 +45,37 @@ func TestParseStaleWorktreePath(t *testing.T) {
 	}
 }
 
+func TestRegisteredWorktreeRequiresExpectedBranchAndRealLeaf(t *testing.T) {
+	repoRoot := t.TempDir()
+	initRepo(t, repoRoot)
+
+	wrongPath := filepath.Join(repoRoot, ".jig", "wrong")
+	if _, err := createWorktreeAt(repoRoot, wrongPath, "jig/wrong", "HEAD"); err != nil {
+		t.Fatal(err)
+	}
+	if registeredWorktree(repoRoot, wrongPath, "jig/expected") {
+		t.Fatal("worktree on the wrong branch was accepted")
+	}
+	if !registeredWorktree(repoRoot, wrongPath, "jig/wrong") {
+		t.Fatal("worktree on the expected branch was rejected")
+	}
+	if err := removeWorktree(repoRoot, wrongPath); err != nil {
+		t.Fatal(err)
+	}
+
+	realPath := filepath.Join(repoRoot, ".jig", "real")
+	if _, err := createWorktreeAt(repoRoot, realPath, "jig/expected", "HEAD"); err != nil {
+		t.Fatal(err)
+	}
+	aliasPath := filepath.Join(repoRoot, ".jig", "alias")
+	if err := os.Symlink(realPath, aliasPath); err != nil {
+		t.Fatal(err)
+	}
+	if registeredWorktree(repoRoot, aliasPath, "jig/expected") {
+		t.Fatal("leaf symlink to a registered worktree was accepted")
+	}
+}
+
 // TestSanitizeBranchName verifies the sanitize helper used for git branch names.
 func TestSanitizeBranchName(t *testing.T) {
 	tests := []struct{ in, want string }{

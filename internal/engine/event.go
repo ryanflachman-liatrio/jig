@@ -42,8 +42,8 @@ type StepStatus struct {
 	// a policy limit (e.g. "error_max_turns", "error_max_budget_usd"). Empty for
 	// non-agent failures and for all non-failing transitions.
 	Subtype string
-	// RecoveryAction records the operator decision that caused this transition
-	// when that decision changes later scheduling semantics (currently skip).
+	// RecoveryAction records the recovery cause/decision that changes later
+	// scheduling semantics (operator skip or a process-interruption park).
 	RecoveryAction string
 	// Cost and Tokens carry the step's SDK-reported dollar cost and total token
 	// count on its terminal transition (Succeeded/Failed/Skipped), so the monitor

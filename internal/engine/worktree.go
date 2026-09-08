@@ -108,27 +108,41 @@ func removeWorktree(repoRoot, wtPath string) error {
 	return nil
 }
 
-// registeredWorktree reports whether git's worktree registry owns exactly the
-// supplied path. A directory beneath a repository is not sufficient: after a
-// crash it may be only partially created residue.
-func registeredWorktree(repoRoot, wtPath string) bool {
+// registeredWorktree reports whether git's worktree registry owns the supplied
+// real directory on the expected branch. A directory beneath a repository is
+// not sufficient: after a crash it may be partial residue, detached, on another
+// branch, or a leaf symlink to some other registered worktree.
+func registeredWorktree(repoRoot, wtPath, branchName string) bool {
+	want := filepath.Clean(wtPath)
+	wantLstat, err := os.Lstat(want)
+	if err != nil || wantLstat.Mode()&os.ModeSymlink != 0 || !wantLstat.IsDir() {
+		return false
+	}
 	out, err := gitCmd(repoRoot, "worktree", "list", "--porcelain")
 	if err != nil {
 		return false
 	}
-	want := filepath.Clean(wtPath)
-	wantInfo, _ := os.Stat(want)
-	for _, line := range strings.Split(out, "\n") {
-		if !strings.HasPrefix(line, "worktree ") {
-			continue
+	wantBranch := "refs/heads/" + branchName
+	for _, stanza := range strings.Split(strings.TrimSpace(out), "\n\n") {
+		registered := ""
+		branch := ""
+		for _, line := range strings.Split(stanza, "\n") {
+			switch {
+			case strings.HasPrefix(line, "worktree "):
+				registered = filepath.Clean(strings.TrimPrefix(line, "worktree "))
+			case strings.HasPrefix(line, "branch "):
+				branch = strings.TrimPrefix(line, "branch ")
+			}
 		}
-		registered := filepath.Clean(strings.TrimPrefix(line, "worktree "))
-		if registered == want {
-			return true
+		if branch != wantBranch {
+			continue
 		}
 		// macOS commonly reports /private/var/... for a path opened through
 		// /var/...; compare the directory identity as well as spelling.
-		if registeredInfo, statErr := os.Stat(registered); statErr == nil && wantInfo != nil && os.SameFile(wantInfo, registeredInfo) {
+		if registered == want {
+			return true
+		}
+		if registeredInfo, statErr := os.Stat(registered); statErr == nil && os.SameFile(wantLstat, registeredInfo) {
 			return true
 		}
 	}
