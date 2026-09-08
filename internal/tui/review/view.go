@@ -25,17 +25,45 @@ func (m *Model) View() string {
 // EmbeddedView omits the workspace header and footer when the Monitor already
 // owns chrome (panel title + CompactHint footer).
 func (m *Model) EmbeddedView() string {
-	return m.view(false, false)
+	if len(m.docs) == 0 {
+		return "No documents to review"
+	}
+	if m.mode == ModeSummary {
+		return m.summaryBody()
+	}
+	if m.width > 0 && m.width < 90 {
+		divider := shared.Theme.Review.Gutter.Render(strings.Repeat("─", max(m.width, 1)))
+		base := m.compactDocumentSwitcher() + "\n" + divider + "\n" + m.documentViewBody(false)
+		if m.mode == ModeComposeComment || m.mode == ModeEditComment {
+			return m.commentOverlay(base)
+		}
+		return base
+	}
+
+	railWidth := listWidth(m.width)
+	contentWidth := max(m.width-railWidth-3, 1)
+	left := m.documentListBody(railWidth, true)
+	right := m.documentViewBody(true)
+	height := max(max(lipgloss.Height(left), lipgloss.Height(right)), 1)
+	separator := strings.TrimSuffix(strings.Repeat(" "+shared.Theme.Review.Gutter.Render("│")+" \n", height), "\n")
+	base := lipgloss.JoinHorizontal(
+		lipgloss.Top,
+		fitReviewWidth(left, railWidth),
+		separator,
+		fitReviewWidth(right, contentWidth),
+	)
+	if m.mode == ModeComposeComment || m.mode == ModeEditComment {
+		return m.commentOverlay(base)
+	}
+	return base
 }
 
-// TitleSegments are the identity crumbs after the [REVIEW] badge: active doc,
+// TitleSegments are the identity crumbs after the [REVIEW] badge: step,
 // progress, and comment count (joined with · by the Monitor panel title).
 func (m Model) TitleSegments() []string {
 	parts := make([]string, 0, 3)
-	if doc := m.ActiveDocument(); doc.Label != "" {
-		parts = append(parts, doc.Label)
-	} else if doc.ID != "" {
-		parts = append(parts, doc.ID)
+	if m.session.StepID != "" {
+		parts = append(parts, m.session.StepID)
 	}
 	if n := len(m.docs); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d/%d", m.reviewedDocumentCount(), n))
@@ -83,9 +111,17 @@ func (m *Model) view(withHeader, withFooter bool) string {
 }
 
 func (m *Model) documentList() string {
+	hFrame, _ := shared.PanelFrame()
+	width := listWidth(m.width)
+	return shared.Panel("Documents", m.documentListBody(max(width-hFrame, 1), false), width, max(len(m.docs)+4, 5), m.mode != ModeSummary)
+}
+
+func (m *Model) documentListBody(width int, withHeading bool) string {
 	var b strings.Builder
-	b.WriteString(shared.Theme.Title.Render("Documents"))
-	b.WriteByte('\n')
+	if withHeading {
+		b.WriteString(shared.Theme.Title.Render("Documents"))
+		b.WriteString("\n\n")
+	}
 	for i, d := range m.docs {
 		mark := "○"
 		if m.reviewed[d.meta.ID] {
@@ -101,26 +137,32 @@ func (m *Model) documentList() string {
 				count++
 			}
 		}
-		b.WriteString(fmt.Sprintf("%s %s %s", cursor, mark, d.meta.Label))
+		line := fmt.Sprintf("%s %s %s", cursor, mark, d.meta.Label)
 		if count > 0 {
-			b.WriteString(fmt.Sprintf("  %d", count))
+			line += fmt.Sprintf("  %d", count)
 		}
+		b.WriteString(ansi.Truncate(line, max(width, 1), "…"))
 		b.WriteByte('\n')
 	}
-	return shared.Panel("Documents", b.String(), listWidth(m.width), max(len(m.docs)+4, 5), m.mode != ModeSummary)
+	return b.String()
 }
 
 func (m *Model) documentView() string {
 	d := m.docs[m.active]
+	return shared.Panel(d.meta.Label, m.documentViewBody(false), documentPanelWidth(m.width), max(12, m.height-2), m.mode != ModeSummary)
+}
+
+func (m *Model) documentViewBody(includeLabel bool) string {
+	d := m.docs[m.active]
 	var b strings.Builder
-	b.WriteString(m.documentHeader(d))
+	b.WriteString(m.documentHeaderForBody(d, includeLabel))
 	if m.activeDocumentMode() == DocumentPreview {
 		b.WriteByte('\n')
 		preview := &m.previews[m.active]
 		if preview.parseErr != nil {
 			m.documentModes[m.active] = DocumentSource
 			m.error = "preview unavailable: " + preview.parseErr.Error()
-			return m.documentView()
+			return m.documentViewBody(includeLabel)
 		}
 		rows := make([]string, 0, len(preview.blocks)*2)
 		activeStart, activeEnd := 0, 0
@@ -129,7 +171,7 @@ func (m *Model) documentView() string {
 			if err != nil {
 				m.documentModes[m.active] = DocumentSource
 				m.error = "preview unavailable: " + err.Error()
-				return m.documentView()
+				return m.documentViewBody(includeLabel)
 			}
 			var blockView strings.Builder
 			m.writePreviewBlock(&blockView, i, block, rendered)
@@ -143,7 +185,7 @@ func (m *Model) documentView() string {
 		rows = previewWindow(rows, activeStart, activeEnd, m.previewRowBudget())
 		b.WriteString(strings.Join(rows, "\n"))
 		b.WriteByte('\n')
-		return shared.Panel(d.meta.Label, b.String(), documentPanelWidth(m.width), max(12, m.height-2), m.mode != ModeSummary)
+		return b.String()
 	}
 	if m.mode == ModeSelectRange {
 		b.WriteString(fmt.Sprintf(" · L%d–%d", min(m.cursor, m.rangeEnd), max(m.cursor, m.rangeEnd)))
@@ -174,13 +216,19 @@ func (m *Model) documentView() string {
 			m.writeSourceRow(&b, row.patchLine)
 		}
 	}
-	return shared.Panel(d.meta.Label, b.String(), documentPanelWidth(m.width), max(12, m.height-2), m.mode != ModeSummary)
+	return b.String()
 }
 
 func (m *Model) documentHeader(d document) string {
+	return m.documentHeaderForBody(d, true)
+}
+
+func (m *Model) documentHeaderForBody(d document, includeLabel bool) string {
 	var b strings.Builder
-	b.WriteString(d.meta.Label)
-	b.WriteString("    ")
+	if includeLabel {
+		b.WriteString(shared.Theme.Title.Render(d.meta.Label))
+		b.WriteString("    ")
+	}
 	if d.meta.Format == "markdown" {
 		preview := shared.Theme.Review.ModeInactive.Render(" PREVIEW ")
 		source := shared.Theme.Review.ModeInactive.Render(" SOURCE ")
@@ -603,6 +651,10 @@ func (m *Model) commentOverlay(base string) string {
 }
 
 func (m *Model) summaryView() string {
+	return shared.Panel("Summary", m.summaryBody(), max(42, m.width-2), max(12, m.height-2), true)
+}
+
+func (m *Model) summaryBody() string {
 	var b strings.Builder
 	b.WriteString(shared.Theme.Title.Render("Review summary"))
 	b.WriteString("\n\n")
@@ -629,7 +681,25 @@ func (m *Model) summaryView() string {
 	b.WriteString(shared.Theme.StatusLine.Render("Overall summary (optional)"))
 	b.WriteByte('\n')
 	b.WriteString(m.summary.View())
-	return shared.Panel("Summary", b.String(), max(42, m.width-2), max(12, m.height-2), true)
+	return b.String()
+}
+
+func (m *Model) compactDocumentSwitcher() string {
+	doc := m.ActiveDocument()
+	label := doc.Label
+	if label == "" {
+		label = doc.ID
+	}
+	line := fmt.Sprintf("Documents  %d/%d · %s  ·  {/} change", m.active+1, len(m.docs), label)
+	return ansi.Truncate(line, max(m.width, 1), "…")
+}
+
+func fitReviewWidth(content string, width int) string {
+	lines := strings.Split(content, "\n")
+	for i := range lines {
+		lines[i] = ansi.Truncate(lines[i], max(width, 1), "")
+	}
+	return strings.Join(lines, "\n")
 }
 func (m *Model) footer() string {
 	if m.mode == ModeSummary {
@@ -655,7 +725,7 @@ func listWidth(width int) int {
 	if width > 0 && width < 90 {
 		return width
 	}
-	return 30
+	return min(36, max(24, width/4))
 }
 func documentPanelWidth(width int) int {
 	if width > 0 && width < 90 {

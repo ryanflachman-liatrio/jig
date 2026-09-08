@@ -89,6 +89,12 @@ type pendingInputEntry struct {
 	composing bool
 }
 
+type reviewOutcome struct {
+	roundID      string
+	verdict      string
+	commentCount int
+}
+
 type gateContextSnapshot struct {
 	cursor         int
 	rowKind        string
@@ -239,9 +245,13 @@ type Model struct {
 	gateContext         *gateContextSnapshot
 
 	// reviews retains the last ReviewRequest seen per step so the Transcript panel
-	// can show the diff when a review step is selected — review steps have no
-	// transcript. Kept after the queue entry is removed (Unit 5).
+	// can show a document overview when a review step is selected — review steps
+	// have no transcript. Kept after the queue entry is removed (Unit 5).
 	reviews map[string]engine.ReviewRequest
+	// reviewOutcomes preserves the terminal review summary after its queue entry
+	// is removed, so selecting a completed review does not fall back to stale
+	// pre-submission content.
+	reviewOutcomes map[string]reviewOutcome
 
 	// reviewDraftErrors is kept per queue entry so a failed draft write is
 	// visible without disturbing another queued review.
@@ -560,6 +570,7 @@ func New(runID string) Model {
 		chatItemRendered:   make(map[transcriptRenderKey]string),
 		chatItemLineRanges: make(map[transcriptLineKey]lineRange),
 		reviews:            make(map[string]engine.ReviewRequest),
+		reviewOutcomes:     make(map[string]reviewOutcome),
 		reviewDraftErrors:  make(map[string]string),
 		chatAutoScroll:     true,
 		expanded:           make(map[string]bool),
@@ -636,6 +647,9 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 	}
 	if m.reviews == nil {
 		m.reviews = make(map[string]engine.ReviewRequest)
+	}
+	if m.reviewOutcomes == nil {
+		m.reviewOutcomes = make(map[string]reviewOutcome)
 	}
 	if m.reviewDraftErrors == nil {
 		m.reviewDraftErrors = make(map[string]string)

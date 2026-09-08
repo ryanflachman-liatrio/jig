@@ -32,7 +32,7 @@ func TestBreadcrumbTitlesSlimAtCommonWidths(t *testing.T) {
 			t.Fatalf("width %d: steps root = %q, want %q", width, steps[0], wantRun)
 		}
 		// Workflow must not lead the Steps title at typical laptop widths (status owns it).
-		if width < reviewEmbedMinWidth {
+		if width < wideMonitorTitleMinWidth {
 			for _, p := range steps {
 				if p == "feature" {
 					t.Fatalf("width %d: Steps title still embeds workflow: %v", width, steps)

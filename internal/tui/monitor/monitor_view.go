@@ -15,6 +15,7 @@ import (
 )
 
 const securityMaxHeight = 5
+const wideMonitorTitleMinWidth = 160
 
 // helpOverlay composites the help chat modal over the base layout using the
 // same Compositor technique as RenderHelpOverlay. The modal takes 60% of the
@@ -345,7 +346,6 @@ type contentKind uint8
 const (
 	contentTranscript contentKind = iota
 	contentReview
-	contentReviewDiff
 	contentFile
 )
 
@@ -364,10 +364,7 @@ func (m Model) selectedContent() contentContext {
 		return contentContext{kind: contentFile, stepID: m.chatStep, label: filepath.Base(m.selFile)}
 	}
 
-	if review, ok := m.reviews[m.chatStep]; ok && len(m.chatEntries) == 0 {
-		if review.Diff != "" {
-			return contentContext{kind: contentReviewDiff, stepID: m.chatStep, label: "Review diff"}
-		}
+	if _, ok := m.reviews[m.chatStep]; ok && len(m.chatEntries) == 0 {
 		return contentContext{kind: contentReview, stepID: m.chatStep, label: "Review"}
 	}
 
@@ -443,7 +440,7 @@ func (m Model) stepsPanelTitleParts() []string {
 		runID = m.runIdentity()
 	}
 	parts := []string{runID}
-	if m.workflow != "" && m.width >= 160 && m.workflow != runID {
+	if m.workflow != "" && m.width >= wideMonitorTitleMinWidth && m.workflow != runID {
 		parts = append(parts, m.workflow)
 	}
 	parts = append(parts, leaf)
@@ -507,8 +504,9 @@ func (m Model) reviewPanelBody() string {
 // full-width (Resolved Decision 14). Only the focused region's border is drawn
 // primary.
 //
-// An open review workspace is a mode of the content panel (2.1): wide terminals
-// keep Steps | Review; narrower ones show full-width Review until Esc.
+// An open review workspace is a focused mode of the content panel. The status,
+// gate bar, and footer preserve run context while the document workspace uses
+// the complete panel width.
 func (m Model) View() string {
 	if !m.ready {
 		return shared.RenderEmptyState(shared.EmptyState{
@@ -567,15 +565,6 @@ func (m Model) reviewPanelsView(layout verticalLayout) string {
 	title := m.reviewPanelTitle()
 	focused := m.badgeFocus() == focusReviewBadge
 	hFrame, vFrame := shared.PanelFrame()
-	if m.reviewEmbedWide() {
-		stepsW, transcriptW, _ := panelSplit(m.width)
-		leftTitle := m.stepsPanelTitleParts()
-		left := shared.BreadcrumbPanel(leftTitle, m.vp.View(), stepsW, layout.panelH, false)
-		innerW := max(transcriptW-hFrame, 1)
-		innerH := max(layout.panelH-vFrame, 1)
-		right := shared.Panel(title, fitBlock(body, innerW, innerH), transcriptW, layout.panelH, focused)
-		return lipgloss.JoinHorizontal(lipgloss.Top, left, right)
-	}
 	innerW := max(m.width-hFrame, 1)
 	innerH := max(layout.panelH-vFrame, 1)
 	return shared.Panel(title, fitBlock(body, innerW, innerH), m.width, layout.panelH, focused)

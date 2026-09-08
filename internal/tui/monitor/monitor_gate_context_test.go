@@ -10,6 +10,7 @@ import (
 
 	"jig/internal/datastore"
 	"jig/internal/engine"
+	domainreview "jig/internal/review"
 	"jig/internal/transcript"
 )
 
@@ -145,6 +146,10 @@ func TestGateContextJumpAndReturnPreserveTranscriptState(t *testing.T) {
 		StepID:  "a",
 		Diff:    "@@ -1 +1 @@\n-old\n+new",
 		Choices: []string{"approve", "reject"},
+		Documents: []domainreview.Document{{
+			ID: "diff", Label: "Proposed changes", Format: "diff", LineCount: 3,
+			Content: "@@ -1 +1 @@\n-old\n+new",
+		}},
 	}})
 	m.focus = focusGate
 
@@ -164,7 +169,7 @@ func TestGateContextJumpAndReturnPreserveTranscriptState(t *testing.T) {
 	if len(jumped.inputQueue) != 1 || jumped.activeInputIdx != 0 {
 		t.Fatal("context navigation changed the gate queue")
 	}
-	for _, want := range []string{"old", "new"} {
+	for _, want := range []string{"Proposed changes", "Diff · 3 lines"} {
 		if !strings.Contains(jumped.chatBody(), want) {
 			t.Fatalf("review context missing %q:\n%s", want, jumped.chatBody())
 		}

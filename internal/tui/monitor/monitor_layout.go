@@ -54,23 +54,12 @@ func (m Model) verticalLayout() verticalLayout {
 	}
 }
 
-// reviewEmbedMinWidth is the terminal width at which Steps stay visible beside
-// an open review workspace (E3). Below this, review is full-width.
-const reviewEmbedMinWidth = 160
-
-func (m Model) reviewEmbedWide() bool {
-	return m.width >= reviewEmbedMinWidth
-}
-
 // reviewPanelOuter returns the outer width/height of the Monitor panel that
-// hosts EmbeddedView (transcript slot when wide; full width when narrow).
+// hosts EmbeddedView. Review is a focused workspace, so it always receives the
+// full monitor width rather than inheriting the transcript split.
 func (m Model) reviewPanelOuter() (width, height int) {
 	layout := m.verticalLayout()
 	height = max(layout.panelH, 1)
-	if m.reviewEmbedWide() {
-		_, transcriptW, _ := panelSplit(m.width)
-		return transcriptW, height
-	}
 	return m.width, height
 }
 

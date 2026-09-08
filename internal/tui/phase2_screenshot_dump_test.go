@@ -87,13 +87,13 @@ func TestPhase2ScreenshotDump(t *testing.T) {
 		Content: content, SHA256: domainreview.Digest(content), LineCount: 1,
 	}}
 
-	// 2.1 wide: open review at >=160
+	// 2.1 wide: open a focused review workspace.
 	m = base()
 	m, _ = m.Update(monitor.EngineEventMsg{Event: engine.ReviewRequest{
 		RunID: "abcd1234ef", StepID: "review", Choices: []string{"accept", "revise"},
 		Documents: docs,
 	}})
-	// First-wait auto-focuses Gate — Enter opens workspace. Resize first so embed is wide.
+	// First-wait auto-focuses Gate — Enter opens the full-width workspace.
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 180, Height: 40})
 	// Ensure gate focus
 	for i := 0; i < 4; i++ {
@@ -107,8 +107,8 @@ func TestPhase2ScreenshotDump(t *testing.T) {
 	if !strings.Contains(wide, "[REVIEW]") {
 		t.Fatalf("wide dump missing [REVIEW]:\n%s", wide)
 	}
-	if !strings.Contains(wide, "Steps") {
-		t.Fatalf("wide dump missing Steps:\n%s", wide)
+	if strings.Contains(wide, "› Steps") || strings.Contains(wide, "[STEPS]") {
+		t.Fatalf("wide dump retained Steps chrome:\n%s", wide)
 	}
 	write("2.1-review-wide.ansi", m)
 

@@ -15,5 +15,5 @@ go test ./internal/tui -run TestGoldenPathProofFrames -count=1
 | `02-monitor-live.txt` | Monitor LIVE / seed running |
 | `03-gate-blurred.txt` | `GATE · needs input` |
 | `04-gate-focused.txt` | `[GATE] · awaiting review` |
-| `05-review-wide.txt` | Review embed ≥160 with Steps |
+| `05-review-wide.txt` | Full-width focused Review workspace |
 | `06-footer-simple.txt` | Footer `simple` tag |

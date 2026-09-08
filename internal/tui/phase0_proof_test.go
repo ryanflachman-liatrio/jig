@@ -46,7 +46,7 @@ func TestPhase0HomeProofArtifact(t *testing.T) {
 	}})
 
 	plain := ansi.Strip(m.View().Content)
-	outDir := "/opt/cursor/artifacts"
+	outDir := filepath.Join(t.TempDir(), "artifacts")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		t.Fatal(err)
 	}

@@ -209,7 +209,7 @@ func TestReviewWorkspaceKeepsGateOpenUntilEngineAcceptsSubmission(t *testing.T) 
 	}
 }
 
-func TestReviewWorkspaceStartsCompactAndEmbedsInMonitor(t *testing.T) {
+func TestReviewWorkspaceStartsCompactAndUsesFocusedMonitorBody(t *testing.T) {
 	m := monitorWithReviewWorkspace(t)
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 180, Height: 45})
 	compact := ansiStrip(m.gateOverlay())
@@ -224,13 +224,16 @@ func TestReviewWorkspaceStartsCompactAndEmbedsInMonitor(t *testing.T) {
 		t.Fatalf("dedicated workspace did not open:\n%s", view)
 	}
 	if !strings.Contains(view, "[REVIEW]") {
-		t.Fatalf("wide embed missing [REVIEW] badge:\n%s", view)
+		t.Fatalf("focused review missing [REVIEW] badge:\n%s", view)
 	}
-	if !strings.Contains(view, "Steps") {
-		t.Fatalf("wide embed (≥160) should keep Steps visible:\n%s", view)
+	if strings.Contains(view, "› Steps") || strings.Contains(view, "[STEPS]") {
+		t.Fatalf("focused review should reclaim the Steps panel:\n%s", view)
 	}
 	if strings.Contains(view, "[TRANSCRIPT]") || strings.Contains(view, "› Transcript") {
-		t.Fatalf("open review should replace transcript slot, not keep Transcript chrome:\n%s", view)
+		t.Fatalf("open review should replace monitor content chrome:\n%s", view)
+	}
+	if strings.Contains(view, "╭─ Scope assessment") || strings.Contains(view, "╭─ Documents") {
+		t.Fatalf("focused review should not nest child panel chrome:\n%s", view)
 	}
 	if afterBarH := lipgloss.Height(m.inputBarView()); afterBarH != beforeBarH {
 		t.Fatalf("gate bar height changed when opening review: before=%d after=%d", beforeBarH, afterBarH)
@@ -242,7 +245,7 @@ func TestReviewWorkspaceStartsCompactAndEmbedsInMonitor(t *testing.T) {
 		t.Fatalf("workspace exceeds terminal: got %dx%d, max 180x45", width, height)
 	}
 
-	// Narrow: full-width review, Steps hidden until Esc.
+	// Narrow uses the same focused mode, with a compact document switcher.
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	narrow := ansiStrip(m.View())
 	if !strings.Contains(narrow, "[REVIEW]") {

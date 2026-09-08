@@ -8,7 +8,7 @@ go test ./internal/tui -run TestPhase2ProofFrames -count=1
 
 | File | Item |
 |---|---|
-| `2.1-review-embed-wide.txt` | Steps \| Review at ≥160 |
-| `2.1-review-embed-narrow.txt` | Full-width Review at <160 |
+| `2.1-review-embed-wide.txt` | Full-width focused Review at 180 columns |
+| `2.1-review-embed-narrow.txt` | Full-width focused Review at 120 columns |
 | `2.2-slim-titles-transcript.txt` | Slim step · Transcript titles |
 | `2.3-footer-simple.txt` | Footer `simple` tag |

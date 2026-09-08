@@ -10,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"jig/internal/datastore"
+	"jig/internal/engine"
 	"jig/internal/step"
 	"jig/internal/transcript"
 	"jig/internal/tui/diffview"
@@ -739,13 +740,10 @@ func (m *Model) chatBody() string {
 	}
 
 	if len(m.chatEntries) == 0 {
-		// Review steps have no transcript. Show the diff here so the reviewer can
-		// read it while the verdict choices live in the gate entry (Decision 2/ADR 0005).
+		// Review steps have no transcript. Their immutable document inventory is
+		// the useful closed-state context; opening the Gate owns document browsing.
 		if rev, ok := m.reviews[m.chatStep]; ok {
-			if rev.Diff != "" {
-				writeDiff(&b, rev.Diff)
-				b.WriteString("\n")
-			}
+			m.writeReviewOverview(&b, rev)
 			return b.String()
 		}
 		if m.RunDir == "" {
@@ -861,6 +859,97 @@ func (m *Model) chatBody() string {
 	}
 
 	return b.String()
+}
+
+func (m *Model) writeReviewOverview(b *strings.Builder, request engine.ReviewRequest) {
+	reviewed, comments := 0, 0
+	for i := range m.inputQueue {
+		entry := &m.inputQueue[i]
+		if entry.kind != inputKindReview || entry.stepID != request.StepID || entry.workspace == nil {
+			continue
+		}
+		comments = len(entry.workspace.Comments())
+		for _, document := range entry.workspace.Documents() {
+			if entry.workspace.Reviewed(document.ID) {
+				reviewed++
+			}
+		}
+		break
+	}
+
+	outcome, submitted := m.reviewOutcomeFor(request)
+	if submitted {
+		reviewed = len(request.Documents)
+		comments = outcome.commentCount
+		b.WriteString("  " + shared.Theme.Valid.Render("Review submitted") + "\n")
+		b.WriteString(fmt.Sprintf("  Verdict: %s · %d / %d documents reviewed · %d comments\n\n",
+			outcome.verdict, reviewed, len(request.Documents), comments))
+	} else {
+		b.WriteString(fmt.Sprintf("  %d / %d documents reviewed · %d comments",
+			reviewed, len(request.Documents), comments))
+		if request.RoundID != "" {
+			b.WriteString(" · round " + request.RoundID)
+		}
+		b.WriteString("\n\n")
+	}
+
+	if len(request.Documents) == 0 {
+		b.WriteString("  " + shared.Theme.Chat.Hint.Render("No review document descriptors were captured.") + "\n")
+		return
+	}
+	for _, document := range request.Documents {
+		mark := "○"
+		for i := range m.inputQueue {
+			entry := &m.inputQueue[i]
+			if entry.kind == inputKindReview && entry.stepID == request.StepID && entry.workspace != nil && entry.workspace.Reviewed(document.ID) {
+				mark = "✓"
+				break
+			}
+		}
+		if submitted {
+			mark = "✓"
+		}
+		label := document.Label
+		if label == "" {
+			label = document.ID
+		}
+		format := reviewFormatLabel(document.Format)
+		lineWord := "lines"
+		if document.LineCount == 1 {
+			lineWord = "line"
+		}
+		b.WriteString(fmt.Sprintf("  %s  %s  %s · %d %s\n", mark, label, format, document.LineCount, lineWord))
+	}
+	if !submitted {
+		hint := "Open this review from the Gate panel."
+		if m.historical {
+			hint = "Resume this run from Home to reopen the review workspace."
+		}
+		b.WriteString("\n  " + shared.Theme.Chat.Hint.Render(hint) + "\n")
+	}
+}
+
+func (m *Model) reviewOutcomeFor(request engine.ReviewRequest) (reviewOutcome, bool) {
+	outcome, ok := m.reviewOutcomes[request.StepID]
+	if !ok || outcome.roundID != "" && request.RoundID != "" && outcome.roundID != request.RoundID {
+		return reviewOutcome{}, false
+	}
+	return outcome, true
+}
+
+func reviewFormatLabel(format string) string {
+	switch format {
+	case "markdown":
+		return "Markdown"
+	case "diff":
+		return "Diff"
+	case "text":
+		return "Plain text"
+	case "":
+		return "Document"
+	default:
+		return format
+	}
 }
 
 // writeGroupHeader renders one tool call group header line:

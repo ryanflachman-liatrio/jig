@@ -101,7 +101,7 @@ the interface later if duplication still hurts.
 |---|---|---|
 | **E1** | Blurred pending gate: **title/status emphasis only**; border stays Iron. Focused gate gets Charple (and `[GATE]`). Avoids two “primary” borders fighting 1.2 | (rec) |
 | **E2** | While review open: keep **stable one-line gate bar height**; change label/contents only (ADR 0002 no-reflow) | (rec) |
-| **E3** | Wide embed: Steps \| Review only if total width ≥ **160**; otherwise full-width Review (Steps hidden until Esc). Document threshold in 2.1 | (rec) |
+| **E3** | Superseded: focused Review now uses the full Monitor body at every width; Steps return on Esc. | (rec) |
 | **E4** | Palette v1: **`ctrl+k` only** (no `:` ) | (rec) |
 | **E5** | Drop stale “open runs…” palette example; v1 actions retarget **Home / switch run** only after 0.1 | (rec) |
 | **E6** | Config path = **`.jig/tui.json`** (matches C5; stays with other jig state under `.jig/`) | (rec) |

@@ -17,6 +17,7 @@ import (
 	"jig/internal/engine"
 	"jig/internal/helpchat"
 	"jig/internal/interaction"
+	domainreview "jig/internal/review"
 	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/transcript"
@@ -754,36 +755,71 @@ func TestMonitorChatCommandOutput(t *testing.T) {
 	}
 }
 
-// TestMonitorChatReviewFallback checks drilling into a review step shows its
-// diff in the Transcript panel. Verdict choices live in the gate strip, not here
-// (Decision 2 / ADR 0005).
+// TestMonitorChatReviewFallback checks drilling into a review step shows the
+// complete document inventory without expanding any document body. Document
+// navigation and verdict choices remain owned by the Gate workspace.
 func TestMonitorChatReviewFallback(t *testing.T) {
 	m := newMonitorWithSteps(t) // no runDir: review steps have no transcript
+	diff := "@@ -1 +1 @@\n-old line\n+new line"
 
 	// A review arrives; Decision 6 means no auto-focus.
 	m, _ = m.Update(EngineEventMsg{Event: engine.ReviewRequest{
 		RunID:   "run-1",
 		StepID:  "a",
-		Diff:    "@@ -1 +1 @@\n-old line\n+new line",
+		RoundID: "g000-i000",
+		Diff:    diff,
 		Choices: []string{"approve", "reject"},
+		Documents: []domainreview.Document{
+			{ID: "plan", Label: "Implementation plan", Format: "markdown", LineCount: 42, Content: "# Plan"},
+			{ID: "diff", Label: "Unified diff", Format: "diff", LineCount: 3, Content: diff},
+		},
 	}})
 
 	m = enterChatStep(t, m, "a")
 	body := m.chatBody()
-	// Diff markers must appear in the Transcript body.
-	for _, want := range []string{"new line", "old line"} {
+	for _, want := range []string{"0 / 2 documents reviewed", "Implementation plan", "Markdown · 42 lines", "Unified diff", "Diff · 3 lines", "Open this review from the Gate panel"} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("review Transcript missing %q:\n%s", want, body)
+			t.Fatalf("review overview missing %q:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "proposed changes") {
-		t.Fatalf("review body repeats context already carried by the panel title:\n%s", body)
+	for _, bodyText := range []string{"old line", "new line"} {
+		if strings.Contains(body, bodyText) {
+			t.Fatalf("closed review expanded document body %q:\n%s", bodyText, body)
+		}
 	}
 	// Verdict choices must NOT appear in the Transcript body (they live in the gate).
 	for _, notWant := range []string{"[1] approve", "[2] reject"} {
 		if strings.Contains(body, notWant) {
 			t.Fatalf("verdict choices must not appear in Transcript body, found %q:\n%s", notWant, body)
 		}
+	}
+}
+
+func TestMonitorReviewOverviewTracksDraftAndSubmission(t *testing.T) {
+	m := monitorWithReviewWorkspace(t)
+	m = enterChatStep(t, m, "a")
+	m.focus = focusGate
+	m, _ = m.Update(key("enter"))
+	m, _ = m.Update(key("r"))
+
+	if body := m.chatBody(); !strings.Contains(body, "1 / 1 documents reviewed") {
+		t.Fatalf("review overview did not reflect draft acknowledgement:\n%s", body)
+	}
+
+	m, _ = m.Update(EngineEventMsg{Event: engine.ReviewSubmitted{
+		RunID: "run-1", StepID: "a", RoundID: "g000-i000", Verdict: "approve", CommentCount: 2,
+	}})
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
+		RunID: "run-1", StepID: "a", To: step.StatusSucceeded,
+	}})
+	body := m.chatBody()
+	for _, want := range []string{"Review submitted", "Verdict: approve", "1 / 1 documents reviewed", "2 comments", "✓  Scope assessment"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("completed review overview missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "Open this review from the Gate panel") {
+		t.Fatalf("completed review still advertises an open gate:\n%s", body)
 	}
 }
 
@@ -1461,7 +1497,7 @@ func TestMonitorFollowIndicatorHiddenForStaticContent(t *testing.T) {
 
 	m.chatEntries = nil
 	m.reviews["a"] = engine.ReviewRequest{StepID: "a", Diff: "diff"}
-	if title := m.transcriptPanelTitle(); title != "Review diff" {
+	if title := m.transcriptPanelTitle(); title != "Review" {
 		t.Fatalf("review title = %q, want no follow indicator", title)
 	}
 }
@@ -2055,12 +2091,12 @@ func TestMonitorContentTitles(t *testing.T) {
 		}
 	})
 
-	t.Run("review diff", func(t *testing.T) {
+	t.Run("review documents", func(t *testing.T) {
 		review := m
 		review.reviews["a"] = engine.ReviewRequest{StepID: "a", Diff: "diff"}
 		review.chatEntries = nil
-		if got := review.selectedContent(); got.kind != contentReviewDiff || got.label != "Review diff" {
-			t.Fatalf("review diff context = %+v", got)
+		if got := review.selectedContent(); got.kind != contentReview || got.label != "Review" {
+			t.Fatalf("review context = %+v", got)
 		}
 	})
 
@@ -2407,17 +2443,21 @@ func TestQuestionCancel(t *testing.T) {
 	}
 }
 
-// TestReviewDiffInTranscript verifies that selecting a review step shows its diff
-// in the Transcript panel (chatBody) while activeInputIdx is unaffected.
-func TestReviewDiffInTranscript(t *testing.T) {
+// TestReviewOverviewInTranscript verifies that selecting a review step shows its
+// document inventory while activeInputIdx is unaffected.
+func TestReviewOverviewInTranscript(t *testing.T) {
 	m := newMonitorWithSteps(t)
+	diff := "@@ -1 +1 @@\n-removed\n+added"
 
-	// Enqueue a review with a diff.
+	// Enqueue a review with a diff document.
 	m, _ = m.Update(EngineEventMsg{Event: engine.ReviewRequest{
 		RunID:   "run-1",
 		StepID:  "a",
-		Diff:    "@@ -1 +1 @@\n-removed\n+added",
+		Diff:    diff,
 		Choices: []string{"approve", "reject"},
+		Documents: []domainreview.Document{{
+			ID: "diff", Label: "Proposed changes", Format: "diff", LineCount: 3, Content: diff,
+		}},
 	}})
 
 	idxBefore := m.activeInputIdx
@@ -2431,13 +2471,15 @@ func TestReviewDiffInTranscript(t *testing.T) {
 	}
 
 	body := m.chatBody()
-	for _, want := range []string{"removed", "added"} {
+	for _, want := range []string{"0 / 1 documents reviewed", "Proposed changes", "Diff · 3 lines"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("chatBody missing %q:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, "proposed changes") {
-		t.Fatalf("chatBody repeats review context from the panel title:\n%s", body)
+	for _, bodyText := range []string{"removed", "added"} {
+		if strings.Contains(body, bodyText) {
+			t.Fatalf("chatBody expanded review body %q:\n%s", bodyText, body)
+		}
 	}
 	// Choices must not appear in Transcript.
 	for _, notWant := range []string{"[1] approve", "[2] reject"} {
@@ -2553,18 +2595,25 @@ func TestCaptureUnit6Scroll(t *testing.T) {
 	}
 }
 
-// TestCaptureUnit5ReviewDiff captures View() with a review step selected,
-// showing the diff in the Transcript panel and the gate entry with verdict choices.
-func TestCaptureUnit5ReviewDiff(t *testing.T) {
+// TestCaptureUnit5ReviewOverview captures View() with a review step selected,
+// showing the document inventory and compact workspace gate.
+func TestCaptureUnit5ReviewOverview(t *testing.T) {
 	const artifactPath = "../../../docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit5-review-diff.txt"
 	m := newMonitorWithSteps(t)
+	plan := "# Plan"
+	diff := "@@ -1,3 +1,3 @@\n context\n-old line\n+new line\n context"
 	m, _ = m.Update(EngineEventMsg{Event: engine.ReviewRequest{
 		RunID:   "run-1",
 		StepID:  "a",
-		Diff:    "@@ -1,3 +1,3 @@\n context\n-old line\n+new line\n context",
+		RoundID: "g000-i000",
+		Diff:    diff,
 		Choices: []string{"approve", "reject"},
+		Documents: []domainreview.Document{
+			{ID: "plan", Label: "Implementation plan", Format: "markdown", LineCount: 1, Content: plan, SHA256: domainreview.Digest(plan)},
+			{ID: "diff", Label: "Unified diff", Format: "diff", LineCount: 5, Content: diff, SHA256: domainreview.Digest(diff)},
+		},
 	}})
-	// Select the review step so Transcript shows the diff.
+	// Select the review step so the content panel shows the inventory.
 	m = enterChatStep(t, m, "a")
 	m.focus = focusGate
 

@@ -85,11 +85,12 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		if ev.RunID != m.RunID {
 			return m, nil
 		}
-		// Retain the request so the Transcript panel can show the diff when the step
-		// is selected (Unit 5), even after the queue entry is answered.
+		// Retain the request so the content panel can show the document inventory
+		// when the step is selected, even after the queue entry is answered.
 		if m.reviews == nil {
 			m.reviews = make(map[string]engine.ReviewRequest)
 		}
+		delete(m.reviewOutcomes, ev.StepID)
 		m.reviews[ev.StepID] = ev
 		// Append a queue entry. Decision 6: no focus steal on arrival.
 		evCopy := ev
@@ -111,6 +112,19 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		}
 		m.inputQueue = append(m.inputQueue, entry)
 		m.consumeFirstWaitFocus()
+
+	case engine.ReviewSubmitted:
+		if ev.RunID != m.RunID {
+			return m, nil
+		}
+		if m.reviewOutcomes == nil {
+			m.reviewOutcomes = make(map[string]reviewOutcome)
+		}
+		m.reviewOutcomes[ev.StepID] = reviewOutcome{
+			roundID:      ev.RoundID,
+			verdict:      ev.Verdict,
+			commentCount: ev.CommentCount,
+		}
 
 	case engine.RecoveryRequest:
 		if ev.RunID != m.RunID {

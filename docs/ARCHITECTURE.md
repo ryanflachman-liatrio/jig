@@ -141,6 +141,15 @@ selected range opens the intersecting comment in the same modal for editing.
 Closing the modal restores the unchanged document viewport, so accumulated
 comments cannot push the editor or active source content outside the workspace.
 
+When a review step is merely selected, the Monitor's content panel shows the
+complete review-document inventory, progress, and—after submission—the verdict
+summary. It does not expand one privileged diff into a synthetic transcript.
+Opening the review gate switches the Monitor body into a focused, full-width
+workspace while retaining the gate bar, run status, and global footer. The
+workspace uses the Monitor's outer panel chrome and a flat document rail/content
+split, so document browsing does not nest another pair of bordered panels or
+compete with an otherwise idle Steps panel.
+
 Source presentation follows a separate, width-independent path. Literal
 `.diff` and `.patch` documents are parsed into an ephemeral projection that
 keeps every immutable patch row while adding old/new source-file coordinates
