@@ -26,9 +26,11 @@
 package manifest
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 
 	"jig/internal/datastore"
@@ -71,17 +73,53 @@ type StepTerminal struct {
 	DiffSHA256        string
 }
 
-// AppendLine writes one pre-encoded JSONL line to journal.jsonl.  If terminal
-// is non-nil the step's result.json is also written.  Errors are silently
-// dropped — a journal write failure is unfortunate but must not kill a live run.
-func (w *Writer) AppendLine(line []byte, terminal *StepTerminal) {
-	// Append the line plus newline in a single write; O_APPEND makes this
-	// atomic on POSIX for writes smaller than PIPE_BUF (~4 KiB for most events).
-	_, _ = w.journal.Write(append(line, '\n'))
+// AppendLine writes one pre-encoded JSONL line to journal.jsonl. If terminal
+// is non-nil the step's result.json is also written. A journal write error is
+// returned so the engine can fail closed before subscribers observe an event
+// that is not durable.
+func (w *Writer) AppendLine(line []byte, terminal *StepTerminal) error {
+	// Append the line plus newline in one write so a process crash can damage at
+	// most the trailing record; the replay reader rejects interior corruption.
+	record := make([]byte, len(line)+1)
+	copy(record, line)
+	record[len(line)] = '\n'
+	n, err := w.journal.Write(record)
+	if err != nil {
+		return fmt.Errorf("manifest: append journal: %w", err)
+	}
+	if n != len(record) {
+		return fmt.Errorf("manifest: append journal: %w", io.ErrShortWrite)
+	}
 
 	if terminal != nil {
 		w.writeResult(terminal)
 	}
+	return nil
+}
+
+// AppendBatch appends a recovery transaction's pre-encoded events with one
+// write and syncs them before Resume starts the scheduler or fans them out.
+func (w *Writer) AppendBatch(lines [][]byte) error {
+	if len(lines) == 0 {
+		return nil
+	}
+	var batch bytes.Buffer
+	for _, line := range lines {
+		batch.Write(line)
+		batch.WriteByte('\n')
+	}
+	record := batch.Bytes()
+	n, err := w.journal.Write(record)
+	if err != nil {
+		return fmt.Errorf("manifest: append journal batch: %w", err)
+	}
+	if n != len(record) {
+		return fmt.Errorf("manifest: append journal batch: %w", io.ErrShortWrite)
+	}
+	if err := w.journal.Sync(); err != nil {
+		return fmt.Errorf("manifest: sync journal batch: %w", err)
+	}
+	return nil
 }
 
 // writeResult serialises the terminal step summary into steps/<stepID>/result.json.

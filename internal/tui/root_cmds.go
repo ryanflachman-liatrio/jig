@@ -7,11 +7,11 @@ import (
 	"jig/internal/tui/monitor"
 )
 
-// hydrateRunsCmd reads the runs persisted on disk and folds each durable journal into
-// its event stream, off the UI goroutine, so the runs list can show runs from
-// earlier sessions at startup. It emits one runsHydratedMsg; runs whose journal
-// is missing or undecodable are simply omitted. When persistence is off, the run
-// list is empty and the message carries nothing.
+// hydrateRunsCmd reads persisted runs off the UI goroutine. ReplayJournal keeps
+// valid reopenable histories raw, but adds display-only terminal reconciliation
+// for orphaned histories whose snapshot is missing/corrupt or whose journal is
+// corrupt. That prevents the Runs screen from advertising an R action that
+// Manager.Resume must reject.
 func hydrateRunsCmd(mgr *engine.Manager) tea.Cmd {
 	return func() tea.Msg {
 		ids, err := mgr.PersistedRuns()
@@ -20,7 +20,7 @@ func hydrateRunsCmd(mgr *engine.Manager) tea.Cmd {
 		}
 		groups := make([][]engine.Event, 0, len(ids))
 		for _, id := range ids {
-			evs, err := engine.ReplayJournalRaw(mgr.RunDir(id))
+			evs, err := engine.ReplayJournal(mgr.RunDir(id))
 			if err != nil || len(evs) == 0 {
 				continue
 			}

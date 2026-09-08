@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -22,17 +23,20 @@ const interruptedSDKSessionErr = "agent SDK session terminated abruptly before r
 // handle exists to Snapshot().
 //
 // A missing journal yields nil with no error: an empty run, or one recorded with
-// persistence off. Lines that fail to decode are skipped rather than aborting the
-// replay — a torn tail from a crash mid-write, or a kind emitted by a newer
-// schema, still leaves every decodable event intact. The caller therefore always
-// gets the best reconstruction the journal supports.
+// persistence off. An incomplete trailing record is tolerated as a crash-torn
+// tail. A newline-complete corrupt record is not skipped: display replay marks
+// the decodable prefix orphaned, while strict resume rejects the journal.
 func ReplayJournal(runDir string) ([]Event, error) {
 	_, events, err := readJournal(runDir)
 	if err != nil {
-		return nil, err
+		if len(events) == 0 {
+			return nil, err
+		}
+		events = hydrateReviewDocuments(runDir, events)
+		return reconcileInterruptedRun(runDir, events, true), nil
 	}
 	events = hydrateReviewDocuments(runDir, events)
-	return reconcileInterruptedRun(runDir, events), nil
+	return reconcileInterruptedRun(runDir, events, false), nil
 }
 
 // ReplayJournalRaw returns only events durably written by the original
@@ -87,11 +91,22 @@ func readJournal(runDir string) (int, []Event, error) {
 
 	var events []Event
 	lastSeq := 0
+	lineNumber := 0
 	br := bufio.NewReader(f)
 	for {
 		line, readErr := br.ReadString('\n')
 		if len(line) > 0 {
-			if env, e, err := UnmarshalEnvelope([]byte(line)); err == nil && e != nil {
+			lineNumber++
+			env, e, decodeErr := UnmarshalEnvelope([]byte(line))
+			if decodeErr != nil {
+				// A crash can interrupt the final append. Only that unterminated
+				// tail is discardable; corruption in a complete record is fatal.
+				if readErr == io.EOF {
+					break
+				}
+				return lastSeq, events, fmt.Errorf("decode journal line %d: %w", lineNumber, decodeErr)
+			}
+			if e != nil {
 				if env.Seq > lastSeq {
 					lastSeq = env.Seq
 				}
@@ -113,7 +128,7 @@ func readJournal(runDir string) (int, []Event, error) {
 // only for **orphaned** runs that cannot reopen (Spec 20 D7). Reopenable runs
 // (workflow.json present with a RunStarted) stay unfinished so Monitor / Runs
 // can offer Resume instead of a virtual RunFinished.
-func reconcileInterruptedRun(runDir string, events []Event) []Event {
+func reconcileInterruptedRun(runDir string, events []Event, forceOrphan bool) []Event {
 	var started *RunStarted
 	finished := false
 	states := make(map[string]step.Status)
@@ -136,7 +151,7 @@ func reconcileInterruptedRun(runDir string, events []Event) []Event {
 	}
 	// Only a successfully decoded snapshot can make the run reopenable. A present
 	// but corrupt snapshot is an orphan just like a missing one (Spec 20 D7).
-	if started != nil {
+	if !forceOrphan && started != nil {
 		if _, err := loadWorkflowSnapshot(runDir); err == nil {
 			return events
 		}

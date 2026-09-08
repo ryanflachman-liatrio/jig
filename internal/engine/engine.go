@@ -2067,8 +2067,23 @@ func (s *scheduler) discardMutationWorkspace(stepID string) error {
 	if path == "" {
 		return nil
 	}
+	expected := filepath.Clean(filepath.Join(s.jigRoot, "worktrees", s.runID, stepID))
+	if s.jigRoot == "" || filepath.Clean(path) != expected {
+		return fmt.Errorf("step %q: refuse to discard unexpected worktree path %q", stepID, path)
+	}
 	if err := removeWorktree(s.repoRoot, path); err != nil {
-		return fmt.Errorf("step %q: discard worktree before retry: %w", stepID, err)
+		// A crash can leave a directory at the canonical path without valid git
+		// worktree registration. Fresh retry explicitly discards that residue.
+		info, statErr := os.Stat(path)
+		switch {
+		case statErr == nil && info.IsDir():
+			if removeErr := os.RemoveAll(path); removeErr != nil {
+				return fmt.Errorf("step %q: discard invalid worktree before retry: %w", stepID, removeErr)
+			}
+		case statErr != nil && !os.IsNotExist(statErr):
+			return fmt.Errorf("step %q: inspect invalid worktree before retry: %w", stepID, statErr)
+		}
+		_, _ = gitCmd(s.repoRoot, "worktree", "prune")
 	}
 	delete(s.worktrees, stepID)
 	delete(s.wtBaseSHAs, stepID)
@@ -2988,6 +3003,10 @@ func (s *scheduler) transition(stepID string, from, to step.Status) {
 }
 
 func (s *scheduler) transitionRecovery(stepID string, from, to step.Status, recoveryAction string) {
+	s.emit(s.transitionEvent(stepID, from, to, recoveryAction))
+}
+
+func (s *scheduler) transitionEvent(stepID string, from, to step.Status, recoveryAction string) StepStatus {
 	state := s.states[stepID]
 	state.Status = to
 	ev := StepStatus{
@@ -3017,7 +3036,7 @@ func (s *scheduler) transitionRecovery(stepID string, from, to step.Status, reco
 		ev.Cost = &cost
 	}
 	ev.Tokens = state.SpentTokens
-	s.emit(ev)
+	return ev
 }
 
 // emit writes an event to the journal (if a writer is configured), then fans
@@ -3025,40 +3044,78 @@ func (s *scheduler) transitionRecovery(stepID string, from, to step.Status, reco
 // any subscriber receives the event, preserving the "journal before fan-out"
 // invariant: in-memory state is always fold(journal).
 // emit is called only from the scheduler goroutine.
-func (s *scheduler) emit(e Event) {
-	s.seq++
+func (s *scheduler) emit(e Event) error {
+	nextSeq := s.seq + 1
 	if s.writer != nil {
-		line, err := MarshalEnvelope(s.seq, e)
-		if err == nil {
-			var term *manifest.StepTerminal
-			if ss, ok := e.(StepStatus); ok {
-				switch ss.To {
-				case step.StatusSucceeded, step.StatusFailed, step.StatusSkipped:
-					state := s.states[ss.StepID]
-					term = &manifest.StepTerminal{
-						StepID:  ss.StepID,
-						Status:  string(ss.To),
-						Attempt: state.Attempt,
-					}
-					if state.Result != nil {
-						term.TotalCostUSD = state.Result.TotalCostUSD
-						term.Result = state.Result
-					}
-					if wfStep := s.stepByID(ss.StepID); wfStep != nil {
-						term.Backend = wfStep.Backend
-						term.Model = wfStep.Model
-						term.Transport = wfStep.Transport
-						term.ToolPolicy = append(append([]string{}, wfStep.AllowedTools...), wfStep.DisallowedTools...)
-					}
-					term.IntegrationCommit = s.stepCommits[ss.StepID]
-					if diff := s.diffs[ss.StepID]; diff != "" {
-						term.DiffSHA256 = fmt.Sprintf("%x", sha256.Sum256([]byte(diff)))
-					}
-				}
-			}
-			s.writer.AppendLine(line, term)
+		line, err := MarshalEnvelope(nextSeq, e)
+		if err != nil {
+			s.cancel()
+			return err
+		}
+		if err := s.writer.AppendLine(line, s.terminalManifest(e)); err != nil {
+			s.cancel()
+			return err
 		}
 	}
+	s.seq = nextSeq
+	s.fanOut(e)
+	return nil
+}
+
+// emitBatch persists a recovery transaction before exposing any member of the
+// batch. It is used during Resume before runLoop starts, so returning an error
+// lets the caller unwind scheduler registration and the run lock cleanly.
+func (s *scheduler) emitBatch(events []Event) error {
+	if len(events) == 0 {
+		return nil
+	}
+	lines := make([][]byte, 0, len(events))
+	nextSeq := s.seq
+	for _, event := range events {
+		nextSeq++
+		line, err := MarshalEnvelope(nextSeq, event)
+		if err != nil {
+			return err
+		}
+		lines = append(lines, line)
+	}
+	if s.writer != nil {
+		if err := s.writer.AppendBatch(lines); err != nil {
+			return err
+		}
+	}
+	s.seq = nextSeq
+	for _, event := range events {
+		s.fanOut(event)
+	}
+	return nil
+}
+
+func (s *scheduler) terminalManifest(e Event) *manifest.StepTerminal {
+	ss, ok := e.(StepStatus)
+	if !ok || !terminalStatus(ss.To) {
+		return nil
+	}
+	state := s.states[ss.StepID]
+	term := &manifest.StepTerminal{StepID: ss.StepID, Status: string(ss.To), Attempt: state.Attempt}
+	if state.Result != nil {
+		term.TotalCostUSD = state.Result.TotalCostUSD
+		term.Result = state.Result
+	}
+	if wfStep := s.stepByID(ss.StepID); wfStep != nil {
+		term.Backend = wfStep.Backend
+		term.Model = wfStep.Model
+		term.Transport = wfStep.Transport
+		term.ToolPolicy = append(append([]string{}, wfStep.AllowedTools...), wfStep.DisallowedTools...)
+	}
+	term.IntegrationCommit = s.stepCommits[ss.StepID]
+	if diff := s.diffs[ss.StepID]; diff != "" {
+		term.DiffSHA256 = fmt.Sprintf("%x", sha256.Sum256([]byte(diff)))
+	}
+	return term
+}
+
+func (s *scheduler) fanOut(e Event) {
 	switch e.(type) {
 	case StepOutput, StepToolCall, StepMessage:
 		fanOutLive(s.subs, e)

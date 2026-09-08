@@ -1561,6 +1561,22 @@ func TestMonitorRecoveryGate(t *testing.T) {
 	}
 }
 
+func TestMonitorRecoveryGateDeduplicatesReplayLiveBoundary(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	replayed := engine.RecoveryRequest{RunID: "run-1", StepID: "a", Err: "interrupted", CanResume: false}
+	m, _ = m.Update(EngineEventMsg{Event: replayed})
+	live := replayed
+	live.CanResume = true
+	m, _ = m.Update(EngineEventMsg{Event: live, IsLive: true})
+
+	if got := len(m.inputQueue); got != 1 {
+		t.Fatalf("replayed + live recovery requests produced %d gates, want 1", got)
+	}
+	if m.inputQueue[0].recovery == nil || !m.inputQueue[0].recovery.CanResume {
+		t.Fatal("duplicate request did not refresh the existing recovery gate")
+	}
+}
+
 func TestMonitorRecoveryActionsStaySynchronized(t *testing.T) {
 	tests := []struct {
 		name       string

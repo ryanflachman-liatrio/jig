@@ -196,10 +196,24 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 		cancel()
 		return fail(fmt.Errorf("restore run branch: %w", err))
 	}
-	// Journal recovery parks before runLoop so a crash during reopen cannot lose
-	// the decision surface (Spec 20 D18).
+	// Journal the entire recovery transaction before runLoop so a crash during
+	// reopen cannot lose the decision surface (Spec 20 D18). The events are
+	// fanned out only after the batch is durable.
+	var recoveryEvents []Event
 	for _, stepID := range interrupted {
-		s.parkInterruptedWorker(stepID)
+		recoveryEvents = append(recoveryEvents, s.parkInterruptedWorker(stepID)...)
+	}
+	if err := s.emitBatch(recoveryEvents); err != nil {
+		m.mu.Lock()
+		delete(m.runs, runID)
+		m.mu.Unlock()
+		if s.runWorktree != "" {
+			_ = removeWorktree(s.repoRoot, s.runWorktree)
+			s.runWorktree = ""
+		}
+		_ = w.Close()
+		cancel()
+		return fail(fmt.Errorf("journal recovery parks: %w", err))
 	}
 	go s.runLoop(ctx)
 	return run, nil
@@ -318,17 +332,18 @@ func restoreUnfinishedCheckpoint(runDir string, wf *workflow.Workflow, events []
 	return states, sessions, ordered, recoverySkipped, nil
 }
 
-// parkInterruptedWorker transitions a durable running/validating step onto the
-// recovery gate, loading crash-durable SessionID when present. Attempt is not
-// bumped here (Spec 20 D15) — that waits for Recover(retry|resume).
-func (s *scheduler) parkInterruptedWorker(stepID string) {
+// parkInterruptedWorker prepares the durable events that move an interrupted
+// running/validating step onto the recovery gate. The caller persists all such
+// events as one batch before starting the scheduler. Attempt is not bumped here
+// (Spec 20 D15) — that waits for Recover(retry|resume).
+func (s *scheduler) parkInterruptedWorker(stepID string) []Event {
 	state := s.states[stepID]
 	if state == nil {
-		return
+		return nil
 	}
 	from := state.Status
 	if from != step.StatusRunning && from != step.StatusValidating {
-		return
+		return nil
 	}
 	if state.Result == nil {
 		state.Result = &step.Result{Status: step.StatusFailed}
@@ -345,21 +360,23 @@ func (s *scheduler) parkInterruptedWorker(stepID string) {
 		path := filepath.Join(s.jigRoot, "worktrees", s.runID, stepID)
 		if directoryExists(path) {
 			s.worktrees[stepID] = path
-			if base, err := gitCmd(path, "merge-base", "HEAD", s.runBranch); err == nil {
-				if base = strings.TrimSpace(base); base != "" {
-					s.wtBaseSHAs[stepID] = base
+			if registeredWorktree(s.repoRoot, path) {
+				if base, err := gitCmd(path, "merge-base", "HEAD", s.runBranch); err == nil {
+					if base = strings.TrimSpace(base); base != "" {
+						s.wtBaseSHAs[stepID] = base
+					}
 				}
 			}
 		}
 	}
 
-	s.transition(stepID, from, step.StatusAwaitingRecovery)
-	s.emit(RecoveryRequest{
+	status := s.transitionEvent(stepID, from, step.StatusAwaitingRecovery, "")
+	return []Event{status, RecoveryRequest{
 		RunID:     s.runID,
 		StepID:    stepID,
 		Err:       processInterruptedErr,
 		CanResume: s.stepCanResume(stepID, state.Result.SessionID),
-	})
+	}}
 }
 
 // stepCanResume reports whether Recover(resume) should be offered: durable

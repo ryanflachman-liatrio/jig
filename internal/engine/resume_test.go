@@ -10,10 +10,38 @@ import (
 	"time"
 
 	"jig/internal/datastore"
+	"jig/internal/manifest"
 	"jig/internal/review"
 	"jig/internal/step"
 	"jig/internal/workflow"
 )
+
+func TestResumeRecoveryBatchWriteFailureDoesNotFanOut(t *testing.T) {
+	w, err := manifest.NewWriter(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ctrl := make(chan Event, 1)
+	s := &scheduler{writer: w, subs: []sub{{ctrl: ctrl}}, seq: 7}
+	events := []Event{
+		StepStatus{RunID: "r", StepID: "a", From: step.StatusRunning, To: step.StatusAwaitingRecovery},
+		RecoveryRequest{RunID: "r", StepID: "a", Err: processInterruptedErr},
+	}
+	if err := s.emitBatch(events); err == nil {
+		t.Fatal("emitBatch succeeded with a closed journal")
+	}
+	if s.seq != 7 {
+		t.Fatalf("sequence advanced to %d after failed batch, want 7", s.seq)
+	}
+	select {
+	case event := <-ctrl:
+		t.Fatalf("failed batch fanned out %T", event)
+	default:
+	}
+}
 
 func TestResumeHistoricalReviewContinuesLoopWithSavedComment(t *testing.T) {
 	const source = `
@@ -665,6 +693,7 @@ func TestResumeMutationWorktreeRecovery(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		createTree    bool
+		invalidTree   bool
 		advanceBranch bool
 		action        string
 		wantCanResume bool
@@ -673,6 +702,7 @@ func TestResumeMutationWorktreeRecovery(t *testing.T) {
 		{name: "resume preserves surviving dirty tree", createTree: true, advanceBranch: true, action: RecoverResume, wantCanResume: true, wantDirty: true},
 		{name: "missing tree offers retry only", action: RecoverRetry},
 		{name: "fresh retry discards dirty tree", createTree: true, action: RecoverRetry, wantCanResume: true},
+		{name: "fresh retry discards invalid residue", invalidTree: true, action: RecoverRetry},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repoRoot := t.TempDir()
@@ -710,6 +740,15 @@ isolation = "worktree"
 					t.Fatal(err)
 				}
 				if err := os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("partial"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tc.invalidTree {
+				wtPath := filepath.Join(root, "worktrees", runID, "agent")
+				if err := os.MkdirAll(wtPath, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("invalid residue"), 0o644); err != nil {
 					t.Fatal(err)
 				}
 			}

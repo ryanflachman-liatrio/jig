@@ -116,6 +116,15 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		if ev.RunID != m.RunID {
 			return m, nil
 		}
+		// Resume replays the durable request while the restored scheduler can also
+		// deliver it live. Collapse that boundary race by gate identity.
+		for i := range m.inputQueue {
+			if m.inputQueue[i].kind == inputKindRecovery && m.inputQueue[i].stepID == ev.StepID {
+				evCopy := ev
+				m.inputQueue[i].recovery = &evCopy
+				return m, nil
+			}
+		}
 		// A step failed and parked for a recovery decision. Append a gate entry; no
 		// focus steal on later arrivals (Decision 6 / ADR 0002). First wait after
 		// enter/resume still focuses Gate (A5).

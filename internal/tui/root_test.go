@@ -10,14 +10,53 @@ import (
 	keybind "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
+	"jig/internal/datastore"
 	"jig/internal/engine"
 	"jig/internal/runner"
+	"jig/internal/step"
 	"jig/internal/tui/detail"
 	"jig/internal/tui/monitor"
 	"jig/internal/tui/selector"
 	"jig/internal/tui/shared"
 	"jig/internal/workflow"
 )
+
+func TestHydrateRunsMarksMissingSnapshotOrphanTerminal(t *testing.T) {
+	jigRoot := t.TempDir()
+	runID := "20260908-120000-orphan"
+	runDir := filepath.Join(jigRoot, "runs", runID)
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	events := []engine.Event{
+		engine.RunStarted{RunID: runID, Workflow: "wf", Steps: []string{"a"}},
+		engine.StepStatus{RunID: runID, StepID: "a", From: step.StatusPending, To: step.StatusRunning},
+	}
+	var journal []byte
+	for i, event := range events {
+		line, err := engine.MarshalEnvelope(i+1, event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		journal = append(journal, line...)
+		journal = append(journal, '\n')
+	}
+	if err := os.WriteFile(datastore.JournalPath(runDir), journal, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	exec := runner.NewFakeExecutor(nil, runner.FakeOutcome{})
+	msg, ok := hydrateRunsCmd(engine.NewManager(exec, jigRoot))().(runsHydratedMsg)
+	if !ok || len(msg.runs) != 1 {
+		t.Fatalf("hydration message = %#v, want one run", msg)
+	}
+	if got := engine.ClassifyUnfinished(msg.runs[0]); got != engine.UnfinishedNone {
+		t.Fatalf("orphan classification = %v, want terminal", got)
+	}
+	if _, ok := msg.runs[0][len(msg.runs[0])-1].(engine.RunFinished); !ok {
+		t.Fatalf("last hydrated event = %T, want RunFinished", msg.runs[0][len(msg.runs[0])-1])
+	}
+}
 
 // TestHomeColdStartAutoSelectsFirstWorkflow drives Home without a terminal:
 // discover workflows, assert the first is selected and its runs pane is labeled.

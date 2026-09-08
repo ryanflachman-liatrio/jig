@@ -108,6 +108,33 @@ func removeWorktree(repoRoot, wtPath string) error {
 	return nil
 }
 
+// registeredWorktree reports whether git's worktree registry owns exactly the
+// supplied path. A directory beneath a repository is not sufficient: after a
+// crash it may be only partially created residue.
+func registeredWorktree(repoRoot, wtPath string) bool {
+	out, err := gitCmd(repoRoot, "worktree", "list", "--porcelain")
+	if err != nil {
+		return false
+	}
+	want := filepath.Clean(wtPath)
+	wantInfo, _ := os.Stat(want)
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(line, "worktree ") {
+			continue
+		}
+		registered := filepath.Clean(strings.TrimPrefix(line, "worktree "))
+		if registered == want {
+			return true
+		}
+		// macOS commonly reports /private/var/... for a path opened through
+		// /var/...; compare the directory identity as well as spelling.
+		if registeredInfo, statErr := os.Stat(registered); statErr == nil && wantInfo != nil && os.SameFile(wantInfo, registeredInfo) {
+			return true
+		}
+	}
+	return false
+}
+
 // captureDiff captures all changes in the worktree relative to baseSHA,
 // covering committed, staged, unstaged, and untracked files so the diff is
 // complete regardless of whether the agent committed its edits.

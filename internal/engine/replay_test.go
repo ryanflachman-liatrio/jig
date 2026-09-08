@@ -243,23 +243,18 @@ func TestReplayJournalHydratesReviewDocumentSnapshot(t *testing.T) {
 	}
 }
 
-func TestReplayJournal_SkipsUndecodableLines(t *testing.T) {
+func TestReplayJournal_ToleratesUnknownKindsAndTornTail(t *testing.T) {
 	runDir := t.TempDir()
 	good, _ := MarshalEnvelope(1, RunStarted{RunID: "r1", Workflow: "wf", Steps: []string{"a"}})
-	last, _ := MarshalEnvelope(4, RunFinished{RunID: "r1", Failed: true})
 
-	// A garbage line and an unknown-kind line between two good events must be
-	// skipped, not abort the replay. The final line intentionally has no trailing
-	// newline — the real-world tail after a crash mid-write. Unknown-kind lines
-	// (forward-compat) return (env, nil, nil) and are skipped by the nil-event
-	// guard in ReplayJournal.
+	// Unknown kinds remain forward-compatible. The final invalid bytes have no
+	// trailing newline and model a process dying midway through one append.
 	var buf []byte
 	buf = append(buf, good...)
 	buf = append(buf, '\n')
-	buf = append(buf, "{ not json\n"...)
-	buf = append(buf, `{"seq":3,"ts":"2026-01-01T00:00:00Z","kind":"not_a_kind","data":{}}`...)
+	buf = append(buf, `{"seq":2,"ts":"2026-01-01T00:00:00Z","kind":"not_a_kind","data":{}}`...)
 	buf = append(buf, '\n')
-	buf = append(buf, last...)
+	buf = append(buf, `{"seq":3,"ts":"2026-01-01`...)
 	if err := os.WriteFile(datastore.JournalPath(runDir), buf, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -268,14 +263,40 @@ func TestReplayJournal_SkipsUndecodableLines(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReplayJournal: %v", err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("want 2 decodable events, got %d", len(got))
+	if len(got) != 1 {
+		t.Fatalf("want 1 decodable event, got %d", len(got))
 	}
 	if _, ok := got[0].(RunStarted); !ok {
 		t.Errorf("event 0: want RunStarted, got %T", got[0])
 	}
-	if _, ok := got[1].(RunFinished); !ok {
-		t.Errorf("event 1 (no trailing newline): want RunFinished, got %T", got[1])
+}
+
+func TestReplayJournal_CompleteInteriorCorruptionOrphansDisplayAndRejectsRaw(t *testing.T) {
+	runDir := t.TempDir()
+	writeJournal(t, runDir, []Event{
+		RunStarted{RunID: "r1", Workflow: "wf", Steps: []string{"a"}},
+		StepStatus{RunID: "r1", StepID: "a", From: step.StatusPending, To: step.StatusRunning},
+	})
+	f, err := os.OpenFile(datastore.JournalPath(runDir), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("{ not json\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := ReplayJournalRaw(runDir); err == nil {
+		t.Fatal("ReplayJournalRaw accepted newline-complete corruption")
+	}
+	got, err := ReplayJournal(runDir)
+	if err != nil {
+		t.Fatalf("ReplayJournal display reconciliation: %v", err)
+	}
+	if _, ok := got[len(got)-1].(RunFinished); !ok {
+		t.Fatalf("last display event = %T, want virtual RunFinished", got[len(got)-1])
 	}
 }
 
