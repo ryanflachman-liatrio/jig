@@ -344,9 +344,9 @@ func (s *scheduler) parkInterruptedWorker(stepID string) {
 	if st := s.stepByID(stepID); st != nil && st.Isolation == workflow.IsolationWorktree && s.jigRoot != "" {
 		path := filepath.Join(s.jigRoot, "worktrees", s.runID, stepID)
 		if directoryExists(path) {
+			s.worktrees[stepID] = path
 			if base, err := gitCmd(path, "merge-base", "HEAD", s.runBranch); err == nil {
 				if base = strings.TrimSpace(base); base != "" {
-					s.worktrees[stepID] = path
 					s.wtBaseSHAs[stepID] = base
 				}
 			}
@@ -385,7 +385,7 @@ func (s *scheduler) stepCanResume(stepID, sessionID string) bool {
 		if path == "" && s.jigRoot != "" {
 			path = filepath.Join(s.jigRoot, "worktrees", s.runID, stepID)
 		}
-		if path == "" || !directoryExists(path) {
+		if path == "" || !directoryExists(path) || s.wtBaseSHAs[stepID] == "" {
 			return false
 		}
 	}

@@ -665,11 +665,12 @@ func TestResumeMutationWorktreeRecovery(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		createTree    bool
+		advanceBranch bool
 		action        string
 		wantCanResume bool
 		wantDirty     bool
 	}{
-		{name: "resume preserves surviving dirty tree", createTree: true, action: RecoverResume, wantCanResume: true, wantDirty: true},
+		{name: "resume preserves surviving dirty tree", createTree: true, advanceBranch: true, action: RecoverResume, wantCanResume: true, wantDirty: true},
 		{name: "missing tree offers retry only", action: RecoverRetry},
 		{name: "fresh retry discards dirty tree", createTree: true, action: RecoverRetry, wantCanResume: true},
 	} {
@@ -710,6 +711,20 @@ isolation = "worktree"
 				}
 				if err := os.WriteFile(filepath.Join(wtPath, "dirty.txt"), []byte("partial"), 0o644); err != nil {
 					t.Fatal(err)
+				}
+			}
+			if tc.advanceBranch {
+				if err := os.WriteFile(filepath.Join(repoRoot, "advanced.txt"), []byte("sibling"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if out, err := gitCmd(repoRoot, "add", "advanced.txt"); err != nil {
+					t.Fatalf("git add: %v: %s", err, out)
+				}
+				if out, err := gitCmd(repoRoot, "commit", "-m", "advance run branch"); err != nil {
+					t.Fatalf("git commit: %v: %s", err, out)
+				}
+				if out, err := gitCmd(repoRoot, "branch", "-f", runBranch, "HEAD"); err != nil {
+					t.Fatalf("advance run branch: %v: %s", err, out)
 				}
 			}
 			if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{SessionID: "sess"}); err != nil {

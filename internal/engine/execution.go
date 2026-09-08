@@ -46,6 +46,11 @@ func (s *scheduler) acquireExecutionWorkspace(st *workflow.Step) (executionWorks
 
 	if kind == executionWorkspaceMutation {
 		if existing, ok := s.worktrees[st.ID]; ok {
+			if s.resumeSessions[st.ID] != "" && s.wtBaseSHAs[st.ID] != "" {
+				workspace.Dir = existing
+				workspace.BaseSHA = s.wtBaseSHAs[st.ID]
+				return workspace, nil
+			}
 			tip, err := currentHEAD(s.runWorktree)
 			if err != nil {
 				return executionWorkspace{}, fmt.Errorf("read run branch tip for step %q: %w", st.ID, err)
