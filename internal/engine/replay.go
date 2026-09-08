@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bufio"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -98,7 +99,10 @@ func readJournal(runDir string) (int, []Event, error) {
 			}
 		}
 		if readErr != nil {
-			break // io.EOF or a read error; either way, stop with what we have.
+			if readErr != io.EOF {
+				return lastSeq, events, readErr
+			}
+			break
 		}
 	}
 	return lastSeq, events, nil
@@ -127,24 +131,52 @@ func reconcileInterruptedRun(runDir string, events []Event) []Event {
 			finished = true
 		}
 	}
-	if started == nil || finished {
+	if finished {
 		return events
 	}
-	// Reopenable: durable workflow snapshot exists. Do not invent terminal events.
-	if fileExists(datastore.WorkflowSnapshotPath(runDir)) {
+	// Only a successfully decoded snapshot can make the run reopenable. A present
+	// but corrupt snapshot is an orphan just like a missing one (Spec 20 D7).
+	if started != nil {
+		if _, err := loadWorkflowSnapshot(runDir); err == nil {
+			return events
+		}
+	}
+
+	ordered := make([]string, 0, len(states))
+	seen := make(map[string]bool, len(states))
+	runID := ""
+	for _, event := range events {
+		status, ok := event.(StepStatus)
+		if !ok {
+			continue
+		}
+		if runID == "" {
+			runID = status.RunID
+		}
+		if !seen[status.StepID] {
+			seen[status.StepID] = true
+			ordered = append(ordered, status.StepID)
+		}
+	}
+	if started != nil {
+		runID = started.RunID
+		ordered = started.Steps
+	}
+	if runID == "" {
 		return events
 	}
 
 	var recovered []Event
-	for _, stepID := range started.Steps {
-		if states[stepID] != step.StatusRunning {
+	for _, stepID := range ordered {
+		from := states[stepID]
+		if from != step.StatusRunning && from != step.StatusValidating {
 			continue
 		}
 		prior := lastStatus[stepID]
 		recovered = append(recovered, StepStatus{
-			RunID:      started.RunID,
+			RunID:      runID,
 			StepID:     stepID,
-			From:       step.StatusRunning,
+			From:       from,
 			To:         step.StatusFailed,
 			Attempt:    prior.Attempt,
 			Iteration:  prior.Iteration,
@@ -156,7 +188,7 @@ func reconcileInterruptedRun(runDir string, events []Event) []Event {
 		return events
 	}
 	return append(append([]Event{}, events...), append(recovered, RunFinished{
-		RunID:  started.RunID,
+		RunID:  runID,
 		Failed: true,
 	})...)
 }

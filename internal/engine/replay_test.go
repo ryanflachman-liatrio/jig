@@ -152,6 +152,47 @@ run = "true"
 	}
 }
 
+func TestReplayJournal_CorruptSnapshotIsOrphaned(t *testing.T) {
+	runDir := t.TempDir()
+	if err := os.WriteFile(datastore.WorkflowSnapshotPath(runDir), []byte(`{"broken":`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeJournal(t, runDir, []Event{
+		RunStarted{RunID: "r1", Workflow: "feature", Steps: []string{"agent"}},
+		StepStatus{RunID: "r1", StepID: "agent", From: step.StatusRunning, To: step.StatusValidating},
+	})
+
+	events, err := ReplayJournal(runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 4 {
+		t.Fatalf("event count = %d, want orphan reconciliation", len(events))
+	}
+	failed, ok := events[2].(StepStatus)
+	if !ok || failed.From != step.StatusValidating || failed.To != step.StatusFailed {
+		t.Fatalf("virtual validating failure = %#v", events[2])
+	}
+}
+
+func TestReplayJournal_MissingRunStartedIsOrphaned(t *testing.T) {
+	runDir := t.TempDir()
+	writeJournal(t, runDir, []Event{
+		StepStatus{RunID: "r1", StepID: "agent", From: step.StatusPending, To: step.StatusRunning},
+	})
+
+	events, err := ReplayJournal(runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 3 {
+		t.Fatalf("event count = %d, want virtual failure and finish", len(events))
+	}
+	if finished, ok := events[2].(RunFinished); !ok || !finished.Failed || finished.RunID != "r1" {
+		t.Fatalf("virtual finish = %#v", events[2])
+	}
+}
+
 func TestReplayJournalRawLeavesInterruptedRunUnfinished(t *testing.T) {
 	runDir := t.TempDir()
 	writeJournal(t, runDir, []Event{

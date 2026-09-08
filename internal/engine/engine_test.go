@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"jig/internal/datastore"
+	"jig/internal/manifest"
 	domainreview "jig/internal/review"
 	"jig/internal/step"
 	"jig/internal/workflow"
@@ -91,6 +92,18 @@ type testExec struct {
 type testOutcome struct {
 	delay time.Duration
 	fail  bool
+}
+
+type sessionBarrierExec struct {
+	runDir string
+	seen   chan datastore.SessionInfo
+}
+
+func (e *sessionBarrierExec) Execute(ctx context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
+	info, _ := datastore.ReadSession(e.runDir, req.Step.ID)
+	e.seen <- info
+	<-ctx.Done()
+	return nil, ctx.Err()
 }
 
 func (e *testExec) Execute(ctx context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
@@ -2543,7 +2556,101 @@ command = "false"
 		}
 	})
 
+	t.Run("session flush failure fails closed", func(t *testing.T) {
+		wf, err := workflow.Decode(`
+[workflow]
+name = "val-session"
+version = "0.1"
+[[step]]
+id = "check"
+type = "agent"
+skill = "check"
+[step.validate]
+command = "true"
+`, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		runDir, err := datastore.RunDir(t.TempDir(), "test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		stepDir, err := datastore.StepDir(runDir, "check")
+		if err != nil {
+			t.Fatal(err)
+		}
+		sessionDir := filepath.Join(stepDir, "session.json")
+		if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(sessionDir, "occupied"), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, runDir, "", "", func(RunSnapshot) {})
+		s.states["check"].Status = step.StatusRunning
+		s.states["check"].Result = &step.Result{Status: step.StatusSucceeded, SessionID: "sess"}
+
+		decision := phRunValidateGate(s, stepDoneMsg{stepID: "check"}, s.stepByID("check"))
+		if decision != decisionFailed || !strings.Contains(s.states["check"].Result.Err, "persist session before validation") {
+			t.Fatalf("decision = %v, result = %+v", decision, s.states["check"].Result)
+		}
+	})
+
 	_ = ctx
+}
+
+func TestDispatchClearsStaleSessionBeforeJournalingRunning(t *testing.T) {
+	wf, err := workflow.Decode(`
+[workflow]
+name = "fresh-session"
+version = "1"
+[[step]]
+id = "agent"
+type = "agent"
+skill = "agent"
+`, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), ".jig")
+	runDir, err := datastore.RunDir(root, "fresh-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{SessionID: "stale"}); err != nil {
+		t.Fatal(err)
+	}
+	writer, err := manifest.NewWriter(runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	exec := &sessionBarrierExec{runDir: runDir, seen: make(chan datastore.SessionInfo, 1)}
+	s := newScheduler(wf, "fresh-session", make(chan schedMsg, 4), nil, exec, cancel, writer, runDir, root, filepath.Dir(root), func(RunSnapshot) { close(done) })
+	go s.run(ctx)
+
+	select {
+	case info := <-exec.seen:
+		if info.SessionID != "" {
+			t.Fatalf("executor observed stale session %q", info.SessionID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for dispatch")
+	}
+	events, err := ReplayJournalRaw(runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := findStatus(events, "agent"); len(got) == 0 || got[len(got)-1] != step.StatusRunning {
+		t.Fatalf("journal statuses = %v, want durable running", got)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout stopping scheduler")
+	}
 }
 
 // TestPostExecHandler_BlockOn tests phCheckBlockOn in isolation:

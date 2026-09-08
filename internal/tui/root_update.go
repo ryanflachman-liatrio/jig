@@ -196,7 +196,7 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.startRun(msg.Wf)
 
 	case runs.ResumeRunMsg:
-		return m, resumeRunCmd(m.manager, msg.RunID, msg.Workflow)
+		return m, resumeRunCmd(m.manager, msg.RunID)
 	}
 
 	// All other messages go to the active screen.

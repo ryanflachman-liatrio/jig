@@ -15,11 +15,9 @@ type Executor interface {
 	Execute(ctx context.Context, req StepRequest, report Reporter) (*step.Result, error)
 }
 
-// SessionResumeSupport is an optional Executor capability: whether a
-// backend/transport pair honors ResumeSessionID (harness CapSessionResume).
-// Managers use it for honest RecoveryRequest.CanResume without importing
-// internal/harness. Executors that omit it keep SessionID-only CanResume
-// (test fakes).
+// SessionResumeSupport reports whether an Executor can honor a resumed backend
+// session for a backend/transport pair. Executors that do not implement it are
+// treated as unable to resume sessions.
 type SessionResumeSupport interface {
 	SupportsSessionResume(backend, transport string) bool
 }

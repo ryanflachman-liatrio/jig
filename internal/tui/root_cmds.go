@@ -1,18 +1,10 @@
 package tui
 
 import (
-	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
-	"strings"
-
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/datastore"
 	"jig/internal/engine"
 	"jig/internal/tui/monitor"
-	"jig/internal/workflow"
 )
 
 // hydrateRunsCmd reads the runs persisted on disk and folds each durable journal into
@@ -38,63 +30,15 @@ func hydrateRunsCmd(mgr *engine.Manager) tea.Cmd {
 	}
 }
 
-func resumeRunCmd(mgr *engine.Manager, runID, workflowName string) tea.Cmd {
+func resumeRunCmd(mgr *engine.Manager, runID string) tea.Cmd {
 	return func() tea.Msg {
-		var fallback *workflow.Workflow
-		if _, err := os.Stat(datastore.WorkflowSnapshotPath(mgr.RunDir(runID))); os.IsNotExist(err) {
-			var loadErr error
-			fallback, loadErr = findWorkflowByName(filepath.Join(filepath.Dir(filepath.Clean(mgr.Root())), ".agents", "jig"), workflowName)
-			if loadErr != nil {
-				return runResumedMsg{runID: runID, err: loadErr}
-			}
-		}
-		run, err := mgr.Resume(runID, fallback)
+		run, err := mgr.Resume(runID)
 		if err != nil {
 			return runResumedMsg{runID: runID, err: err}
 		}
 		events, err := engine.ReplayJournal(mgr.RunDir(runID))
 		return runResumedMsg{runID: runID, run: run, events: events, err: err}
 	}
-}
-
-func findWorkflowByName(root, name string) (*workflow.Workflow, error) {
-	var matches []*workflow.Workflow
-	var matchingLoadErr error
-	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			if os.IsNotExist(walkErr) {
-				return filepath.SkipAll
-			}
-			return walkErr
-		}
-		if entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".toml") {
-			return nil
-		}
-		meta, ok, err := workflow.LoadMeta(path)
-		if err != nil || !ok || meta.Name != name {
-			return nil
-		}
-		wf, err := workflow.Load(path)
-		if err != nil {
-			matchingLoadErr = err
-			return nil
-		}
-		matches = append(matches, wf)
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	if len(matches) == 0 {
-		if matchingLoadErr != nil {
-			return nil, fmt.Errorf("cannot resume: workflow %q is invalid: %w", name, matchingLoadErr)
-		}
-		return nil, fmt.Errorf("cannot resume: workflow %q was not found", name)
-	}
-	if len(matches) > 1 {
-		return nil, fmt.Errorf("cannot resume: workflow name %q is ambiguous", name)
-	}
-	return matches[0], nil
 }
 
 // waitForLiveEventCmd drains one event from the live (liveness-signal) channel.

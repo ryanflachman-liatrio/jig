@@ -24,6 +24,7 @@ type Styles struct {
 	Valid         lipgloss.Style
 	Running       lipgloss.Style
 	Warning       lipgloss.Style
+	Wrap          lipgloss.Style
 	Path          lipgloss.Style
 	SelectedLine  lipgloss.Style
 	SelectedBar   lipgloss.Style // charple "▌" cursor prefix for list rows
@@ -222,6 +223,7 @@ func DefaultTheme() Styles {
 	s.Valid = lipgloss.NewStyle().Bold(true).Foreground(success)
 	s.Running = lipgloss.NewStyle().Foreground(secondary)
 	s.Warning = lipgloss.NewStyle().Bold(true).Foreground(warning)
+	s.Wrap = lipgloss.NewStyle()
 	s.Path = lipgloss.NewStyle().Foreground(fgDim).Italic(true)
 	s.SelectedLine = lipgloss.NewStyle().Bold(true).Foreground(fgBase)
 	s.SelectedBar = lipgloss.NewStyle().Foreground(primary).Bold(true)

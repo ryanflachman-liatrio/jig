@@ -29,12 +29,13 @@ func TestJournalRoundTrip(t *testing.T) {
 		{
 			name: "StepStatus",
 			ev: StepStatus{
-				RunID:     "r1",
-				StepID:    "fix",
-				From:      step.StatusPending,
-				To:        step.StatusRunning,
-				Attempt:   1,
-				Iteration: 2,
+				RunID:          "r1",
+				StepID:         "fix",
+				From:           step.StatusPending,
+				To:             step.StatusRunning,
+				Attempt:        1,
+				Iteration:      2,
+				RecoveryAction: RecoverSkip,
 			},
 		},
 		{

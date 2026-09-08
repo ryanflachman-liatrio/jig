@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"charm.land/lipgloss/v2"
-
 	"jig/internal/tui/shared"
 )
 
@@ -21,7 +19,7 @@ func clipReason(s string, width, maxLines int) string {
 	if width < 1 {
 		width = 1
 	}
-	wrapped := lipgloss.NewStyle().Width(width).Render(s)
+	wrapped := shared.Theme.Wrap.Width(width).Render(s)
 	lines := strings.Split(wrapped, "\n")
 	if len(lines) <= maxLines {
 		return wrapped

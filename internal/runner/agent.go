@@ -125,7 +125,9 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 	// dispatches keep the existing file so crash reopen and live Recover(resume)
 	// share one identity on disk.
 	if req.ResumeSessionID == "" {
-		_ = datastore.ClearSession(sessionRunDir(req), req.Step.ID)
+		if err := datastore.ClearSession(sessionRunDir(req), req.Step.ID); err != nil {
+			return failResult(fmt.Sprintf("clear stale session: %v", err), start), nil
+		}
 	}
 
 	sess, err := h.Open(ctx, spec)
@@ -159,11 +161,11 @@ func sessionRunDir(req engine.StepRequest) string {
 	return filepath.Dir(filepath.Dir(filepath.Dir(req.TranscriptPath)))
 }
 
-func persistSessionID(req engine.StepRequest, sessionID string) {
+func persistSessionID(req engine.StepRequest, sessionID string) error {
 	if sessionID == "" || req.TranscriptPath == "" || req.Step == nil {
-		return
+		return nil
 	}
-	_ = datastore.WriteSession(sessionRunDir(req), req.Step.ID, datastore.SessionInfo{
+	return datastore.WriteSession(sessionRunDir(req), req.Step.ID, datastore.SessionInfo{
 		SessionID:  sessionID,
 		Backend:    req.Step.Backend,
 		Transport:  req.Step.Transport,
@@ -312,11 +314,14 @@ func captureStream(
 	// with SessionID == "". Spec 20 also persists the first id to session.json
 	// so process death mid-flight can still offer Recover(resume).
 	sessionID := ""
-	noteSession := func(id string) {
+	noteSession := func(id string) error {
 		if id != "" && sessionID == "" {
 			sessionID = id
-			persistSessionID(req, id)
+			if err := persistSessionID(req, id); err != nil {
+				return err
+			}
 		}
+		return nil
 	}
 
 	// lastAssistantText is the concatenated text from the most recent flushed
@@ -332,7 +337,9 @@ func captureStream(
 	for ev := range events {
 		switch ev.Type {
 		case harness.EventSessionID:
-			noteSession(ev.SessionID)
+			if err := noteSession(ev.SessionID); err != nil {
+				return failResult(fmt.Sprintf("persist session: %v", err), start), nil
+			}
 		case harness.EventText:
 			buf = appendStreamBlock(buf, transcript.Block{Type: transcript.BlockText, Text: ev.Text})
 		case harness.EventThinking:
@@ -387,7 +394,9 @@ func captureStream(
 				if res.SessionID == "" {
 					res.SessionID = sessionID
 				}
-				noteSession(res.SessionID)
+				if err := noteSession(res.SessionID); err != nil {
+					return failResult(fmt.Sprintf("persist session: %v", err), start), nil
+				}
 				return res, nil
 			}
 			result := &step.Result{
@@ -401,7 +410,9 @@ func captureStream(
 			if result.SessionID == "" {
 				result.SessionID = sessionID
 			}
-			noteSession(result.SessionID)
+			if err := noteSession(result.SessionID); err != nil {
+				return failResult(fmt.Sprintf("persist session: %v", err), start), nil
+			}
 
 			// Structured output carries only brief metadata fields; large prose
 			// lives in raw_result.md, written by the engine from the agent's text

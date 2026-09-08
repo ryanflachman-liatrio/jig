@@ -277,7 +277,7 @@ Expand `restoreReviewCheckpoint` into a broader **restore unfinished checkpoint*
 with a **narrow** MVP allow-list:
 
 ```
-Manager.Resume(runID, legacyWorkflow)
+Manager.Resume(runID)
   → load workflow snapshot
   → ReplayJournalRaw (durable only)
   → classify steps:

@@ -18,27 +18,31 @@ const (
 // UnfinishedNone.
 func ClassifyUnfinished(events []Event) UnfinishedKind {
 	finished := false
-	hasReview := false
-	hasInterrupted := false
-	hasOther := false
+	states := make(map[string]step.Status)
 	for _, event := range events {
 		switch event := event.(type) {
 		case RunFinished:
 			finished = true
 		case StepStatus:
-			switch event.To {
-			case step.StatusAwaitingReview:
-				hasReview = true
-			case step.StatusRunning, step.StatusValidating:
-				hasInterrupted = true
-			case step.StatusNeedsInput, step.StatusAwaitingRecovery,
-				step.StatusAwaitingIntegration, step.StatusStopped:
-				hasOther = true
-			}
+			states[event.StepID] = event.To
 		}
 	}
 	if finished {
 		return UnfinishedNone
+	}
+	hasReview := false
+	hasInterrupted := false
+	hasOther := false
+	for _, status := range states {
+		switch status {
+		case step.StatusAwaitingReview:
+			hasReview = true
+		case step.StatusRunning, step.StatusValidating:
+			hasInterrupted = true
+		case step.StatusNeedsInput, step.StatusAwaitingRecovery,
+			step.StatusAwaitingIntegration, step.StatusStopped:
+			hasOther = true
+		}
 	}
 	if hasInterrupted {
 		return UnfinishedInterrupted

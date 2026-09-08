@@ -819,6 +819,37 @@ func TestSessionIDPersistedToSessionJSON(t *testing.T) {
 	}
 }
 
+func TestSessionIDPersistenceFailureFailsAttempt(t *testing.T) {
+	runDir, err := datastore.RunDir(t.TempDir(), "run1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	stepDir, err := datastore.StepDir(runDir, "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessionDir := filepath.Join(stepDir, "session.json")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sessionDir, "occupied"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := captureStream(scriptChan(
+		harness.Event{Type: harness.EventSessionID, SessionID: "sess-disk"},
+	), engine.StepRequest{
+		Step:           &workflow.Step{ID: "agent", Backend: "claude", Transport: "sdk"},
+		TranscriptPath: datastore.TranscriptPath(runDir, "agent"),
+	}, &captureReporter{}, time.Now(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Status != step.StatusFailed || !strings.Contains(res.Err, "persist session") {
+		t.Fatalf("result = %+v, want surfaced session persistence failure", res)
+	}
+}
+
 func TestFreshDispatchClearsSessionJSON(t *testing.T) {
 	runDir, err := datastore.RunDir(t.TempDir(), "run1")
 	if err != nil {

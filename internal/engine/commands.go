@@ -200,6 +200,9 @@ func (m reviewSubmissionMsg) execute(s *scheduler) {
 		return // stale or duplicate verdict
 	}
 	s.finalizeReview(m.stepID, m.submission)
+	if state.Status != step.StatusAwaitingReview {
+		s.restoredHold = false
+	}
 }
 
 func (m agentInputMsg) execute(s *scheduler)         { s.handleAgentInput(m) }

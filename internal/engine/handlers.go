@@ -91,14 +91,18 @@ func phRunValidateGate(s *scheduler, m stepDoneMsg, wfStep *workflow.Step) postE
 	// Spec 20 D9: flush SessionID to session.json before entering validating so a
 	// crash in this narrow window still leaves a durable resume identity.
 	if res := s.states[m.stepID].Result; res != nil && res.SessionID != "" && s.runDir != "" {
-		_ = datastore.WriteSession(s.runDir, m.stepID, datastore.SessionInfo{
+		if err := datastore.WriteSession(s.runDir, m.stepID, datastore.SessionInfo{
 			SessionID:  res.SessionID,
 			Backend:    wfStep.Backend,
 			Transport:  wfStep.Transport,
 			Attempt:    s.states[m.stepID].Attempt,
 			Iteration:  s.states[m.stepID].Iteration,
 			Generation: s.states[m.stepID].Generation,
-		})
+		}); err != nil {
+			res.Status = step.StatusFailed
+			res.Err = "persist session before validation: " + err.Error()
+			return decisionFailed
+		}
 	}
 	from := s.states[m.stepID].Status
 	s.transition(m.stepID, from, step.StatusValidating)

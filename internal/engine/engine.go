@@ -777,6 +777,9 @@ type scheduler struct {
 	sessionResumeInFlight map[string]bool
 	// failedSessionResume forces CanResume=false after a dead-session resume.
 	failedSessionResume map[string]bool
+	// restoredHold prevents a reopened scheduler from dispatching pending work
+	// before the operator acknowledges one of its durable gates.
+	restoredHold bool
 
 	// seenEscalations deduplicates critical-finding recovery escalations by
 	// Fingerprint. A fingerprint that already triggered enterRecovery must not
@@ -936,31 +939,33 @@ func (s *scheduler) runLoop(ctx context.Context) {
 	}()
 
 	for {
-		// 0. Fire any coalesced loop back-edges whose rewind body has fully
-		//    settled. Runs before dispatch so a fired rewind's freshly-pending body
-		//    steps are picked up in this same iteration.
-		s.fireReadyLoops()
+		if !s.restoredHold {
+			// 0. Fire any coalesced loop back-edges whose rewind body has fully
+			//    settled. Runs before dispatch so a fired rewind's freshly-pending body
+			//    steps are picked up in this same iteration.
+			s.fireReadyLoops()
 
-		// 1. Dispatch every ready step, respecting max_parallel.
-		for s.inFlight < maxPar {
-			st, ok := s.nextReady(ctx)
-			if !ok {
-				break
+			// 1. Dispatch every ready step, respecting max_parallel.
+			for s.inFlight < maxPar {
+				st, ok := s.nextReady(ctx)
+				if !ok {
+					break
+				}
+				s.dispatch(ctx, st)
 			}
-			s.dispatch(ctx, st)
-		}
 
-		// 2. Terminal check: nothing running, nothing pending and runnable. Before
-		//    finishing, present the final-merge gate (spec 06 A3) when the run branch
-		//    carries commits — this is a pre-RunFinished completion step, so the run
-		//    parks (does not emit RunFinished) until the operator lands or discards.
-		if s.inFlight == 0 && !s.anyPendingRunnable() {
-			if !s.requestFinalMergeIfNeeded() {
-				s.cleanupWorktrees()
-				s.emit(RunFinished{RunID: s.runID, Failed: s.anyFailed()})
-				return
+			// 2. Terminal check: nothing running, nothing pending and runnable. Before
+			//    finishing, present the final-merge gate (spec 06 A3) when the run branch
+			//    carries commits — this is a pre-RunFinished completion step, so the run
+			//    parks (does not emit RunFinished) until the operator lands or discards.
+			if s.inFlight == 0 && !s.anyPendingRunnable() {
+				if !s.requestFinalMergeIfNeeded() {
+					s.cleanupWorktrees()
+					s.emit(RunFinished{RunID: s.runID, Failed: s.anyFailed()})
+					return
+				}
+				// Parked on the final-merge gate: fall through and block on the inbox.
 			}
-			// Parked on the final-merge gate: fall through and block on the inbox.
 		}
 
 		// 3. Block for exactly one message, then loop to re-dispatch.
@@ -1368,6 +1373,19 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 			s.states[st.ID].Result = &step.Result{
 				Status: step.StatusFailed,
 				Err:    fmt.Sprintf("create step dir for %q: %v", st.ID, err),
+			}
+			s.enterRecovery(st.ID)
+			return
+		}
+	}
+	// Clear a stale session before the durable running transition. If the process
+	// dies after that transition, session.json can only belong to this dispatch.
+	if st.Type == workflow.StepAgent && s.resumeSessions[st.ID] == "" {
+		if err := datastore.ClearSession(s.runDir, st.ID); err != nil {
+			releaseReaderView()
+			s.states[st.ID].Result = &step.Result{
+				Status: step.StatusFailed,
+				Err:    fmt.Sprintf("clear stale session for step %q: %v", st.ID, err),
 			}
 			s.enterRecovery(st.ID)
 			return
@@ -1990,6 +2008,7 @@ func (s *scheduler) handleRecover(m recoverMsg) {
 
 	switch m.action {
 	case RecoverAbort:
+		s.restoredHold = false
 		s.aborted = true
 		s.transition(m.stepID, state.Status, step.StatusFailed)
 		s.cancel()
@@ -2000,7 +2019,8 @@ func (s *scheduler) handleRecover(m recoverMsg) {
 		// treat it like an on_failure="continue" node — dependents proceed and the
 		// run keeps going. No worker is re-dispatched; the recovery loop ends here.
 		s.skippedByOperator[m.stepID] = true
-		s.transition(m.stepID, state.Status, step.StatusFailed)
+		s.restoredHold = false
+		s.transitionRecovery(m.stepID, state.Status, step.StatusFailed, RecoverSkip)
 
 	case RecoverRetry, RecoverResume:
 		if s.recoverCount[m.stepID] >= maxRecoverRounds {
@@ -2026,15 +2046,37 @@ func (s *scheduler) handleRecover(m recoverMsg) {
 			if state.Result != nil {
 				state.Result.SessionID = ""
 			}
-			_ = datastore.ClearSession(s.runDir, m.stepID)
+			if err := datastore.ClearSession(s.runDir, m.stepID); err != nil {
+				s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("step %q: clear session before retry: %v", m.stepID, err)})
+				return
+			}
+			if err := s.discardMutationWorkspace(m.stepID); err != nil {
+				s.emit(RunError{RunID: s.runID, Err: err.Error()})
+				return
+			}
 		}
 		s.recoverCount[m.stepID]++
 		state.Attempt++
-		// Back to pending: the main loop re-dispatches. For an agent step that ran
-		// in a worktree, dispatch reuses the existing worktree; a setup-failure
-		// retry has no stored worktree, so dispatch re-runs createWorktree.
+		s.restoredHold = false
 		s.transition(m.stepID, state.Status, step.StatusPending)
 	}
+}
+
+func (s *scheduler) discardMutationWorkspace(stepID string) error {
+	path := s.worktrees[stepID]
+	if path == "" {
+		return nil
+	}
+	if err := removeWorktree(s.repoRoot, path); err != nil {
+		return fmt.Errorf("step %q: discard worktree before retry: %w", stepID, err)
+	}
+	delete(s.worktrees, stepID)
+	delete(s.wtBaseSHAs, stepID)
+	delete(s.diffs, stepID)
+	// createWorktreeAt uses -B and therefore resets any surviving branch ref to
+	// the current run tip. Branch deletion is only cleanup, not correctness.
+	_, _ = gitCmd(s.repoRoot, "branch", "-D", s.stepBranchName(stepID))
+	return nil
 }
 
 // handleResolveIntegration applies a human decision to a step parked in
@@ -2942,16 +2984,21 @@ func (s *scheduler) rewindPlan(targetID string) (rewindTo string, survivors []st
 }
 
 func (s *scheduler) transition(stepID string, from, to step.Status) {
+	s.transitionRecovery(stepID, from, to, "")
+}
+
+func (s *scheduler) transitionRecovery(stepID string, from, to step.Status, recoveryAction string) {
 	state := s.states[stepID]
 	state.Status = to
 	ev := StepStatus{
-		RunID:      s.runID,
-		StepID:     stepID,
-		From:       from,
-		To:         to,
-		Attempt:    state.Attempt,
-		Iteration:  state.Iteration,
-		Generation: state.Generation,
+		RunID:          s.runID,
+		StepID:         stepID,
+		From:           from,
+		To:             to,
+		Attempt:        state.Attempt,
+		Iteration:      state.Iteration,
+		Generation:     state.Generation,
+		RecoveryAction: recoveryAction,
 	}
 	// Carry the failure reason and subtype so the TUI can surface them without
 	// re-reading result.json. handle() guarantees state.Result.Err is populated

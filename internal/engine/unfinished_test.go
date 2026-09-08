@@ -48,6 +48,16 @@ func TestClassifyUnfinished(t *testing.T) {
 			},
 			want: UnfinishedOther,
 		},
+		{
+			name: "latest terminal state wins over historical running",
+			evs: []Event{
+				RunStarted{RunID: "r", Workflow: "w", Steps: []string{"worker", "gate"}},
+				StepStatus{StepID: "worker", To: step.StatusRunning},
+				StepStatus{StepID: "worker", To: step.StatusSucceeded},
+				StepStatus{StepID: "gate", To: step.StatusAwaitingReview},
+			},
+			want: UnfinishedReview,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
