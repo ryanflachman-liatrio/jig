@@ -74,14 +74,44 @@ func TestReplayJournal_RoundTrip(t *testing.T) {
 }
 
 func TestReplayJournal_MissingJournal(t *testing.T) {
-	// A run dir with no journal.jsonl (persistence-off run, or one that never got
-	// past creation) is not an error — it simply has no events to fold.
-	got, err := ReplayJournal(t.TempDir())
+	// A persisted run directory with no journal remains visible as a failed
+	// orphan row instead of silently disappearing from ownership views.
+	runDir := filepath.Join(t.TempDir(), "missing-journal-run")
+	if err := os.Mkdir(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReplayJournal(runDir)
 	if err != nil {
 		t.Fatalf("ReplayJournal: %v", err)
 	}
-	if got != nil {
-		t.Errorf("want nil events for missing journal, got %v", got)
+	if len(got) != 2 {
+		t.Fatalf("missing journal history length = %d, want 2", len(got))
+	}
+	if started, ok := got[0].(RunStarted); !ok || started.RunID != "missing-journal-run" {
+		t.Fatalf("synthetic start = %#v", got[0])
+	}
+	if finished, ok := got[1].(RunFinished); !ok || !finished.Failed {
+		t.Fatalf("synthetic finish = %#v", got[1])
+	}
+}
+
+func TestReplayJournal_FirstRecordCorruptionProducesOrphanHistory(t *testing.T) {
+	runDir := filepath.Join(t.TempDir(), "corrupt-journal-run")
+	if err := os.Mkdir(runDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(datastore.JournalPath(runDir), []byte("{ not json\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReplayJournal(runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("corrupt journal history length = %d, want 2", len(got))
+	}
+	if finished, ok := got[1].(RunFinished); !ok || !finished.Failed || finished.RunID != "corrupt-journal-run" {
+		t.Fatalf("synthetic finish = %#v", got[1])
 	}
 }
 

@@ -105,7 +105,9 @@ func phRunValidateGate(s *scheduler, m stepDoneMsg, wfStep *workflow.Step) postE
 		}
 	}
 	from := s.states[m.stepID].Status
-	s.transition(m.stepID, from, step.StatusValidating)
+	if !s.transition(m.stepID, from, step.StatusValidating) {
+		return decisionNeedsInput
+	}
 	passed, detail := s.runGate(wfStep, s.executionDirForStep(m.stepID))
 	s.emit(GateResult{RunID: s.runID, StepID: m.stepID, Passed: passed, Detail: detail})
 	if !passed {

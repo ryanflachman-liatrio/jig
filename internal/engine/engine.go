@@ -719,6 +719,7 @@ type scheduler struct {
 	networkRequests  int
 	secretResolver   SecretResolver
 	seq              int
+	fatalJournalErr  error // stops scheduling when state cannot be made durable
 
 	// Phase 5: worktree lifecycle.
 	jigRoot    string            // .jig/ root; "" when persistence is disabled
@@ -898,7 +899,13 @@ func (s *scheduler) run(ctx context.Context) {
 	for i, st := range s.wf.Steps {
 		ids[i] = st.ID
 	}
-	s.emit(RunStarted{RunID: s.runID, Workflow: s.wf.Meta.Name, Steps: ids})
+	if err := s.emit(RunStarted{RunID: s.runID, Workflow: s.wf.Meta.Name, Steps: ids}); err != nil {
+		s.onDone(s.snapshot())
+		if s.writer != nil {
+			_ = s.writer.Close()
+		}
+		return
+	}
 
 	// Create the per-run integration branch + run worktree at the working-branch
 	// HEAD (spec 06). Persistence-off / non-git (repoRoot == "") is a no-op: no
@@ -939,11 +946,17 @@ func (s *scheduler) runLoop(ctx context.Context) {
 	}()
 
 	for {
+		if s.fatalJournalErr != nil {
+			return
+		}
 		if !s.restoredHold {
 			// 0. Fire any coalesced loop back-edges whose rewind body has fully
 			//    settled. Runs before dispatch so a fired rewind's freshly-pending body
 			//    steps are picked up in this same iteration.
 			s.fireReadyLoops()
+			if s.fatalJournalErr != nil {
+				return
+			}
 
 			// 1. Dispatch every ready step, respecting max_parallel.
 			for s.inFlight < maxPar {
@@ -952,6 +965,9 @@ func (s *scheduler) runLoop(ctx context.Context) {
 					break
 				}
 				s.dispatch(ctx, st)
+			}
+			if s.fatalJournalErr != nil {
+				return
 			}
 
 			// 2. Terminal check: nothing running, nothing pending and runnable. Before
@@ -992,6 +1008,9 @@ func (s *scheduler) runLoop(ctx context.Context) {
 // for the next dispatchable step.
 func (s *scheduler) nextReady(ctx context.Context) (*workflow.Step, bool) {
 	for i := range s.wf.Steps {
+		if s.fatalJournalErr != nil {
+			return nil, false
+		}
 		st := &s.wf.Steps[i]
 		state := s.states[st.ID]
 		if state.Status != step.StatusPending {
@@ -999,7 +1018,9 @@ func (s *scheduler) nextReady(ctx context.Context) (*workflow.Step, bool) {
 		}
 		if blocked, reason := s.budgetExhausted(); blocked {
 			state.Result = &step.Result{Status: step.StatusFailed, Err: reason}
-			s.transition(st.ID, step.StatusPending, step.StatusFailed)
+			if !s.transition(st.ID, step.StatusPending, step.StatusFailed) {
+				return nil, false
+			}
 			continue
 		}
 		if until := s.retryNotBefore[st.ID]; !until.IsZero() && time.Now().Before(until) {
@@ -1020,7 +1041,9 @@ func (s *scheduler) nextReady(ctx context.Context) (*workflow.Step, bool) {
 		if st.When != "" {
 			cond, _ := workflow.ParseCondition(st.When)
 			if !s.evalGuard(cond) {
-				s.transition(st.ID, state.Status, step.StatusSkipped)
+				if !s.transition(st.ID, state.Status, step.StatusSkipped) {
+					return nil, false
+				}
 				s.skippedByGuard[st.ID] = true
 				s.cascadeSkip(st.ID)
 				continue
@@ -1033,7 +1056,9 @@ func (s *scheduler) nextReady(ctx context.Context) (*workflow.Step, bool) {
 			cond, _ := workflow.ParseCondition(st.AppliesWhen)
 			if !s.evalGuard(cond) {
 				state.Result = &step.Result{Status: step.StatusSucceeded, Verdict: "skip"}
-				s.transition(st.ID, state.Status, step.StatusSucceeded)
+				if !s.transition(st.ID, state.Status, step.StatusSucceeded) {
+					return nil, false
+				}
 				continue
 			}
 		}
@@ -1393,7 +1418,10 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	}
 
 	from := s.states[st.ID].Status
-	s.transition(st.ID, from, step.StatusRunning)
+	if !s.transition(st.ID, from, step.StatusRunning) {
+		releaseReaderView()
+		return
+	}
 	s.inFlight++
 	if st.Isolation == workflow.IsolationWorktree {
 		s.mutatingInFlight++
@@ -1793,8 +1821,10 @@ func (s *scheduler) enterRecovery(stepID string) {
 		s.failedSessionResume[stepID] = true
 		delete(s.sessionResumeInFlight, stepID)
 	}
-	s.transition(stepID, state.Status, step.StatusAwaitingRecovery)
-	s.emit(RecoveryRequest{
+	if !s.transition(stepID, state.Status, step.StatusAwaitingRecovery) {
+		return
+	}
+	_ = s.emit(RecoveryRequest{
 		RunID:     s.runID,
 		StepID:    stepID,
 		Err:       state.Result.Err,
@@ -3008,12 +3038,18 @@ func (s *scheduler) rewindPlan(targetID string) (rewindTo string, survivors []st
 	return rewindTo, survivors
 }
 
-func (s *scheduler) transition(stepID string, from, to step.Status) {
-	s.transitionRecovery(stepID, from, to, "")
+func (s *scheduler) transition(stepID string, from, to step.Status) bool {
+	return s.transitionRecovery(stepID, from, to, "")
 }
 
-func (s *scheduler) transitionRecovery(stepID string, from, to step.Status, recoveryAction string) {
-	s.emit(s.transitionEvent(stepID, from, to, recoveryAction))
+func (s *scheduler) transitionRecovery(stepID string, from, to step.Status, recoveryAction string) bool {
+	state := s.states[stepID]
+	previous := state.Status
+	if err := s.emit(s.transitionEvent(stepID, from, to, recoveryAction)); err != nil {
+		state.Status = previous
+		return false
+	}
+	return true
 }
 
 func (s *scheduler) transitionEvent(stepID string, from, to step.Status, recoveryAction string) StepStatus {
@@ -3059,17 +3095,26 @@ func (s *scheduler) emit(e Event) error {
 	if s.writer != nil {
 		line, err := MarshalEnvelope(nextSeq, e)
 		if err != nil {
-			s.cancel()
+			s.failJournal(err)
 			return err
 		}
 		if err := s.writer.AppendLine(line, s.terminalManifest(e)); err != nil {
-			s.cancel()
+			s.failJournal(err)
 			return err
 		}
 	}
 	s.seq = nextSeq
 	s.fanOut(e)
 	return nil
+}
+
+func (s *scheduler) failJournal(err error) {
+	if s.fatalJournalErr == nil {
+		s.fatalJournalErr = err
+	}
+	if s.cancel != nil {
+		s.cancel()
+	}
 }
 
 // emitBatch persists a recovery transaction before exposing any member of the

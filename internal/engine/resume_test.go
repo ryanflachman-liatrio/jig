@@ -43,6 +43,57 @@ func TestResumeRecoveryBatchWriteFailureDoesNotFanOut(t *testing.T) {
 	}
 }
 
+func TestJournalWriteFailureRollsBackStateAndBlocksDependentDispatch(t *testing.T) {
+	wf, err := workflow.Decode(`
+[workflow]
+name = "journal-failure"
+version = "1"
+[[step]]
+id = "a"
+type = "command"
+run = "true"
+[[step]]
+id = "b"
+type = "command"
+run = "true"
+depends_on = ["a"]
+`, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := manifest.NewWriter(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	exec := &crashRecordingExec{}
+	s := newScheduler(wf, "r", make(chan schedMsg, 1), nil, exec, cancel, w, "", "", "", func(RunSnapshot) {})
+	s.states["a"].Status = step.StatusRunning
+
+	if s.transition("a", step.StatusRunning, step.StatusSucceeded) {
+		t.Fatal("transition succeeded with a closed journal")
+	}
+	if got := s.states["a"].Status; got != step.StatusRunning {
+		t.Fatalf("state advanced after journal failure: got %s, want running", got)
+	}
+	if s.fatalJournalErr == nil {
+		t.Fatal("journal failure did not latch a fatal scheduler error")
+	}
+	if ready, ok := s.nextReady(ctx); ok || ready != nil {
+		t.Fatalf("dependent became ready after journal failure: %#v", ready)
+	}
+	exec.mu.Lock()
+	calls := len(exec.reqs)
+	exec.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("executor dispatched %d times after journal failure", calls)
+	}
+}
+
 func TestResumeRepairsInterruptedRecoveryTransactionAtEveryRecordBoundary(t *testing.T) {
 	for _, includeRequest := range []bool{false, true} {
 		name := "after tagged status"

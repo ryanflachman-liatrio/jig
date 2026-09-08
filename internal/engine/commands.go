@@ -143,7 +143,9 @@ func (m stepDoneMsg) execute(s *scheduler) {
 		// handler already transitioned the step; nothing more to do
 	default: // decisionContinue — all handlers passed → step succeeded
 		curFrom := s.states[m.stepID].Status
-		s.transition(m.stepID, curFrom, step.StatusSucceeded)
+		if !s.transition(m.stepID, curFrom, step.StatusSucceeded) {
+			return
+		}
 		if wfStep != nil {
 			s.recordRoutes(m.stepID, wfStep, "")
 		}

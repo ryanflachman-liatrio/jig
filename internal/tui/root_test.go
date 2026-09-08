@@ -76,6 +76,36 @@ func TestHydrateRunsMarksOrphansTerminal(t *testing.T) {
 	}
 }
 
+func TestHydrateRunsKeepsMissingAndCorruptJournalRows(t *testing.T) {
+	for _, corrupt := range []bool{false, true} {
+		name := "missing"
+		if corrupt {
+			name = "corrupt first record"
+		}
+		t.Run(name, func(t *testing.T) {
+			jigRoot := t.TempDir()
+			runID := "20260908-130000-journal-orphan"
+			runDir := filepath.Join(jigRoot, "runs", runID)
+			if err := os.MkdirAll(runDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if corrupt {
+				if err := os.WriteFile(datastore.JournalPath(runDir), []byte("{ bad\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			exec := runner.NewFakeExecutor(nil, runner.FakeOutcome{})
+			msg := hydrateRunsCmd(engine.NewManager(exec, jigRoot))().(runsHydratedMsg)
+			if len(msg.runs) != 1 {
+				t.Fatalf("hydrated groups = %d, want orphan row", len(msg.runs))
+			}
+			if finished, ok := msg.runs[0][len(msg.runs[0])-1].(engine.RunFinished); !ok || !finished.Failed {
+				t.Fatalf("orphan finish = %#v", msg.runs[0][len(msg.runs[0])-1])
+			}
+		})
+	}
+}
+
 // TestHomeColdStartAutoSelectsFirstWorkflow drives Home without a terminal:
 // discover workflows, assert the first is selected and its runs pane is labeled.
 func TestHomeColdStartAutoSelectsFirstWorkflow(t *testing.T) {

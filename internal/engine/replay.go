@@ -24,21 +24,58 @@ const orphanedRunErr = "run cannot be reopened because its durable workflow snap
 // a per-run monitor — for runs from earlier sessions, where no in-memory Run
 // handle exists to Snapshot().
 //
-// A missing journal yields nil with no error: an empty run, or one recorded with
-// persistence off. An incomplete trailing record is tolerated as a crash-torn
-// tail. A newline-complete corrupt record is not skipped: display replay marks
-// the decodable prefix orphaned, while strict resume rejects the journal.
+// A missing/empty journal for a persisted run directory produces a synthetic
+// failed orphan history so the run remains visible. An incomplete trailing
+// record is tolerated as a crash-torn tail. A newline-complete corrupt record
+// is not skipped: display replay marks the decodable prefix orphaned, while
+// strict resume rejects the journal.
 func ReplayJournal(runDir string) ([]Event, error) {
 	_, events, err := readJournal(runDir)
 	if err != nil {
 		if len(events) == 0 {
+			if orphan := orphanTerminalHistory(runDir); len(orphan) > 0 {
+				return orphan, nil
+			}
 			return nil, err
 		}
 		events = hydrateReviewDocuments(runDir, events)
 		return reconcileInterruptedRun(runDir, events, true), nil
 	}
+	if len(events) == 0 {
+		return orphanTerminalHistory(runDir), nil
+	}
 	events = hydrateReviewDocuments(runDir, events)
 	return reconcileInterruptedRun(runDir, events, false), nil
+}
+
+func orphanTerminalHistory(runDir string) []Event {
+	if runDir == "" {
+		return nil
+	}
+	info, err := os.Stat(runDir)
+	if err != nil || !info.IsDir() {
+		return nil
+	}
+	runID := filepath.Base(filepath.Clean(runDir))
+	if runID == "." || runID == string(filepath.Separator) || runID == "" {
+		return nil
+	}
+	workflowName := ""
+	var stepIDs []string
+	if wf, loadErr := loadWorkflowSnapshot(runDir); loadErr == nil && wf != nil {
+		workflowName = wf.Meta.Name
+		stepIDs = make([]string, 0, len(wf.Steps))
+		for i := range wf.Steps {
+			stepIDs = append(stepIDs, wf.Steps[i].ID)
+		}
+	}
+	events := []Event{RunStarted{RunID: runID, Workflow: workflowName, Steps: stepIDs}}
+	for _, stepID := range stepIDs {
+		events = append(events, StepStatus{
+			RunID: runID, StepID: stepID, From: step.StatusPending, To: step.StatusFailed, Err: orphanedRunErr,
+		})
+	}
+	return append(events, RunFinished{RunID: runID, Failed: true})
 }
 
 // ReplayJournalRaw returns only events durably written by the original
