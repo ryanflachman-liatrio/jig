@@ -1,6 +1,6 @@
 # Implementation Plan: Unfinished park reopen after process death
 
-**Status:** Plan proposed (follow-on to Spec 20 / open goal A3 residual) — decisions open for lock
+**Status:** Implemented (2026-09-08)
 **Depends on:** Spec 20 mid-execution crash recovery (generalized `Manager.Resume`,
 `session.json`, D7 orphan rules, journal-before-reopen); Spec 06 integration
 gates; Spec 07 live Stop/Resume; review-gate restore path
@@ -167,17 +167,17 @@ Avoid duplicating gate chrome; TUI should see the same event types as live.
 
 | # | Topic | Proposed decision | Status |
 |---|---|---|---|
-| E1 | Product shape | One `Manager.Resume` restores all unfinished park kinds; lift Spec 20 D8 reject | proposed |
-| E2 | Stopped semantics | Restore as `stopped` (Spec 07), not crash→recovery | proposed |
-| E3 | Gate re-emit | Re-emit `RecoveryRequest` / `InputRequest` / `AgentQuestion` / `IntegrationConflictRequest` on reopen for bus/TUI liveness; do not rewrite prior journal rows | proposed |
-| E4 | needs_input payload missing | Degrade to `awaiting_recovery` with Err explaining lost question; prefer InputRequest restore when journal has it | open |
-| E5 | Integration conflict markers missing | Fail Resume for that run (or that step→recovery) — do not invent empty conflict UI | open |
-| E6 | Pre-crash awaiting_recovery | Rehydrate in place; do not bump Attempt; CanResume from session.json ∧ cap | proposed |
-| E7 | Mixed with Spec 20 workers | Allowed; each park kind independent (ADR 0002) | proposed |
-| E8 | TUI | No new panels; existing Gate chrome per event type; Runs copy may add park-kind subtitle | proposed |
-| E9 | A2 / headless | Document full settle matrix; CLI flags remain A2 | proposed |
-| E10 | Ordering | Implement only after Spec 20 Phases 1–2 land (needs generalized Resume skeleton) | proposed |
-| E11 | Docs | engine-design Resume classes; workflow-schema; CONTEXT; open-goals A3 residual → Spec 21 | proposed |
+| E1 | Product shape | One `Manager.Resume` restores all unfinished park kinds; lift Spec 20 D8 reject | locked |
+| E2 | Stopped semantics | Restore as `stopped` (Spec 07), not crash→recovery | locked |
+| E3 | Gate re-emit | Append fresh `RecoveryRequest` / `InputRequest` / `AgentQuestion` / `IntegrationConflictRequest` rows as one pre-loop batch, then fan out | locked |
+| E4 | needs_input payload missing | Degrade to `awaiting_recovery` with Err explaining lost payload/session; prefer unresolved AgentQuestion, then InputRequest | locked |
+| E5 | Integration conflict markers missing | Fail Resume for the run; preserve the historical worktree and do not invent empty conflict UI | locked |
+| E6 | Pre-crash awaiting_recovery | Rehydrate in place; do not bump Attempt; CanResume from session.json ∧ cap | locked |
+| E7 | Mixed with Spec 20 workers | Allowed; each park kind independent (ADR 0002) | locked |
+| E8 | TUI | No new panels; existing Gate chrome per event type; deduplicate replay/live request boundaries | locked |
+| E9 | A2 / headless | Document full settle matrix; CLI flags remain A2 | locked |
+| E10 | Ordering | Implement only after Spec 20 Phases 1–2 land (needs generalized Resume skeleton) | satisfied |
+| E11 | Docs | engine-design Resume classes; workflow-schema; CONTEXT; open-goals A3 residual | implemented |
 
 ---
 
@@ -185,32 +185,32 @@ Avoid duplicating gate chrome; TUI should see the same event types as live.
 
 ### Phase 0 — Spec lock
 
-- [ ] Confirm E1–E11 (resolve E4, E5)
-- [ ] Inventory journal event payloads needed for question / integration rehydrate
-- [ ] Agree fail-closed vs degrade-to-recovery per park
+- [x] Confirm E1–E11 (resolve E4, E5)
+- [x] Inventory journal event payloads needed for question / integration rehydrate
+- [x] Agree fail-closed vs degrade-to-recovery per park
 
 ### Phase 1 — Engine park restore
 
 **Packages:** `internal/engine`
 
-- [ ] Lift Spec 20 reject for Spec 21 statuses
-- [ ] Rehydrate `awaiting_recovery`, `stopped`, `needs_input`, `awaiting_integration`
-- [ ] Mixed-park tests (review + recovery + integration + stopped + needs_input
+- [x] Lift Spec 20 reject for Spec 21 statuses
+- [x] Rehydrate `awaiting_recovery`, `stopped`, `needs_input`, `awaiting_integration`
+- [x] Mixed-park tests (review + recovery + integration + stopped + needs_input
       combinations worth covering; table-driven)
-- [ ] Preserve Spec 20 worker crash path tests
+- [x] Preserve Spec 20 worker crash path tests
 
 **Exit criteria:** `go test ./internal/engine` — Resume accepts each park kind
 alone and in mixed fixtures; finished still rejected.
 
 ### Phase 2 — TUI + copy
 
-- [ ] Ensure Gate overlays bind to re-emitted events after Resume
-- [ ] Runs/Monitor copy for non-crash unfinished parks (not all "interrupted")
-- [ ] Golden tests
+- [x] Ensure Gate overlays bind to re-emitted events after Resume
+- [x] Runs/Monitor copy for non-crash unfinished parks (not all "interrupted")
+- [x] Replay/live boundary tests
 
 ### Phase 3 — Docs + A2 matrix note
 
-- [ ] engine-design / schema / CONTEXT / open-goals / headless settle matrix
+- [x] engine-design / schema / CONTEXT / open-goals / headless settle matrix
 
 ---
 
@@ -235,16 +235,16 @@ alone and in mixed fixtures; finished still rejected.
 
 ---
 
-## Open questions (resolve in Phase 0)
+## Resolved questions
 
-1. **E4** — If `needs_input` has no restorable question payload, force recovery
-   or reject entire Resume?
-2. **E5** — If conflict markers disappeared, reject Resume or park recovery on
-   that step?
-3. **Stopped + missing session.json** — allow Resume-step as fresh only, or
-   show stopped with CanResume false?
-4. **Re-emit duplicates** — should fold ignore duplicate gate requests for the
-   same step+status, or always append?
+1. Missing `needs_input` payload or resumable session degrades that step to
+   recovery; it does not reject unrelated parks in the run.
+2. Missing integration conflict markers rejects Resume and leaves the historical
+   worktree intact.
+3. A stopped step without `session.json` remains stopped; Resume-step restarts it
+   fresh, matching live Spec 07 behavior.
+4. Resume appends fresh gate rows for durability/liveness. The journal fold and
+   Monitor deduplicate them by gate identity.
 
 ---
 

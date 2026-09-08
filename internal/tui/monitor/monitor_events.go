@@ -190,6 +190,13 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		if ev.RunID != m.RunID {
 			return m, nil
 		}
+		for i := range m.inputQueue {
+			if m.inputQueue[i].kind == inputKindRequest && m.inputQueue[i].stepID == ev.StepID {
+				evCopy := ev
+				m.inputQueue[i].request = &evCopy
+				return m, nil
+			}
+		}
 		// Decision 6: no focus steal on later arrivals; first wait still focuses.
 		evCopy := ev
 		wasEmpty := len(m.inputQueue) == 0
@@ -210,6 +217,13 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		if ev.RunID != m.RunID {
 			return m, nil
 		}
+		for i := range m.inputQueue {
+			entry := &m.inputQueue[i]
+			if entry.kind == inputKindQuestion && entry.stepID == ev.StepID && entry.question.Request().ID == ev.Request.ID {
+				entry.question = questionpanel.New(ev.Request).Resize(m.gateInnerWidth(), m.gateBodyHeight()-gateHeaderRows)
+				return m, nil
+			}
+		}
 		// Update the step badge immediately — the scheduler inbox notification
 		// may be dropped under load, so drive the display from this reliable event.
 		if idx, ok := m.index[ev.StepID]; ok {
@@ -229,7 +243,7 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		}
 		for i := range m.inputQueue {
 			entry := &m.inputQueue[i]
-			if entry.kind == inputKindQuestion && entry.question.Request().ID == ev.RequestID {
+			if entry.kind == inputKindQuestion && entry.stepID == ev.StepID && entry.question.Request().ID == ev.RequestID {
 				m.removeEntryAt(i)
 				break
 			}

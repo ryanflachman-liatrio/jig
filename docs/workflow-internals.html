@@ -1,0 +1,980 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A code-grounded guide to jig workflow objects and TOML parsing.">
+  <title>Inside a jig workflow</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --page: light-dark(#f4f1e9, #111512);
+      --surface: light-dark(#fffdf7, #191f1b);
+      --surface-2: light-dark(#eeeadf, #222a24);
+      --ink: light-dark(#1e2922, #edf4ee);
+      --muted: light-dark(#657068, #a8b5aa);
+      --line: light-dark(#ccd2ca, #39443b);
+      --green: light-dark(#176846, #74d7a4);
+      --green-soft: light-dark(#dceee4, #173728);
+      --amber: light-dark(#91600d, #efc168);
+      --amber-soft: light-dark(#f7ead0, #3e3017);
+      --blue: light-dark(#2e628d, #8fc7ef);
+      --blue-soft: light-dark(#deebf4, #183348);
+      --red: light-dark(#a13c36, #f29990);
+      --red-soft: light-dark(#f6e1df, #43211f);
+      --purple: light-dark(#6f4d92, #c7a1ed);
+      --purple-soft: light-dark(#eadff3, #342641);
+      --shadow: 0 12px 30px light-dark(rgb(42 48 43 / 9%), rgb(0 0 0 / 22%));
+      --radius: 14px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--green) 10%, transparent), transparent 24rem),
+        var(--page);
+      color: var(--ink);
+      font-family: var(--sans);
+      line-height: 1.55;
+    }
+
+    a { color: var(--green); text-underline-offset: 3px; }
+    code, pre { font-family: var(--mono); }
+    code {
+      padding: .12rem .32rem;
+      border-radius: 5px;
+      background: var(--surface-2);
+      font-size: .9em;
+    }
+    pre {
+      margin: 0;
+      padding: 1rem;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: light-dark(#202820, #0b0f0c);
+      color: light-dark(#edf4ee, #dfece2);
+      font-size: .84rem;
+      line-height: 1.6;
+    }
+
+    .shell {
+      display: grid;
+      grid-template-columns: 16rem minmax(0, 1fr);
+      max-width: 92rem;
+      margin: 0 auto;
+    }
+
+    aside {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 2rem 1.25rem;
+      border-right: 1px solid var(--line);
+      background: color-mix(in srgb, var(--page) 92%, transparent);
+      backdrop-filter: blur(12px);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: .65rem;
+      margin-bottom: 2rem;
+      font-weight: 750;
+      letter-spacing: -.02em;
+    }
+    .brand-mark {
+      display: grid;
+      width: 2rem;
+      height: 2rem;
+      place-items: center;
+      border-radius: 8px;
+      background: var(--green);
+      color: var(--page);
+      font-family: var(--mono);
+    }
+    nav a {
+      display: block;
+      padding: .42rem .55rem;
+      border-left: 2px solid transparent;
+      color: var(--muted);
+      font-size: .9rem;
+      text-decoration: none;
+    }
+    nav a:hover, nav a:focus-visible {
+      border-left-color: var(--green);
+      color: var(--ink);
+    }
+    .nav-group {
+      margin: 1.3rem .55rem .35rem;
+      color: var(--ink);
+      font-size: .72rem;
+      font-weight: 750;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    main { min-width: 0; padding: 0 4rem 6rem; }
+    header {
+      min-height: 30rem;
+      display: grid;
+      align-content: center;
+      padding: 5rem 0 4rem;
+      border-bottom: 1px solid var(--line);
+    }
+    .eyebrow {
+      margin: 0 0 .8rem;
+      color: var(--green);
+      font-family: var(--mono);
+      font-size: .78rem;
+      font-weight: 700;
+      letter-spacing: .11em;
+      text-transform: uppercase;
+    }
+    h1, h2, h3 { line-height: 1.13; letter-spacing: -.035em; }
+    h1 {
+      max-width: 16ch;
+      margin: 0;
+      font-size: clamp(3rem, 7vw, 6.6rem);
+      font-weight: 760;
+    }
+    h2 { margin: 0 0 1rem; font-size: clamp(2rem, 4vw, 3.4rem); }
+    h3 { margin: 0 0 .65rem; font-size: 1.15rem; }
+    .lede {
+      max-width: 52rem;
+      margin: 1.5rem 0 0;
+      color: var(--muted);
+      font-size: 1.15rem;
+    }
+    .hero-flow {
+      display: flex;
+      align-items: center;
+      gap: .65rem;
+      margin-top: 2rem;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: .86rem;
+      flex-wrap: wrap;
+    }
+    .hero-flow span:not(.arrow) {
+      padding: .5rem .72rem;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+    .hero-flow span:last-child { border-color: var(--green); color: var(--green); }
+    .arrow { color: var(--green); }
+
+    section { padding: 5rem 0 0; scroll-margin-top: 1rem; }
+    .section-intro {
+      max-width: 52rem;
+      margin: 0 0 2rem;
+      color: var(--muted);
+      font-size: 1.05rem;
+    }
+    .kicker {
+      margin-bottom: .55rem;
+      color: var(--green);
+      font-family: var(--mono);
+      font-size: .75rem;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+
+    .callout {
+      padding: 1rem 1.15rem;
+      border-left: 4px solid var(--green);
+      background: var(--green-soft);
+    }
+    .callout strong { display: block; margin-bottom: .2rem; }
+
+    .grid { display: grid; gap: 1rem; }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card {
+      min-width: 0;
+      padding: 1.15rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .card p { margin: .35rem 0 0; color: var(--muted); }
+    .tag {
+      display: inline-block;
+      margin-bottom: .65rem;
+      padding: .18rem .5rem;
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: .72rem;
+    }
+    .tag.green { background: var(--green-soft); color: var(--green); }
+    .tag.amber { background: var(--amber-soft); color: var(--amber); }
+    .tag.blue { background: var(--blue-soft); color: var(--blue); }
+    .tag.purple { background: var(--purple-soft); color: var(--purple); }
+
+    .object-root {
+      padding: 1.35rem;
+      border: 2px solid var(--green);
+      border-radius: var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .object-root > h3 { color: var(--green); font-family: var(--mono); }
+    .branches {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+    .branch {
+      padding: 1rem;
+      border-top: 4px solid var(--line);
+      border-radius: 0 0 var(--radius) var(--radius);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .branch:nth-child(1) { border-color: var(--blue); }
+    .branch:nth-child(2) { border-color: var(--amber); }
+    .branch:nth-child(3) { border-color: var(--purple); }
+    .branch:nth-child(4) { border-color: var(--green); }
+    .field-list {
+      margin: .7rem 0 0;
+      padding: 0;
+      list-style: none;
+      color: var(--muted);
+      font-family: var(--mono);
+      font-size: .77rem;
+    }
+    .field-list li { padding: .16rem 0; overflow-wrap: anywhere; }
+    .field-list b { color: var(--ink); font-weight: 600; }
+
+    .type-table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    th, td {
+      padding: .72rem .8rem;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-size: .76rem; letter-spacing: .06em; text-transform: uppercase; }
+    tbody tr:hover { background: color-mix(in srgb, var(--surface-2) 62%, transparent); }
+
+    .ref-chain {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr auto 1fr;
+      align-items: stretch;
+      gap: .6rem;
+      margin: 1.3rem 0;
+    }
+    .ref-chain .node {
+      padding: .85rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+      text-align: center;
+    }
+    .ref-chain .connector { align-self: center; color: var(--green); font-family: var(--mono); }
+
+    .timeline {
+      position: relative;
+      display: grid;
+      gap: 1rem;
+      margin-left: .9rem;
+      padding-left: 2rem;
+    }
+    .timeline::before {
+      content: "";
+      position: absolute;
+      left: .55rem;
+      top: .5rem;
+      bottom: .5rem;
+      width: 2px;
+      background: var(--line);
+    }
+    .phase {
+      position: relative;
+      padding: 1.2rem 1.3rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .phase::before {
+      content: attr(data-step);
+      position: absolute;
+      left: -3.1rem;
+      top: 1.1rem;
+      display: grid;
+      width: 2rem;
+      height: 2rem;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--green);
+      color: var(--page);
+      font-family: var(--mono);
+      font-size: .75rem;
+      font-weight: 800;
+    }
+    .phase p { margin: .35rem 0 0; color: var(--muted); }
+    .phase ul { margin-bottom: 0; }
+
+    .precedence {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: .55rem;
+      align-items: stretch;
+      counter-reset: precedence;
+    }
+    .precedence > div {
+      counter-increment: precedence;
+      position: relative;
+      padding: 2.4rem .85rem 1rem;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+    }
+    .precedence > div::before {
+      content: counter(precedence);
+      position: absolute;
+      top: .7rem;
+      left: .8rem;
+      color: var(--green);
+      font-family: var(--mono);
+      font-size: .75rem;
+      font-weight: 800;
+    }
+    .precedence strong { display: block; }
+    .precedence small { color: var(--muted); }
+
+    .module-demo {
+      display: grid;
+      grid-template-columns: 1fr auto 1.35fr;
+      gap: 1rem;
+      align-items: center;
+    }
+    .mini-graph {
+      display: grid;
+      gap: .6rem;
+      padding: 1rem;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--surface);
+    }
+    .mini-node {
+      padding: .65rem .75rem;
+      border-left: 4px solid var(--blue);
+      border-radius: 5px;
+      background: var(--blue-soft);
+      font-family: var(--mono);
+      font-size: .8rem;
+    }
+    .mini-node.module { border-color: var(--purple); background: var(--purple-soft); }
+    .mini-node.internal { border-color: var(--green); background: var(--green-soft); }
+    .mini-arrow { color: var(--muted); text-align: center; font-family: var(--mono); }
+    .big-arrow { color: var(--green); font-size: 1.8rem; }
+
+    .gate-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
+    .gate {
+      padding: .9rem 1rem;
+      border-left: 3px solid var(--amber);
+      background: var(--amber-soft);
+    }
+    .gate b { display: block; }
+    .gate span { color: var(--muted); font-size: .9rem; }
+
+    details {
+      border-top: 1px solid var(--line);
+      padding: .8rem 0;
+    }
+    summary { cursor: pointer; font-weight: 700; }
+    details p, details ul { color: var(--muted); }
+
+    .success {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      padding: 1.4rem;
+      border: 2px solid var(--green);
+      border-radius: var(--radius);
+      background: var(--green-soft);
+    }
+    .success ul { margin: .6rem 0 0; padding-left: 1.1rem; }
+
+    footer {
+      margin-top: 5rem;
+      padding-top: 1.5rem;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: .86rem;
+    }
+
+    @media (max-width: 1050px) {
+      .shell { grid-template-columns: 1fr; }
+      aside { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+      aside nav { display: flex; flex-wrap: wrap; gap: .2rem; }
+      .nav-group { flex-basis: 100%; }
+      main { padding: 0 2rem 4rem; }
+      .branches { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+
+    @media (max-width: 700px) {
+      main { padding-inline: 1rem; }
+      header { min-height: auto; padding-top: 3.5rem; }
+      .grid.two, .grid.three, .branches, .gate-grid, .success { grid-template-columns: 1fr; }
+      .ref-chain, .module-demo { grid-template-columns: 1fr; }
+      .ref-chain .connector, .big-arrow { transform: rotate(90deg); justify-self: center; }
+      .precedence { grid-template-columns: 1fr; }
+    }
+
+    @media print {
+      aside { display: none; }
+      .shell { display: block; }
+      main { padding: 0; }
+      .card, .branch, .phase { box-shadow: none; break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <div class="brand"><span class="brand-mark">j</span> workflow internals</div>
+      <nav aria-label="Document sections">
+        <div class="nav-group">Objects</div>
+        <a href="#mental-model">Mental model</a>
+        <a href="#workflow-root">Workflow root</a>
+        <a href="#step">The Step union</a>
+        <a href="#references">References and schemas</a>
+        <div class="nav-group">Parser</div>
+        <a href="#entry-points">Entry points</a>
+        <a href="#pipeline">Loading pipeline</a>
+        <a href="#precedence">Precedence</a>
+        <a href="#modules">Module expansion</a>
+        <a href="#validation">Validation</a>
+        <a href="#result">Final object</a>
+        <div class="nav-group">Further reading</div>
+        <a href="workflow-object-graph.md">Mermaid object graph</a>
+        <a href="workflow-parsing-pipeline.md">Mermaid parser chart</a>
+      </nav>
+    </aside>
+
+    <main>
+      <header>
+        <p class="eyebrow">internal/workflow · code-guided tour</p>
+        <h1>Inside a jig workflow</h1>
+        <p class="lede">
+          A workflow starts as author-friendly TOML and ends as a validated,
+          execution-ready graph. This guide explains the objects that carry
+          that graph, the transformations performed by the loader, and the
+          invariants guaranteed before the engine sees it.
+        </p>
+        <div class="hero-flow" aria-label="High-level workflow loading sequence">
+          <span>TOML</span><span class="arrow">→</span>
+          <span>decoded structs</span><span class="arrow">→</span>
+          <span>resolved assets</span><span class="arrow">→</span>
+          <span>expanded modules</span><span class="arrow">→</span>
+          <span>*Workflow</span>
+        </div>
+      </header>
+
+      <section id="mental-model">
+        <div class="kicker">01 · Mental model</div>
+        <h2>A graph with a typed contract</h2>
+        <p class="section-intro">
+          The package does more than deserialize TOML. It compiles an author
+          graph into an execution graph, resolves external authoring assets,
+          applies configuration layers, and rejects ambiguous or unsafe
+          combinations. The engine can therefore treat the result as a stable
+          contract rather than raw configuration.
+        </p>
+        <div class="grid three">
+          <article class="card">
+            <span class="tag green">structure</span>
+            <h3>The graph</h3>
+            <p><code>Step.ID</code> names nodes. <code>DependsOn</code> creates DAG edges. Conditions and routes add typed decisions and bounded back-edges.</p>
+          </article>
+          <article class="card">
+            <span class="tag blue">data</span>
+            <h3>The contracts</h3>
+            <p><code>Input</code>, <code>OutputType</code>, <code>Schema</code>, check artifacts, and review targets describe what moves between nodes.</p>
+          </article>
+          <article class="card">
+            <span class="tag amber">policy</span>
+            <h3>The guardrails</h3>
+            <p>Defaults, profiles, retry rules, isolation, budgets, security, and validation determine how each node may execute.</p>
+          </article>
+        </div>
+        <div class="callout" style="margin-top:1rem">
+          <strong>The key boundary</strong>
+          <span><code>internal/workflow</code> knows the schema and proves the graph is coherent. It does not execute agents or schedule the graph.</span>
+        </div>
+      </section>
+
+      <section id="workflow-root">
+        <div class="kicker">02 · Object graph</div>
+        <h2>The Workflow root</h2>
+        <p class="section-intro">
+          <code>Workflow</code> owns the top-level metadata, global defaults,
+          executable steps, optional module interface, lookup indexes, source
+          snapshot, and module provenance.
+        </p>
+        <div class="object-root">
+          <h3>Workflow</h3>
+          <div class="grid two">
+            <div>
+              <strong>Decoded fields</strong>
+              <ul class="field-list">
+                <li><b>Meta</b> ← <code>[workflow]</code></li>
+                <li><b>Defaults</b> ← <code>[defaults]</code></li>
+                <li><b>Steps</b> ← repeated <code>[[step]]</code></li>
+                <li><b>Module</b> ← optional <code>[module]</code></li>
+              </ul>
+            </div>
+            <div>
+              <strong>Derived state</strong>
+              <ul class="field-list">
+                <li><b>index</b> — step ID to executable position</li>
+                <li><b>profileIndex</b> — profile ID to profile</li>
+                <li><b>publicSteps</b> — pre-expansion author graph</li>
+                <li><b>moduleSources</b> — path, hash, and source TOML</li>
+                <li><b>sourcePath/sourceTOML</b> — root provenance</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="branches">
+          <article class="branch">
+            <span class="tag blue">one</span>
+            <h3>Meta</h3>
+            <ul class="field-list">
+              <li><b>Name</b> string</li>
+              <li><b>Version</b> string</li>
+              <li><b>Description</b> string</li>
+            </ul>
+          </article>
+          <article class="branch">
+            <span class="tag amber">one</span>
+            <h3>Defaults</h3>
+            <ul class="field-list">
+              <li>model and reasoning knobs</li>
+              <li>backend and transport</li>
+              <li>parallelism and resource limits</li>
+              <li>cost, network, and finding budgets</li>
+              <li>artifacts, context, and security</li>
+            </ul>
+          </article>
+          <article class="branch">
+            <span class="tag purple">zero or one</span>
+            <h3>Module</h3>
+            <ul class="field-list">
+              <li><b>SchemaVersion</b> int</li>
+              <li><b>Inputs</b> map to ModuleValue</li>
+              <li><b>Exports</b> map to ModuleExport</li>
+            </ul>
+          </article>
+          <article class="branch">
+            <span class="tag green">many</span>
+            <h3>Step</h3>
+            <ul class="field-list">
+              <li>common graph fields</li>
+              <li>one step-type configuration</li>
+              <li>execution policy</li>
+              <li>typed I/O and routing</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="step">
+        <div class="kicker">03 · The central type</div>
+        <h2><code>Step</code> is a validated union</h2>
+        <p class="section-intro">
+          Go stores every step kind in one large struct. The discriminator is
+          <code>Step.Type</code>; validation makes the union safe by requiring
+          each kind's fields and rejecting fields belonging to other kinds.
+        </p>
+
+        <div class="type-table-wrap card">
+          <table>
+            <thead>
+              <tr><th>Type</th><th>Purpose</th><th>Defining fields</th><th>Important constraints</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><code>agent</code></td>
+                <td>Runs a fresh agent context.</td>
+                <td><code>skill</code> or <code>agent_file</code>, inputs, tools, model, schema, context</td>
+                <td>Exactly one prompt source; backend/transport must be valid; isolation is resolved.</td>
+              </tr>
+              <tr>
+                <td><code>command</code></td>
+                <td>Runs deterministic shell work.</td>
+                <td><code>run</code> or <code>script</code></td>
+                <td>Exactly one command source; agent/check/review-only fields are rejected.</td>
+              </tr>
+              <tr>
+                <td><code>check</code></td>
+                <td>Runs a typed quality gate.</td>
+                <td><code>run</code>/<code>script</code>, <code>applies_when</code>, <code>findings</code></td>
+                <td>Produces pass/fail/skip/error semantics and must define automatic remediation routes.</td>
+              </tr>
+              <tr>
+                <td><code>review</code></td>
+                <td>Pauses for a human decision.</td>
+                <td><code>review[]</code> source/file targets</td>
+                <td>Targets must be unambiguous, resolvable, and connected to dependencies.</td>
+              </tr>
+              <tr>
+                <td><code>subworkflow</code></td>
+                <td>Invokes a reusable module.</td>
+                <td><code>module</code>, <code>with</code></td>
+                <td>Author-facing only; replaced before the engine receives the graph.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="grid two" style="margin-top:1rem">
+          <article class="card">
+            <span class="tag">common fields</span>
+            <h3>Graph and execution</h3>
+            <p><code>ID</code>, <code>DependsOn</code>, <code>When</code>, <code>Output</code>, <code>OutputType</code>, failure policy, timeout, retry, idempotence, resource class, mutation paths, secrets, deterministic validation, routes, and step security.</p>
+          </article>
+          <article class="card">
+            <span class="tag">resolved fields</span>
+            <h3>What TOML does not show</h3>
+            <p>The loader computes effective context injection and isolation, resolves prompt/template bodies, snapshots those bodies, parses file schemas, and fills inherited configuration.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="references">
+        <div class="kicker">04 · Connections</div>
+        <h2>References become graph and data edges</h2>
+        <p class="section-intro">
+          Cross-object relationships are usually encoded as strings. The
+          validator resolves those strings against <code>Workflow.index</code>
+          and verifies that ordering and data dependencies agree.
+        </p>
+
+        <div class="ref-chain" aria-label="Input reference resolution">
+          <div class="node"><code>Input.Ref</code><br><small>@research</small></div>
+          <div class="connector">→</div>
+          <div class="node"><code>Workflow.index</code><br><small>"research" → 0</small></div>
+          <div class="connector">→</div>
+          <div class="node"><code>Step</code><br><small>producer and schema</small></div>
+        </div>
+
+        <div class="grid three">
+          <article class="card">
+            <span class="tag blue">Input</span>
+            <h3>Four input forms</h3>
+            <p>A literal path, whole-step reference, structured field reference, named check artifact, or interactive <code>from="user"</code> value.</p>
+          </article>
+          <article class="card">
+            <span class="tag purple">Condition</span>
+            <h3>Transient typed guard</h3>
+            <p><code>when</code>, <code>applies_when</code>, <code>block_on</code>, and route guards are parsed on demand into step, field path, operator, and value.</p>
+          </article>
+          <article class="card">
+            <span class="tag green">Schema</span>
+            <h3>Recursive output shape</h3>
+            <p><code>Schema.Fields</code> is a tree: object fields own child fields, list fields own an element field, and enums carry allowed strings.</p>
+          </article>
+        </div>
+
+        <div class="grid two" style="margin-top:1rem">
+          <pre aria-label="Example structured schema">[step.schema]
+decision = { enum = ["ship", "revise"] }
+metrics = {
+  score = "number",
+  labels = { list = "text" }
+}</pre>
+          <pre aria-label="Resulting field object tree">Schema
+├── Field decision : enum
+│   └── [ship, revise]
+└── Field metrics : object
+    ├── Field labels : list
+    │   └── Field labels[] : text
+    └── Field score : number</pre>
+        </div>
+
+        <div class="callout" style="margin-top:1rem">
+          <strong>Agent schemas are always augmented</strong>
+          <span>The effective schema is <code>MergedSchema(step.Schema)</code>. Base fields provide assumptions, confidence, issues, status, and summary for every agent.</span>
+        </div>
+      </section>
+
+      <section id="entry-points">
+        <div class="kicker">05 · Parser</div>
+        <h2>Three entry points, one core path</h2>
+        <p class="section-intro">
+          Every full load converges on <code>decodeWorkflowLocked</code>. The
+          entry point determines where root TOML comes from, whether it has a
+          source path, and whether module files are live or locked snapshots.
+        </p>
+        <div class="type-table-wrap card">
+          <table>
+            <thead><tr><th>Entry point</th><th>Input</th><th>Filesystem behavior</th><th>Module behavior</th></tr></thead>
+            <tbody>
+              <tr><td><code>Load(path)</code></td><td>Path to root TOML</td><td>Reads root and authoring assets; performs existence checks.</td><td>Reads current module files.</td></tr>
+              <tr><td><code>Decode(data, baseDir)</code></td><td>TOML string</td><td>Reads assets when <code>baseDir</code> is non-empty.</td><td>Reads current modules relative to <code>baseDir</code>.</td></tr>
+              <tr><td><code>Decode(data, "")</code></td><td>TOML string</td><td>Structural-only mode; skips file reads and existence checks.</td><td>Cannot expand a subworkflow without a directory.</td></tr>
+              <tr><td><code>DecodeLocked(...)</code></td><td>Persisted root and module sources</td><td>Normal structural processing.</td><td>Uses captured TOML and verifies every SHA-256.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="pipeline">
+        <div class="kicker">06 · Transformations</div>
+        <h2>The loading pipeline</h2>
+        <p class="section-intro">
+          Loading is deliberately ordered. Each phase produces information the
+          next phase needs—for example, file-derived tools must exist before
+          isolation is defaulted, and schemas must resolve before field
+          references are checked.
+        </p>
+
+        <div class="timeline">
+          <article class="phase" data-step="1">
+            <h3>Acquire root source</h3>
+            <p><code>Load</code> reads the file and computes its absolute path and directory. <code>Decode</code> already has the TOML string. <code>DecodeLocked</code> first validates and indexes persisted module sources.</p>
+          </article>
+          <article class="phase" data-step="2">
+            <h3>Decode TOML</h3>
+            <p>BurntSushi TOML fills a zero-value <code>Workflow</code>. Four types interpret richer author syntax themselves:</p>
+            <ul>
+              <li><code>Duration</code> parses Go duration strings.</li>
+              <li><code>Input</code> accepts reference strings or inline tables.</li>
+              <li><code>OutputType</code> accepts a scalar kind or enum table.</li>
+              <li><code>Schema</code> converts nested tables into sorted field trees.</li>
+            </ul>
+          </article>
+          <article class="phase" data-step="3">
+            <h3>Reject unknown keys</h3>
+            <p><code>MetaData.Undecoded()</code> turns misspelled or unsupported keys into an immediate parse error. Custom-unmarshaled subtrees count as consumed.</p>
+          </article>
+          <article class="phase" data-step="4">
+            <h3>Resolve authoring assets</h3>
+            <p>In order: skill instructions, agent files, output templates, and literal review sources. Resolved prompt and template text is copied into snapshot fields immediately.</p>
+          </article>
+          <article class="phase" data-step="5">
+            <h3>Load and apply profiles</h3>
+            <p>Built-ins are combined with project profiles from <code>.agents/jig/profiles/*.toml</code>. Profile values fill fields still unset after explicit TOML and agent-file resolution.</p>
+          </article>
+          <article class="phase" data-step="6">
+            <h3>Apply defaults and build the ID index</h3>
+            <p>Global defaults and built-in fallbacks become concrete step values. Effective context injection, security overrides, backend transport, and isolation are resolved. The step ID index is rebuilt.</p>
+          </article>
+          <article class="phase" data-step="7">
+            <h3>Expand modules recursively</h3>
+            <p>If subworkflow nodes exist, the author graph is saved, child workflows are prepared recursively, bindings and exports are type-checked, internal IDs are namespaced, and public references are rewritten.</p>
+          </article>
+          <article class="phase" data-step="8">
+            <h3>Resolve schemas and validate</h3>
+            <p>External JSON Schemas become the same <code>Schema</code>/<code>Field</code> representation used by inline TOML. All structural, referential, policy, and DAG checks then run and aggregate their errors.</p>
+          </article>
+          <article class="phase" data-step="9">
+            <h3>Attach provenance and return</h3>
+            <p>On success, source path and original TOML are attached. The caller receives a fully resolved <code>*Workflow</code>. On any failure, no partially valid workflow is returned.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="precedence">
+        <div class="kicker">07 · Resolution rules</div>
+        <h2>Configuration precedence</h2>
+        <p class="section-intro">The first non-zero value wins, from strongest author intent to weakest fallback.</p>
+        <div class="precedence" aria-label="Agent configuration precedence from highest to lowest">
+          <div><strong>Step</strong><small>Explicit <code>[[step]]</code> fields</small></div>
+          <div><strong>Agent file</strong><small>Tools and model from frontmatter</small></div>
+          <div><strong>Profile</strong><small>Reusable named configuration</small></div>
+          <div><strong>Defaults</strong><small>Workflow-wide configuration</small></div>
+          <div><strong>Built-in</strong><small>Hard-coded final fallback</small></div>
+        </div>
+
+        <div class="grid two" style="margin-top:1rem">
+          <article class="card">
+            <h3>Why pointer booleans exist</h3>
+            <p><code>*bool</code> preserves three states: unset, explicitly true, and explicitly false. This matters for <code>inject_context</code> and security overrides.</p>
+          </article>
+          <article class="card">
+            <h3>The additive exception</h3>
+            <p><code>AskUserQuestion</code> from <code>@interactive</code> is added to allowed tools even when a step already declared its own allowlist.</p>
+          </article>
+          <article class="card">
+            <h3>Backend fallback</h3>
+            <p>The backend falls back to Claude. Cursor and Codex select ACP when transport is omitted; Claude selects SDK.</p>
+          </article>
+          <article class="card">
+            <h3>Isolation fallback</h3>
+            <p>An agent with a mutating allowed tool defaults to <code>worktree</code>. Everything else defaults to <code>none</code>.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="modules">
+        <div class="kicker">08 · Compilation</div>
+        <h2>Modules turn one public node into many executable nodes</h2>
+        <p class="section-intro">
+          Module expansion is the most compiler-like part of loading. The
+          parent-facing invocation disappears; its child graph is cloned,
+          namespaced, connected, and made self-contained.
+        </p>
+
+        <div class="module-demo">
+          <div class="mini-graph" aria-label="Author graph before expansion">
+            <strong>Author graph</strong>
+            <div class="mini-node">intake</div>
+            <div class="mini-arrow">↓</div>
+            <div class="mini-node module">spec · subworkflow</div>
+            <div class="mini-arrow">↓</div>
+            <div class="mini-node">implement</div>
+          </div>
+          <div class="big-arrow">→</div>
+          <div class="mini-graph" aria-label="Executable graph after expansion">
+            <strong>Executable graph</strong>
+            <div class="mini-node">intake</div>
+            <div class="mini-arrow">↓</div>
+            <div class="mini-node internal">spec__research</div>
+            <div class="mini-arrow">↓</div>
+            <div class="mini-node internal">spec__write</div>
+            <div class="mini-arrow">↓</div>
+            <div class="mini-node">implement</div>
+          </div>
+        </div>
+
+        <div class="grid two" style="margin-top:1rem">
+          <article class="card">
+            <span class="tag purple">input boundary</span>
+            <h3>Bindings</h3>
+            <p>Every required module input must be supplied through <code>with</code>. Bindings may be paths, upstream fields, check artifacts, parent-module inputs, or sibling-module exports. Their declared types must agree.</p>
+          </article>
+          <article class="card">
+            <span class="tag green">output boundary</span>
+            <h3>Exports</h3>
+            <p>Exports resolve to real internal producers. Parent inputs, conditions, review targets, and feedback references are rewritten to those producers.</p>
+          </article>
+          <article class="card">
+            <span class="tag blue">graph boundary</span>
+            <h3>Roots and terminals</h3>
+            <p>Parent dependencies and invocation guards flow into module roots. Consumers of the module wait for all internal terminal steps.</p>
+          </article>
+          <article class="card">
+            <span class="tag amber">reproducibility</span>
+            <h3>Provenance</h3>
+            <p>Each module's absolute path, source TOML, and SHA-256 are captured. Locked decoding refuses missing or checksum-mismatched module sources.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="validation">
+        <div class="kicker">09 · Proof before execution</div>
+        <h2>Validation closes the graph</h2>
+        <p class="section-intro">
+          The validator accumulates problems, sorts them, and returns one
+          <code>ValidationError</code>. This lets authors fix a set of related
+          problems in one pass.
+        </p>
+        <div class="gate-grid">
+          <div class="gate"><b>Metadata and budgets</b><span>Required name/version, non-empty graph, non-negative budgets, valid capacity limits.</span></div>
+          <div class="gate"><b>Identity</b><span>Every step ID is present, well formed, and unique.</span></div>
+          <div class="gate"><b>Step union</b><span>Each type has its required fields and no incompatible fields.</span></div>
+          <div class="gate"><b>References</b><span>Dependencies exist; inputs also declare ordering; fields and artifacts exist.</span></div>
+          <div class="gate"><b>Output contracts</b><span>Scalar and structured shapes do not conflict; reserved base fields cannot be redeclared.</span></div>
+          <div class="gate"><b>Execution policy</b><span>Retry needs idempotence, backoff is coherent, mutation paths and secrets are names.</span></div>
+          <div class="gate"><b>Conditions and routes</b><span>Guards are typed, targets exist, branches are explicit, and loop counts are bounded.</span></div>
+          <div class="gate"><b>DAG integrity</b><span>DFS rejects dependency cycles. Legal route back-edges are deliberately outside the DAG check.</span></div>
+        </div>
+
+        <div class="card" style="margin-top:1rem">
+          <h3>Details worth remembering</h3>
+          <details>
+            <summary>Why are schema files resolved during validation?</summary>
+            <p>Cross-step references need every producer's field tree. Resolving files first lets inline and external schemas share the same downstream checking path.</p>
+          </details>
+          <details>
+            <summary>Why must an input reference also appear in depends_on?</summary>
+            <p>The data edge and scheduling edge must agree. Otherwise a consumer could ask for output from a producer it does not wait for.</p>
+          </details>
+          <details>
+            <summary>Why are route cycles allowed but dependency cycles rejected?</summary>
+            <p><code>depends_on</code> defines the static DAG. Routes are separately validated bounded back-edges with explicit iteration limits, preserving termination.</p>
+          </details>
+          <details>
+            <summary>Why does structural-only decoding skip files?</summary>
+            <p>Tests and editor tooling can validate object shape without requiring the author's filesystem. File-backed details remain unresolved rather than being guessed.</p>
+          </details>
+        </div>
+      </section>
+
+      <section id="result">
+        <div class="kicker">10 · Handoff</div>
+        <h2>What the engine receives</h2>
+        <div class="success">
+          <div>
+            <h3>Resolved</h3>
+            <ul>
+              <li>Defaults and profiles folded into steps</li>
+              <li>Backend, transport, context, and isolation concrete</li>
+              <li>Prompt and template bodies snapshotted</li>
+              <li>JSON Schema files parsed into field trees</li>
+              <li>Modules expanded and references rewritten</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Proven</h3>
+            <ul>
+              <li>Step kinds are internally consistent</li>
+              <li>References and types line up</li>
+              <li>Retries and loops are bounded</li>
+              <li>The dependency graph is acyclic</li>
+              <li>Source and module provenance is available</li>
+            </ul>
+          </div>
+        </div>
+        <div class="callout" style="margin-top:1rem">
+          <strong>Compact mental model</strong>
+          <span>The loader behaves like a small compiler: decode syntax → resolve symbols and assets → inline modules → type-check references → emit an execution graph.</span>
+        </div>
+      </section>
+
+      <section id="source-map">
+        <div class="kicker">Source map</div>
+        <h2>Where each behavior lives</h2>
+        <div class="type-table-wrap card">
+          <table>
+            <thead><tr><th>Concern</th><th>File</th></tr></thead>
+            <tbody>
+              <tr><td>Core types and custom TOML decoding</td><td><a href="../internal/workflow/schema.go"><code>schema.go</code></a></td></tr>
+              <tr><td>Entry points, asset ordering, profiles, defaults</td><td><a href="../internal/workflow/load.go"><code>load.go</code></a></td></tr>
+              <tr><td>Recursive module expansion</td><td><a href="../internal/workflow/module.go"><code>module.go</code></a></td></tr>
+              <tr><td>Structural and referential validation</td><td><a href="../internal/workflow/validate.go"><code>validate.go</code></a></td></tr>
+              <tr><td>Conditions</td><td><a href="../internal/workflow/condition.go"><code>condition.go</code></a></td></tr>
+              <tr><td>Agent files and output templates</td><td><a href="../internal/workflow/agent_file.go"><code>agent_file.go</code></a></td></tr>
+              <tr><td>Skill snapshots</td><td><a href="../internal/workflow/skill.go"><code>skill.go</code></a></td></tr>
+              <tr><td>Project-local profiles</td><td><a href="../internal/workflow/load_profiles.go"><code>load_profiles.go</code></a></td></tr>
+              <tr><td>JSON Schema conversion</td><td><a href="../internal/workflow/schema_json.go"><code>schema_json.go</code></a></td></tr>
+              <tr><td>Base agent output fields</td><td><a href="../internal/workflow/base_schema.go"><code>base_schema.go</code></a></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer>
+        Derived from the current <code>internal/workflow</code> implementation.
+        Detailed Mermaid sources: <a href="workflow-object-graph.md">object graph</a>
+        and <a href="workflow-parsing-pipeline.md">parsing pipeline</a>.
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

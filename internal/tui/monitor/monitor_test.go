@@ -1613,6 +1613,46 @@ func TestMonitorRecoveryGateDeduplicatesReplayLiveBoundary(t *testing.T) {
 	}
 }
 
+func TestMonitorInputGatesDeduplicateReplayLiveBoundary(t *testing.T) {
+	t.Run("block_on", func(t *testing.T) {
+		m := newMonitorWithSteps(t)
+		request := engine.InputRequest{RunID: "run-1", StepID: "a"}
+		m, _ = m.Update(EngineEventMsg{Event: request})
+		m, _ = m.Update(EngineEventMsg{Event: request, IsLive: true})
+		if got := len(m.inputQueue); got != 1 {
+			t.Fatalf("replayed + live input requests produced %d gates, want 1", got)
+		}
+	})
+
+	t.Run("agent question", func(t *testing.T) {
+		m := newMonitorWithSteps(t)
+		request := interaction.QuestionRequest{ID: "q1", Fields: []interaction.QuestionField{{ID: "answer", Prompt: "Answer?", Kind: interaction.FieldText}}}
+		question := engine.AgentQuestion{RunID: "run-1", StepID: "a", Request: request}
+		m, _ = m.Update(EngineEventMsg{Event: question})
+		m, _ = m.Update(EngineEventMsg{Event: question, IsLive: true})
+		if got := len(m.inputQueue); got != 1 {
+			t.Fatalf("replayed + live agent questions produced %d gates, want 1", got)
+		}
+	})
+
+	t.Run("same question id on different steps", func(t *testing.T) {
+		m := newMonitorWithSteps(t)
+		request := interaction.QuestionRequest{ID: "q1", Fields: []interaction.QuestionField{{ID: "answer", Prompt: "Answer?", Kind: interaction.FieldText}}}
+		m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{RunID: "run-1", StepID: "a", Request: request}})
+		m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestion{RunID: "run-1", StepID: "b", Request: request}})
+		if got := len(m.inputQueue); got != 2 {
+			t.Fatalf("two steps with the same request id produced %d gates, want 2", got)
+		}
+		m, _ = m.Update(EngineEventMsg{Event: engine.AgentQuestionResolved{RunID: "run-1", StepID: "a", RequestID: "q1"}})
+		if got := len(m.inputQueue); got != 1 {
+			t.Fatalf("resolving one step left %d gates, want 1", got)
+		}
+		if m.inputQueue[0].stepID != "b" {
+			t.Fatalf("remaining question belongs to %q, want b", m.inputQueue[0].stepID)
+		}
+	})
+}
+
 func TestMonitorRecoveryActionsStaySynchronized(t *testing.T) {
 	tests := []struct {
 		name       string

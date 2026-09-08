@@ -675,8 +675,9 @@ func (r *reporter) Question(ctx context.Context, req interaction.QuestionRequest
 }
 
 type pendingQuestion struct {
-	request interaction.QuestionRequest
-	reply   chan<- interaction.QuestionResponse
+	request  interaction.QuestionRequest
+	reply    chan<- interaction.QuestionResponse
+	restored bool
 }
 
 // ── scheduler ────────────────────────────────────────────────────────────────
@@ -801,6 +802,10 @@ type scheduler struct {
 	skippedByGuard map[string]bool
 
 	pendingQuestions map[string]map[string]pendingQuestion
+	// restoredQuestionResponses accumulates answers to questions whose original
+	// worker died. Once the last answer arrives, the scheduler resumes the
+	// durable agent session with the complete response set as a new turn.
+	restoredQuestionResponses map[string][]interaction.QuestionResponse
 
 	// Per-step cancellation (spec 07 B1). Each dispatched worker gets its own
 	// child context derived from the run context, its CancelFunc stored here keyed
@@ -843,46 +848,47 @@ func newScheduler(
 		states[s.ID] = &step.State{ID: s.ID, Status: step.StatusPending}
 	}
 	return &scheduler{
-		wf:                    wf,
-		runID:                 runID,
-		states:                states,
-		inbox:                 inbox,
-		subs:                  subs,
-		exec:                  exec,
-		cancel:                cancel,
-		writer:                writer,
-		runDir:                runDir,
-		structured:            make(map[string]map[string]any),
-		stepFeedback:          make(map[string]string),
-		rerunSource:           make(map[string]string),
-		rerunMax:              make(map[string]int),
-		pendingLoops:          make(map[string]*loopIntent),
-		classInFlight:         make(map[string]int),
-		retryNotBefore:        make(map[string]time.Time),
-		jigRoot:               jigRoot,
-		repoRoot:              repoRoot,
-		worktrees:             make(map[string]string),
-		wtBaseSHAs:            make(map[string]string),
-		diffs:                 make(map[string]string),
-		executionViews:        make(map[string]executionWorkspace),
-		stepCommits:           make(map[string]string),
-		pendingUserInputs:     make(map[string][]workflow.Input),
-		collectedUserInputs:   make(map[string][]ResolvedInput),
-		preResolvedInputs:     make(map[string][]ResolvedInput),
-		stickyUserInputs:      make(map[string][]ResolvedInput),
-		resumeSessions:        make(map[string]string),
-		stepMessage:           make(map[string]string),
-		reviewSessions:        make(map[string]review.Session),
-		stepInputCount:        make(map[string]int),
-		recoverCount:          make(map[string]int),
-		sessionResumeInFlight: make(map[string]bool),
-		failedSessionResume:   make(map[string]bool),
-		seenEscalations:       make(map[string]bool),
-		skippedByOperator:     make(map[string]bool),
-		skippedByGuard:        make(map[string]bool),
-		pendingQuestions:      make(map[string]map[string]pendingQuestion),
-		stepCancels:           make(map[string]context.CancelFunc),
-		stopping:              make(map[string]bool),
+		wf:                        wf,
+		runID:                     runID,
+		states:                    states,
+		inbox:                     inbox,
+		subs:                      subs,
+		exec:                      exec,
+		cancel:                    cancel,
+		writer:                    writer,
+		runDir:                    runDir,
+		structured:                make(map[string]map[string]any),
+		stepFeedback:              make(map[string]string),
+		rerunSource:               make(map[string]string),
+		rerunMax:                  make(map[string]int),
+		pendingLoops:              make(map[string]*loopIntent),
+		classInFlight:             make(map[string]int),
+		retryNotBefore:            make(map[string]time.Time),
+		jigRoot:                   jigRoot,
+		repoRoot:                  repoRoot,
+		worktrees:                 make(map[string]string),
+		wtBaseSHAs:                make(map[string]string),
+		diffs:                     make(map[string]string),
+		executionViews:            make(map[string]executionWorkspace),
+		stepCommits:               make(map[string]string),
+		pendingUserInputs:         make(map[string][]workflow.Input),
+		collectedUserInputs:       make(map[string][]ResolvedInput),
+		preResolvedInputs:         make(map[string][]ResolvedInput),
+		stickyUserInputs:          make(map[string][]ResolvedInput),
+		resumeSessions:            make(map[string]string),
+		stepMessage:               make(map[string]string),
+		reviewSessions:            make(map[string]review.Session),
+		stepInputCount:            make(map[string]int),
+		recoverCount:              make(map[string]int),
+		sessionResumeInFlight:     make(map[string]bool),
+		failedSessionResume:       make(map[string]bool),
+		seenEscalations:           make(map[string]bool),
+		skippedByOperator:         make(map[string]bool),
+		skippedByGuard:            make(map[string]bool),
+		pendingQuestions:          make(map[string]map[string]pendingQuestion),
+		restoredQuestionResponses: make(map[string][]interaction.QuestionResponse),
+		stepCancels:               make(map[string]context.CancelFunc),
+		stopping:                  make(map[string]bool),
 		postExecChain: []postExecHandler{
 			phCaptureWorktreeDiff,
 			phValidateMutationPaths,
@@ -1918,6 +1924,7 @@ func (s *scheduler) handleResume(m resumeMsg) {
 	// No captured session id → leave resumeSessions unset: dispatch builds the
 	// full prompt and the runner starts a fresh session (documented degrade).
 	state.Attempt++
+	s.restoredHold = false
 	s.transition(m.stepID, step.StatusStopped, step.StatusPending)
 }
 
@@ -2147,6 +2154,7 @@ func (s *scheduler) handleResolveIntegration(m resolveIntegrationMsg) {
 	if state == nil || state.Status != step.StatusAwaitingIntegration {
 		return // stale or duplicate
 	}
+	s.restoredHold = false
 
 	if m.abort {
 		// Discard the conflicted/staged squash so the run worktree is clean, then
@@ -2205,6 +2213,7 @@ func (s *scheduler) handleResolveIntegrationWithAgent(m resolveIntegrationWithAg
 	if state == nil || state.Status != step.StatusAwaitingIntegration || s.resolver == nil || st == nil || st.Type != workflow.StepAgent {
 		return
 	}
+	s.restoredHold = false
 	paths := mergeConflictPaths(s.runWorktree)
 	if len(paths) == 0 {
 		s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("step %q: no unresolved integration conflict remains", m.stepID)})
@@ -2545,7 +2554,7 @@ func (s *scheduler) evalBlockOn(stepID string, wfStep *workflow.Step) bool {
 // It stashes the session resume info and resets the step to pending for re-dispatch.
 func (s *scheduler) handleAgentInput(m agentInputMsg) {
 	state := s.states[m.stepID]
-	if state.Status != step.StatusNeedsInput {
+	if state == nil || state.Status != step.StatusNeedsInput {
 		return
 	}
 	if state.Result == nil || state.Result.SessionID == "" {
@@ -2563,6 +2572,7 @@ func (s *scheduler) handleAgentInput(m agentInputMsg) {
 	}
 	s.resumeSessions[m.stepID] = state.Result.SessionID
 	s.stepMessage[m.stepID] = m.text
+	s.restoredHold = false
 	s.transition(m.stepID, step.StatusNeedsInput, step.StatusPending)
 }
 

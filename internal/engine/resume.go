@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"jig/internal/datastore"
+	"jig/internal/interaction"
 	"jig/internal/manifest"
 	"jig/internal/review"
 	"jig/internal/step"
@@ -105,12 +106,9 @@ func releaseRunLock(f *os.File) {
 	_ = f.Close()
 }
 
-// Resume restores an unfinished run whose durable parks are reopenable under
-// Spec 20: document-review gates and/or workers interrupted mid-flight
-// (running / validating). Interrupted workers are journaled onto the recovery
-// gate before the scheduler loop starts. Non-worker parks (needs_input,
-// pre-crash awaiting_recovery, stopped, awaiting_integration) are rejected
-// until Spec 21.
+// Resume restores every durable unfinished park under one scheduler. Workers
+// interrupted mid-flight are moved to recovery; parks that already existed
+// before process death are rehydrated in place.
 func (m *Manager) Resume(runID string) (*Run, error) {
 	if runID == "" || filepath.Base(runID) != runID || strings.ContainsAny(runID, `/\\`) {
 		return nil, fmt.Errorf("engine: invalid run id %q", runID)
@@ -140,7 +138,7 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	if err != nil {
 		return fail(fmt.Errorf("resume workflow: %w", err))
 	}
-	restored, sessions, interrupted, recoverySkipped, err := restoreUnfinishedCheckpoint(runDir, wf, events)
+	checkpoint, err := restoreUnfinishedCheckpoint(runDir, wf, events)
 	if err != nil {
 		return fail(err)
 	}
@@ -177,18 +175,18 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir, m.root, repoRoot, onDone)
 	s.resolver = m.resolver
 	s.seq = seq
-	s.states = restored
-	s.reviewSessions = sessions
-	s.restoredHold = len(sessions) > 0 || len(interrupted) > 0
-	for stepID := range recoverySkipped {
+	s.states = checkpoint.states
+	s.reviewSessions = checkpoint.reviewSessions
+	s.restoredHold = checkpoint.hasParks()
+	for stepID := range checkpoint.recoverySkipped {
 		s.skippedByOperator[stepID] = true
 	}
 	for i := range wf.Steps {
-		if restored[wf.Steps[i].ID].Status == step.StatusSkipped && wf.Steps[i].When != "" {
+		if checkpoint.states[wf.Steps[i].ID].Status == step.StatusSkipped && wf.Steps[i].When != "" {
 			s.skippedByGuard[wf.Steps[i].ID] = true
 		}
 	}
-	if err := s.restoreRunBranch(); err != nil {
+	if err := s.restoreRunBranch(len(checkpoint.integrations) > 0); err != nil {
 		m.mu.Lock()
 		delete(m.runs, runID)
 		m.mu.Unlock()
@@ -199,21 +197,26 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	// Journal the entire recovery transaction before runLoop so a crash during
 	// reopen cannot lose the decision surface (Spec 20 D18). The events are
 	// fanned out only after the batch is durable.
-	var recoveryEvents []Event
-	for _, stepID := range interrupted {
-		recoveryEvents = append(recoveryEvents, s.parkInterruptedWorker(stepID)...)
-	}
-	if err := s.emitBatch(recoveryEvents); err != nil {
+	reopenEvents, err := s.rehydrateParks(checkpoint)
+	if err != nil {
 		m.mu.Lock()
 		delete(m.runs, runID)
 		m.mu.Unlock()
-		if s.runWorktree != "" {
+		_ = w.Close()
+		cancel()
+		return fail(err)
+	}
+	if err := s.emitBatch(reopenEvents); err != nil {
+		m.mu.Lock()
+		delete(m.runs, runID)
+		m.mu.Unlock()
+		if s.runWorktree != "" && len(checkpoint.integrations) == 0 {
 			_ = removeWorktree(s.repoRoot, s.runWorktree)
 			s.runWorktree = ""
 		}
 		_ = w.Close()
 		cancel()
-		return fail(fmt.Errorf("journal recovery parks: %w", err))
+		return fail(fmt.Errorf("journal reopened parks: %w", err))
 	}
 	go s.runLoop(ctx)
 	return run, nil
@@ -228,18 +231,44 @@ const processInterruptedErr = "process exited while step was running"
 // It is internal journal provenance, not an operator-selectable action.
 const processInterruptedRecoveryAction = "process_interrupted"
 
-func restoreUnfinishedCheckpoint(runDir string, wf *workflow.Workflow, events []Event) (map[string]*step.State, map[string]review.Session, []string, map[string]bool, error) {
+const lostInputRecoveryAction = "lost_input"
+
+type unfinishedCheckpoint struct {
+	states              map[string]*step.State
+	reviewSessions      map[string]review.Session
+	interrupted         map[string]bool
+	recoveries          map[string]RecoveryRequest
+	inputs              map[string]InputRequest
+	questions           map[string][]AgentQuestion
+	integrations        map[string]IntegrationConflictRequest
+	stopped             map[string]bool
+	missingInputPayload map[string]string
+	recoverySkipped     map[string]bool
+}
+
+func (c *unfinishedCheckpoint) hasParks() bool {
+	return len(c.reviewSessions) > 0 || len(c.interrupted) > 0 || len(c.recoveries) > 0 ||
+		len(c.inputs) > 0 || len(c.questions) > 0 || len(c.integrations) > 0 ||
+		len(c.stopped) > 0 || len(c.missingInputPayload) > 0
+}
+
+func restoreUnfinishedCheckpoint(runDir string, wf *workflow.Workflow, events []Event) (*unfinishedCheckpoint, error) {
 	if wf == nil {
-		return nil, nil, nil, nil, fmt.Errorf("resume: workflow is unavailable")
+		return nil, fmt.Errorf("resume: workflow is unavailable")
 	}
 	states := make(map[string]*step.State, len(wf.Steps))
 	for i := range wf.Steps {
 		states[wf.Steps[i].ID] = &step.State{ID: wf.Steps[i].ID, Status: step.StatusPending}
 	}
-	requests := make(map[string]ReviewRequest)
+	reviewRequests := make(map[string]ReviewRequest)
+	recoveryRequests := make(map[string]RecoveryRequest)
+	inputRequests := make(map[string]InputRequest)
+	questions := make(map[string][]AgentQuestion)
+	integrationRequests := make(map[string]IntegrationConflictRequest)
 	verdicts := make(map[string]string)
 	recoverySkipped := make(map[string]bool)
 	interruptedRecovery := make(map[string]bool)
+	lostInputRecovery := make(map[string]bool)
 	var started *RunStarted
 	for _, event := range events {
 		switch event := event.(type) {
@@ -247,11 +276,11 @@ func restoreUnfinishedCheckpoint(runDir string, wf *workflow.Workflow, events []
 			copy := event
 			started = &copy
 		case RunFinished:
-			return nil, nil, nil, nil, fmt.Errorf("resume: run is already finished")
+			return nil, fmt.Errorf("resume: run is already finished")
 		case StepStatus:
 			state := states[event.StepID]
 			if state == nil {
-				return nil, nil, nil, nil, fmt.Errorf("resume: workflow no longer contains step %q", event.StepID)
+				return nil, fmt.Errorf("resume: workflow no longer contains step %q", event.StepID)
 			}
 			state.Status = event.To
 			state.Attempt = event.Attempt
@@ -276,22 +305,47 @@ func restoreUnfinishedCheckpoint(runDir string, wf *workflow.Workflow, events []
 			} else {
 				delete(interruptedRecovery, event.StepID)
 			}
+			if event.To == step.StatusAwaitingRecovery && event.RecoveryAction == lostInputRecoveryAction {
+				lostInputRecovery[event.StepID] = true
+			} else {
+				delete(lostInputRecovery, event.StepID)
+			}
 			if event.To != step.StatusAwaitingReview {
-				delete(requests, event.StepID)
+				delete(reviewRequests, event.StepID)
+			}
+			if event.To != step.StatusAwaitingRecovery {
+				delete(recoveryRequests, event.StepID)
+			}
+			if event.To != step.StatusNeedsInput {
+				delete(inputRequests, event.StepID)
+				delete(questions, event.StepID)
+			}
+			if event.To != step.StatusAwaitingIntegration {
+				delete(integrationRequests, event.StepID)
 			}
 		case ReviewRequest:
-			requests[event.StepID] = event
+			reviewRequests[event.StepID] = event
 		case ReviewSubmitted:
 			verdicts[event.StepID] = event.Verdict
-			delete(requests, event.StepID)
+			delete(reviewRequests, event.StepID)
+		case RecoveryRequest:
+			recoveryRequests[event.StepID] = event
+		case InputRequest:
+			inputRequests[event.StepID] = event
+		case AgentQuestion:
+			questions[event.StepID] = upsertQuestion(questions[event.StepID], event)
+		case AgentQuestionResolved:
+			questions[event.StepID] = removeQuestion(questions[event.StepID], event.RequestID)
+		case IntegrationConflictRequest:
+			integrationRequests[event.StepID] = event
 		}
 	}
 	if started == nil || started.Workflow != wf.Meta.Name || len(started.Steps) != len(wf.Steps) {
-		return nil, nil, nil, nil, fmt.Errorf("resume: workflow does not match the historical run")
+		return nil, fmt.Errorf("resume: workflow does not match the historical run")
 	}
 	for i, id := range started.Steps {
 		if wf.Steps[i].ID != id {
-			return nil, nil, nil, nil, fmt.Errorf("resume: workflow step order changed at %q", id)
+			return nil, fmt.Errorf("resume: workflow step order changed at %q", id)
 		}
 	}
 	for id, verdict := range verdicts {
@@ -303,49 +357,205 @@ func restoreUnfinishedCheckpoint(runDir string, wf *workflow.Workflow, events []
 		}
 	}
 
-	sessions := make(map[string]review.Session)
-	var interrupted []string
-	for id, state := range states {
+	checkpoint := &unfinishedCheckpoint{
+		states:              states,
+		reviewSessions:      make(map[string]review.Session),
+		interrupted:         make(map[string]bool),
+		recoveries:          make(map[string]RecoveryRequest),
+		inputs:              make(map[string]InputRequest),
+		questions:           make(map[string][]AgentQuestion),
+		integrations:        make(map[string]IntegrationConflictRequest),
+		stopped:             make(map[string]bool),
+		missingInputPayload: make(map[string]string),
+		recoverySkipped:     recoverySkipped,
+	}
+	for i := range wf.Steps {
+		id := wf.Steps[i].ID
+		state := states[id]
 		switch state.Status {
 		case step.StatusPending, step.StatusSucceeded, step.StatusSkipped, step.StatusFailed:
 		case step.StatusAwaitingReview:
-			req, ok := requests[id]
+			req, ok := reviewRequests[id]
 			if !ok {
-				return nil, nil, nil, nil, fmt.Errorf("resume: step %q is waiting for non-review input", id)
+				return nil, fmt.Errorf("resume: step %q has no durable review request", id)
 			}
 			sess, err := restoreReviewSession(runDir, req)
 			if err != nil {
-				return nil, nil, nil, nil, err
+				return nil, err
 			}
-			sessions[id] = sess
+			checkpoint.reviewSessions[id] = sess
 		case step.StatusRunning, step.StatusValidating:
-			interrupted = append(interrupted, id)
+			checkpoint.interrupted[id] = true
 		case step.StatusAwaitingRecovery:
-			if !interruptedRecovery[id] {
-				return nil, nil, nil, nil, fmt.Errorf("resume: step %q is %s; reopen of this park requires Spec 21 unfinished-park restore", id, state.Status)
+			req, ok := recoveryRequests[id]
+			if !ok {
+				errText := "step was awaiting recovery when the jig process exited"
+				if interruptedRecovery[id] {
+					errText = processInterruptedErr
+				} else if lostInputRecovery[id] {
+					errText = "process exited while step needed input, but its durable input could not be restored"
+				}
+				req = RecoveryRequest{RunID: started.RunID, StepID: id, Err: errText}
 			}
-			interrupted = append(interrupted, id)
-		case step.StatusNeedsInput, step.StatusAwaitingIntegration, step.StatusStopped:
-			return nil, nil, nil, nil, fmt.Errorf("resume: step %q is %s; reopen of this park requires Spec 21 unfinished-park restore", id, state.Status)
+			checkpoint.recoveries[id] = req
+		case step.StatusNeedsInput:
+			switch {
+			case len(questions[id]) > 0:
+				checkpoint.questions[id] = questions[id]
+			case inputRequests[id].StepID != "":
+				checkpoint.inputs[id] = inputRequests[id]
+			default:
+				checkpoint.missingInputPayload[id] = "process exited while step needed input, but no durable input request was found"
+			}
+		case step.StatusAwaitingIntegration:
+			checkpoint.integrations[id] = integrationRequests[id]
+		case step.StatusStopped:
+			checkpoint.stopped[id] = true
 		default:
-			return nil, nil, nil, nil, fmt.Errorf("resume: step %q is %s; only review gates and interrupted workers can resume", id, state.Status)
+			return nil, fmt.Errorf("resume: step %q has unsupported durable status %s", id, state.Status)
 		}
 	}
-	if len(sessions) == 0 && len(interrupted) == 0 && len(recoverySkipped) == 0 {
-		return nil, nil, nil, nil, fmt.Errorf("resume: run has no reopenable park")
+	if !checkpoint.hasParks() && len(recoverySkipped) == 0 {
+		return nil, fmt.Errorf("resume: run has no reopenable park")
 	}
-	// Stable order matches workflow step order for deterministic RecoveryRequest fan-out.
-	ordered := make([]string, 0, len(interrupted))
-	for i := range wf.Steps {
-		id := wf.Steps[i].ID
-		for _, interruptedID := range interrupted {
-			if interruptedID == id {
-				ordered = append(ordered, id)
-				break
+	return checkpoint, nil
+}
+
+func upsertQuestion(existing []AgentQuestion, question AgentQuestion) []AgentQuestion {
+	for i := range existing {
+		if existing[i].Request.ID == question.Request.ID {
+			existing[i] = question
+			return existing
+		}
+	}
+	return append(existing, question)
+}
+
+func removeQuestion(existing []AgentQuestion, requestID string) []AgentQuestion {
+	for i := range existing {
+		if existing[i].Request.ID == requestID {
+			return append(existing[:i], existing[i+1:]...)
+		}
+	}
+	return existing
+}
+
+func (s *scheduler) rehydrateParks(checkpoint *unfinishedCheckpoint) ([]Event, error) {
+	var events []Event
+	for i := range s.wf.Steps {
+		stepID := s.wf.Steps[i].ID
+		state := s.states[stepID]
+		switch state.Status {
+		case step.StatusRunning, step.StatusValidating:
+			events = append(events, s.parkInterruptedWorker(stepID)...)
+		case step.StatusAwaitingRecovery:
+			s.restoreParkSession(stepID)
+			s.reattachStepWorktree(stepID)
+			req := checkpoint.recoveries[stepID]
+			if req.Err == "" {
+				req.Err = "step was awaiting recovery when the jig process exited"
 			}
+			if state.Result != nil {
+				state.Result.Err = req.Err
+				state.Result.Status = step.StatusFailed
+				req.CanResume = s.stepCanResume(stepID, state.Result.SessionID)
+			} else {
+				req.CanResume = false
+			}
+			req.RunID = s.runID
+			req.StepID = stepID
+			events = append(events, req)
+		case step.StatusStopped:
+			s.restoreParkSession(stepID)
+			s.reattachStepWorktree(stepID)
+		case step.StatusNeedsInput:
+			s.restoreParkSession(stepID)
+			s.reattachStepWorktree(stepID)
+			errText := checkpoint.missingInputPayload[stepID]
+			if errText == "" && (state.Result == nil || !s.stepCanResume(stepID, state.Result.SessionID)) {
+				errText = "process exited while step needed input, but its agent session cannot be resumed"
+			}
+			if errText != "" {
+				events = append(events, s.parkLostInput(stepID, errText)...)
+				continue
+			}
+			if pending := checkpoint.questions[stepID]; len(pending) > 0 {
+				s.pendingQuestions[stepID] = make(map[string]pendingQuestion, len(pending))
+				for _, question := range pending {
+					question.RunID = s.runID
+					s.pendingQuestions[stepID][question.Request.ID] = pendingQuestion{request: question.Request, restored: true}
+					events = append(events, question)
+				}
+			} else {
+				request := checkpoint.inputs[stepID]
+				request.RunID = s.runID
+				events = append(events, request)
+			}
+		case step.StatusAwaitingIntegration:
+			paths := mergeConflictPaths(s.runWorktree)
+			if len(paths) == 0 {
+				return nil, fmt.Errorf("resume: step %q is awaiting integration but the run worktree has no unresolved conflict markers", stepID)
+			}
+			request := checkpoint.integrations[stepID]
+			events = append(events, s.integrationConflictRequest(stepID, paths, request.Resolution))
 		}
 	}
-	return states, sessions, ordered, recoverySkipped, nil
+	return events, nil
+}
+
+func (s *scheduler) restoreParkSession(stepID string) {
+	state := s.states[stepID]
+	if state == nil {
+		return
+	}
+	if state.Result == nil {
+		state.Result = loadPersistedResult(s.runDir, stepID, state.Status, "", "")
+	}
+	if info, err := datastore.ReadSession(s.runDir, stepID); err == nil && info.SessionID != "" {
+		state.Result.SessionID = info.SessionID
+	}
+}
+
+func (s *scheduler) reattachStepWorktree(stepID string) {
+	st := s.stepByID(stepID)
+	if st == nil || st.Isolation != workflow.IsolationWorktree || s.jigRoot == "" {
+		return
+	}
+	path := filepath.Join(s.jigRoot, "worktrees", s.runID, stepID)
+	if !directoryExists(path) {
+		return
+	}
+	s.worktrees[stepID] = path
+	if !registeredWorktree(s.repoRoot, path, s.stepBranchName(stepID)) {
+		return
+	}
+	if base, err := gitCmd(path, "merge-base", "HEAD", s.runBranch); err == nil {
+		if base = strings.TrimSpace(base); base != "" {
+			s.wtBaseSHAs[stepID] = base
+		}
+	}
+}
+
+func (s *scheduler) parkLostInput(stepID, errText string) []Event {
+	state := s.states[stepID]
+	if state == nil || state.Status != step.StatusNeedsInput {
+		return nil
+	}
+	if state.Result == nil {
+		state.Result = &step.Result{}
+	}
+	state.Result.Status = step.StatusFailed
+	state.Result.Err = errText
+	status := s.transitionEvent(stepID, step.StatusNeedsInput, step.StatusAwaitingRecovery, lostInputRecoveryAction)
+	return []Event{status, RecoveryRequest{RunID: s.runID, StepID: stepID, Err: errText}}
+}
+
+func restoredQuestionMessage(responses []interaction.QuestionResponse) string {
+	data, err := json.Marshal(responses)
+	if err != nil {
+		return "The jig process exited while you were waiting for AskUserQuestion input. Continue using the operator's submitted answers."
+	}
+	return "The jig process exited while you were waiting for AskUserQuestion input. Continue using these operator responses: " + string(data)
 }
 
 // parkInterruptedWorker prepares the durable events that move an interrupted
@@ -370,21 +580,7 @@ func (s *scheduler) parkInterruptedWorker(stepID string) []Event {
 	state.Result.Err = processInterruptedErr
 	state.Result.Status = step.StatusFailed
 
-	// Re-attach surviving mutator worktrees so Recover(resume) continues against
-	// the same dirty tree when possible (Spec 20 D10).
-	if st := s.stepByID(stepID); st != nil && st.Isolation == workflow.IsolationWorktree && s.jigRoot != "" {
-		path := filepath.Join(s.jigRoot, "worktrees", s.runID, stepID)
-		if directoryExists(path) {
-			s.worktrees[stepID] = path
-			if registeredWorktree(s.repoRoot, path, s.stepBranchName(stepID)) {
-				if base, err := gitCmd(path, "merge-base", "HEAD", s.runBranch); err == nil {
-					if base = strings.TrimSpace(base); base != "" {
-						s.wtBaseSHAs[stepID] = base
-					}
-				}
-			}
-		}
-	}
+	s.reattachStepWorktree(stepID)
 
 	status := s.transitionEvent(stepID, from, step.StatusAwaitingRecovery, processInterruptedRecoveryAction)
 	return []Event{status, RecoveryRequest{
@@ -475,7 +671,7 @@ func restoreReviewSession(runDir string, req ReviewRequest) (review.Session, err
 	return review.Session{StepID: req.StepID, RoundID: req.RoundID, Documents: docs}, nil
 }
 
-func (s *scheduler) restoreRunBranch() error {
+func (s *scheduler) restoreRunBranch(preserveConflict bool) error {
 	if s.repoRoot == "" {
 		return nil
 	}
@@ -487,13 +683,31 @@ func (s *scheduler) restoreRunBranch() error {
 		return fmt.Errorf("integration branch %s is missing", branch)
 	}
 	wtPath := filepath.Join(s.jigRoot, "worktrees", s.runID, "_run")
-	// A crashed process can leave the run branch registered to its old worktree.
-	// The scheduler lock establishes single ownership among resume-capable jig processes.
-	_ = removeWorktree(s.repoRoot, wtPath)
-	_, _ = gitCmd(s.repoRoot, "worktree", "prune")
-	base, err := createWorktreeAt(s.repoRoot, wtPath, branch, branch)
-	if err != nil {
-		return err
+	var base string
+	if preserveConflict {
+		// Recreating the run worktree would discard the index/conflict index
+		// state that is the integration gate's durable payload.
+		if !registeredWorktree(s.repoRoot, wtPath, branch) {
+			return fmt.Errorf("integration worktree for %s is missing or is not registered to %s", s.runID, branch)
+		}
+		if len(mergeConflictPaths(wtPath)) == 0 {
+			return fmt.Errorf("integration worktree for %s has no unresolved conflict markers", s.runID)
+		}
+		var err error
+		base, err = currentHEAD(wtPath)
+		if err != nil {
+			return fmt.Errorf("read integration worktree HEAD: %w", err)
+		}
+	} else {
+		// A crashed process can leave the run branch registered to its old worktree.
+		// The scheduler lock establishes single ownership among resume-capable jig processes.
+		_ = removeWorktree(s.repoRoot, wtPath)
+		_, _ = gitCmd(s.repoRoot, "worktree", "prune")
+		var err error
+		base, err = createWorktreeAt(s.repoRoot, wtPath, branch, branch)
+		if err != nil {
+			return err
+		}
 	}
 	s.runBranch = branch
 	s.runWorktree = wtPath

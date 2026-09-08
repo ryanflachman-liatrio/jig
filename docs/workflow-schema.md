@@ -1037,10 +1037,11 @@ gates, engine-observed metadata, `review` (human-in-the-loop) steps, scalar
 
 **Deferred:** map/fan-out over a dynamic list (N parallel steps from data),
 exact mid-turn LLM rewind, secrets management, remote/distributed execution.
-An unfinished historical run parked on document-review gates and/or workers
-interrupted mid-execution (`running` / `validating`) can restore a live
-scheduler via `Manager.Resume` (Spec 20): interrupted workers park on the
-recovery gate; durable mid-flight SessionID lives in
-`.jig/runs/<id>/steps/<step-id>/session.json`. Other unfinished parks
-(`needs_input`, pre-crash `awaiting_recovery`, `stopped`,
-`awaiting_integration`) reopen under Spec 21.
+Any unfinished historical run can restore a live scheduler through
+`Manager.Resume` (Specs 20 and 21). Interrupted workers (`running` /
+`validating`) move to the recovery gate; existing review, recovery, stopped,
+input, question, and integration-conflict parks restore in place. Mixed park
+kinds reopen together. Durable agent SessionID lives in
+`.jig/runs/<id>/steps/<step-id>/session.json`; an input park that lacks its
+request payload or resumable session degrades to recovery. An integration park
+fails reopening when its registered run worktree or conflict markers are gone.

@@ -137,16 +137,17 @@ _Avoid_: Retry, rerun (reserve "retry" for the automatic `on_failure = "retry"`)
 **Stop** interrupts a single running step (the run stays alive and becomes quiescent);
 **resume** continues that step's agent session with a new message. Stop is the way to
 reach quiescence mid-run so a reset can proceed; resume continues the conversation, not
-the exact interrupted turn. Same-process only — after process death a `stopped` park
-needs Spec 21 to restore.
+the exact interrupted turn. After process death, `Manager.Resume` restores the stopped
+park and its durable session before the same Resume-step action is used.
 _Avoid_: Pause; Cancel (reserve "cancel" for tearing down the whole run).
 
 **Crash reopen** (a run):
-Restoring a live scheduler for an unfinished run whose workers died with the
-process (`Manager.Resume`, Spec 20). Durable `running` / `validating` steps park
-on the recovery gate; mid-flight SessionID is read from `session.json`. Distinct
-from live Stop/Resume: never routes through `StatusStopped`. Review-parked steps
-restore alongside interrupted workers. Other parks → Spec 21.
+Restoring a live scheduler for an unfinished run after its owning process dies
+(`Manager.Resume`, Specs 20 and 21). Durable `running` / `validating` steps move
+to recovery; review, recovery, stopped, input/question, and integration parks
+restore in place, including mixed runs. Mid-flight SessionID is read from
+`session.json`. Distinct from live Stop/Resume: interrupted workers never route
+through `StatusStopped`.
 _Avoid_: Recover (reserve for the gate action after reopen); Reset.
 
 **Quiescent**:

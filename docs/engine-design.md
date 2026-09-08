@@ -45,8 +45,8 @@ manifest, and TUI (D). Alternatives considered and rejected:
 3. **Journal before fan-out.** Events are appended to `journal.jsonl`
    *synchronously, before* publishing to subscribers. In-memory state is
    always `fold(journal)`; the TUI can never have seen something the journal
-   missed; crash reopen (Spec 20) and review-gate resume are "replay the
-   journal" under `scheduler.lock` with no redesign.
+   missed; crash reopen and durable-gate resume are "replay the journal"
+   under `scheduler.lock` with no redesign.
 4. **The engine never imports Bubble Tea; the TUI never mutates engine
    state.** Events out through channels; verdicts in through `Run.Resolve`.
    Keeps `jig run` (headless / CI) possible and engine tests terminal-free.
@@ -326,6 +326,34 @@ A stopped step keeps the run alive and quiescent: the run stays open but idles,
 waiting for an operator action (resume or reset). Quiescence is the precondition
 for `Run.Reset` — reset never mutates while a worker is live.
 
+After process death, `Manager.Resume` restores `stopped` in place and reloads
+its durable `session.json`. The existing `Run.Resume` action then continues that
+session, or restarts fresh when no session id was captured.
+
+### Unfinished-run reopen
+
+`Manager.Resume` folds the journal into step state and restores every durable
+unfinished park in one scheduler:
+
+- `running` / `validating` workers move to `awaiting_recovery` with the
+  process-interrupted error.
+- Existing `awaiting_recovery` steps re-emit `RecoveryRequest` without changing
+  attempt or iteration.
+- `needs_input` re-emits its latest `InputRequest` or unresolved
+  `AgentQuestion`; answering resumes the durable agent session. Missing input
+  payload or a non-resumable session degrades to recovery with a clear error.
+- `stopped` stays stopped and remains eligible for the normal resume/reset
+  actions.
+- `awaiting_integration` preserves the registered conflicted run worktree and
+  rebuilds conflict paths from Git. Missing conflict markers fail reopening
+  rather than presenting an empty resolution gate.
+- `awaiting_review` restores its immutable review checkpoint as before.
+
+All synthesized transitions and repeated gate requests are appended as one
+journal batch before the scheduler loop begins or subscribers receive them.
+Mixed park kinds restore together; each continues through its existing live
+gate action.
+
 ### Reset — dependency closure and rewind+replay
 
 `Run.Reset(target)` rewinds the run branch and re-queues the target step and its
@@ -584,6 +612,6 @@ diff, `revise` loops with feedback, `approve` triggers the final merge gate.
 Map/fan-out over dynamic lists, secrets, remote execution. Also deferred:
 journaling `StepOutput` deltas in full (decided to skip at Phase 4 — the
 transcript carries the full content). Reopening a fully-settled run for reset
-is also deferred (A12 / ADR 0008). Mid-execution **worker** crash reopen and
-review-gate resume ship in Spec 20 (`Manager.Resume` + `session.json`); other
-unfinished parks after process death are Spec 21.
+is also deferred (A12 / ADR 0008). Specs 20 and 21 make every unfinished worker
+or gate park reopenable through `Manager.Resume`; durable agent identity lives
+in `session.json`.

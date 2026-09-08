@@ -131,8 +131,12 @@ off `RunFinished` / `Run.Wait`, never `Done` alone.
 Spec 19 `--on-recovery` settles gates **during** an active `jig run`. It does
 **not** reopen a dead process. After a host OOM / `kill -9`, A2's future
 `jig resume <run-id> [--on-recovery …]` must call `Manager.Resume` first
-(Spec 20 parks interrupted workers on `RecoveryRequest`); only then does the
-same `--on-recovery` policy apply. TUI `R` is the interactive client today.
+(Specs 20 and 21 restore interrupted workers plus existing review, recovery,
+stopped, input, question, and integration parks); only then do the same settle
+policies apply. The future CLI must provide a policy for every restored gate:
+review/input/question fail closed without supplied answers, recovery uses
+`--on-recovery`, and conflicts use `--on-conflict`. TUI `R` is the interactive
+client today.
 
 ## Authoring CI-safe workflows
 

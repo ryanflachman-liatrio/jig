@@ -343,11 +343,27 @@ func (m agentQuestionAnswerMsg) execute(s *scheduler) {
 	})
 	state := s.states[m.stepID]
 	if state != nil && state.Status == step.StatusNeedsInput && len(pending) == 0 {
-		s.transition(m.stepID, step.StatusNeedsInput, step.StatusRunning)
+		if item.restored {
+			s.restoredQuestionResponses[m.stepID] = append(s.restoredQuestionResponses[m.stepID], m.response)
+			if state.Result == nil || !s.stepCanResume(m.stepID, state.Result.SessionID) {
+				return
+			}
+			s.resumeSessions[m.stepID] = state.Result.SessionID
+			s.stepMessage[m.stepID] = restoredQuestionMessage(s.restoredQuestionResponses[m.stepID])
+			delete(s.restoredQuestionResponses, m.stepID)
+			s.restoredHold = false
+			s.transition(m.stepID, step.StatusNeedsInput, step.StatusPending)
+		} else {
+			s.transition(m.stepID, step.StatusNeedsInput, step.StatusRunning)
+		}
+	} else if item.restored {
+		s.restoredQuestionResponses[m.stepID] = append(s.restoredQuestionResponses[m.stepID], m.response)
 	}
-	select {
-	case item.reply <- m.response:
-	default:
+	if item.reply != nil {
+		select {
+		case item.reply <- m.response:
+		default:
+		}
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"jig/internal/datastore"
+	"jig/internal/interaction"
 	"jig/internal/manifest"
 	"jig/internal/review"
 	"jig/internal/step"
@@ -491,7 +492,7 @@ depends_on = ["gate"]
 	}
 }
 
-func TestResumeRejectsSpec21Parks(t *testing.T) {
+func TestResumeRestoresBlockOnInput(t *testing.T) {
 	wf, err := workflow.Decode(`
 [workflow]
 name = "parked"
@@ -512,14 +513,461 @@ skill = "agent"
 	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
 		t.Fatal(err)
 	}
+	if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{SessionID: "input-session"}); err != nil {
+		t.Fatal(err)
+	}
 	writeJournal(t, runDir, []Event{
 		RunStarted{RunID: "needs-input", Workflow: "parked", Steps: []string{"agent"}},
-		StepStatus{RunID: "needs-input", StepID: "agent", From: step.StatusPending, To: step.StatusNeedsInput},
+		StepStatus{RunID: "needs-input", StepID: "agent", From: step.StatusRunning, To: step.StatusNeedsInput},
+		InputRequest{RunID: "needs-input", StepID: "agent"},
 	})
-	mgr := NewManager(&testExec{}, root)
-	if _, err := mgr.Resume("needs-input"); err == nil || !strings.Contains(err.Error(), "Spec 21") {
-		t.Fatalf("Resume error = %v, want Spec 21 reject", err)
+	exec := &crashRecordingExec{}
+	mgr := NewManager(exec, root)
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Resume("needs-input")
+	if err != nil {
+		t.Fatal(err)
 	}
+	select {
+	case event := <-ch:
+		if request, ok := event.(InputRequest); !ok || request.StepID != "agent" {
+			t.Fatalf("reopened event = %#v, want InputRequest", event)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for restored InputRequest")
+	}
+	run.SendInput("agent", "use the durable answer")
+	collectEvents(t, ch, 5*time.Second)
+	exec.mu.Lock()
+	defer exec.mu.Unlock()
+	if len(exec.reqs) != 1 || exec.reqs[0].ResumeSessionID != "input-session" || exec.reqs[0].Message != "use the durable answer" {
+		t.Fatalf("resumed request = %+v", exec.reqs)
+	}
+}
+
+func TestResumeRestoresStoppedStep(t *testing.T) {
+	wf, err := workflow.Decode(`
+[workflow]
+name = "stopped"
+version = "1"
+[[step]]
+id = "agent"
+type = "agent"
+skill = "agent"
+`, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), ".jig")
+	runDir, err := datastore.RunDir(root, "stopped-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
+		t.Fatal(err)
+	}
+	if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{SessionID: "stopped-session"}); err != nil {
+		t.Fatal(err)
+	}
+	writeJournal(t, runDir, []Event{
+		RunStarted{RunID: "stopped-run", Workflow: "stopped", Steps: []string{"agent"}},
+		StepStatus{RunID: "stopped-run", StepID: "agent", From: step.StatusRunning, To: step.StatusStopped, Attempt: 2},
+	})
+	exec := &crashRecordingExec{}
+	mgr := NewManager(exec, root)
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Resume("stopped-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := snapshotStep(run.Snapshot(), "agent").Status; got != step.StatusStopped {
+		t.Fatalf("restored status = %s, want stopped", got)
+	}
+	run.Resume("agent", "continue stopped work")
+	collectEvents(t, ch, 5*time.Second)
+	exec.mu.Lock()
+	defer exec.mu.Unlock()
+	if len(exec.reqs) != 1 || exec.reqs[0].ResumeSessionID != "stopped-session" || exec.reqs[0].Message != "continue stopped work" {
+		t.Fatalf("resumed request = %+v", exec.reqs)
+	}
+}
+
+func TestResumeRestoresAgentQuestion(t *testing.T) {
+	wf, err := workflow.Decode(`
+[workflow]
+name = "question"
+version = "1"
+[[step]]
+id = "agent"
+type = "agent"
+skill = "agent"
+`, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), ".jig")
+	runDir, err := datastore.RunDir(root, "question-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
+		t.Fatal(err)
+	}
+	if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{SessionID: "question-session"}); err != nil {
+		t.Fatal(err)
+	}
+	request := interaction.QuestionRequest{ID: "q1", Fields: []interaction.QuestionField{{ID: "choice", Prompt: "Choose?", Kind: interaction.FieldText, Required: true}}}
+	writeJournal(t, runDir, []Event{
+		RunStarted{RunID: "question-run", Workflow: "question", Steps: []string{"agent"}},
+		StepStatus{RunID: "question-run", StepID: "agent", From: step.StatusRunning, To: step.StatusNeedsInput},
+		AgentQuestion{RunID: "question-run", StepID: "agent", Request: request},
+	})
+	exec := &crashRecordingExec{}
+	mgr := NewManager(exec, root)
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Resume("question-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case event := <-ch:
+		if question, ok := event.(AgentQuestion); !ok || question.Request.ID != "q1" {
+			t.Fatalf("reopened event = %#v, want AgentQuestion", event)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for restored AgentQuestion")
+	}
+	run.AnswerQuestion("agent", interaction.QuestionResponse{
+		RequestID: "q1", Action: interaction.ActionAccept,
+		Answers: map[string]interaction.Answer{"choice": {Values: []string{"yes"}}},
+	})
+	collectEvents(t, ch, 5*time.Second)
+	exec.mu.Lock()
+	defer exec.mu.Unlock()
+	if len(exec.reqs) != 1 || exec.reqs[0].ResumeSessionID != "question-session" || !strings.Contains(exec.reqs[0].Message, `"yes"`) {
+		t.Fatalf("resumed request = %+v", exec.reqs)
+	}
+}
+
+func TestResumeNeedsInputWithoutPayloadDegradesToRecovery(t *testing.T) {
+	wf, err := workflow.Decode(`
+[workflow]
+name = "lost-input"
+version = "1"
+[[step]]
+id = "agent"
+type = "agent"
+skill = "agent"
+`, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), ".jig")
+	runDir, err := datastore.RunDir(root, "lost-input-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
+		t.Fatal(err)
+	}
+	writeJournal(t, runDir, []Event{
+		RunStarted{RunID: "lost-input-run", Workflow: "lost-input", Steps: []string{"agent"}},
+		StepStatus{RunID: "lost-input-run", StepID: "agent", From: step.StatusRunning, To: step.StatusNeedsInput},
+	})
+	mgr := NewManager(&crashRecordingExec{}, root)
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Resume("lost-input-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovery := waitRecoveryRequest(t, ch, 2*time.Second)
+	if !strings.Contains(recovery.Err, "no durable input request") {
+		t.Fatalf("recovery error = %q", recovery.Err)
+	}
+	if got := snapshotStep(run.Snapshot(), "agent").Status; got != step.StatusAwaitingRecovery {
+		t.Fatalf("restored status = %s, want awaiting_recovery", got)
+	}
+	run.Recover("agent", RecoverAbort, "")
+	collectEvents(t, ch, 2*time.Second)
+}
+
+func TestResumeRehydratesExistingRecovery(t *testing.T) {
+	wf, err := workflow.Decode(`
+[workflow]
+name = "recovery-park"
+version = "1"
+[[step]]
+id = "agent"
+type = "agent"
+skill = "agent"
+`, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), ".jig")
+	runDir, err := datastore.RunDir(root, "recovery-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
+		t.Fatal(err)
+	}
+	if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{SessionID: "recovery-session"}); err != nil {
+		t.Fatal(err)
+	}
+	writeJournal(t, runDir, []Event{
+		RunStarted{RunID: "recovery-run", Workflow: "recovery-park", Steps: []string{"agent"}},
+		StepStatus{RunID: "recovery-run", StepID: "agent", From: step.StatusRunning, To: step.StatusAwaitingRecovery, Attempt: 3},
+		RecoveryRequest{RunID: "recovery-run", StepID: "agent", Err: "original failure"},
+	})
+	exec := &crashRecordingExec{}
+	mgr := NewManager(exec, root)
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Resume("recovery-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := waitRecoveryRequest(t, ch, 2*time.Second)
+	if request.Err != "original failure" || !request.CanResume {
+		t.Fatalf("restored recovery = %+v", request)
+	}
+	if got := snapshotStep(run.Snapshot(), "agent").Attempt; got != 3 {
+		t.Fatalf("attempt = %d, want unchanged 3", got)
+	}
+	run.Recover("agent", RecoverResume, "continue")
+	collectEvents(t, ch, 5*time.Second)
+	exec.mu.Lock()
+	defer exec.mu.Unlock()
+	if len(exec.reqs) != 1 || exec.reqs[0].ResumeSessionID != "recovery-session" {
+		t.Fatalf("resumed request = %+v", exec.reqs)
+	}
+}
+
+func TestResumeRestoresMixedParkKinds(t *testing.T) {
+	wf, err := workflow.Decode(`
+[workflow]
+name = "mixed-parks"
+version = "1"
+[[step]]
+id = "recovery"
+type = "agent"
+skill = "agent"
+[[step]]
+id = "stopped"
+type = "agent"
+skill = "agent"
+[[step]]
+id = "input"
+type = "agent"
+skill = "agent"
+[[step]]
+id = "worker"
+type = "agent"
+skill = "agent"
+`, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), ".jig")
+	runDir, err := datastore.RunDir(root, "mixed-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
+		t.Fatal(err)
+	}
+	for stepID, sessionID := range map[string]string{"stopped": "stopped-session", "input": "input-session"} {
+		if err := datastore.WriteSession(runDir, stepID, datastore.SessionInfo{SessionID: sessionID}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeJournal(t, runDir, []Event{
+		RunStarted{RunID: "mixed-run", Workflow: "mixed-parks", Steps: []string{"recovery", "stopped", "input", "worker"}},
+		StepStatus{RunID: "mixed-run", StepID: "recovery", From: step.StatusRunning, To: step.StatusAwaitingRecovery},
+		RecoveryRequest{RunID: "mixed-run", StepID: "recovery", Err: "boom"},
+		StepStatus{RunID: "mixed-run", StepID: "stopped", From: step.StatusRunning, To: step.StatusStopped},
+		StepStatus{RunID: "mixed-run", StepID: "input", From: step.StatusRunning, To: step.StatusNeedsInput},
+		InputRequest{RunID: "mixed-run", StepID: "input"},
+		StepStatus{RunID: "mixed-run", StepID: "worker", From: step.StatusPending, To: step.StatusRunning},
+	})
+	exec := &crashRecordingExec{}
+	mgr := NewManager(exec, root)
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Resume("mixed-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantEvents := map[string]bool{"recovery": false, "input": false, "worker": false}
+	deadline := time.After(2 * time.Second)
+	for remaining := len(wantEvents); remaining > 0; {
+		select {
+		case event := <-ch:
+			switch event := event.(type) {
+			case RecoveryRequest:
+				if seen, ok := wantEvents[event.StepID]; ok && !seen {
+					wantEvents[event.StepID] = true
+					remaining--
+				}
+			case InputRequest:
+				if seen, ok := wantEvents[event.StepID]; ok && !seen {
+					wantEvents[event.StepID] = true
+					remaining--
+				}
+			}
+		case <-deadline:
+			t.Fatalf("restored events = %v", wantEvents)
+		}
+	}
+	if got := snapshotStep(run.Snapshot(), "stopped").Status; got != step.StatusStopped {
+		t.Fatalf("stopped status = %s", got)
+	}
+	run.Resume("stopped", "continue")
+	run.SendInput("input", "answer")
+	run.Recover("recovery", RecoverRetry, "")
+	run.Recover("worker", RecoverRetry, "")
+	collectEvents(t, ch, 5*time.Second)
+	if final := run.Snapshot(); !final.Done || final.Failed {
+		t.Fatalf("final = %+v", final)
+	}
+	exec.mu.Lock()
+	defer exec.mu.Unlock()
+	if len(exec.reqs) != 4 {
+		t.Fatalf("dispatch count = %d, want 4", len(exec.reqs))
+	}
+}
+
+func TestResumeIntegrationConflictPreservesRunWorktree(t *testing.T) {
+	repoRoot := t.TempDir()
+	initRepo(t, repoRoot)
+	root := filepath.Join(repoRoot, ".jig")
+	const runID = "integration-run"
+	wf, err := workflow.Decode(`
+[workflow]
+name = "integration-park"
+version = "1"
+[[step]]
+id = "agent"
+type = "agent"
+skill = "agent"
+isolation = "worktree"
+`, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runDir, err := datastore.RunDir(root, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
+		t.Fatal(err)
+	}
+	runBranch := runBranchName(wf.Meta.Name, runID)
+	if out, err := gitCmd(repoRoot, "branch", runBranch, "HEAD"); err != nil {
+		t.Fatalf("create run branch: %v — %s", err, out)
+	}
+	runWorktree := filepath.Join(root, "worktrees", runID, "_run")
+	if _, err := createWorktreeAt(repoRoot, runWorktree, runBranch, runBranch); err != nil {
+		t.Fatal(err)
+	}
+	sideWorktree := filepath.Join(root, "worktrees", runID, "side")
+	if _, err := createWorktreeAt(repoRoot, sideWorktree, "jig/test-conflict-side", runBranch); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sideWorktree, "seed.txt"), []byte("side"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := gitCmd(sideWorktree, "add", "seed.txt"); err != nil {
+		t.Fatalf("stage side: %v — %s", err, out)
+	}
+	if out, err := gitCmd(sideWorktree, "commit", "-m", "side"); err != nil {
+		t.Fatalf("commit side: %v — %s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(runWorktree, "seed.txt"), []byte("run"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := gitCmd(runWorktree, "add", "seed.txt"); err != nil {
+		t.Fatalf("stage run: %v — %s", err, out)
+	}
+	if out, err := gitCmd(runWorktree, "commit", "-m", "run"); err != nil {
+		t.Fatalf("commit run: %v — %s", err, out)
+	}
+	if _, err := gitCmd(runWorktree, "merge", "--squash", "jig/test-conflict-side"); err == nil {
+		t.Fatal("expected merge conflict")
+	}
+	writeJournal(t, runDir, []Event{
+		RunStarted{RunID: runID, Workflow: wf.Meta.Name, Steps: []string{"agent"}},
+		StepStatus{RunID: runID, StepID: "agent", From: step.StatusRunning, To: step.StatusAwaitingIntegration},
+		IntegrationConflictRequest{RunID: runID, StepID: "agent", Paths: []string{"seed.txt"}, Worktree: runWorktree},
+	})
+	mgr := NewManager(&crashRecordingExec{}, root)
+	_, ch := mgr.Subscribe()
+	run, err := mgr.Resume(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case event := <-ch:
+		request, ok := event.(IntegrationConflictRequest)
+		if !ok || len(request.Paths) != 1 || request.Paths[0] != "seed.txt" || request.Worktree != runWorktree {
+			t.Fatalf("restored conflict = %#v", event)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for restored integration conflict")
+	}
+	if paths := mergeConflictPaths(runWorktree); len(paths) != 1 || paths[0] != "seed.txt" {
+		t.Fatalf("conflict paths after reopen = %v", paths)
+	}
+	run.ResolveIntegration("agent", true)
+	_ = waitRecoveryRequest(t, ch, 2*time.Second)
+	run.Recover("agent", RecoverAbort, "")
+	collectEvents(t, ch, 2*time.Second)
+	_ = removeWorktree(repoRoot, sideWorktree)
+}
+
+func TestResumeIntegrationWithoutConflictMarkersFailsClosed(t *testing.T) {
+	repoRoot := t.TempDir()
+	initRepo(t, repoRoot)
+	root := filepath.Join(repoRoot, ".jig")
+	const runID = "missing-conflict"
+	wf, err := workflow.Decode(`
+[workflow]
+name = "missing-conflict"
+version = "1"
+[[step]]
+id = "agent"
+type = "agent"
+skill = "agent"
+`, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runDir, err := datastore.RunDir(root, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
+		t.Fatal(err)
+	}
+	runBranch := runBranchName(wf.Meta.Name, runID)
+	if out, err := gitCmd(repoRoot, "branch", runBranch, "HEAD"); err != nil {
+		t.Fatalf("create run branch: %v — %s", err, out)
+	}
+	runWorktree := filepath.Join(root, "worktrees", runID, "_run")
+	if _, err := createWorktreeAt(repoRoot, runWorktree, runBranch, runBranch); err != nil {
+		t.Fatal(err)
+	}
+	writeJournal(t, runDir, []Event{
+		RunStarted{RunID: runID, Workflow: wf.Meta.Name, Steps: []string{"agent"}},
+		StepStatus{RunID: runID, StepID: "agent", From: step.StatusRunning, To: step.StatusAwaitingIntegration},
+		IntegrationConflictRequest{RunID: runID, StepID: "agent", Paths: []string{"seed.txt"}, Worktree: runWorktree},
+	})
+	if _, err := NewManager(&crashRecordingExec{}, root).Resume(runID); err == nil || !strings.Contains(err.Error(), "no unresolved conflict markers") {
+		t.Fatalf("Resume error = %v", err)
+	}
+	if !registeredWorktree(repoRoot, runWorktree, runBranch) {
+		t.Fatal("failed reopen destroyed the historical integration worktree")
+	}
+	_ = removeWorktree(repoRoot, runWorktree)
 }
 
 func TestResumeRejectsFinishedRun(t *testing.T) {
