@@ -16,6 +16,7 @@ import (
 	"jig/internal/step"
 	"jig/internal/tui/detail"
 	"jig/internal/tui/monitor"
+	runspane "jig/internal/tui/runs"
 	"jig/internal/tui/selector"
 	"jig/internal/tui/shared"
 	"jig/internal/workflow"
@@ -101,6 +102,11 @@ func TestHydrateRunsKeepsMissingAndCorruptJournalRows(t *testing.T) {
 			}
 			if finished, ok := msg.runs[0][len(msg.runs[0])-1].(engine.RunFinished); !ok || !finished.Failed {
 				t.Fatalf("orphan finish = %#v", msg.runs[0][len(msg.runs[0])-1])
+			}
+			pane := runspane.NewModel().Hydrate(msg.runs).WithWorkflowContext("selected-workflow", nil)
+			body := pane.PaneBody(80, 12)
+			if !strings.Contains(body, "orphan") || !strings.Contains(body, "failed") {
+				t.Fatalf("filtered Runs pane hid terminal orphan:\n%s", body)
 			}
 		})
 	}

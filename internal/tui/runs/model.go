@@ -122,7 +122,11 @@ func (m Model) visibleRows() []runRow {
 	}
 	rows := make([]runRow, 0, len(m.rows))
 	for _, row := range m.rows {
-		if row.workflow == m.workflowName {
+		// A synthetic orphan row can have no workflow identity when both its
+		// journal prefix and workflow snapshot are unavailable. Keep that
+		// ownership record visible in filtered Home panes rather than losing it;
+		// the row is terminal and therefore cannot offer Resume.
+		if row.workflow == "" || row.workflow == m.workflowName {
 			rows = append(rows, row)
 		}
 	}
