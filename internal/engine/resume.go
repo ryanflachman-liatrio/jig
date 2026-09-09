@@ -27,6 +27,7 @@ type workflowSnapshot struct {
 	ModuleSources []workflow.ModuleSource `json:"module_sources,omitempty"`
 	Meta          workflow.Meta           `json:"meta"`
 	Defaults      workflow.Defaults       `json:"defaults"`
+	Telemetry     workflow.Telemetry      `json:"telemetry,omitempty"`
 	PublicSteps   []workflow.Step         `json:"public_steps,omitempty"`
 	ExpandedSteps []workflow.Step         `json:"expanded_steps,omitempty"`
 }
@@ -48,6 +49,7 @@ func persistWorkflowSnapshot(runDir string, wf *workflow.Workflow) error {
 		ModuleSources: wf.ModuleSources(),
 		Meta:          wf.Meta,
 		Defaults:      wf.Defaults,
+		Telemetry:     wf.Telemetry,
 		PublicSteps:   wf.PublicSteps(),
 		ExpandedSteps: wf.Steps,
 	}
@@ -78,7 +80,7 @@ func loadWorkflowSnapshot(runDir string) (*workflow.Workflow, error) {
 		}
 	}
 	if len(snap.ExpandedSteps) > 0 {
-		return workflow.RestoreExpanded(snap.Meta, snap.Defaults, snap.PublicSteps, snap.ExpandedSteps, snap.ModuleSources), nil
+		return workflow.RestoreExpandedWithTelemetry(snap.Meta, snap.Defaults, snap.Telemetry, snap.PublicSteps, snap.ExpandedSteps, snap.ModuleSources), nil
 	}
 	return workflow.DecodeLocked(snap.TOML, snap.BaseDir, snap.SourcePath, snap.ModuleSources)
 }

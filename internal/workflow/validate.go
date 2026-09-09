@@ -4,10 +4,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode"
+)
+
+// telemetryPrefixRe / telemetryAttrKeyRe mirror internal/telemetry so the
+// workflow loader can validate [telemetry] settings at load time without
+// importing that package (avoids a future cycle when telemetry consumes
+// TelemetryFields derived from workflow). Keep in sync with
+// internal/telemetry/config.go's metricPrefixRe and resourceAttrKeyRe.
+var (
+	telemetryPrefixRe  = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_]{0,31}$`)
+	telemetryAttrKeyRe = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$`)
 )
 
 // ValidationError aggregates every problem found in a workflow so the user sees
@@ -46,6 +57,7 @@ func (wf *Workflow) validate(baseDir string) error {
 	v.checkMeta()
 	v.checkResourceLimits()
 	v.checkSecurityConfig()
+	v.checkTelemetry()
 	v.checkIDs()
 	for i := range wf.Steps {
 		v.checkStep(&wf.Steps[i])
@@ -86,6 +98,28 @@ func (v *validator) checkMeta() {
 	}
 	if v.wf.Defaults.MaxNetworkRequests < 0 {
 		v.errf("[defaults] max_network_requests must be >= 0, got %d", v.wf.Defaults.MaxNetworkRequests)
+	}
+}
+
+// checkTelemetry validates the optional [telemetry] table. The mode /
+// endpoint / listener bind live in env or .jig/telemetry.json, so validation
+// here is purely structural: prefix shape, attribute-key shape. Enabled ==
+// true is not a full-blown load-time error on its own (the exporter target
+// comes from env / prefs, which are runtime concerns), but every field the
+// operator did author must be well-formed.
+func (v *validator) checkTelemetry() {
+	t := v.wf.Telemetry
+	if t.MetricPrefix != "" && !telemetryPrefixRe.MatchString(t.MetricPrefix) {
+		v.errf("[telemetry] metric_prefix %q must match %s", t.MetricPrefix, telemetryPrefixRe.String())
+	}
+	for k := range t.ResourceAttributes {
+		if k == "" {
+			v.errf("[telemetry] resource_attributes key is empty")
+			continue
+		}
+		if !telemetryAttrKeyRe.MatchString(k) {
+			v.errf("[telemetry] resource_attributes key %q must match %s", k, telemetryAttrKeyRe.String())
+		}
 	}
 }
 

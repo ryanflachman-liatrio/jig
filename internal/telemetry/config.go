@@ -217,11 +217,10 @@ func ResolveConfig(env EnvLookup, prefs Prefs, tel TelemetryFields) (Config, err
 		OTLPHeaders:        map[string]string{},
 	}
 
-	// Layer 1: workflow [telemetry] (lowest precedence for endpoint / mode;
-	// authoritative for MetricPrefix / ExportThinkingCounts / attrs).
-	if tel.Enabled {
-		cfg.Mode = ModeProm
-	}
+	// Layer 1: workflow [telemetry]. This layer never sets Mode — a workflow's
+	// enabled=true is an opt-in signal, but the actual exporter target must
+	// come from env or prefs so the operator (not the workflow author) picks
+	// the endpoint. validateResolved below enforces that pairing.
 	if tel.MetricPrefix != "" {
 		cfg.MetricPrefix = tel.MetricPrefix
 	}
