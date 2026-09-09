@@ -34,7 +34,7 @@ and comparison to high-rated TUIs (lazygit, k9s, yazi, btop) plus agent peers
 | A5 | **Claude ACP session resume** — advertise + honor `CapSessionResume` | S | ACP→Claude cannot Stop/Resume or resume `block_on` today. |
 | A6 | **Restore Tier-2 security monitors** — ship `examples/agents/monitors/*.md` (or change discovery) | R | `discoverMonitors` still points at a deleted directory → silent no-op. |
 | A7 | **Codex parallel ACP reliability** — durable diagnosis + operator-facing fix path | S | Known flakiness under `max_parallel`; diagnostics plan still open. |
-| A8 | **Map / foreach fan-out** — N parallel steps from dynamic list data | S | Explicitly Deferred in `docs/workflow-schema.md`. |
+| A8 | **Map / foreach fan-out** — N parallel steps from dynamic list data | S | Plan: [`a8-dynamic-foreach-fan-out.md`](a8-dynamic-foreach-fan-out.md). Explicitly deferred in `docs/workflow-schema.md` until this plan is implemented. |
 
 ### P1
 
