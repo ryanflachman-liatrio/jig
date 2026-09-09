@@ -3,13 +3,13 @@
                            │ agent     │◄╮
                            ╰───────────╯ │
                                  │       │
-                                 ▼       ↺ review == revise  ≤3
+                                 ▼       ↺ review == "revise"  ≤3
                            ╭───────────╮ │
                            │ review    │ │
                            │ review ↺  │─╯
                            ╰───────────╯
                                  │
-                                 ▽ review == approve
+                                 ▽ review == "approve"
                            ╭───────────╮
                            │ impl      │
                            │ command ⇢ │

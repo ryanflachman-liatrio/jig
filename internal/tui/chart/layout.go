@@ -160,15 +160,17 @@ func layoutChart(wf *workflow.Workflow) chartLayout {
 		ranks[rank[i]] = append(ranks[rank[i]], i)
 	}
 
-	// depends_on edges, plus the when-decoration. A guard is validated to
-	// reference a step in depends_on, so at most one incoming edge is marked.
+	// depends_on edges, plus the when-decoration.
 	var edges []chartEdge
 	for i := range steps {
 		s := steps[i]
-		whenStep, whenLabel := "", ""
+		conditionalSteps := map[string]bool{}
+		whenLabel := ""
 		if s.When != "" {
 			if cond, err := workflow.ParseCondition(s.When); err == nil {
-				whenStep = cond.Step
+				for _, ref := range cond.ReferencedSteps() {
+					conditionalSteps[ref] = true
+				}
 				whenLabel = condLabel(cond)
 			}
 		}
@@ -177,7 +179,7 @@ func layoutChart(wf *workflow.Workflow) chartLayout {
 			if !ok {
 				continue
 			}
-			e := chartEdge{from: j, to: i, conditional: dep == whenStep}
+			e := chartEdge{from: j, to: i, conditional: conditionalSteps[dep]}
 			if e.conditional {
 				e.label = whenLabel
 			}
@@ -204,18 +206,7 @@ func layoutChart(wf *workflow.Workflow) chartLayout {
 // chart. It reconstructs from the parsed fields (not Raw) so spacing is uniform
 // regardless of how the author wrote the TOML.
 func condLabel(c *workflow.Condition) string {
-	ref := c.Step
-	if len(c.Field) > 0 {
-		ref += "." + strings.Join(c.Field, ".")
-	}
-	switch c.Op {
-	case workflow.CondEq:
-		return ref + " == " + c.Value
-	case workflow.CondNeq:
-		return ref + " != " + c.Value
-	default: // CondTruthy: a bare bool verdict/field reference
-		return ref
-	}
+	return c.String()
 }
 
 // loopLabel is a back-edge's caption: the re-run guard plus the ≤N iteration

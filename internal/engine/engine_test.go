@@ -1694,10 +1694,11 @@ version = "0.1"
 id = "chat"
 type = "agent"
 skill = "chat"
-block_on = "chat.needs_input"
+block_on = "chat.needs_input && chat.rounds < 2"
 
   [step.schema]
   needs_input = "bool"
+  rounds = "number"
 
 [[step]]
 id = "after"
@@ -1713,7 +1714,7 @@ depends_on = ["chat"]
 		testExec:  testExec{outcomes: map[string]testOutcome{"chat": {delay: delay}, "after": {delay: delay}}},
 		stepID:    "chat",
 		sessionID: "sess-1",
-		responses: []string{`{"needs_input":true}`, `{"needs_input":false}`},
+		responses: []string{`{"needs_input":true,"rounds":1}`, `{"needs_input":false,"rounds":2}`},
 	}
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
@@ -1993,7 +1994,7 @@ run = "true"
 id = "quality"
 type = "check"
 depends_on = ["ready", "remediate"]
-applies_when = "ready"
+applies_when = "ready && ready == true"
 output_type = { enum = ["pass", "fail", "skip", "error"] }
 run = "true"
 
@@ -2003,7 +2004,7 @@ run = "true"
   required_tools = ["sh"]
 
 [[step.route]]
-when = "quality != 'pass'"
+when = "quality == 'fail' || quality == 'error'"
 goto = "remediate"
 max_iterations = 2
 feedback = "@quality"

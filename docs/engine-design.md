@@ -470,22 +470,27 @@ These were open questions; they are now decided. Implement accordingly.
 End-to-end flow for `status = { enum = ["success", "fail", "review"] }` on a
 producer and `when = "research.status == 'success'"` on a consumer:
 
-- **Load time (done, in `internal/workflow`):** the enum parses into
-  `Field{Type: FieldEnum, Enum: …}`; `ParseCondition` + the validator check
-  that `research` is in `depends_on`, the field path resolves via
-  `Schema.lookup`, and the compared literal is an enum member. A typo'd value
-  fails `jig validate`.
+- **Parse and load time (in `internal/workflow`):** `ParseCondition` lexes a
+  bounded expression tree with comparison > `&&` > `||` precedence. The
+  validator visits every predicate, checks that each referenced step is
+  available through `depends_on`, resolves every field path, and validates the
+  operator/literal against its bool, enum, text, number, or opaque type. A
+  typo'd enum or nonnumeric threshold fails `jig validate`. Route validation
+  also proves guarded branches pairwise disjoint and either finite-domain
+  exhaustive or completed by a fallback.
 - **Producer completion (engine):** compile the step's `Schema` via the
   existing `Schema.JSONSchema()`, run headless
   (`claude -p --output-format json --json-schema '<schema>'`), take the
   `structured_output` field from the CLI result — constrained decoding
   guarantees it conforms — store it on `Result.Structured`, write it to
   `artifacts/<step-id>.json`.
-- **Guard evaluation (scheduler):** decode `Result.Structured` once into a
-  `map[string]any` (cache on `State`), walk the field path, string-compare.
-  No re-validation, no "field missing" error path. Bare-bool guards
-  (`when = "research.blocked"`) truthy-test; scalar verdicts
-  (`when = "approve == 'revise'"`) compare `Result.Verdict`.
+- **Guard evaluation (scheduler):** recursively evaluate the checked AST.
+  `&&` and `||` short-circuit. Leaves read scalar `Result.Verdict` or decode
+  `Result.Structured` once into the scheduler cache and walk the field path.
+  Bool/string values compare without coercion; number fields compare as JSON
+  numbers, so `10 > 2`. Missing steps, malformed structured JSON, missing
+  fields, or nonscalar values fail closed to false. The same interpreter serves
+  `when`, `applies_when`, `block_on`, and route guards.
 - Field refs as *inputs* (`inputs = ["@research.status"]`) use the identical
   decode-and-walk in `datastore.Resolve`, inlined into the prompt.
 

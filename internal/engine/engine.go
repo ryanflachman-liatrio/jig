@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -2570,57 +2571,180 @@ func gateOutputPath(executionDir, output string) (string, error) {
 // The condition was syntactically and semantically validated at load time, so
 // missing steps or bad field paths return false (treat as "not yet ready").
 func (s *scheduler) evalGuard(cond *workflow.Condition) bool {
-	depState := s.states[cond.Step]
-	if depState == nil || depState.Result == nil {
+	if cond == nil {
 		return false
 	}
+	return s.evalGuardExpr(cond.Root)
+}
 
-	var val string
-	if len(cond.Field) == 0 {
-		// Scalar verdict (output_type bool or enum).
-		val = depState.Result.Verdict
-	} else {
-		// Field path into structured JSON output. Decode once and cache.
-		m, ok := s.structured[cond.Step]
-		if !ok && len(depState.Result.Structured) > 0 {
-			if err := json.Unmarshal(depState.Result.Structured, &m); err == nil {
-				s.structured[cond.Step] = m
-			}
+func (s *scheduler) evalGuardExpr(expr *workflow.ConditionExpr) bool {
+	if expr == nil {
+		return false
+	}
+	switch expr.Op {
+	case workflow.CondAnd:
+		return s.evalGuardExpr(expr.Left) && s.evalGuardExpr(expr.Right)
+	case workflow.CondOr:
+		return s.evalGuardExpr(expr.Left) || s.evalGuardExpr(expr.Right)
+	}
+	value, fieldType, scalarKind, ok := s.resolveGuardValue(expr.Ref)
+	if !ok {
+		return false
+	}
+	if expr.Op == workflow.CondTruthy {
+		actual, ok := value.(bool)
+		return ok && actual
+	}
+	return compareGuardValue(value, fieldType, scalarKind, expr.Op, expr.Literal)
+}
+
+func (s *scheduler) resolveGuardValue(ref workflow.ConditionRef) (any, workflow.FieldType, workflow.OutputKind, bool) {
+	depState := s.states[ref.Step]
+	if depState == nil || depState.Result == nil {
+		return nil, "", "", false
+	}
+	producer := s.stepByID(ref.Step)
+	if len(ref.Field) == 0 {
+		if producer == nil {
+			return nil, "", "", false
 		}
-		var cur any = m
-		for _, seg := range cond.Field {
-			obj, ok := cur.(map[string]any)
-			if !ok {
-				return false
-			}
-			cur, ok = obj[seg]
-			if !ok {
-				return false
-			}
-		}
-		switch v := cur.(type) {
-		case string:
-			val = v
-		case bool:
-			if v {
-				val = "true"
-			} else {
-				val = "false"
-			}
+		switch producer.OutputType.Kind {
+		case workflow.OutputBool:
+			value, err := strconv.ParseBool(depState.Result.Verdict)
+			return value, "", workflow.OutputBool, err == nil
+		case workflow.OutputEnum:
+			return depState.Result.Verdict, "", workflow.OutputEnum, true
 		default:
-			val = fmt.Sprintf("%v", cur)
+			return nil, "", producer.OutputType.Kind, false
 		}
 	}
 
-	switch cond.Op {
-	case workflow.CondTruthy:
-		return val == "true"
-	case workflow.CondEq:
-		return val == cond.Value
-	case workflow.CondNeq:
-		return val != cond.Value
+	m, ok := s.structured[ref.Step]
+	if !ok && len(depState.Result.Structured) > 0 {
+		if err := json.Unmarshal(depState.Result.Structured, &m); err == nil {
+			s.structured[ref.Step] = m
+		}
+	}
+	var cur any = m
+	for _, seg := range ref.Field {
+		obj, ok := cur.(map[string]any)
+		if !ok {
+			return nil, "", "", false
+		}
+		cur, ok = obj[seg]
+		if !ok {
+			return nil, "", "", false
+		}
+	}
+	if producer == nil {
+		return nil, "", "", false
+	}
+	field, ok := runtimeSchemaField(producer.ReferenceSchema(), ref.Field)
+	if !ok {
+		return nil, "", "", false
+	}
+	return cur, field.Type, "", true
+}
+
+func runtimeSchemaField(schema *workflow.Schema, path []string) (*workflow.Field, bool) {
+	if schema == nil {
+		return nil, false
+	}
+	fields := schema.Fields
+	var current *workflow.Field
+	for _, segment := range path {
+		current = nil
+		for _, field := range fields {
+			if field.Name == segment {
+				current = field
+				break
+			}
+		}
+		if current == nil {
+			return nil, false
+		}
+		fields = current.Fields
+	}
+	return current, current != nil
+}
+
+func compareGuardValue(value any, fieldType workflow.FieldType, scalarKind workflow.OutputKind, op workflow.CondOp, literal workflow.ConditionLiteral) bool {
+	if scalarKind == workflow.OutputBool || fieldType == workflow.FieldBool {
+		actual, ok := value.(bool)
+		want, err := strconv.ParseBool(literal.Value)
+		return ok && err == nil && compareOrderedBool(actual, want, op)
+	}
+	if scalarKind == workflow.OutputEnum || fieldType == workflow.FieldEnum || fieldType == workflow.FieldText {
+		actual, ok := value.(string)
+		return ok && compareOrderedString(actual, literal.Value, op)
+	}
+	if fieldType == workflow.FieldNumber {
+		actual, ok := value.(float64)
+		want, err := strconv.ParseFloat(literal.Value, 64)
+		return ok && err == nil && compareOrderedNumber(actual, want, op)
+	}
+	if fieldType == workflow.FieldAny {
+		switch actual := value.(type) {
+		case string:
+			if !literal.Quoted && (literal.Value == "true" || literal.Value == "false") {
+				return false
+			}
+			if !literal.Quoted {
+				if _, err := strconv.ParseFloat(literal.Value, 64); err == nil {
+					return false
+				}
+			}
+			return compareOrderedString(actual, literal.Value, op)
+		case bool:
+			want, err := strconv.ParseBool(literal.Value)
+			return !literal.Quoted && err == nil && compareOrderedBool(actual, want, op)
+		case float64:
+			want, err := strconv.ParseFloat(literal.Value, 64)
+			return !literal.Quoted && err == nil && compareOrderedNumber(actual, want, op)
+		}
 	}
 	return false
+}
+
+func compareOrderedBool(actual, want bool, op workflow.CondOp) bool {
+	switch op {
+	case workflow.CondEq:
+		return actual == want
+	case workflow.CondNeq:
+		return actual != want
+	default:
+		return false
+	}
+}
+
+func compareOrderedString(actual, want string, op workflow.CondOp) bool {
+	switch op {
+	case workflow.CondEq:
+		return actual == want
+	case workflow.CondNeq:
+		return actual != want
+	default:
+		return false
+	}
+}
+
+func compareOrderedNumber(actual, want float64, op workflow.CondOp) bool {
+	switch op {
+	case workflow.CondEq:
+		return actual == want
+	case workflow.CondNeq:
+		return actual != want
+	case workflow.CondLT:
+		return actual < want
+	case workflow.CondLTE:
+		return actual <= want
+	case workflow.CondGT:
+		return actual > want
+	case workflow.CondGTE:
+		return actual >= want
+	default:
+		return false
+	}
 }
 
 // cascadeSkip skips every pending step that has a transitive dependency on

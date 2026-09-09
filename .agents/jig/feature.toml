@@ -172,7 +172,7 @@ idempotent = true
 id            = "quality_snapshot"
 type          = "check"
 depends_on    = ["implement", "plan_review"]
-applies_when  = "plan_review == 'approve'"
+applies_when  = "plan_review == 'approve' && plan_review != 'revise'"
 isolation     = "worktree"
 output_type   = { enum = ["pass", "fail", "skip", "error"] }
 run           = "printf 'quality report\n' > quality-report.txt; printf '{\"schema_version\":1,\"outcome\":\"pass\",\"findings\":[]}' > quality-findings.json"

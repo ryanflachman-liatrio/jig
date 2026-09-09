@@ -709,23 +709,57 @@ working directory remains the fallback.
 ## Conditionals (forward branching)
 
 A step runs only if its `when` guard is true. Branches live on the **consumer**
-side, so the graph stays readable. Expression grammar (minimal):
+side, so the graph stays readable. The same expression grammar is used by
+`when`, check `applies_when`, agent `block_on`, and route `when`:
 
+```ebnf
+expression = or-expression ;
+or-expression = and-expression, { "||", and-expression } ;
+and-expression = primary, { "&&", primary } ;
+primary = predicate | "(", expression, ")" ;
+predicate = reference, [ comparison, literal ] ;
+comparison = "==" | "!=" | "<" | "<=" | ">" | ">=" ;
+reference = identifier, { ".", identifier } ;
+literal = quoted-string | bare-token ;
 ```
+
+Comparisons and bare truth tests bind first, then `&&`, then `||`;
+parentheses override precedence. Expressions are limited to 32 nesting levels
+and 256 syntax nodes.
+
+```toml
 when = "validate == 'valid'"          # scalar output_type verdict
 when = "review != 'approve'"
 when = "is_valid"                      # bare bool for output_type = "bool"
 when = "research.status == 'complete'" # a field of a producer's schema
 when = "research.blocked"              # bare bool field
+when = "qa.passed && plan_review == 'approve'"
+when = "analyze.all_succeeded && analyze.count >= 1"
+when = "final == 'ship' || final == 'hold'"
 ```
 
-The left-hand side is a `<stepid>`, optionally followed by a dotted
+Each predicate's left-hand side is a `<stepid>`, optionally followed by a dotted
 `.field.path`. A bare step id tests that step's scalar `output_type` verdict; a
 field path tests a named field of the step's structured (`[step.schema]` /
-`schema_file`) output. Either way, the compared value is checked at load time
-against the referenced type — an enum comparison to a non-member, or a field
-that doesn't exist, is a parse error. The referenced step must be in
-`depends_on`.
+`schema_file`) output. Every referenced step must be in `depends_on` (except
+route-owning and `block_on` self references), and every field and literal is
+checked at load time.
+
+| Referenced value | Bare | `==`, `!=` | `<`, `<=`, `>`, `>=` |
+|---|---:|---:|---:|
+| bool scalar/field | yes | `true` / `false` | no |
+| enum scalar/field | no | declared members | no |
+| text field | no | string literal | no |
+| number field | no | finite JSON number | finite JSON number |
+| opaque `unknown` field | no | yes | no |
+| list/object/artifact | no | no | no |
+
+Single- and double-quoted strings may contain whitespace or operator text.
+Bare `true`, `false`, and JSON numbers are preferred for those types; quoted
+boolean and numeric spellings remain accepted for compatibility. Comparisons
+are always reference-to-literal—there is no arithmetic, unary `!`, collection
+indexing, or reference-to-reference comparison. Missing or malformed runtime
+data fails the predicate closed to false.
 
 ---
 
@@ -898,9 +932,16 @@ max_iterations = 3                # engine aborts the run past this
 feedback       = "@review"        # becomes an input to the target's next run
 ```
 
-Routes are evaluated in declaration order; guards must be non-ambiguous and
-either exhaust the source enum/bool domain or end in `fallback = true`. Every
-selection and cap exhaustion is recorded as a distinct journal event.
+Routes are evaluated in declaration order, but order never resolves ambiguity:
+every pair of guarded routes must be provably disjoint. The conservative proof
+recognizes contradictory equalities/inequalities, non-overlapping numeric
+ranges, disjunctions whose alternatives are all disjoint, and conjunctions
+with a contradictory term. Shapes it cannot prove are rejected. Guarded routes
+must either cover the route owner's complete bool/enum scalar domain or end in
+`fallback = true`; guards involving dependencies, structured fields, numbers,
+text, or opaque values cannot prove finite coverage. A fallback is rejected
+when own-output coverage proves it unreachable. Every selection and cap
+exhaustion is recorded as a distinct journal event.
 
 ```toml
 [[step.route]]
@@ -925,8 +966,9 @@ collected as a structured, batched submission in the review workspace.
 
 ### `block_on` — agent-initiated pause
 
-An agent step may declare `block_on` as a condition expression that references the
-step's **own** schema output field (the left-hand side must be the step's own id).
+An agent step may declare `block_on` as a condition expression whose every
+predicate references the step's **own** scalar or schema output (every
+left-hand side must use the step's own id).
 
 ```toml
 [[step]]
@@ -1222,14 +1264,15 @@ The chart is a direct, deterministic drawing of the constructs above:
   the same rank are ordered left-to-right by their position in the file.
 - **Edges** are `depends_on` links, drawn with elbow connectors that fan out from
   a parent and fan in above a child (`▼`).
-- **Conditional edges** — the one edge a step's `when` guard decorates — use a
+- **Conditional edges** — every dependency edge referenced by a step's `when`
+  guard — use a
   hollow arrowhead (`▽`) in the conditional color, since `when` gates an existing
   dependency rather than adding a new one. The guard is labeled beside the edge
-  in compact form (e.g. `review == approve`).
+  in canonical form (e.g. `review == "approve"`).
 - **Back-edges** — bounded route targets — are a distinct class
   routed up a dedicated channel on the right (`↺`, `◄`), reflecting that they are
   the only cycles in the graph and are capped by `max_iterations`. The channel is
-  captioned with the loop guard and its bound (e.g. `review == revise  ≤3`).
+  captioned with the loop guard and its bound (e.g. `review == "revise"  ≤3`).
 
 Long labels are truncated with an ellipsis; the guard-labeled edges reserve an
 extra row between ranks so the text never overlaps a connector.

@@ -60,15 +60,16 @@ run        = 'echo "analyzed target=$JIG_INPUT_TARGET index=$JIG_FANOUT_INDEX/$J
 
 # -----------------------------------------------------------------------------
 # 3. Synthesize — a read-only producer agent that consumes the family's whole
-#    ordered aggregate only once every child has settled (`analyze.all_succeeded`
-#    is the family's aggregate guard, evaluated after fan-in, not a per-child
-#    guard). No tools needed: everything it needs is in the aggregate input.
+#    ordered aggregate only once every child has settled. Its compound guard
+#    requires both success and at least one child, and is evaluated after
+#    fan-in rather than per child. No tools needed: everything it needs is in
+#    the aggregate input.
 # -----------------------------------------------------------------------------
 [[step]]
 id            = "synthesize"
 type          = "agent"
 depends_on    = ["analyze"]
-when          = "analyze.all_succeeded"
+when          = "analyze.all_succeeded && analyze.count >= 1"
 skill         = "skills/dynamic-fanout-synthesize"
 inputs        = ["@analyze.results"]
 allowed_tools = []

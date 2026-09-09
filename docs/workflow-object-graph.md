@@ -219,10 +219,25 @@ class Route {
 
 class Condition {
     +string Raw
+    +ConditionExpr Root
+}
+
+class ConditionExpr {
+    +CondOp Op
+    +ConditionExpr Left
+    +ConditionExpr Right
+    +ConditionRef Ref
+    +ConditionLiteral Literal
+}
+
+class ConditionRef {
     +string Step
     +string[] Field
-    +CondOp Op
+}
+
+class ConditionLiteral {
     +string Value
+    +bool Quoted
 }
 
 class Module {
@@ -309,6 +324,12 @@ class CondOp {
     truthy
     equals
     not-equals
+    less-than
+    less-than-or-equal
+    greater-than
+    greater-than-or-equal
+    and
+    or
 }
 
 Workflow "1" *-- "1" Meta : workflow
@@ -348,6 +369,10 @@ OutputType ..> OutputKind
 Field ..> FieldType
 ModuleValue ..> FieldType
 Condition ..> CondOp
+Condition "1" *-- "1" ConditionExpr : Root
+ConditionExpr "1" *-- "0..2" ConditionExpr : operands
+ConditionExpr "1" *-- "1" ConditionRef
+ConditionExpr "1" *-- "1" ConditionLiteral
 
 Step ..> AgentProfile : Profile resolves by ID
 Step ..> Condition : parses When, AppliesWhen, BlockOn
@@ -366,7 +391,8 @@ CheckFindings ..> Input : named artifact exports
 - `index` and `profileIndex` are derived lookup structures and are not decoded
   directly from TOML.
 - `When`, `AppliesWhen`, `BlockOn`, and `Route.When` remain strings in the
-  stored object. Validation parses them into temporary `Condition` values.
+  stored object. Validation parses them into bounded `ConditionExpr` trees,
+  visits every predicate for reference/type checks, and discards the tree.
 - Agent prompts and output templates are loaded eagerly and copied into
   snapshot fields so a resumed run does not depend on changed authoring files.
 - An agent's effective output schema is `BaseSchema + Step.Schema`. The base

@@ -77,7 +77,7 @@ File-by-file:
 | `schema.go` | The core types: `Workflow`, `Meta`, `Defaults`, `Step`, `Input`, `OutputType`, `Field`, `Schema`, and the step/field/failure enums. This is the data model everything else operates on. |
 | `load.go` | `Load(path)` / `Decode(data, baseDir)`: TOML decode, `applyDefaults()` (fold `[defaults]` into steps, build the id→index map), then validate. `baseDir` roots file-existence checks; `""` skips them for tests. |
 | `validate.go` | The static validator — structural, referential, and type checks. The bulk of the package's rules live here. |
-| `condition.go` | `ParseCondition` for `when` / `loop.when` guards: parses `stepid`, `stepid.field.path`, and the `truthy | == | !=` operators. |
+| `condition.go` | Bounded lexer/parser and expression AST for every guard surface: dotted references, truthiness, typed equality/ordering, `&&`, `||`, grouping, canonical formatting, and reference visitors/rewriting. |
 | `agent_file.go` | Parses a Claude agent `.md` file (frontmatter + body) and folds its `tools`/`model` into a step when the step leaves them unset. |
 | `schema_json.go` | `ParseJSONSchema` (raw JSON Schema → the internal `Field` model) and `Schema.JSONSchema()` (compile back out to JSON Schema for constrained decoding). |
 

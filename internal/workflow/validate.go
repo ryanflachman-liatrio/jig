@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -382,12 +383,14 @@ func (v *validator) checkAgent(s *Step) {
 		cond, err := ParseCondition(s.BlockOn)
 		if err != nil {
 			v.errf("agent step %q block_on: %v", s.ID, err)
-		} else if cond.Step != s.ID {
-			v.errf("agent step %q block_on: condition must reference this step's own output (got %q, want %q)", s.ID, cond.Step, s.ID)
-		} else if len(cond.Field) > 0 {
-			// Agent steps always have the base schema; block_on evaluates the
-			// step's own per-child output, never the foreach aggregate.
-			v.checkOwnFieldRef(s.ID, "block_on", s, cond.Field)
+		} else {
+			for _, predicate := range cond.Predicates() {
+				if predicate.Ref.Step != s.ID {
+					v.errf("agent step %q block_on: condition must reference this step's own output (got %q, want %q)", s.ID, predicate.Ref.Step, s.ID)
+					continue
+				}
+				v.checkOwnCondValue(s.ID, "block_on", s, predicate)
+			}
 		}
 	}
 }
@@ -474,10 +477,12 @@ func (v *validator) checkCheck(s *Step) {
 		if err != nil {
 			v.errf("check step %q applies_when: %v", s.ID, err)
 		} else {
-			if !contains(s.DependsOn, cond.Step) {
-				v.errf("check step %q applies_when references %q, which must be in depends_on", s.ID, cond.Step)
+			for _, ref := range cond.ReferencedSteps() {
+				if !contains(s.DependsOn, ref) {
+					v.errf("check step %q applies_when references %q, which must be in depends_on", s.ID, ref)
+				}
 			}
-			v.checkCondValue(s.ID, "applies_when", cond)
+			v.checkConditionValues(s.ID, "applies_when", cond)
 		}
 	}
 	if s.Findings == nil {
@@ -760,10 +765,12 @@ func (v *validator) checkWhen(s *Step) {
 	}
 	// A guard must reference a step this one waits for, else the verdict may
 	// not exist yet when the guard is evaluated.
-	if !contains(s.DependsOn, cond.Step) {
-		v.errf("step %q when references %q, which must be in its depends_on", s.ID, cond.Step)
+	for _, ref := range cond.ReferencedSteps() {
+		if !contains(s.DependsOn, ref) {
+			v.errf("step %q when references %q, which must be in its depends_on", s.ID, ref)
+		}
 	}
-	v.checkCondValue(s.ID, "when", cond)
+	v.checkConditionValues(s.ID, "when", cond)
 }
 
 func (v *validator) checkValidate(s *Step) {
@@ -828,15 +835,18 @@ func (v *validator) checkRoutes(s *Step) {
 			v.errf("%s when: %v", label, err)
 			continue
 		}
-		if cond.Step != s.ID && !contains(s.DependsOn, cond.Step) {
-			v.errf("%s when references %q, which must be this step or in its depends_on", label, cond.Step)
+		for _, ref := range cond.ReferencedSteps() {
+			if ref != s.ID && !contains(s.DependsOn, ref) {
+				v.errf("%s when references %q, which must be this step or in its depends_on", label, ref)
+			}
 		}
-		v.checkCondValue(s.ID, "route.when", cond)
+		v.checkConditionValues(s.ID, "route.when", cond)
 		guarded = append(guarded, cond)
-		if seen[r.When] {
-			v.errf("step %q has duplicate route guard %q", s.ID, r.When)
+		canonical := cond.canonicalKey()
+		if seen[canonical] {
+			v.errf("step %q has duplicate route guard %q", s.ID, cond.String())
 		}
-		seen[r.When] = true
+		seen[canonical] = true
 		if r.Feedback != "" && !strings.HasPrefix(r.Feedback, "@") {
 			v.errf("%s feedback must be \"@stepid\", got %q", label, r.Feedback)
 		} else if r.Feedback != "" {
@@ -855,7 +865,7 @@ func (v *validator) checkRoutes(s *Step) {
 	if fallback >= 0 && v.routesExhaustOutput(s, true) {
 		v.errf("step %q fallback route is unreachable because guarded routes exhaust its output", s.ID)
 	}
-	if len(guarded) > 1 && !routesAreMutuallyExclusive(guarded) {
+	if !routesAreMutuallyExclusive(guarded) {
 		v.errf("step %q route guards are not mutually exclusive", s.ID)
 	}
 	if s.Type == StepCheck && !v.hasAutomaticCheckRemediation(s) {
@@ -867,56 +877,159 @@ func (v *validator) checkRoutes(s *Step) {
 // a single non-pass guard. Skip is engine-produced before route selection, so
 // the latter is equivalent to fail-or-error for a dispatched check.
 func (v *validator) hasAutomaticCheckRemediation(s *Step) bool {
-	fail, runtimeErr := false, false
-	for _, r := range s.Routes {
-		if r.Fallback {
-			continue
+	for _, outcome := range []string{"fail", "error"} {
+		covered := false
+		for _, r := range s.Routes {
+			if r.Fallback || !v.routeTargetPrecedes(r.Goto, s.ID) {
+				continue
+			}
+			cond, err := ParseCondition(r.When)
+			if err != nil {
+				continue
+			}
+			if value, known := evalFiniteCondition(cond.Root, s.ID, outcome); known && value {
+				covered = true
+				break
+			}
 		}
-		cond, err := ParseCondition(r.When)
-		if err != nil || cond.Step != s.ID || len(cond.Field) != 0 {
-			continue
-		}
-		if !v.routeTargetPrecedes(r.Goto, s.ID) {
-			continue
-		}
-		if cond.Op == CondNeq && cond.Value == "pass" {
-			return true
-		}
-		if cond.Op != CondEq {
-			continue
-		}
-		switch cond.Value {
-		case "fail":
-			fail = true
-		case "error":
-			runtimeErr = true
-		}
-	}
-	return fail && runtimeErr
-}
-
-// routesAreMutuallyExclusive accepts only equality tests over one typed value
-// source with distinct values. This deliberately conservative rule avoids
-// pretending that arbitrary boolean expressions are statically disjoint.
-func routesAreMutuallyExclusive(guards []*Condition) bool {
-	first := guards[0]
-	values := map[string]bool{}
-	for _, guard := range guards[1:] {
-		if guard.Step != first.Step || strings.Join(guard.Field, ".") != strings.Join(first.Field, ".") {
+		if !covered {
 			return false
 		}
-	}
-	if len(guards) == 2 && first.Value == guards[1].Value && first.Op != guards[1].Op &&
-		(first.Op == CondEq || first.Op == CondNeq) && (guards[1].Op == CondEq || guards[1].Op == CondNeq) {
-		return true
-	}
-	for _, guard := range guards {
-		if guard.Op != CondEq || values[guard.Value] {
-			return false
-		}
-		values[guard.Value] = true
 	}
 	return true
+}
+
+func routesAreMutuallyExclusive(guards []*Condition) bool {
+	for i := 0; i < len(guards); i++ {
+		for j := i + 1; j < len(guards); j++ {
+			if !conditionsDisjoint(guards[i].Root, guards[j].Root) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func conditionsDisjoint(a, b *ConditionExpr) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	switch a.Op {
+	case CondOr:
+		return conditionsDisjoint(a.Left, b) && conditionsDisjoint(a.Right, b)
+	case CondAnd:
+		return conditionsDisjoint(a.Left, b) || conditionsDisjoint(a.Right, b)
+	}
+	switch b.Op {
+	case CondOr:
+		return conditionsDisjoint(a, b.Left) && conditionsDisjoint(a, b.Right)
+	case CondAnd:
+		return conditionsDisjoint(a, b.Left) || conditionsDisjoint(a, b.Right)
+	}
+	if a.Ref.Step != b.Ref.Step || strings.Join(a.Ref.Field, ".") != strings.Join(b.Ref.Field, ".") {
+		return false
+	}
+	aOp, aValue := normalizedAtomic(a)
+	bOp, bValue := normalizedAtomic(b)
+	if aOp == CondEq && bOp == CondEq {
+		return aValue != bValue
+	}
+	if aValue == bValue && ((aOp == CondEq && bOp == CondNeq) || (aOp == CondNeq && bOp == CondEq)) {
+		return true
+	}
+	aNumber, aErr := strconv.ParseFloat(aValue, 64)
+	bNumber, bErr := strconv.ParseFloat(bValue, 64)
+	if aErr != nil || bErr != nil || !isConditionNumber(aValue) || !isConditionNumber(bValue) {
+		return false
+	}
+	aRange, okA := numericRange(aOp, aNumber)
+	bRange, okB := numericRange(bOp, bNumber)
+	return okA && okB && rangesDisjoint(aRange, bRange)
+}
+
+func normalizedAtomic(expr *ConditionExpr) (CondOp, string) {
+	if expr.Op == CondTruthy {
+		return CondEq, "true"
+	}
+	return expr.Op, expr.Literal.Value
+}
+
+type conditionRange struct {
+	lower, upper                   float64
+	hasLower, hasUpper             bool
+	lowerInclusive, upperInclusive bool
+}
+
+func numericRange(op CondOp, value float64) (conditionRange, bool) {
+	switch op {
+	case CondEq:
+		return conditionRange{lower: value, upper: value, hasLower: true, hasUpper: true, lowerInclusive: true, upperInclusive: true}, true
+	case CondLT:
+		return conditionRange{upper: value, hasUpper: true}, true
+	case CondLTE:
+		return conditionRange{upper: value, hasUpper: true, upperInclusive: true}, true
+	case CondGT:
+		return conditionRange{lower: value, hasLower: true}, true
+	case CondGTE:
+		return conditionRange{lower: value, hasLower: true, lowerInclusive: true}, true
+	default:
+		return conditionRange{}, false
+	}
+}
+
+func rangesDisjoint(a, b conditionRange) bool {
+	if a.hasUpper && b.hasLower {
+		if a.upper < b.lower || (a.upper == b.lower && (!a.upperInclusive || !b.lowerInclusive)) {
+			return true
+		}
+	}
+	if b.hasUpper && a.hasLower {
+		if b.upper < a.lower || (b.upper == a.lower && (!b.upperInclusive || !a.lowerInclusive)) {
+			return true
+		}
+	}
+	return false
+}
+
+func evalFiniteCondition(expr *ConditionExpr, stepID, value string) (bool, bool) {
+	if expr == nil {
+		return false, false
+	}
+	switch expr.Op {
+	case CondAnd:
+		left, known := evalFiniteCondition(expr.Left, stepID, value)
+		if !known {
+			return false, false
+		}
+		if !left {
+			return false, true
+		}
+		right, known := evalFiniteCondition(expr.Right, stepID, value)
+		return left && right, known
+	case CondOr:
+		left, known := evalFiniteCondition(expr.Left, stepID, value)
+		if !known {
+			return false, false
+		}
+		if left {
+			return true, true
+		}
+		right, known := evalFiniteCondition(expr.Right, stepID, value)
+		return right, known
+	}
+	if expr.Ref.Step != stepID || len(expr.Ref.Field) != 0 {
+		return false, false
+	}
+	switch expr.Op {
+	case CondTruthy:
+		return value == "true", true
+	case CondEq:
+		return value == expr.Literal.Value, true
+	case CondNeq:
+		return value != expr.Literal.Value, true
+	default:
+		return false, false
+	}
 }
 
 // routesExhaustOutput permits omitting a fallback only when guarded routes
@@ -929,22 +1042,26 @@ func (v *validator) routesExhaustOutput(s *Step, ignoreFallback bool) bool {
 	} else if s.OutputType.Kind != OutputEnum {
 		return false
 	}
-	seen := make(map[string]bool, len(s.Routes))
-	for _, r := range s.Routes {
-		if r.Fallback {
-			if ignoreFallback {
+	for _, value := range values {
+		covered := false
+		for _, r := range s.Routes {
+			if r.Fallback {
+				if !ignoreFallback {
+					return false
+				}
 				continue
 			}
-			return false
+			cond, err := ParseCondition(r.When)
+			if err != nil {
+				return false
+			}
+			result, known := evalFiniteCondition(cond.Root, s.ID, value)
+			if !known {
+				return false
+			}
+			covered = covered || result
 		}
-		cond, err := ParseCondition(r.When)
-		if err != nil || cond.Step != s.ID || len(cond.Field) != 0 || cond.Op != CondEq || seen[cond.Value] {
-			return false
-		}
-		seen[cond.Value] = true
-	}
-	for _, value := range values {
-		if !seen[value] {
+		if !covered {
 			return false
 		}
 	}
@@ -983,16 +1100,22 @@ func (v *validator) routeTargetPrecedes(target, source string) bool {
 // references: a schema field (when the condition carries a field path) or the
 // step's scalar output_type verdict. guard names the source ("when"/"route.when")
 // for error messages.
-func (v *validator) checkCondValue(stepID, guard string, cond *Condition) {
-	target, ok := v.wf.index[cond.Step]
+func (v *validator) checkConditionValues(stepID, guard string, cond *Condition) {
+	for _, predicate := range cond.Predicates() {
+		v.checkCondValue(stepID, guard, predicate)
+	}
+}
+
+func (v *validator) checkCondValue(stepID, guard string, cond *ConditionExpr) {
+	target, ok := v.wf.index[cond.Ref.Step]
 	if !ok {
 		return // unknown-step error already reported by the caller
 	}
 	ts := &v.wf.Steps[target]
 
 	// A field path resolves against the referenced step's structured schema.
-	if len(cond.Field) > 0 {
-		if f, ok := v.checkFieldRef(stepID, guard, ts, cond.Field); ok {
+	if len(cond.Ref.Field) > 0 {
+		if f, ok := v.checkFieldRef(stepID, guard, ts, cond.Ref.Field); ok {
 			v.checkFieldCond(stepID, guard, cond, f)
 		}
 		return
@@ -1002,29 +1125,54 @@ func (v *validator) checkCondValue(stepID, guard string, cond *Condition) {
 	// single scalar meaning across N children — a guard must name an aggregate
 	// field such as `analyze.all_succeeded`.
 	if ts.ForEach != nil {
-		v.errf("step %q %s: %q is a foreach family; compare an aggregate field (e.g. %s.all_succeeded), not the bare family", stepID, guard, cond.Step, cond.Step)
+		v.errf("step %q %s: %q is a foreach family; compare an aggregate field (e.g. %s.all_succeeded), not the bare family", stepID, guard, cond.Ref.Step, cond.Ref.Step)
 		return
 	}
 	ot := ts.OutputType
 	switch cond.Op {
 	case CondTruthy:
 		if ot.Kind != OutputBool {
-			v.errf("step %q %s: bare %q requires that step to have output_type = bool", stepID, guard, cond.Step)
+			v.errf("step %q %s: bare %q requires that step to have output_type = bool", stepID, guard, cond.Ref.Step)
 		}
 	case CondEq, CondNeq:
 		if ot.Kind == OutputText {
-			v.errf("step %q %s compares %q, which has no typed verdict (output_type is text)", stepID, guard, cond.Step)
-		} else if !ot.allows(cond.Value) {
-			v.errf("step %q %s: %q is not a valid value for step %q", stepID, guard, cond.Value, cond.Step)
+			v.errf("step %q %s compares %q, which has no typed verdict (output_type is text)", stepID, guard, cond.Ref.Step)
+		} else if !ot.allows(cond.Literal.Value) {
+			v.errf("step %q %s: %q is not a valid value for step %q", stepID, guard, cond.Literal.Value, cond.Ref.Step)
 		}
+	case CondLT, CondLTE, CondGT, CondGTE:
+		v.errf("step %q %s: ordering comparison requires a number field, got scalar %q", stepID, guard, cond.Ref.Step)
 	}
 }
 
 // checkFieldCond verifies a comparison against a resolved schema field: enums
 // must compare to a declared value, bools to true/false, and only leaf scalar
 // fields may be compared at all.
-func (v *validator) checkFieldCond(stepID, guard string, cond *Condition, f *Field) {
-	name := strings.Join(cond.Field, ".")
+func (v *validator) checkOwnCondValue(stepID, guard string, source *Step, cond *ConditionExpr) {
+	if len(cond.Ref.Field) > 0 {
+		if f, ok := v.checkOwnFieldRef(stepID, guard, source, cond.Ref.Field); ok {
+			v.checkFieldCond(stepID, guard, cond, f)
+		}
+		return
+	}
+	switch cond.Op {
+	case CondTruthy:
+		if source.OutputType.Kind != OutputBool {
+			v.errf("step %q %s: bare %q requires that step to have output_type = bool", stepID, guard, cond.Ref.Step)
+		}
+	case CondEq, CondNeq:
+		if source.OutputType.Kind == OutputText {
+			v.errf("step %q %s compares %q, which has no typed verdict (output_type is text)", stepID, guard, cond.Ref.Step)
+		} else if !source.OutputType.allows(cond.Literal.Value) {
+			v.errf("step %q %s: %q is not a valid value for step %q", stepID, guard, cond.Literal.Value, cond.Ref.Step)
+		}
+	case CondLT, CondLTE, CondGT, CondGTE:
+		v.errf("step %q %s: ordering comparison requires a number field, got scalar %q", stepID, guard, cond.Ref.Step)
+	}
+}
+
+func (v *validator) checkFieldCond(stepID, guard string, cond *ConditionExpr, f *Field) {
+	name := strings.Join(cond.Ref.Field, ".")
 	switch cond.Op {
 	case CondTruthy:
 		if f.Type != FieldBool {
@@ -1033,18 +1181,28 @@ func (v *validator) checkFieldCond(stepID, guard string, cond *Condition, f *Fie
 	case CondEq, CondNeq:
 		switch f.Type {
 		case FieldEnum:
-			if !contains(f.Enum, cond.Value) {
+			if !contains(f.Enum, cond.Literal.Value) {
 				v.errf("step %q %s: %q is not a valid value for field %q (enum: %s)",
-					stepID, guard, cond.Value, name, strings.Join(f.Enum, ", "))
+					stepID, guard, cond.Literal.Value, name, strings.Join(f.Enum, ", "))
 			}
 		case FieldBool:
-			if cond.Value != "true" && cond.Value != "false" {
-				v.errf("step %q %s: field %q is bool; value must be true or false, got %q", stepID, guard, name, cond.Value)
+			if cond.Literal.Value != "true" && cond.Literal.Value != "false" {
+				v.errf("step %q %s: field %q is bool; value must be true or false, got %q", stepID, guard, name, cond.Literal.Value)
 			}
-		case FieldText, FieldNumber, FieldAny:
+		case FieldNumber:
+			if !isConditionNumber(cond.Literal.Value) {
+				v.errf("step %q %s: field %q is number; value must be a finite JSON number, got %q", stepID, guard, name, cond.Literal.Value)
+			}
+		case FieldText, FieldAny:
 			// Comparable against a free literal; nothing further to check.
 		default:
 			v.errf("step %q %s: field %q is %s and cannot be compared", stepID, guard, name, f.Type)
+		}
+	case CondLT, CondLTE, CondGT, CondGTE:
+		if f.Type != FieldNumber {
+			v.errf("step %q %s: field %q is %s; ordering comparisons require number", stepID, guard, name, f.Type)
+		} else if !isConditionNumber(cond.Literal.Value) {
+			v.errf("step %q %s: field %q is number; value must be a finite JSON number, got %q", stepID, guard, name, cond.Literal.Value)
 		}
 	}
 }

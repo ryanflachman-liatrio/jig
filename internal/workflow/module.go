@@ -127,15 +127,21 @@ func (e *moduleExpansion) expand(wf *Workflow, baseDir, sourcePath string, stack
 		if st.BlockOn, err = rewriteModuleCondition(st.BlockOn, modules); err != nil {
 			return fmt.Errorf("step %q: %w", st.ID, err)
 		}
-		if condition, err := ParseCondition(st.When); err == nil {
-			st.DependsOn = uniqueStrings(append(st.DependsOn, condition.Step))
-		}
-		if condition, err := ParseCondition(st.AppliesWhen); err == nil {
-			st.DependsOn = uniqueStrings(append(st.DependsOn, condition.Step))
+		for _, raw := range []string{st.When, st.AppliesWhen} {
+			if condition, parseErr := ParseCondition(raw); parseErr == nil {
+				st.DependsOn = uniqueStrings(append(st.DependsOn, condition.ReferencedSteps()...))
+			}
 		}
 		for j := range st.Routes {
 			if st.Routes[j].When, err = rewriteModuleCondition(st.Routes[j].When, modules); err != nil {
 				return fmt.Errorf("step %q route %d: %w", st.ID, j+1, err)
+			}
+			if condition, parseErr := ParseCondition(st.Routes[j].When); parseErr == nil {
+				for _, ref := range condition.ReferencedSteps() {
+					if ref != st.ID {
+						st.DependsOn = uniqueStrings(append(st.DependsOn, ref))
+					}
+				}
 			}
 			st.Routes[j].Feedback, err = rewriteModuleReference(st.Routes[j].Feedback, modules)
 			if err != nil {
@@ -212,32 +218,29 @@ func rewriteModuleCondition(raw string, modules map[string]expandedModule) (stri
 	if err != nil {
 		return raw, nil
 	}
-	module, ok := modules[condition.Step]
-	if !ok {
-		return raw, nil
+	changed := false
+	rewritten, err := condition.RewriteRefs(func(ref ConditionRef) (ConditionRef, error) {
+		module, ok := modules[ref.Step]
+		if !ok {
+			return ref, nil
+		}
+		changed = true
+		if len(ref.Field) != 1 {
+			return ConditionRef{}, fmt.Errorf("module %q conditions must name one export", ref.Step)
+		}
+		export, ok := module.exports[ref.Field[0]]
+		if !ok {
+			return ConditionRef{}, fmt.Errorf("module %q has no export %q", ref.Step, ref.Field[0])
+		}
+		if export.Artifact != "" {
+			return ConditionRef{}, fmt.Errorf("module export %q is an artifact and cannot be used in a condition", ref.Field[0])
+		}
+		return ConditionRef{Step: export.Ref, Field: append([]string(nil), export.RefField...)}, nil
+	})
+	if err != nil || changed {
+		return rewritten, err
 	}
-	if len(condition.Field) == 0 {
-		return "", fmt.Errorf("module %q conditions must name an export", condition.Step)
-	}
-	export, ok := module.exports[condition.Field[0]]
-	if !ok {
-		return "", fmt.Errorf("module %q has no export %q", condition.Step, condition.Field[0])
-	}
-	if export.Artifact != "" {
-		return "", fmt.Errorf("module export %q is an artifact and cannot be used in a condition", condition.Field[0])
-	}
-	left := export.Ref
-	if len(export.RefField) > 0 {
-		left += "." + strings.Join(export.RefField, ".")
-	}
-	switch condition.Op {
-	case CondTruthy:
-		return left, nil
-	case CondEq, CondNeq:
-		return left + " " + string(condition.Op) + " " + fmt.Sprintf("%q", condition.Value), nil
-	default:
-		return "", fmt.Errorf("unsupported condition operator %q", condition.Op)
-	}
+	return raw, nil
 }
 
 func rewriteModuleReference(raw string, modules map[string]expandedModule) (string, error) {
@@ -343,10 +346,15 @@ func instSteps(child *Workflow, parent Step) ([]Step, error) {
 		if isRoot {
 			steps[i].DependsOn = uniqueStrings(append(steps[i].DependsOn, parent.DependsOn...))
 			if parent.When != "" {
-				if steps[i].When != "" {
-					return nil, fmt.Errorf("module root %q already has a when guard; cannot combine it with the invocation guard", steps[i].ID)
+				if steps[i].When == "" {
+					steps[i].When = parent.When
+				} else {
+					combined, err := ParseCondition("(" + parent.When + ") && (" + steps[i].When + ")")
+					if err != nil {
+						return nil, fmt.Errorf("combine module root %q guards: %w", steps[i].ID, err)
+					}
+					steps[i].When = combined.String()
 				}
-				steps[i].When = parent.When
 			}
 		}
 		prefixStep(&steps[i], parent.ID, internal)
@@ -685,21 +693,19 @@ func prefixCondition(raw, prefix string, internal map[string]bool) string {
 		return ""
 	}
 	condition, err := ParseCondition(raw)
-	if err != nil || !internal[condition.Step] {
+	if err != nil {
 		return raw
 	}
-	left := prefix + "__" + condition.Step
-	if len(condition.Field) > 0 {
-		left += "." + strings.Join(condition.Field, ".")
+	rewritten, err := condition.RewriteRefs(func(ref ConditionRef) (ConditionRef, error) {
+		if internal[ref.Step] {
+			ref.Step = prefix + "__" + ref.Step
+		}
+		return ref, nil
+	})
+	if err != nil {
+		return raw
 	}
-	switch condition.Op {
-	case CondTruthy:
-		return left
-	case CondEq:
-		return left + " == " + fmt.Sprintf("%q", condition.Value)
-	default:
-		return left + " != " + fmt.Sprintf("%q", condition.Value)
-	}
+	return rewritten
 }
 
 func prefixFeedback(raw, prefix string, internal map[string]bool) string {

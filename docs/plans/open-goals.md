@@ -42,7 +42,7 @@ and comparison to high-rated TUIs (lazygit, k9s, yazi, btop) plus agent peers
 |----|------|------|-------|
 | A9 | **Gemini (or next) backend** — real harness before marketing the name | S | Validate rejects; no `harness.For` path. |
 | A10 | **Secrets beyond env** — vault / 1Password / age (or clear “env-only” product stance) | S | Names → `JIG_SECRET_*` only today. |
-| A11 | **Richer condition language** — `&&` / `\|\|` / comparisons | C | Guards are `truthy` / `==` / `!=` only. |
+| A11 | **Richer condition language** — `&&` / `\|\|` / comparisons | C+S | **Done.** Bounded expression AST, typed numeric comparisons, compound route proofs, module rewriting, and chart support. Plan: [`a11-richer-condition-language.md`](a11-richer-condition-language.md). |
 | A12 | **Reset settled runs** — postmortem rewind after `RunFinished` | S | ADR 0008 / engine deferred. |
 | A13 | **Help agent on historical runs** — read-only journal/transcript analysis | S | Spec 11 live-run only today. |
 | A14 | **Packaging + CI** — release artifacts, brew/`go install` docs, GitHub Actions | C | Build-from-source friction. |

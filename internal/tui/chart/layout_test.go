@@ -219,7 +219,7 @@ label = "Work summary"
 		if be.maxIter != 4 {
 			t.Errorf("back-edge maxIter = %d, want 4", be.maxIter)
 		}
-		if want := "check == redo  ≤4"; be.label != want {
+		if want := `check == "redo"  ≤4`; be.label != want {
 			t.Errorf("back-edge label = %q, want %q", be.label, want)
 		}
 		// The loop must not have leaked into the forward depends_on edge set as a
@@ -298,4 +298,46 @@ output_exists = true
 			t.Errorf("build gateLabel = %q, want %q", got, "exists")
 		}
 	})
+}
+
+func TestLayoutChartMarksEveryCompoundGuardDependency(t *testing.T) {
+	wf := mustDecode(t, `
+[workflow]
+name = "compound"
+version = "1"
+[[step]]
+id = "a"
+type = "command"
+output_type = "bool"
+run = "true"
+[[step]]
+id = "b"
+type = "command"
+output_type = "bool"
+run = "true"
+[[step]]
+id = "joined"
+type = "command"
+depends_on = ["a", "b"]
+when = "a && (b == true || b != false)"
+run = "true"
+`)
+	lay := layoutChart(wf)
+	conditional := 0
+	for _, edge := range lay.edges {
+		if lay.nodes[edge.to].id != "joined" {
+			continue
+		}
+		if !edge.conditional {
+			t.Errorf("%s→joined edge is not conditional", lay.nodes[edge.from].id)
+			continue
+		}
+		conditional++
+		if want := "a && (b == true || b != false)"; edge.label != want {
+			t.Errorf("edge label = %q, want %q", edge.label, want)
+		}
+	}
+	if conditional != 2 {
+		t.Fatalf("conditional joined edges = %d, want 2", conditional)
+	}
 }
