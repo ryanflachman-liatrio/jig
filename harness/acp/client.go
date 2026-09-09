@@ -73,8 +73,10 @@ type Diff struct {
 // Client implements acp.Client, capturing every session/update into an
 // in-memory log and delegating permission decisions to Decide.
 type Client struct {
-	Decide Decider
-	Elicit Elicitor
+	Decide         Decider
+	Elicit         Elicitor
+	CursorQuestion CursorQuestionHandler
+	CursorPlan     CursorPlanHandler
 
 	// OnUpdate, if set, is invoked synchronously with each Event as it is
 	// captured — before SessionUpdate returns — so a caller can stream events
@@ -83,6 +85,7 @@ type Client struct {
 	OnUpdate func(Event)
 
 	mu           sync.Mutex
+	replaying    bool
 	events       []Event
 	requests     []acpsdk.RequestPermissionRequest
 	elicitations []acpsdk.UnstableCreateElicitationRequest
@@ -207,6 +210,10 @@ func (c *Client) SessionUpdate(_ context.Context, params acpsdk.SessionNotificat
 		return nil
 	}
 	c.mu.Lock()
+	if c.replaying {
+		c.mu.Unlock()
+		return nil
+	}
 	c.events = append(c.events, ev)
 	c.mu.Unlock()
 	if c.OnUpdate != nil {
@@ -214,6 +221,8 @@ func (c *Client) SessionUpdate(_ context.Context, params acpsdk.SessionNotificat
 	}
 	return nil
 }
+
+func (c *Client) setReplaying(on bool) { c.mu.Lock(); c.replaying = on; c.mu.Unlock() }
 
 func textOf(cb acpsdk.ContentBlock) string {
 	if cb.Text != nil {

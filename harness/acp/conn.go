@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -188,6 +187,8 @@ func (c *Conn) LoadSession(ctx context.Context, cwd, sessionID string) error {
 	if !c.SupportsLoadSession {
 		return fmt.Errorf("adapter did not advertise session/load")
 	}
+	c.client.setReplaying(true)
+	defer c.client.setReplaying(false)
 	resp, err := c.rpc.LoadSession(ctx, acpsdk.LoadSessionRequest{
 		Cwd:        cwd,
 		McpServers: []acpsdk.McpServer{},
@@ -388,14 +389,25 @@ func addExitStatus(fields map[string]any, cmd *exec.Cmd) {
 // requires no auth step). If CURSOR_API_KEY is set in the environment Cursor
 // treats itself as already authenticated, but calling Authenticate is still
 // safe (it is a no-op when already authenticated).
-func ConnectCursor(ctx context.Context, decide Decider, onUpdate func(Event)) (*Conn, error) {
+func ConnectCursor(ctx context.Context, decide Decider, onUpdate func(Event), question CursorQuestionHandler, diagnosticsDir string) (*Conn, error) {
 	agentPath, err := exec.LookPath("cursor-agent")
 	if err != nil {
 		return nil, fmt.Errorf("cursor-agent not found on PATH (run: cursor-agent --version to verify install): %w", err)
 	}
 
+	diagnostics, err := newDiagnosticLog(diagnosticsDir, nil)
+	if err != nil {
+		return nil, fmt.Errorf("open diagnostics: %w", err)
+	}
+	closeDiagnostics := true
+	defer func() {
+		if closeDiagnostics {
+			_ = diagnostics.Close()
+		}
+	}()
 	cmd := exec.CommandContext(ctx, agentPath, "acp")
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = diagnostics.StderrWriter()
+	configureProcess(cmd)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("stdin pipe: %w", err)
@@ -407,24 +419,26 @@ func ConnectCursor(ctx context.Context, decide Decider, onUpdate func(Event)) (*
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start cursor-agent acp: %w", err)
 	}
+	diagnostics.setRootPID(cmd.Process.Pid)
 
-	client := &Client{Decide: decide, OnUpdate: onUpdate}
-	rpc := acpsdk.NewClientSideConnection(client, stdin, stdout)
+	client := &Client{Decide: decide, OnUpdate: onUpdate, CursorQuestion: question}
+	rpc := acpsdk.NewClientSideConnection(client, stdin, newCursorWireReader(stdout))
 
 	initResp, err := rpc.Initialize(ctx, acpsdk.InitializeRequest{
 		ProtocolVersion: acpsdk.ProtocolVersionNumber,
 	})
 	if err != nil {
-		_ = cmd.Process.Kill()
+		_ = killProcess(cmd)
 		_ = cmd.Wait()
 		return nil, fmt.Errorf("initialize: %w", err)
 	}
 
 	if _, err := rpc.Authenticate(ctx, acpsdk.AuthenticateRequest{MethodId: "cursor_login"}); err != nil {
-		_ = cmd.Process.Kill()
+		_ = killProcess(cmd)
 		_ = cmd.Wait()
 		return nil, fmt.Errorf("cursor authenticate: %w (run: cursor-agent login)", err)
 	}
 
-	return &Conn{cmd: cmd, rpc: rpc, client: client, ProtocolVersion: int(initResp.ProtocolVersion)}, nil
+	closeDiagnostics = false
+	return &Conn{cmd: cmd, rpc: rpc, client: client, diagnostics: diagnostics, ProtocolVersion: int(initResp.ProtocolVersion), SupportsLoadSession: initResp.AgentCapabilities.LoadSession}, nil
 }

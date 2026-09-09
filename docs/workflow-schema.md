@@ -314,12 +314,15 @@ tool-call diff or location detail. A completed edit with no such detail shows
 `Adapter did not provide edit details.`; jig does not infer patches from tool
 titles or the workspace.
 
-Interactive steps may enable `AskUserQuestion` with either transport. The ACP
-path advertises form elicitation only and supports text, single-select, and
-multi-select questions, including the Claude adapter's “Other” answer fields.
-ACP URL elicitation and other primitive form field types are intentionally not
-advertised; an agent that sends one receives a protocol error rather than a
-partially interpreted prompt. Permission requests remain a separate security
+Interactive steps may enable `AskUserQuestion` only when the selected harness
+advertises user-question support. Claude ACP uses form elicitation and supports
+text, single-select, multi-select, and the Claude adapter's “Other” fields.
+Cursor ACP uses its native `cursor/ask_question` callback for required
+single- and multi-select questions; option IDs, rather than display labels, are
+returned to Cursor. Cursor sessions also support continuation through ACP
+`session/load`, provided the running CLI negotiates that capability. A missing,
+expired, or incompatible saved session fails the step; jig never starts a fresh
+conversation in its place. Permission requests remain a separate security
 decision and are never rendered as user questions.
 
 ```toml

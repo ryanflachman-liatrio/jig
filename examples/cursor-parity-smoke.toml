@@ -1,0 +1,26 @@
+# Validate with: jig validate examples/cursor-parity-smoke.toml
+# Run interactively with a logged-in cursor-agent installation.
+[workflow]
+name = "cursor-parity-smoke"
+version = "1"
+description = "Cursor ACP question and resumable block_on smoke fixture."
+
+[defaults]
+backend = "cursor"
+transport = "acp"
+cwd = "."
+
+[[step]]
+id = "ask"
+type = "agent"
+skill = "../.agents/skills/intake"
+allowed_tools = ["AskUserQuestion"]
+
+[[step]]
+id = "checkpoint"
+type = "agent"
+depends_on = ["ask"]
+skill = "../.agents/skills/intake"
+block_on = "checkpoint.needs_input == true"
+  [step.schema]
+  needs_input = "bool"

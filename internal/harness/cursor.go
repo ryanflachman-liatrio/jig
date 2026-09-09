@@ -20,11 +20,8 @@ func NewCursorHarness() *CursorHarness { return &CursorHarness{} }
 
 func (*CursorHarness) Name() string { return "cursor" }
 
-// Capabilities: permission callbacks and structured output via prompt injection.
-// No user questions (cursor-agent ACP has no elicitation callback), session
-// resume, or partial streaming.
 func (*CursorHarness) Capabilities() CapabilitySet {
-	return NewCapabilitySet(CapPermissionCallback, CapStructuredOutput)
+	return NewCapabilitySet(CapPermissionCallback, CapUserQuestion, CapSessionResume, CapStructuredOutput, CapPartialStreaming)
 }
 
 func (*CursorHarness) PreviewPrompt(spec SessionSpec) string {
@@ -35,12 +32,8 @@ func (*CursorHarness) PreviewPrompt(spec SessionSpec) string {
 // and starts the prompt turn in the background. Rejects capability-gated
 // SessionSpec fields this harness does not advertise.
 func (h *CursorHarness) Open(ctx context.Context, spec SessionSpec) (Session, error) {
-	if spec.Resume != "" {
-		return nil, fmt.Errorf("cursor: session resume not supported (CapSessionResume not advertised)")
-	}
-
 	events := make(chan Event, 32)
-	sess := &acpSession{events: events, hasSchema: spec.Schema != nil, schema: spec.Schema}
+	sess := &acpSession{events: events, hasSchema: spec.Schema != nil, schema: spec.Schema, partial: spec.Partial}
 
 	var decide acp.Decider
 	if spec.Permission != nil {
@@ -51,13 +44,22 @@ func (h *CursorHarness) Open(ctx context.Context, spec SessionSpec) (Session, er
 
 	conn, err := acp.ConnectCursor(ctx, decide, func(ev acp.Event) {
 		sess.onEvent(ev)
-	})
+	}, newCursorQuestionHandler(spec.Question), spec.DiagnosticsDir)
 	if err != nil {
 		return nil, fmt.Errorf("cursor: %w", err)
 	}
 	sess.conn = conn
 
-	sessionID, err := conn.NewSession(ctx, spec.Cwd)
+	var sessionID string
+	if spec.Resume != "" {
+		if err := conn.LoadSession(ctx, spec.Cwd, spec.Resume); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("cursor: %w", err)
+		}
+		sessionID = spec.Resume
+	} else {
+		sessionID, err = conn.NewSession(ctx, spec.Cwd)
+	}
 	if err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("cursor: %w", err)

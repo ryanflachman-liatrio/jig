@@ -95,6 +95,29 @@ func TestSessionUpdate_PreservesStructuredDiff(t *testing.T) {
 	}
 }
 
+func TestSessionUpdate_SuppressesReplayBeforeCaptureAndForwarding(t *testing.T) {
+	forwarded := 0
+	c := &Client{OnUpdate: func(Event) { forwarded++ }}
+	c.setReplaying(true)
+	if err := c.SessionUpdate(context.Background(), acpsdk.SessionNotification{Update: acpsdk.SessionUpdate{
+		AgentMessageChunk: &acpsdk.SessionUpdateAgentMessageChunk{Content: textBlock("history")},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Events(); len(got) != 0 || forwarded != 0 {
+		t.Fatalf("replay captured or forwarded: %v, %d", got, forwarded)
+	}
+	c.setReplaying(false)
+	if err := c.SessionUpdate(context.Background(), acpsdk.SessionNotification{Update: acpsdk.SessionUpdate{
+		AgentMessageChunk: &acpsdk.SessionUpdateAgentMessageChunk{Content: textBlock("fresh")},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Events(); len(got) != 1 || got[0].Text != "fresh" || forwarded != 1 {
+		t.Fatalf("fresh update = %v, forwarded %d", got, forwarded)
+	}
+}
+
 func statusPtr(s acpsdk.ToolCallStatus) *acpsdk.ToolCallStatus { return &s }
 
 func permissionRequest(options ...acpsdk.PermissionOption) acpsdk.RequestPermissionRequest {

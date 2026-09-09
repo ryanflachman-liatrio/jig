@@ -55,7 +55,7 @@ func (h *AcpHarness) Open(ctx context.Context, spec SessionSpec) (Session, error
 	}
 
 	events := make(chan Event, 32)
-	sess := &acpSession{events: events, hasSchema: spec.Schema != nil, schema: spec.Schema}
+	sess := &acpSession{events: events, hasSchema: spec.Schema != nil, schema: spec.Schema, partial: spec.Partial}
 
 	var decide acp.Decider
 	if spec.Permission != nil {
@@ -352,6 +352,7 @@ type acpSession struct {
 	events    chan Event
 	hasSchema bool
 	schema    map[string]any
+	partial   bool
 
 	// lastText accumulates EventMessage chunks for structured-output extraction.
 	// Reset when the first new tool call ID is seen so only the final text
@@ -560,6 +561,9 @@ func (s *acpSession) onEvent(ev acp.Event) {
 			s.lastText += ev.Text
 		}
 		s.events <- Event{Type: EventText, Text: ev.Text}
+		if s.partial {
+			s.events <- Event{Type: EventTextDelta, Text: ev.Text}
+		}
 		s.hasTextSinceFlush = true
 
 	case acp.EventThought:

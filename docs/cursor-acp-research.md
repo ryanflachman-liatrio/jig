@@ -1,5 +1,11 @@
 # Cursor ACP Research
 
+> Historical note: this document predates the Cursor parity implementation.
+> The tested wire contract, capability mapping, and acceptance procedure are
+> recorded in [the A4 plan](plans/a4-cursor-harness-parity.md). In particular,
+> Cursor question requests use a vendor extension and are not ACP form
+> elicitation.
+
 Cursor natively exposes an ACP (Agent Client Protocol) server via the `agent acp` subcommand, using JSON-RPC 2.0 over stdio, and launched this feature on March 4, 2026.
 
 ## Overview

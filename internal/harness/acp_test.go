@@ -193,6 +193,22 @@ func TestOnEvent_TextChunksGrouped(t *testing.T) {
 	}
 }
 
+func TestOnEvent_TextDeltaFollowsPartialSetting(t *testing.T) {
+	s := newTestSession()
+	s.partial = true
+	s.onEvent(acp.Event{Kind: acp.EventMessage, Text: "live"})
+	got := drainEvents(s.events)
+	if len(got) != 2 || got[0].Type != EventText || got[1].Type != EventTextDelta || got[1].Text != "live" {
+		t.Fatalf("partial events = %+v", got)
+	}
+	s = newTestSession()
+	s.onEvent(acp.Event{Kind: acp.EventMessage, Text: "final"})
+	got = drainEvents(s.events)
+	if len(got) != 1 || got[0].Type != EventText {
+		t.Fatalf("non-partial events = %+v", got)
+	}
+}
+
 func TestOnEvent_ThinkingGrouped(t *testing.T) {
 	s := newTestSession()
 	s.onEvent(acp.Event{Kind: acp.EventThought, Text: "reasoning"})

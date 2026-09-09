@@ -29,7 +29,7 @@ func (*CodexHarness) PreviewPrompt(spec SessionSpec) string {
 
 func (h *CodexHarness) Open(ctx context.Context, spec SessionSpec) (Session, error) {
 	events := make(chan Event, 32)
-	sess := &acpSession{events: events, hasSchema: spec.Schema != nil, schema: spec.Schema}
+	sess := &acpSession{events: events, hasSchema: spec.Schema != nil, schema: spec.Schema, partial: spec.Partial}
 
 	var decide acp.Decider
 	if spec.Permission != nil {
