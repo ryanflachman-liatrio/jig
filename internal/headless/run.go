@@ -28,25 +28,10 @@ func Run(ctx context.Context, opts Options) Result {
 		return Result{ExitCode: ExitUsage, Err: err}
 	}
 
-	policy := &Policy{
-		ApproveMerge: opts.ApproveMerge,
-		DiscardMerge: opts.DiscardMerge,
-		CI:           opts.CI,
-		OnRecovery:   opts.OnRecovery,
-		OnConflict:   opts.OnConflict,
-	}
 	hasMerge := opts.ApproveMerge || opts.DiscardMerge || opts.CI
 	w.emitGateWarnings(wf, opts.Manager.Root(), hasMerge)
 
-	if opts.Timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, opts.Timeout)
-		defer cancel()
-	}
-
 	live, ctrl := opts.Manager.Subscribe()
-	go drainLive(live)
-
 	run, err := opts.Manager.Start(wf)
 	if err != nil {
 		w.errf("%v", err)
@@ -55,6 +40,35 @@ func Run(ctx context.Context, opts Options) Result {
 			Error: &ErrorInfo{Code: "start_error", Message: err.Error()},
 		}}
 	}
+	return supervise(ctx, opts, wf, run, live, ctrl, w)
+}
+
+// Supervise owns an already-created scheduler until it settles, using the same
+// policy, event draining, output envelope, timeout, and exits as Run. Callers
+// restoring a run must subscribe before Manager.Resume and pass those channels.
+func Supervise(ctx context.Context, opts Options, wf *workflow.Workflow, run *engine.Run, live, ctrl <-chan engine.Event) Result {
+	return supervise(ctx, opts, wf, run, live, ctrl, newWriter(opts))
+}
+
+func supervise(ctx context.Context, opts Options, wf *workflow.Workflow, run *engine.Run, live, ctrl <-chan engine.Event, w *writer) Result {
+	if opts.Manager == nil || wf == nil || run == nil {
+		err := fmt.Errorf("headless: manager, workflow, and run are required")
+		w.errf("%v", err)
+		return Result{ExitCode: ExitUsage, Err: err}
+	}
+	policy := &Policy{
+		ApproveMerge: opts.ApproveMerge,
+		DiscardMerge: opts.DiscardMerge,
+		CI:           opts.CI,
+		OnRecovery:   opts.OnRecovery,
+		OnConflict:   opts.OnConflict,
+	}
+	if opts.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, opts.Timeout)
+		defer cancel()
+	}
+	go drainLive(live)
 	w.runID(run.ID)
 
 	var terminal error

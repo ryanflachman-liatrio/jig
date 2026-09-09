@@ -17,6 +17,30 @@ import (
 	"jig/internal/workflow"
 )
 
+func TestRunLockState(t *testing.T) {
+	runDir := t.TempDir()
+	held, err := RunLockState(runDir)
+	if err != nil || held {
+		t.Fatalf("missing lock: held=%t err=%v", held, err)
+	}
+	if _, err := os.Stat(datastore.SchedulerLockPath(runDir)); !os.IsNotExist(err) {
+		t.Fatalf("probe created lock file: %v", err)
+	}
+	lock, err := acquireRunLock(runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	held, err = RunLockState(runDir)
+	if err != nil || !held {
+		t.Fatalf("held lock: held=%t err=%v", held, err)
+	}
+	releaseRunLock(lock)
+	held, err = RunLockState(runDir)
+	if err != nil || held {
+		t.Fatalf("stale lock file: held=%t err=%v", held, err)
+	}
+}
+
 func TestResumeRecoveryBatchWriteFailureDoesNotFanOut(t *testing.T) {
 	w, err := manifest.NewWriter(t.TempDir())
 	if err != nil {

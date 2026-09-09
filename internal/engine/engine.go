@@ -384,8 +384,44 @@ func (r *Run) ClosureOf(stepID string) []string {
 // closure, replays independent survivor commits, returns the closure to pending,
 // and bumps each reset step's Generation counter (spec 08 C2). Only valid on
 // an unfinished, quiescent run (no worker in flight); settled runs and in-flight
-// runs are silent no-ops. Persistence-off runs (no git) are also no-ops.
-func (r *Run) Reset(stepID string) { r.inbox <- resetMsg{stepID: stepID} }
+// runs and persistence-off runs return a typed error.
+func (r *Run) Reset(stepID string) (ResetResult, error) {
+	select {
+	case <-r.done:
+		return ResetResult{}, &ResetError{Code: "settled", Target: stepID, Err: fmt.Errorf("run is already settled")}
+	default:
+	}
+	reply := make(chan resetReply, 1)
+	select {
+	case r.inbox <- resetMsg{stepID: stepID, reply: reply}:
+		select {
+		case result := <-reply:
+			return result.result, result.err
+		case <-r.done:
+			return ResetResult{}, &ResetError{Code: "settled", Target: stepID, Err: fmt.Errorf("run settled before reset completed")}
+		}
+	case <-r.done:
+		return ResetResult{}, &ResetError{Code: "settled", Target: stepID, Err: fmt.Errorf("run is already settled")}
+	}
+}
+
+type ResetResult struct {
+	Target   string   `json:"target"`
+	Closure  []string `json:"closure"`
+	RewindTo string   `json:"rewind_sha"`
+}
+
+type ResetError struct {
+	Code   string
+	Target string
+	Err    error
+}
+
+func (e *ResetError) Error() string {
+	return fmt.Sprintf("reset %q (%s): %v", e.Target, e.Code, e.Err)
+}
+
+func (e *ResetError) Unwrap() error { return e.Err }
 
 // Resolve delivers a human verdict for a review step (Phase 3+).
 func (r *Run) Resolve(stepID, verdict string) {
@@ -597,6 +633,12 @@ type resumeMsg struct {
 // replays survivors, and returns the closure to pending for re-dispatch.
 type resetMsg struct {
 	stepID string
+	reply  chan<- resetReply
+}
+
+type resetReply struct {
+	result ResetResult
+	err    error
 }
 
 // retryWakeMsg wakes the scheduler when a bounded backoff expires. The step
@@ -1938,33 +1980,58 @@ func (s *scheduler) handleResume(m resumeMsg) {
 // or file operation. A crash after journaling leaves the journal (showing
 // pending, no expected output) consistent with the deleted files.
 func (s *scheduler) handleReset(m resetMsg) {
+	reply := func(result ResetResult, err error) {
+		if m.reply != nil {
+			m.reply <- resetReply{result: result, err: err}
+		}
+	}
 	// Guard: only on an unfinished, quiescent run with git persistence.
-	if s.terminated || s.inFlight > 0 || s.runWorktree == "" {
+	if s.terminated {
+		reply(ResetResult{}, &ResetError{Code: "settled", Target: m.stepID, Err: fmt.Errorf("run is already settled")})
+		return
+	}
+	if s.inFlight > 0 {
+		reply(ResetResult{}, &ResetError{Code: "in_flight", Target: m.stepID, Err: fmt.Errorf("run has %d worker(s) in flight", s.inFlight)})
+		return
+	}
+	if s.runWorktree == "" {
+		reply(ResetResult{}, &ResetError{Code: "persistence_required", Target: m.stepID, Err: fmt.Errorf("run has no git worktree")})
 		return
 	}
 
 	closure := s.closureOf(m.stepID)
 	if len(closure) == 0 {
+		reply(ResetResult{}, &ResetError{Code: "unknown_target", Target: m.stepID, Err: fmt.Errorf("step does not exist")})
 		return
 	}
 
 	rewindTo, survivors := s.rewindPlan(m.stepID)
+	result := ResetResult{Target: m.stepID, Closure: append([]string(nil), closure...), RewindTo: rewindTo}
+	// A restored scheduler must not dispatch pending work between journal
+	// invalidation and successful Git/artifact cleanup.
+	s.restoredHold = true
 
 	// Journal the audit event and StepStatus(→pending) transitions BEFORE any
 	// destructive operation. A crash after this point leaves the journal in a
 	// state consistent with the pending/empty-output files that follow.
-	s.emit(StepsReset{
+	if err := s.emit(StepsReset{
 		RunID:    s.runID,
 		Target:   m.stepID,
 		Closure:  closure,
 		RewindTo: rewindTo,
-	})
+	}); err != nil {
+		reply(ResetResult{}, &ResetError{Code: "journal", Target: m.stepID, Err: err})
+		return
+	}
 	for _, id := range closure {
 		state := s.states[id]
 		if state == nil {
 			continue
 		}
-		s.transition(id, state.Status, step.StatusPending)
+		if !s.transition(id, state.Status, step.StatusPending) {
+			reply(ResetResult{}, &ResetError{Code: "journal", Target: m.stepID, Err: fmt.Errorf("persist pending transition for step %q", id)})
+			return
+		}
 	}
 
 	// Rewind the run branch and replay independent survivors.
@@ -1972,6 +2039,7 @@ func (s *scheduler) handleReset(m resetMsg) {
 		if out, err := gitCmd(s.runWorktree, "reset", "--hard", rewindTo); err != nil {
 			s.emit(RunError{RunID: s.runID,
 				Err: fmt.Sprintf("reset: git reset --hard %s: %v — %s", rewindTo, err, strings.TrimSpace(out))})
+			reply(ResetResult{}, &ResetError{Code: "git_reset", Target: m.stepID, Err: fmt.Errorf("git reset --hard %s: %w: %s", rewindTo, err, strings.TrimSpace(out))})
 			return
 		}
 		for _, sha := range survivors {
@@ -1985,6 +2053,7 @@ func (s *scheduler) handleReset(m resetMsg) {
 				s.emit(IntegrationConflictRequest{RunID: s.runID, StepID: m.stepID, Paths: paths})
 				s.emit(RunError{RunID: s.runID,
 					Err: fmt.Sprintf("reset: cherry-pick %s: conflict — %s", sha, strings.TrimSpace(out))})
+				reply(ResetResult{}, &ResetError{Code: "survivor_conflict", Target: m.stepID, Err: fmt.Errorf("cherry-pick %s: %w: %s", sha, err, strings.TrimSpace(out))})
 				return
 			}
 		}
@@ -1993,7 +2062,10 @@ func (s *scheduler) handleReset(m resetMsg) {
 	// Clear per-step derived outputs for the closure (result.json / output.*).
 	// transcript.jsonl is intentionally kept — the re-run appends a new generation.
 	for _, id := range closure {
-		_ = datastore.ClearStepOutputs(s.runDir, id)
+		if err := datastore.ClearStepOutputs(s.runDir, id); err != nil {
+			reply(ResetResult{}, &ResetError{Code: "artifact_cleanup", Target: m.stepID, Err: err})
+			return
+		}
 	}
 
 	// Reset in-memory state for each closure step and purge stale routing maps.
@@ -2033,6 +2105,8 @@ func (s *scheduler) handleReset(m resetMsg) {
 		delete(s.preResolvedInputs, id)
 		delete(s.stopping, id)
 	}
+	s.restoredHold = false
+	reply(result, nil)
 }
 
 // handleRecover applies a human recovery decision to a step parked in
@@ -2942,14 +3016,33 @@ func (s *scheduler) loopBody(gotoID, loopID string) []string {
 // Independent parallel branches (steps with no transitive dependency on
 // targetID) are excluded — they are survivors in a subsequent rewindPlan call.
 func (s *scheduler) closureOf(targetID string) []string {
+	return ResetClosure(s.wf, targetID)
+}
+
+// ResetClosure returns target plus every transitive dependent in workflow
+// declaration order. It performs no scheduler, filesystem, lock, or Git work.
+func ResetClosure(wf *workflow.Workflow, targetID string) []string {
+	if wf == nil || targetID == "" {
+		return nil
+	}
+	found := false
+	for i := range wf.Steps {
+		if wf.Steps[i].ID == targetID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil
+	}
 	// Forward reachability: start with the target, then add every step whose
 	// depends_on chain passes through the accumulating set. Same algorithm as
 	// loopBody's fwd set, but without the backward intersection.
 	fwd := map[string]bool{targetID: true}
 	for changed := true; changed; {
 		changed = false
-		for i := range s.wf.Steps {
-			st := &s.wf.Steps[i]
+		for i := range wf.Steps {
+			st := &wf.Steps[i]
 			if fwd[st.ID] {
 				continue
 			}
@@ -2964,9 +3057,9 @@ func (s *scheduler) closureOf(targetID string) []string {
 	}
 	// Return in declaration order so the caller has a stable, deterministic list.
 	var out []string
-	for i := range s.wf.Steps {
-		if fwd[s.wf.Steps[i].ID] {
-			out = append(out, s.wf.Steps[i].ID)
+	for i := range wf.Steps {
+		if fwd[wf.Steps[i].ID] {
+			out = append(out, wf.Steps[i].ID)
 		}
 	}
 	return out

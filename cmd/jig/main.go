@@ -26,6 +26,23 @@ func main() {
 			os.Exit(runPrune(os.Args[2:]))
 		case "run":
 			os.Exit(runRun(os.Args[2:]))
+		case "status":
+			os.Exit(runStatus(os.Args[2:]))
+		case "logs":
+			os.Exit(runLogs(os.Args[2:]))
+		case "doctor":
+			os.Exit(runDoctor(os.Args[2:]))
+		case "resume":
+			os.Exit(runResume(os.Args[2:]))
+		case "reset":
+			os.Exit(runReset(os.Args[2:]))
+		case "help", "-h", "--help":
+			printHelp()
+			return
+		default:
+			fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
+			fmt.Fprintln(os.Stderr, "usage: jig <validate|run|status|logs|doctor|resume|reset|prune>")
+			os.Exit(2)
 		}
 	}
 

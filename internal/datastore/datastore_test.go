@@ -31,6 +31,51 @@ func TestRunDir_CreatesLayout(t *testing.T) {
 	}
 }
 
+func TestResolveRunDir(t *testing.T) {
+	root := t.TempDir()
+	runID := "20260908-120000-safe1234"
+	want, err := RunDir(root, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ResolveRunDir(root, runID)
+	if err != nil || got != want {
+		t.Fatalf("ResolveRunDir = %q, %v; want %q", got, err, want)
+	}
+	for _, bad := range []string{"", ".", "..", "../escape", "a/b", `a\\b`, filepath.Join(root, "runs", runID)} {
+		if _, err := ResolveRunDir(root, bad); err == nil {
+			t.Errorf("ResolveRunDir(%q) succeeded", bad)
+		}
+	}
+	if _, err := ResolveRunDir(root, "missing"); err == nil {
+		t.Error("missing run succeeded")
+	}
+	if _, err := ResolveRunDir("", runID); err == nil {
+		t.Error("empty root succeeded")
+	}
+}
+
+func TestResolveRunDirRejectsSymlinkAndFile(t *testing.T) {
+	root := t.TempDir()
+	runs := filepath.Join(root, "runs")
+	if err := os.MkdirAll(runs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runs, "file"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveRunDir(root, "file"); err == nil {
+		t.Error("file target succeeded")
+	}
+	target := t.TempDir()
+	if err := os.Symlink(target, filepath.Join(runs, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveRunDir(root, "link"); err == nil {
+		t.Error("symlink target succeeded")
+	}
+}
+
 func TestRunDir_EmptyRootReturnsError(t *testing.T) {
 	_, err := RunDir("", "any-id")
 	if err == nil {

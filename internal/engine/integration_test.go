@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -1084,7 +1085,9 @@ func TestResetFanOut(t *testing.T) {
 	}
 
 	// Reset to "a": closure = {a, b, gate}; D is the only survivor.
-	run.Reset("a")
+	if result, err := run.Reset("a"); err != nil || !reflect.DeepEqual(result.Closure, []string{"a", "b", "gate"}) {
+		t.Fatalf("Reset(a) = %#v, %v", result, err)
+	}
 
 	// Wait for the second ReviewRequest (A and B re-ran with Generation=1).
 	waitForReviewRequest(t, ch, "gate", 10*time.Second)
@@ -1211,7 +1214,9 @@ label = "Code changes"
 	}
 
 	// Reset to "b" only (linear tip). Closure = {b, gate}; A is untouched.
-	run.Reset("b")
+	if result, err := run.Reset("b"); err != nil || !reflect.DeepEqual(result.Closure, []string{"b", "gate"}) {
+		t.Fatalf("Reset(b) = %#v, %v", result, err)
+	}
 
 	// Wait for gate again (B re-ran).
 	waitForReviewRequest(t, ch, "gate", 10*time.Second)

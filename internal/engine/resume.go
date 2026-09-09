@@ -106,6 +106,46 @@ func releaseRunLock(f *os.File) {
 	_ = f.Close()
 }
 
+// RunLockState reports whether another process currently owns the scheduler
+// lock. A missing lock file is free; probing never creates it or keeps a lock.
+func RunLockState(runDir string) (bool, error) {
+	if runDir == "" {
+		return false, fmt.Errorf("engine: persistence required to inspect a run lock")
+	}
+	info, err := os.Stat(runDir)
+	if err != nil {
+		return false, fmt.Errorf("engine: inspect run directory: %w", err)
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("engine: run path is not a directory")
+	}
+	path := datastore.SchedulerLockPath(runDir)
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("engine: open scheduler lock: %w", err)
+	}
+	defer f.Close()
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if err == syscall.EWOULDBLOCK || err == syscall.EAGAIN {
+			return true, nil
+		}
+		return false, fmt.Errorf("engine: probe scheduler lock: %w", err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
+		return false, fmt.Errorf("engine: release scheduler lock probe: %w", err)
+	}
+	return false, nil
+}
+
+// LoadWorkflowSnapshot reads and verifies the immutable workflow captured at
+// run start. Historical commands must use this instead of current author TOML.
+func LoadWorkflowSnapshot(runDir string) (*workflow.Workflow, error) {
+	return loadWorkflowSnapshot(runDir)
+}
+
 // Resume restores every durable unfinished park under one scheduler. Workers
 // interrupted mid-flight are moved to recovery; parks that already existed
 // before process death are rehydrated in place.
@@ -120,7 +160,10 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	}
 	m.mu.Unlock()
 
-	runDir := m.RunDir(runID)
+	runDir, err := datastore.ResolveRunDir(m.root, runID)
+	if err != nil {
+		return nil, fmt.Errorf("engine: resolve run: %w", err)
+	}
 	lock, err := acquireRunLock(runDir)
 	if err != nil {
 		return nil, err
@@ -154,6 +197,7 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 		return fail(fmt.Errorf("run %s already has a scheduler", runID))
 	}
 	subs := append([]sub(nil), m.subs...)
+	secrets := m.secrets
 	m.runs[runID] = run
 	m.mu.Unlock()
 
@@ -174,6 +218,7 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	}
 	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir, m.root, repoRoot, onDone)
 	s.resolver = m.resolver
+	s.secretResolver = secrets
 	s.seq = seq
 	s.states = checkpoint.states
 	s.reviewSessions = checkpoint.reviewSessions

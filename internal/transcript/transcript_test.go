@@ -196,6 +196,41 @@ func TestReaderSkipsCorruptAndUnknown(t *testing.T) {
 	}
 }
 
+func TestPageAfterDoesNotAdvancePastPartialRecord(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "transcript.jsonl")
+	if err := os.WriteFile(path, []byte(`{"seq":1,"ts":"2026-09-08T00:00:00Z"`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page, err := r.PageAfter(0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.End != 0 || len(page.Entries) != 0 {
+		t.Fatalf("partial page = %#v", page)
+	}
+	if cursor, err := r.CompleteCursor(); err != nil || cursor != 0 {
+		t.Fatalf("partial cursor = %d, %v", cursor, err)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`,"iter":0,"attempt":0,"role":"assistant","blocks":[]}` + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	page, err = r.PageAfter(0, 10)
+	if err != nil || len(page.Entries) != 1 || page.End == 0 {
+		t.Fatalf("completed page = %#v, %v", page, err)
+	}
+}
+
 func TestWindowAndTail(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "transcript.jsonl")
 	var entries []Entry

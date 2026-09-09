@@ -8,41 +8,41 @@ import (
 	"jig/internal/workflow"
 )
 
-// gateWarning describes a construct that will fail-closed if hit at runtime.
-type gateWarning struct {
+// GateWarning describes a construct that will fail-closed if hit at runtime.
+type GateWarning struct {
 	StepID string
 	Kind   string
 	Detail string
 }
 
-// inventoryGates scans the workflow for headless-hostile constructs (D18:
+// InventoryGates scans the workflow for headless-hostile constructs (D18:
 // warn at start, fail when a gate fires).
-func inventoryGates(wf *workflow.Workflow) []gateWarning {
-	var out []gateWarning
+func InventoryGates(wf *workflow.Workflow) []GateWarning {
+	var out []GateWarning
 	for i := range wf.Steps {
 		s := &wf.Steps[i]
 		switch s.Type {
 		case workflow.StepReview:
-			out = append(out, gateWarning{
+			out = append(out, GateWarning{
 				StepID: s.ID, Kind: "review",
 				Detail: "type=review will fail-closed if reached",
 			})
 		}
 		if s.BlockOn != "" {
-			out = append(out, gateWarning{
+			out = append(out, GateWarning{
 				StepID: s.ID, Kind: "block_on",
 				Detail: fmt.Sprintf("block_on=%q will fail-closed if true", s.BlockOn),
 			})
 		}
 		if s.Profile == "@interactive" {
-			out = append(out, gateWarning{
+			out = append(out, GateWarning{
 				StepID: s.ID, Kind: "interactive",
 				Detail: `profile="@interactive" enables AskUserQuestion`,
 			})
 		}
 		for _, in := range s.Inputs {
 			if in.From == "user" {
-				out = append(out, gateWarning{
+				out = append(out, GateWarning{
 					StepID: s.ID, Kind: "user_prompt",
 					Detail: fmt.Sprintf("from=user input %q will fail-closed", in.As),
 				})
@@ -51,6 +51,8 @@ func inventoryGates(wf *workflow.Workflow) []gateWarning {
 	}
 	return out
 }
+
+func inventoryGates(wf *workflow.Workflow) []GateWarning { return InventoryGates(wf) }
 
 func (w *writer) emitGateWarnings(wf *workflow.Workflow, root string, hasMergePolicy bool) {
 	for _, g := range inventoryGates(wf) {

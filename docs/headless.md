@@ -128,15 +128,13 @@ off `RunFinished` / `Run.Wait`, never `Done` alone.
 
 ### Crash reopen vs `--on-recovery`
 
-Spec 19 `--on-recovery` settles gates **during** an active `jig run`. It does
-**not** reopen a dead process. After a host OOM / `kill -9`, A2's future
-`jig resume <run-id> [--on-recovery …]` must call `Manager.Resume` first
-(Specs 20 and 21 restore interrupted workers plus existing review, recovery,
-stopped, input, question, and integration parks); only then do the same settle
-policies apply. The future CLI must provide a policy for every restored gate:
-review/input/question fail closed without supplied answers, recovery uses
-`--on-recovery`, and conflicts use `--on-conflict`. TUI `R` is the interactive
-client today.
+Spec 19 `--on-recovery` settles gates **during** an active `jig run`; it does
+not itself reopen a dead process. `jig resume RUN_ID --on-recovery ACTION` calls
+`Manager.Resume` and then hands the restored scheduler to the same headless
+supervisor. It accepts automation-safe interrupted/recovery/integration parks;
+review, input/question, prompt, stopped, and final-merge parks fail before
+mutation and direct the operator to the TUI. See
+[`docs/operations.md`](operations.md).
 
 ## Authoring CI-safe workflows
 
@@ -154,7 +152,8 @@ client today.
 
 At start, `jig run` warns on stderr about hostile constructs and reminds about
 merge flags when git persistence applies. `jig validate` stays structural;
-`jig doctor --ci` / `--strict-ci` are later (A2).
+`jig doctor WORKFLOW.toml --ci` uses the same hostile-gate inventory and also
+checks deterministic local prerequisites before tokens are spent.
 
 ## Dual-mode with the TUI
 
@@ -168,3 +167,4 @@ merge flags when git persistence applies. `jig validate` stays structural;
 - Workflow schema: [`docs/workflow-schema.md`](workflow-schema.md)
 - Engine design: [`docs/engine-design.md`](engine-design.md)
 - Open goal A1: [`docs/plans/open-goals.md`](plans/open-goals.md)
+- Operations CLI: [`docs/operations.md`](operations.md)

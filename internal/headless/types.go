@@ -44,7 +44,7 @@ type Options struct {
 	ApproveMerge bool
 	DiscardMerge bool
 
-	// OnRecovery is abort|retry|skip (default abort). resume is engine/TUI-only.
+	// OnRecovery is abort|retry|resume|skip (default abort).
 	OnRecovery string
 	// OnConflict is abort only in headless (abort→recovery cascade). No agent.
 	OnConflict string
@@ -59,10 +59,11 @@ type Options struct {
 
 // Recovery / conflict policy values (CLI + Policy).
 const (
-	RecoveryAbort = "abort"
-	RecoveryRetry = "retry"
-	RecoverySkip  = "skip"
-	ConflictAbort = "abort"
+	RecoveryAbort  = "abort"
+	RecoveryRetry  = "retry"
+	RecoveryResume = "resume"
+	RecoverySkip   = "skip"
+	ConflictAbort  = "abort"
 )
 
 // Result is the settled outcome of a headless run.

@@ -23,8 +23,8 @@ jig has two halves that meet at the `.toml` workflow file:
                                         │ SDK stream / results
                                         ▼
                         ┌──────────────────────────────┐
-   watch / review    →  │  internal/tui  (Bubble Tea)   │  ← human-in-the-loop
-                        │  streaming chat + run monitor  │
+   operate / review  →  │  internal/tui + internal/ops   │
+                        │  interactive UI + scriptable CLI│
                         └──────────────────────────────┘
 ```
 
@@ -35,11 +35,14 @@ jig has two halves that meet at the `.toml` workflow file:
   gates, loops, run-branch worktree management, and the event journal.
 - The **TUI** is the human surface — a streaming Claude chat client and a
   navigable run monitor for driving and reviewing in-flight workflows.
+- **ops + headless** are the non-TUI surface — immutable status/log/doctor
+  reports and guarded historical control, supervised by the same event-policy
+  loop as a newly started run.
 
 ## Package layout
 
 ```
-cmd/jig/            entry point: `jig validate` / `jig prune` subcommands + the TUI
+cmd/jig/            thin command parsing/rendering + bare-command TUI entry
 internal/
   workflow/         schema, loader, validator, guard/condition parser   [DONE]
   tui/              Bubble Tea app: chat client + navigable run monitor  [DONE]
@@ -49,6 +52,8 @@ internal/
   transcript/       per-step transcript.jsonl store (writer + reader)   [DONE]
   manifest/         journal.jsonl writer + per-step result.json         [DONE]
   datastore/        run-dir layout, path helpers, retention under .jig/ [DONE]
+  ops/              status/log/doctor reports + resume/reset preflight  [DONE]
+  headless/         shared start/resume supervision and gate policy      [DONE]
 .agents/jig/        executable workflows, scripts, and workflow templates
 .agents/skills/     reusable agent skills used by those workflows
 docs/               this file, TESTING.md, workflow-schema.md

@@ -22,7 +22,62 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
+
+// ResolveRunDir validates runID and resolves an existing persisted run without
+// creating anything. Persisted identifiers are deliberately stricter than
+// ordinary path fragments because these paths are accepted from CLI input.
+func ResolveRunDir(root, runID string) (string, error) {
+	if root == "" {
+		return "", fmt.Errorf("datastore: persistence root is empty")
+	}
+	if runID == "" || runID == "." || runID == ".." || filepath.IsAbs(runID) ||
+		filepath.Base(runID) != runID || strings.ContainsAny(runID, `/\\`) {
+		return "", fmt.Errorf("datastore: invalid run id %q", runID)
+	}
+
+	runsDir, err := filepath.Abs(filepath.Join(root, "runs"))
+	if err != nil {
+		return "", fmt.Errorf("datastore: resolve runs directory: %w", err)
+	}
+	info, err := os.Lstat(runsDir)
+	if err != nil {
+		return "", fmt.Errorf("datastore: access runs directory %q: %w", runsDir, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("datastore: runs path %q must not be a symlink", runsDir)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("datastore: runs path %q is not a directory", runsDir)
+	}
+
+	dir := filepath.Join(runsDir, runID)
+	entry, err := os.Lstat(dir)
+	if err != nil {
+		return "", fmt.Errorf("datastore: access run %q: %w", runID, err)
+	}
+	if entry.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("datastore: run %q must not be a symlink", runID)
+	}
+	if !entry.IsDir() {
+		return "", fmt.Errorf("datastore: run %q is not a directory", runID)
+	}
+
+	resolvedRuns, err := filepath.EvalSymlinks(runsDir)
+	if err != nil {
+		return "", fmt.Errorf("datastore: resolve runs directory %q: %w", runsDir, err)
+	}
+	resolvedRun, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", fmt.Errorf("datastore: resolve run %q: %w", runID, err)
+	}
+	rel, err := filepath.Rel(resolvedRuns, resolvedRun)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("datastore: run %q escapes the persistence root", runID)
+	}
+	return dir, nil
+}
 
 // RunDir creates (if necessary) the run directory for runID under root and
 // returns its path.  The subdirectories steps/ and artifacts/ are created at

@@ -54,6 +54,9 @@ func (p *Policy) Handle(run *engine.Run, ev engine.Event) error {
 			StepID:  e.StepID,
 		}
 	case engine.RecoveryRequest:
+		if p.OnRecovery == RecoveryResume && !e.CanResume {
+			return &GateError{Code: "gate_recovery_resume", Message: "recovery session cannot be resumed", StepID: e.StepID}
+		}
 		run.Recover(e.StepID, p.recoveryAction(), "")
 		return nil
 	case engine.IntegrationConflictRequest:
@@ -78,6 +81,8 @@ func (p *Policy) recoveryAction() string {
 		return engine.RecoverRetry
 	case RecoverySkip:
 		return engine.RecoverSkip
+	case RecoveryResume:
+		return engine.RecoverResume
 	default:
 		return engine.RecoverAbort
 	}

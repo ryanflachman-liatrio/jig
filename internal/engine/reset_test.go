@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -284,10 +285,8 @@ func writeAndCommit(t *testing.T, dir, filename, content, msg string) string {
 	return sha
 }
 
-// TestResetGuard verifies that Run.Reset is a silent no-op when the run is
-// settled (terminated). Calling Reset after RunFinished puts a message in the
-// buffered inbox; the scheduler goroutine has already exited so it is never
-// consumed, but the snapshot remains unchanged (spec 08 C2 guard).
+// TestResetGuard verifies that Run.Reset acknowledges the settled-run guard
+// without changing the final snapshot.
 func TestResetGuard(t *testing.T) {
 	const toml = `
 [workflow]
@@ -315,9 +314,11 @@ run = "echo a"
 		t.Fatal("expected run to be done before testing guard")
 	}
 
-	// Reset on a settled run: must not panic or block; message goes to the
-	// buffered inbox and is silently discarded.
-	run.Reset("a")
+	_, resetErr := run.Reset("a")
+	var typed *ResetError
+	if !errors.As(resetErr, &typed) || typed.Code != "settled" {
+		t.Fatalf("Reset settled error = %v", resetErr)
+	}
 
 	// Snapshot must still show the run as done and step a still succeeded.
 	snap := run.Snapshot()
@@ -331,9 +332,8 @@ run = "echo a"
 	}
 }
 
-// TestResetPersistenceOff verifies that Run.Reset is a silent no-op when the run
-// has no git persistence (runWorktree == ""). The guard in handleReset returns
-// early without any git or file operations (spec 08 C2 persistence-off path).
+// TestResetPersistenceOff verifies that Run.Reset reports the no-git guard and
+// performs no state change (spec 08 C2 persistence-off path).
 func TestResetPersistenceOff(t *testing.T) {
 	const toml = `
 [workflow]
@@ -362,7 +362,11 @@ run = "sleep 10"
 
 	// Now the run is quiescent (inFlight==0, not terminated). But runWorktree==""
 	// so handleReset must return early without panicking.
-	run.Reset("a") // must not panic or cause any state change
+	_, resetErr := run.Reset("a")
+	var typed *ResetError
+	if !errors.As(resetErr, &typed) || typed.Code != "persistence_required" {
+		t.Fatalf("Reset persistence-off error = %v", resetErr)
+	}
 
 	time.Sleep(10 * time.Millisecond) // let inbox drain
 

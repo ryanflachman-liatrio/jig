@@ -30,6 +30,47 @@ type Page struct {
 	HasLater   bool
 }
 
+// CompleteCursor returns the byte offset immediately after the newest
+// newline-complete record. A concurrently visible partial append is excluded so
+// a subsequent PageAfter call can retry it once the writer finishes the line.
+func (r *Reader) CompleteCursor() (int64, error) {
+	f, err := os.Open(r.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("transcript: open %q: %w", r.path, err)
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return 0, fmt.Errorf("transcript: stat %q: %w", r.path, err)
+	}
+	size := info.Size()
+	if size == 0 {
+		return 0, nil
+	}
+	var last [1]byte
+	if _, err := f.ReadAt(last[:], size-1); err != nil {
+		return 0, fmt.Errorf("transcript: inspect %q: %w", r.path, err)
+	}
+	if last[0] == '\n' {
+		return size, nil
+	}
+	for end := size; end > 0; {
+		start := max(int64(0), end-reverseReadChunk)
+		buf := make([]byte, end-start)
+		if _, err := f.ReadAt(buf, start); err != nil {
+			return 0, fmt.Errorf("transcript: inspect %q: %w", r.path, err)
+		}
+		if i := bytes.LastIndexByte(buf, '\n'); i >= 0 {
+			return start + int64(i) + 1, nil
+		}
+		end = start
+	}
+	return 0, nil
+}
+
 // Open returns a Reader for the transcript at path. The file need not exist yet
 // (a reader may open before the writer creates it); read methods treat a
 // missing file as an empty transcript.
@@ -44,11 +85,28 @@ func Open(path string) (*Reader, error) {
 // Malformed lines are not counted, keeping the count aligned with the index
 // space Window and Tail operate over.
 func (r *Reader) Count() (int, error) {
-	entries, err := r.readAll()
+	f, err := os.Open(r.path)
 	if err != nil {
-		return 0, err
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("transcript: open %q: %w", r.path, err)
 	}
-	return len(entries), nil
+	defer f.Close()
+	count := 0
+	br := bufio.NewReader(f)
+	for {
+		line, readErr := br.ReadString('\n')
+		if _, ok := decodeEntry([]byte(line)); ok {
+			count++
+		}
+		if readErr == io.EOF {
+			return count, nil
+		}
+		if readErr != nil {
+			return 0, fmt.Errorf("transcript: count %q: %w", r.path, readErr)
+		}
+	}
 }
 
 // Window returns up to limit entries starting at offset (0-based) in file
@@ -175,9 +233,12 @@ func (r *Reader) PageAfter(start int64, limit int) (Page, error) {
 	br := bufio.NewReader(f)
 	for len(page.Entries) < limit {
 		line, readErr := br.ReadString('\n')
-		page.End += int64(len(line))
-		if e, ok := decodeEntry([]byte(line)); ok {
-			page.Entries = append(page.Entries, e)
+		complete := len(line) > 0 && line[len(line)-1] == '\n'
+		if complete {
+			page.End += int64(len(line))
+			if e, ok := decodeEntry([]byte(line)); ok {
+				page.Entries = append(page.Entries, e)
+			}
 		}
 		if readErr == io.EOF {
 			break

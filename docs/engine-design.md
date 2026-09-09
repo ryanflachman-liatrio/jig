@@ -354,9 +354,22 @@ journal batch before the scheduler loop begins or subscribers receive them.
 Mixed park kinds restore together; each continues through its existing live
 gate action.
 
+Read-only operators use `ReplayJournalRecords`, which retains each envelope's
+sequence and timestamp and never applies the TUI's display-only orphan
+reconciliation. `RunLockState` probes the same advisory lock non-blockingly and
+releases it immediately; a stale lock file is therefore free, while a held lock
+is the sole cross-process ownership signal. `LoadWorkflowSnapshot` exposes the
+checksum-verified captured graph for historical preflight without consulting
+current author TOML.
+
+`jig resume` subscribes before `Manager.Resume`, because restored gate events
+are durably emitted during reopen setup. The restored `Run` is then owned by
+`headless.Supervise`, the same settle loop used by `jig run`; no second process
+attaches to a scheduler already holding the lock.
+
 ### Reset — dependency closure and rewind+replay
 
-`Run.Reset(target)` rewinds the run branch and re-queues the target step and its
+`Run.Reset(target)` synchronously rewinds the run branch and re-queues the target step and its
 dependency closure. It is only valid on an unfinished, quiescent run. See
 [ADR 0008](../adr/0008-manual-reset-rewind-and-replay.md) for the full algorithm
 rationale and rejected alternatives.
@@ -375,6 +388,13 @@ rationale and rejected alternatives.
    `Generation` counter. Unlike `Attempt` (which gates `MaxRetries`), `Generation`
    is a provenance axis only — it makes manual re-runs legible in the transcript
    without consuming the automatic-retry budget.
+
+The reset call returns `ResetResult{Target, Closure, RewindTo}` only after the
+mutation succeeds, or a typed `ResetError` for scheduler guards, journal, Git,
+or artifact cleanup failures. `ResetClosure` provides the same declaration-order
+calculation as a pure helper for byte-for-byte read-only CLI previews. A
+successful reset clears the restored dispatch hold so the invalidated closure
+can run.
 
 Cherry-pick conflicts surface through the integration-conflict gate (same path as
 squash-merge conflicts from parallel steps — no auto-resolver). Reset on a fully

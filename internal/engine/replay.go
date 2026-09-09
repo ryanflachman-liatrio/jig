@@ -6,11 +6,21 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	"jig/internal/datastore"
 	"jig/internal/review"
 	"jig/internal/step"
 )
+
+// JournalRecord preserves the durable envelope metadata alongside its decoded
+// event. Event is nil for a well-formed envelope whose kind is unknown to this
+// version, allowing inspection tools to retain its timestamp without guessing.
+type JournalRecord struct {
+	Seq       int
+	Timestamp time.Time
+	Event     Event
+}
 
 const interruptedSDKSessionErr = "agent SDK session terminated abruptly before reporting a terminal result"
 
@@ -86,6 +96,14 @@ func ReplayJournalRaw(runDir string) ([]Event, error) {
 	return events, err
 }
 
+// ReplayJournalRecords returns only records written by the scheduler, retaining
+// envelope timestamps and any decodable prefix before a complete corrupt line.
+// A crash-torn final line is ignored in the same way as ReplayJournalRaw.
+func ReplayJournalRecords(runDir string) ([]JournalRecord, error) {
+	_, records, err := readJournalRecords(runDir)
+	return records, err
+}
+
 func hydrateReviewDocuments(runDir string, events []Event) []Event {
 	hydrated := append([]Event(nil), events...)
 	for i, event := range hydrated {
@@ -119,6 +137,20 @@ func hydrateReviewDocuments(runDir string, events []Event) []Event {
 // failure events ReplayJournal adds for display, because those events were never
 // committed and would incorrectly make an interrupted run terminal.
 func readJournal(runDir string) (int, []Event, error) {
+	seq, records, err := readJournalRecords(runDir)
+	events := make([]Event, 0, len(records))
+	for _, record := range records {
+		if record.Event != nil {
+			events = append(events, record.Event)
+		}
+	}
+	return seq, events, err
+}
+
+func readJournalRecords(runDir string) (int, []JournalRecord, error) {
+	if runDir == "" {
+		return 0, nil, nil
+	}
 	f, err := os.Open(datastore.JournalPath(runDir))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -128,7 +160,7 @@ func readJournal(runDir string) (int, []Event, error) {
 	}
 	defer f.Close()
 
-	var events []Event
+	var records []JournalRecord
 	lastSeq := 0
 	lineNumber := 0
 	br := bufio.NewReader(f)
@@ -143,23 +175,21 @@ func readJournal(runDir string) (int, []Event, error) {
 				if readErr == io.EOF {
 					break
 				}
-				return lastSeq, events, fmt.Errorf("decode journal line %d: %w", lineNumber, decodeErr)
+				return lastSeq, records, fmt.Errorf("decode journal line %d: %w", lineNumber, decodeErr)
 			}
-			if e != nil {
-				if env.Seq > lastSeq {
-					lastSeq = env.Seq
-				}
-				events = append(events, e)
+			if env.Seq > lastSeq {
+				lastSeq = env.Seq
 			}
+			records = append(records, JournalRecord{Seq: env.Seq, Timestamp: env.Ts, Event: e})
 		}
 		if readErr != nil {
 			if readErr != io.EOF {
-				return lastSeq, events, readErr
+				return lastSeq, records, readErr
 			}
 			break
 		}
 	}
-	return lastSeq, events, nil
+	return lastSeq, records, nil
 }
 
 // reconcileInterruptedRun supplies terminal events that could not be journaled

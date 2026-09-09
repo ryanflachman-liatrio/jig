@@ -1,15 +1,36 @@
 package engine
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"jig/internal/datastore"
 	"jig/internal/review"
 	"jig/internal/step"
 	"jig/internal/workflow"
 )
+
+func TestReplayJournalRecordsPreservesEnvelopeMetadata(t *testing.T) {
+	runDir := t.TempDir()
+	ts := time.Date(2026, 9, 8, 12, 34, 56, 0, time.UTC)
+	line := fmt.Sprintf(`{"seq":7,"ts":%q,"kind":"run_started","data":{"RunID":"r1","Workflow":"wf","Steps":["a"]}}`, ts.Format(time.RFC3339))
+	if err := os.WriteFile(datastore.JournalPath(runDir), []byte(line+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	records, err := ReplayJournalRecords(runDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].Seq != 7 || !records[0].Timestamp.Equal(ts) {
+		t.Fatalf("records = %#v", records)
+	}
+	if _, ok := records[0].Event.(RunStarted); !ok {
+		t.Fatalf("event = %T", records[0].Event)
+	}
+}
 
 // writeJournal marshals evs (seq starting at 1) into runDir's journal.jsonl,
 // one line each, mirroring what manifest.Writer produces at run time.
