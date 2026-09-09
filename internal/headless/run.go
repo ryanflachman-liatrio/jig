@@ -171,6 +171,8 @@ func eventRunID(ev engine.Event) string {
 		return e.RunID
 	case engine.AgentQuestionResolved:
 		return e.RunID
+	case engine.FanOutExpanded:
+		return e.RunID
 	default:
 		return ""
 	}

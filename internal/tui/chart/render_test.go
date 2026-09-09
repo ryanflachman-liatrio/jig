@@ -5,7 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
+
+	"charm.land/lipgloss/v2"
 )
 
 // updateGolden regenerates the .golden fixtures instead of comparing against
@@ -186,11 +189,122 @@ run = "make"
 command = "go build ./... && go test ./... -race -count=1"
 `,
 		},
+		{
+			// A foreach family node (analyze): the static graph stays one node
+			// per declared family, annotated with a compact ×N marker.
+			name:  "foreach",
+			width: 72,
+			src: `
+[workflow]
+name = "fanout"
+version = "1"
+[defaults]
+max_parallel = 3
+[[step]]
+id = "discover"
+type = "agent"
+skill = "s"
+  [step.schema]
+  targets = { list = { name = "text", path = "text" } }
+[[step]]
+id = "analyze"
+type = "agent"
+depends_on = ["discover"]
+skill = "s"
+  [step.foreach]
+  items = "@discover.targets"
+  as = "target"
+  max_items = 8
+  [step.schema]
+  finding = "text"
+[[step]]
+id = "report"
+type = "command"
+depends_on = ["analyze"]
+run = "x"
+`,
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			goldenChart(t, tc.name, tc.src, tc.width)
 		})
+	}
+}
+
+// foreachWF is a minimal discover -> analyze(foreach, max_items=8) -> report
+// workflow, reused by the narrow-width and horizontal-scroll tests below.
+const foreachWF = `
+[workflow]
+name = "fanout"
+version = "1"
+[defaults]
+max_parallel = 3
+[[step]]
+id = "discover"
+type = "agent"
+skill = "s"
+  [step.schema]
+  targets = { list = { name = "text", path = "text" } }
+[[step]]
+id = "analyze"
+type = "agent"
+depends_on = ["discover"]
+skill = "s"
+  [step.foreach]
+  items = "@discover.targets"
+  as = "target"
+  max_items = 8
+  [step.schema]
+  finding = "text"
+`
+
+// TestChartForEachAnnotation proves a foreach family's node type line carries
+// the compact ×N marker at a normal width.
+func TestChartForEachAnnotation(t *testing.T) {
+	wf := mustDecode(t, foreachWF)
+	got := ansiEscape.ReplaceAllString(RenderChart(wf, 72), "")
+	if !strings.Contains(got, "×8") {
+		t.Errorf("expected ×8 foreach annotation in chart:\n%s", got)
+	}
+}
+
+// TestChartForEachNarrowWidth proves a very narrow terminal width neither
+// panics nor silently drops the family node — chartLayout may (like any wide
+// chart) render a canvas wider than the requested width, which the caller
+// scrolls horizontally, but every declared node — family included — still
+// appears somewhere in the rendered art.
+func TestChartForEachNarrowWidth(t *testing.T) {
+	wf := mustDecode(t, foreachWF)
+	got := ansiEscape.ReplaceAllString(RenderChart(wf, 20), "")
+	for _, id := range []string{"discover", "analyze"} {
+		if !strings.Contains(got, id) {
+			t.Errorf("narrow chart missing node %q:\n%s", id, got)
+		}
+	}
+}
+
+// TestChartForEachHorizontalScroll proves RenderChart never clips a family
+// node's ×N marker to fit a requested width smaller than the node's own
+// content needs — every rendered line stays at least as wide as the node
+// boxes it draws (the caller, e.g. the workflow detail screen, scrolls
+// horizontally rather than the chart clipping content), the same contract
+// every other wide chart element (a long gate/loop label) already relies on.
+func TestChartForEachHorizontalScroll(t *testing.T) {
+	wf := mustDecode(t, foreachWF)
+	const requested = 10 // far narrower than "analyze" + "agent ×8" naturally needs.
+	got := RenderChart(wf, requested)
+	plain := ansiEscape.ReplaceAllString(got, "")
+	if !strings.Contains(plain, "×8") {
+		t.Errorf("expected ×8 marker to survive unclipped at a narrow requested width:\n%s", plain)
+	}
+	if !strings.Contains(plain, "analyze") {
+		t.Errorf("expected the family node id to survive at a narrow requested width:\n%s", plain)
+	}
+	for i, line := range strings.Split(got, "\n") {
+		if w := lipgloss.Width(line); w > requested*4 {
+			t.Fatalf("line %d implausibly wide (%d) — rendering likely runaway, not a deliberate scrollable canvas:\n%s", i, w, plain)
+		}
 	}
 }

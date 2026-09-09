@@ -164,7 +164,31 @@ func (m Model) handleEngineEvent(e engine.Event) Model {
 		if !ok {
 			return m
 		}
+		// A fan-out child's StepStatus can arrive before (live) or without ever
+		// seeing (a corrupt/partial journal tail) its FanOutExpanded event; folding
+		// it here unconditionally, rather than requiring prior registration, is what
+		// keeps an unrecognized child id from ever reading as a corrupt run.
+		if _, known := m.rows[i].statuses[ev.StepID]; !known {
+			m.rows[i].total++
+		}
 		m.rows[i].statuses[ev.StepID] = ev.To
+	case engine.FanOutExpanded:
+		i, ok := m.index[ev.RunID]
+		if !ok {
+			return m
+		}
+		if m.rows[i].familyChildren == nil {
+			m.rows[i].familyChildren = make(map[string][]string)
+		}
+		children := make([]string, 0, len(ev.Instances))
+		for _, inst := range ev.Instances {
+			children = append(children, inst.InstanceID)
+			if _, known := m.rows[i].statuses[inst.InstanceID]; !known {
+				m.rows[i].statuses[inst.InstanceID] = step.StatusPending
+				m.rows[i].total++
+			}
+		}
+		m.rows[i].familyChildren[ev.FamilyID] = children
 	case engine.RunFinished:
 		i, ok := m.index[ev.RunID]
 		if !ok {

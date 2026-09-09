@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 	"time"
@@ -208,6 +209,17 @@ var allEventInstances = []Event{
 	AgentQuestionResolved{RunID: "r", StepID: "s", RequestID: "q1", Action: interaction.ActionAccept},
 	StepsReset{RunID: "r", Target: "s", Closure: []string{"s"}, RewindTo: "abc"},
 	SecurityFinding{RunID: "r", StepID: "s", Tier: "guard", Monitor: "secret-leak", Severity: "high", Action: "blocked", Fingerprint: "fp"},
+	FanOutExpanded{
+		SchemaVersion:  FanOutExpandedVersion,
+		RunID:          "r",
+		FamilyID:       "analyze",
+		Generation:     0,
+		Iteration:      0,
+		ManifestDigest: "deadbeef",
+		Instances: []FanOutInstanceDescriptor{
+			{InstanceID: "analyze.__fanout__.g000.r000.i0000", Index: 0, ItemSHA256: "aaa"},
+		},
+	},
 }
 
 // TestEventExhaustiveness verifies every Event union member:
@@ -277,5 +289,146 @@ func TestSecurityFindingJournal(t *testing.T) {
 	}
 	if sf.StepID != ev.StepID || sf.Fingerprint != ev.Fingerprint || sf.Severity != ev.Severity {
 		t.Errorf("round-trip mismatch: got %+v, want %+v", sf, ev)
+	}
+}
+
+// TestFanOutExpandedRoundTrip proves FanOutExpanded marshals/unmarshals
+// through the journal envelope codec, preserving instance order and every
+// field, and lands under the stable "fan_out_expanded" kind.
+func TestFanOutExpandedRoundTrip(t *testing.T) {
+	ev := FanOutExpanded{
+		SchemaVersion:  FanOutExpandedVersion,
+		RunID:          "run-1",
+		FamilyID:       "analyze",
+		Generation:     0,
+		Iteration:      1,
+		ManifestDigest: "sha256:abcdef",
+		Instances: []FanOutInstanceDescriptor{
+			{InstanceID: "analyze.__fanout__.g000.r001.i0000", Index: 0, ItemSHA256: "sha-a"},
+			{InstanceID: "analyze.__fanout__.g000.r001.i0001", Index: 1, ItemSHA256: "sha-b"},
+		},
+	}
+	line, err := MarshalEnvelope(5, ev)
+	if err != nil {
+		t.Fatalf("MarshalEnvelope: %v", err)
+	}
+	env, decoded, err := UnmarshalEnvelope(line)
+	if err != nil {
+		t.Fatalf("UnmarshalEnvelope: %v", err)
+	}
+	if env.Kind != "fan_out_expanded" {
+		t.Errorf("Kind = %q, want fan_out_expanded", env.Kind)
+	}
+	got, ok := decoded.(FanOutExpanded)
+	if !ok {
+		t.Fatalf("decoded type = %T, want FanOutExpanded", decoded)
+	}
+	if got.FamilyID != ev.FamilyID || got.Generation != ev.Generation || got.Iteration != ev.Iteration ||
+		got.ManifestDigest != ev.ManifestDigest {
+		t.Errorf("round-trip mismatch: got %+v, want %+v", got, ev)
+	}
+	if len(got.Instances) != len(ev.Instances) {
+		t.Fatalf("Instances len = %d, want %d", len(got.Instances), len(ev.Instances))
+	}
+	for i := range ev.Instances {
+		if got.Instances[i] != ev.Instances[i] {
+			t.Errorf("Instances[%d] = %+v, want %+v", i, got.Instances[i], ev.Instances[i])
+		}
+	}
+}
+
+// TestFanOutExpandedRejectsUnknownVersion proves a manifest/event written by
+// a newer, incompatible jig version fails closed at decode time rather than
+// being silently misinterpreted — the one event kind with its own schema
+// version, since it is the authoritative creation record for runtime children.
+func TestFanOutExpandedRejectsUnknownVersion(t *testing.T) {
+	line := []byte(`{"seq":1,"ts":"2026-01-01T00:00:00Z","kind":"fan_out_expanded","data":{"schema_version":99,"family_id":"analyze"}}`)
+	_, _, err := UnmarshalEnvelope(line)
+	if err == nil {
+		t.Fatal("expected an error decoding an unsupported fan_out_expanded schema_version")
+	}
+}
+
+// TestFanOutExpandedNoRawItemData proves the marshaled event never carries
+// the raw item value — only ids, positions, and digests — regardless of what
+// a caller might mistakenly try to stash on the struct via JSON round-trip.
+// The check is structural: FanOutInstanceDescriptor has no field capable of
+// holding a raw item, so an encoded instance can only ever contain
+// instance_id/index/item_sha256 keys.
+func TestFanOutExpandedNoRawItemData(t *testing.T) {
+	ev := FanOutExpanded{
+		SchemaVersion: FanOutExpandedVersion,
+		RunID:         "run-1",
+		FamilyID:      "analyze",
+		Instances: []FanOutInstanceDescriptor{
+			{InstanceID: "analyze.__fanout__.g000.r000.i0000", Index: 0, ItemSHA256: "sha-a"},
+		},
+	}
+	line, err := MarshalEnvelope(1, ev)
+	if err != nil {
+		t.Fatalf("MarshalEnvelope: %v", err)
+	}
+	env, _, err := UnmarshalEnvelope(line)
+	if err != nil {
+		t.Fatalf("UnmarshalEnvelope: %v", err)
+	}
+	var raw struct {
+		Instances []map[string]any `json:"instances"`
+	}
+	if err := json.Unmarshal(env.Data, &raw); err != nil {
+		t.Fatalf("decode raw instances: %v", err)
+	}
+	if len(raw.Instances) != 1 {
+		t.Fatalf("instances = %d, want 1", len(raw.Instances))
+	}
+	allowed := map[string]bool{"instance_id": true, "index": true, "item_sha256": true}
+	for key := range raw.Instances[0] {
+		if !allowed[key] {
+			t.Errorf("unexpected key %q in instance descriptor — only id/index/digest are permitted, never raw item data", key)
+		}
+	}
+}
+
+// TestFanOutExpandedBackwardCompatibleReplay proves an older reader that only
+// understands RunStarted.Steps (the static author graph) still gets a valid
+// baseline when a journal also contains a FanOutExpanded event: the unknown
+// kind is skipped, never treated as a fatal replay error, and RunStarted
+// itself is untouched by the addition.
+func TestFanOutExpandedBackwardCompatibleReplay(t *testing.T) {
+	started := RunStarted{RunID: "run-1", Workflow: "fanout", Steps: []string{"discover", "analyze", "synthesize"}}
+	startedLine, err := MarshalEnvelope(1, started)
+	if err != nil {
+		t.Fatalf("MarshalEnvelope(RunStarted): %v", err)
+	}
+	expanded := FanOutExpanded{
+		SchemaVersion: FanOutExpandedVersion,
+		RunID:         "run-1",
+		FamilyID:      "analyze",
+		Instances: []FanOutInstanceDescriptor{
+			{InstanceID: "analyze.__fanout__.g000.r000.i0000", Index: 0, ItemSHA256: "sha-a"},
+		},
+	}
+	expandedLine, err := MarshalEnvelope(2, expanded)
+	if err != nil {
+		t.Fatalf("MarshalEnvelope(FanOutExpanded): %v", err)
+	}
+
+	// An "old reader" simulation: decode every envelope, but only look at
+	// RunStarted.Steps, ignoring any kind it doesn't recognize (as
+	// UnmarshalEnvelope's unknown-kind contract already guarantees for a kind
+	// truly absent from its decoders map — here we confirm a *known* kind on
+	// the new side degrades to the same "usable baseline" shape).
+	var baseline []string
+	for _, line := range [][]byte{startedLine, expandedLine} {
+		_, ev, err := UnmarshalEnvelope(line)
+		if err != nil {
+			t.Fatalf("UnmarshalEnvelope: %v", err)
+		}
+		if rs, ok := ev.(RunStarted); ok {
+			baseline = rs.Steps
+		}
+	}
+	if len(baseline) != 3 || baseline[0] != "discover" || baseline[2] != "synthesize" {
+		t.Fatalf("baseline = %v, want the static author graph unchanged by FanOutExpanded", baseline)
 	}
 }

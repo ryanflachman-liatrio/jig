@@ -67,6 +67,8 @@ func eventKind(e Event) string {
 		return "agent_question_resolved"
 	case SecurityFinding:
 		return "security_finding"
+	case FanOutExpanded:
+		return "fan_out_expanded"
 	default:
 		return "unknown"
 	}
@@ -173,6 +175,21 @@ var decoders = map[string]func([]byte) (Event, error){
 	"security_finding": func(b []byte) (Event, error) {
 		var e SecurityFinding
 		return e, json.Unmarshal(b, &e)
+	},
+	// fan_out_expanded validates its schema_version at decode time (unlike
+	// every other event kind, which has no version field): it is the
+	// authoritative creation record for runtime children, so a journal
+	// written by a newer, incompatible jig version must fail closed on
+	// Resume rather than silently misinterpreting the instance list.
+	"fan_out_expanded": func(b []byte) (Event, error) {
+		var e FanOutExpanded
+		if err := json.Unmarshal(b, &e); err != nil {
+			return nil, err
+		}
+		if e.SchemaVersion != FanOutExpandedVersion {
+			return nil, fmt.Errorf("fan_out_expanded: unsupported schema_version %d (want %d)", e.SchemaVersion, FanOutExpandedVersion)
+		}
+		return e, nil
 	},
 }
 

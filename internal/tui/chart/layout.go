@@ -38,6 +38,15 @@ type chartNode struct {
 	retry      bool   // on_failure = "retry"
 	maxRetries int    // max_retries value (0 means use engine default of 1)
 	loop       *chartLoop
+	foreach    *chartForEach
+}
+
+// chartForEach annotates a declared [step.foreach] family node (A8). The
+// author graph stays exactly one node per family — this never expands into a
+// runtime-sized chart — so maxItems is the only cardinality the static chart
+// can show; the actual runtime count is only known once the run executes.
+type chartForEach struct {
+	maxItems int
 }
 
 // chartLoop is the bounded back-edge hanging off a step, mirrored onto its node
@@ -133,6 +142,9 @@ func layoutChart(wf *workflow.Workflow) chartLayout {
 		}
 		if len(s.Routes) > 0 {
 			n.loop = &chartLoop{target: s.Routes[0].Goto, maxIter: s.Routes[0].MaxIterations}
+		}
+		if s.ForEach != nil {
+			n.foreach = &chartForEach{maxItems: s.ForEach.MaxItems}
 		}
 		nodes[i] = n
 		if rank[i] > maxRank {

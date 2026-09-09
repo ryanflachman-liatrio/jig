@@ -468,6 +468,82 @@ type Step struct {
 	Validate *Validate    `toml:"validate"`
 	Routes   []Route      `toml:"route"`
 	Security StepSecurity `toml:"security"`
+
+	// ForEach declares a bounded runtime fan-out: one child of this step's
+	// agent/command template per element of a producer's typed list field.
+	// Agent/command-only; see ForEach and docs/plans/a8-dynamic-foreach-fan-out.md.
+	ForEach *ForEach `toml:"foreach"`
+}
+
+// ForEachIDMarker is the reserved substring the engine uses to build runtime
+// child IDs (e.g. "analyze.__fanout__.g000.r000.i0000"). Reserved at validate
+// time so an author-declared step id can never collide with a generated one.
+const ForEachIDMarker = ".__fanout__."
+
+// ForEach is a [step.foreach] block: the bounded runtime fan-out contract for
+// an agent or command step. Items must be an exact `@step.field` reference to
+// a direct dependency's FieldList output; one child runs per element, each
+// receiving that element bound to the name in As. MaxItems is a hard cap
+// checked before any child is created; MaxParallel additionally bounds this
+// family's own concurrency on top of every other existing limit.
+type ForEach struct {
+	Items       string `toml:"items"`
+	As          string `toml:"as"`
+	MaxItems    int    `toml:"max_items"`
+	MaxParallel int    `toml:"max_parallel"`
+}
+
+// ReferenceSchema returns the schema other steps' field references resolve
+// against. An ordinary step's reference schema is its own effective output
+// schema (merged base + declared, for an agent). A foreach family instead
+// exposes the synthetic aggregate contract (count/succeeded/failed/
+// all_succeeded/results): the family is the only author-addressable output,
+// never an individual child. Use EffectiveSchema instead when checking a
+// foreach template's own per-child output (e.g. block_on).
+func (s *Step) ReferenceSchema() *Schema {
+	if s.ForEach != nil {
+		return AggregateForEachSchema()
+	}
+	return s.EffectiveSchema()
+}
+
+// EffectiveSchema returns this step's own output schema regardless of
+// whether it is a foreach template: the merged base+declared schema for an
+// agent step, or the declared schema for any other step type.
+func (s *Step) EffectiveSchema() *Schema {
+	if s.Type == StepAgent {
+		return MergedSchema(s.Schema)
+	}
+	return s.Schema
+}
+
+// AggregateForEachSchema returns the fixed synthetic schema exposed by every
+// foreach family: count, succeeded, failed, all_succeeded, and an ordered
+// results list. Both results[].item and results[].output are intentionally
+// opaque (FieldAny) — the aggregate exposes the whole results list, never a
+// projection through it (docs/plans/a8-dynamic-foreach-fan-out.md, "Aggregate
+// result contract"). The result-record fields around them are typed so
+// `analyze.all_succeeded` and similar checks are statically verifiable.
+func AggregateForEachSchema() *Schema {
+	resultFields := []*Field{
+		{Name: "index", Type: FieldNumber},
+		{Name: "instance_id", Type: FieldText},
+		{Name: "item", Type: FieldAny},
+		{Name: "status", Type: FieldEnum, Enum: []string{"succeeded", "failed", "skipped"}},
+		{Name: "verdict", Type: FieldText},
+		{Name: "output", Type: FieldAny},
+		{Name: "output_path", Type: FieldText},
+		{Name: "error", Type: FieldText},
+	}
+	return &Schema{
+		Fields: []*Field{
+			{Name: "count", Type: FieldNumber},
+			{Name: "succeeded", Type: FieldNumber},
+			{Name: "failed", Type: FieldNumber},
+			{Name: "all_succeeded", Type: FieldBool},
+			{Name: "results", Type: FieldList, Elem: &Field{Name: "results[]", Type: FieldObject, Fields: resultFields}},
+		},
+	}
 }
 
 // Duration is TOML's string duration form (for example "30s" or "5m").

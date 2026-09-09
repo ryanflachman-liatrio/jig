@@ -62,6 +62,11 @@ func (w *writer) event(ev engine.Event) {
 		w.progress("%s %s", e.StepID, e.To)
 	case engine.RunStarted:
 		w.progress("started %s (%d steps)", e.Workflow, len(e.Steps))
+	case engine.FanOutExpanded:
+		// One concise expansion line per the plan ("Headless" operator-surface
+		// section); ordinary child StepStatus/gate events follow through the
+		// normal case above using their full runtime instance id.
+		w.progress("%s: expanded to %d item(s)", e.FamilyID, len(e.Instances))
 	}
 	if w.mode == OutputJSONL {
 		w.jsonlEvent(ev)
@@ -104,6 +109,8 @@ func eventTypeName(ev engine.Event) string {
 		return "final_merge_request"
 	case engine.RunError:
 		return "run_error"
+	case engine.FanOutExpanded:
+		return "fanout_expanded"
 	default:
 		return fmt.Sprintf("%T", ev)
 	}

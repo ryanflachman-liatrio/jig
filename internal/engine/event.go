@@ -248,6 +248,41 @@ type SecurityFinding struct {
 	Fingerprint string `json:"fingerprint"`
 }
 
+// FanOutExpandedVersion is the only FanOutExpanded schema version this
+// package journals or decodes. A future incompatible shape must bump this and
+// add explicit decoder support rather than silently misreading an old event.
+const FanOutExpandedVersion = 1
+
+// FanOutInstanceDescriptor is the lightweight, journal-safe record of one
+// runtime child produced by a foreach expansion: identity, source position,
+// and the item's digest. The raw item value never appears here — it lives
+// only in the run-owned datastore.FanOutManifest (see FanOutExpanded).
+type FanOutInstanceDescriptor struct {
+	InstanceID string `json:"instance_id"`
+	Index      int    `json:"index"`
+	ItemSHA256 string `json:"item_sha256"`
+}
+
+// FanOutExpanded is the durable, authoritative creation record for one
+// foreach family's runtime children, journaled once per generation/iteration
+// immediately after the matching datastore.FanOutManifest has been written
+// atomically. Instances are ordered by source index. Raw item data
+// deliberately never rides this event (or any event): only ids, positions,
+// and digests, so a large family's expansion never bloats the journal or the
+// live event bus (docs/plans/a8-dynamic-foreach-fan-out.md, "Durability,
+// replay, and crash reopen"). On resume this is the authoritative source for
+// recreating runtime children; RunStarted.Steps stays the static author
+// graph so an older reader still gets a valid baseline.
+type FanOutExpanded struct {
+	SchemaVersion  int                        `json:"schema_version"`
+	RunID          string                     `json:"run_id"`
+	FamilyID       string                     `json:"family_id"`
+	Generation     int                        `json:"generation"`
+	Iteration      int                        `json:"iteration"`
+	ManifestDigest string                     `json:"manifest_digest"`
+	Instances      []FanOutInstanceDescriptor `json:"instances"`
+}
+
 func (RunStarted) isEvent()                 {}
 func (RunFinished) isEvent()                {}
 func (StepStatus) isEvent()                 {}
@@ -269,3 +304,4 @@ func (AgentQuestion) isEvent()              {}
 func (AgentQuestionResolved) isEvent()      {}
 func (StepsReset) isEvent()                 {}
 func (SecurityFinding) isEvent()            {}
+func (FanOutExpanded) isEvent()             {}

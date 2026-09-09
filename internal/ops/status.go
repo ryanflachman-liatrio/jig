@@ -38,6 +38,17 @@ type StepReport struct {
 	Subtype    string      `json:"subtype"`
 	CostUSD    float64     `json:"cost_usd"`
 	Tokens     int         `json:"tokens"`
+
+	// ParentID, FanOutIndex, and FanOutTotal are runtime fan-out provenance
+	// (A8): ParentID is the declaring family's step id for a child, "" for
+	// every ordinary step (including the family step itself, which stays a
+	// zero-cost barrier reported like any other step). FanOutIndex/FanOutTotal
+	// are the child's source position and the family's current-generation item
+	// count. Omitted from JSON when empty/zero so ordinary status output is
+	// unchanged.
+	ParentID    string `json:"parent_id,omitempty"`
+	FanOutIndex int    `json:"fan_out_index,omitempty"`
+	FanOutTotal int    `json:"fan_out_total,omitempty"`
 }
 
 type RunReport struct {
@@ -135,6 +146,24 @@ func FoldStatus(runID string, records []engine.JournalRecord, lockHeld bool) Run
 				stepIndex[id] = len(report.Steps)
 				report.Steps = append(report.Steps, StepReport{ID: id, Status: step.StatusPending})
 			}
+		case engine.FanOutExpanded:
+			// Pre-register every child with its family/index/total (A8) so
+			// parent_id/index/total are always present, even for a child whose
+			// first StepStatus hasn't been journaled yet, and so ordering
+			// (below its family) is stable regardless of dispatch order.
+			for _, inst := range event.Instances {
+				if _, ok := stepIndex[inst.InstanceID]; ok {
+					continue
+				}
+				stepIndex[inst.InstanceID] = len(report.Steps)
+				report.Steps = append(report.Steps, StepReport{
+					ID:          inst.InstanceID,
+					Status:      step.StatusPending,
+					ParentID:    event.FamilyID,
+					FanOutIndex: inst.Index,
+					FanOutTotal: len(event.Instances),
+				})
+			}
 		case engine.StepStatus:
 			i, ok := stepIndex[event.StepID]
 			if !ok {
@@ -184,6 +213,8 @@ func FoldStatus(runID string, records []engine.JournalRecord, lockHeld bool) Run
 		}
 	}
 
+	report.Steps = orderStepsWithChildren(report.Steps)
+
 	for _, sr := range report.Steps {
 		report.TotalCostUSD += sr.CostUSD
 		report.TotalTokens += sr.Tokens
@@ -212,6 +243,34 @@ func FoldStatus(runID string, records []engine.JournalRecord, lockHeld bool) Run
 	}
 	report.Reopenable = !finished && !lockHeld && len(records) > 0
 	return report
+}
+
+// orderStepsWithChildren places every foreach family's runtime children
+// (across every generation, in the order their FanOutExpanded/StepStatus
+// events were folded) directly beneath their family, without disturbing the
+// relative order of ordinary (non-child) steps. A child never appears at the
+// top level.
+func orderStepsWithChildren(steps []StepReport) []StepReport {
+	children := map[string][]StepReport{}
+	hasChildren := false
+	top := make([]StepReport, 0, len(steps))
+	for _, s := range steps {
+		if s.ParentID != "" {
+			children[s.ParentID] = append(children[s.ParentID], s)
+			hasChildren = true
+			continue
+		}
+		top = append(top, s)
+	}
+	if !hasChildren {
+		return steps
+	}
+	out := make([]StepReport, 0, len(steps))
+	for _, s := range top {
+		out = append(out, s)
+		out = append(out, children[s.ID]...)
+	}
+	return out
 }
 
 func hasInterrupted(steps []StepReport) bool {

@@ -351,6 +351,225 @@ Deterministic script/command; no agent context.
 | `inputs` | [string]| `@stepid` refs / paths made available.             |
 | `output` | path    | Optional file the command writes.                  |
 
+### `[step.foreach]` — dynamic fan-out
+
+A `[step.foreach]` block turns an `agent` or `command` step into a **family**:
+instead of running once, jig binds one element of a runtime-sized list to each
+of N runtime **children**, runs them under the family's ordinary concurrency
+and failure policy, and joins them into one ordered aggregate before any
+dependent runs. The declared step stays a single node in the static DAG — the
+list length is only known once its producer runs.
+
+```toml
+[[step]]
+id         = "discover"
+type       = "agent"
+skill      = "skills/discover"
+
+  [step.schema]
+  targets = { list = { name = "text", path = "text" } }
+
+[[step]]
+id         = "analyze"
+type       = "agent"
+depends_on = ["discover"]
+skill      = "skills/analyze"
+
+  [step.foreach]
+  items        = "@discover.targets"
+  as           = "target"
+  max_items    = 32
+  max_parallel = 4
+
+  [step.schema]
+  finding  = "text"
+  severity = { enum = ["low", "medium", "high"] }
+
+[[step]]
+id         = "synthesize"
+type       = "agent"
+depends_on = ["analyze"]
+skill      = "skills/synthesize"
+inputs     = ["@analyze.results"]
+when       = "analyze.all_succeeded"
+```
+
+`[step.foreach]` fields:
+
+| Field | Type | Contract |
+|---|---|---|
+| `items` | string | Required exact `@step.field` reference. The producer must be a direct `depends_on` entry and the resolved field must be a list (`{ list = … }`). A bare step ref, a file, an artifact, or a runtime child id is a load-time error. |
+| `as` | string | Required identifier bound to each element — used in the agent prompt block and the command environment. Must not collide with an `inputs` entry's `as`, or with the reserved fan-out metadata names `index`, `total`, `instance_id`, `id`. |
+| `max_items` | integer | Required, `>= 1`. If the resolved list is longer, the family fails closed (its `on_failure` policy applies) **before any child is created** — jig never silently truncates. |
+| `max_parallel` | integer | Optional, `>= 0`. `0` (default) inherits only the existing global (`max_parallel`), `resource_class`, and read/mutate caps. A positive value additionally caps this family's own in-flight children. |
+
+Additional rules, enforced by `jig validate` before any executor runs:
+
+- `[step.foreach]` is valid only on `type = "agent"` or `type = "command"`,
+  including a mutating worktree template.
+- The template may declare `inputs` (other than `from = "user"`), a
+  `[step.schema]`, `[step.validate]`, `[step.retry]`, `timeout`,
+  `resource_class`, `mutation_paths`, `secrets`, and `block_on` — these apply
+  independently to each child. `from = "user"` inputs are rejected: prompting
+  a human N times before dispatch is easy to trigger by accident.
+- A foreach template cannot declare a fixed `output` path (parallel children
+  would race on one repository path) or `[[step.route]]` (a route may target
+  the family as a whole from elsewhere, but a single child cannot rewind the
+  graph).
+- A `when` guard on the family step itself is evaluated once, before
+  expansion — there is no per-item `when`.
+- A condition may reference an aggregate field (`analyze.all_succeeded`,
+  `analyze.count`, …) but not the bare family id (`when = "analyze"`) — N
+  child verdicts have no single scalar meaning. `analyze.results` is
+  available to a consumer's `inputs` as the whole ordered list; jig does not
+  support projecting a field through it (e.g. `@analyze.results.output`).
+- The runtime marker `.__fanout__.` is reserved: no author-declared step id
+  may contain it.
+- A module rewrites and clones `foreach.items` exactly as it already rewrites
+  `inputs`, reviews, conditions, and route feedback, so a family may source
+  its list from a producer declared earlier in the same module.
+
+#### Runtime identity and item delivery
+
+The declared id (`analyze`) is the **family id** and is the only one that
+appears in `depends_on`/`@ref`/`when` anywhere in the TOML. Each expansion
+receives the family's current generation and iteration; child ids are
+deterministic and derived only from those coordinates, the family id, and the
+element's zero-based source index:
+
+```text
+analyze.__fanout__.g000.r000.i0000
+analyze.__fanout__.g000.r000.i0001
+analyze.__fanout__.g000.r001.i0000   # after a bounded route rewind (iteration bump)
+analyze.__fanout__.g001.r000.i0000   # after a manual reset (generation bump)
+```
+
+Runtime child ids are operator/provenance identities only — a workflow file
+can never address one directly; every author-facing reference resolves to the
+family. Duplicate item values still get distinct children because identity is
+positional, not value-based.
+
+Each child receives its bound element as exact, canonical JSON:
+
+- **Agent children** get a labeled JSON block (naming `as`, the zero-based
+  position, the total count, and the instance id) prepended ahead of the
+  step's ordinary inputs.
+- **Command children** get the compact JSON as `JIG_INPUT_<AS>` (same
+  environment-name normalization as declared artifacts/secrets), plus
+  `JIG_FANOUT_INDEX` (zero-based), `JIG_FANOUT_TOTAL`, and
+  `JIG_FANOUT_INSTANCE_ID`.
+
+Every other lifecycle behavior — timeouts, `[step.retry]`, `[step.validate]`,
+security monitoring, worktree isolation and integration, recovery gates, and
+transcript capture — applies to a child exactly as it would to an ordinary
+step, because a runtime child is a full clone of the template (minus
+`foreach` itself, which is cleared so a child cannot recursively expand, and
+`when`, cleared because the family's guard already ran once).
+
+#### The aggregate — the family's only addressable output
+
+A foreach family is a **fan-in barrier**: dependents never dispatch until
+every child has reached a terminal status (`succeeded`, `failed`, or
+`skipped`) or been accepted by an operator recovery decision. The family then
+writes one ordered aggregate to its normal `steps/<family-id>/output.json`
+(and `Result.Structured`, for the persistence-off path):
+
+```json
+{
+  "count": 2,
+  "succeeded": 1,
+  "failed": 1,
+  "all_succeeded": false,
+  "results": [
+    {
+      "index": 0,
+      "instance_id": "analyze.__fanout__.g000.r000.i0000",
+      "item": { "name": "api", "path": "services/api" },
+      "status": "succeeded",
+      "verdict": "",
+      "output": { "finding": "clean", "severity": "low" },
+      "output_path": "/.../steps/analyze.__fanout__.g000.r000.i0000/output.md",
+      "error": ""
+    }
+  ]
+}
+```
+
+`results` is ordered by **source index, never completion order** — the family
+dispatches children concurrently, so they may finish out of order, but the
+aggregate is always stable. `count`/`succeeded`/`failed`/`all_succeeded` are
+honest roll-ups of the child statuses actually observed; the run itself still
+reports failed overall if any child failed, matching ordinary
+`on_failure = "continue"` semantics.
+
+A consumer references the family exactly like any other producer:
+`@analyze.results` (the whole ordered list, as an input), or
+`analyze.all_succeeded` / `analyze.count` / `analyze.succeeded` /
+`analyze.failed` in a `when` guard. Both `results[].item` and
+`results[].output` are opaque JSON — there is no static typing through a
+list element, only through the family's own fixed aggregate fields. An empty
+producer list is valid: the family journals a zero-instance expansion, writes
+the empty aggregate (`count: 0`, `all_succeeded: true`), and succeeds
+immediately — a successful empty fan-in.
+
+#### Lifecycle, reset, and resume
+
+A family's dispatch does not consume an `inFlight` slot itself — it is a pure
+barrier. Each child consumes one ordinary global slot and, when applicable,
+one family-local (`max_parallel`), resource-class, and read/mutate slot.
+Child failures use the template's own policy: `[step.retry]` applies per
+child; `on_failure = "continue"` or an operator recovery skip makes that
+child terminal without blocking siblings; an abort-policy failure parks that
+one child on the ordinary recovery gate while the family keeps waiting.
+
+**Reset.** An individual runtime child cannot be reset directly — jig
+rejects that with a typed error directing the operator to reset the family
+(or use recovery retry/resume on the single failed child before fan-in
+completes). Resetting the family, or a step upstream of it, invalidates the
+current expansion and produces a **new generation**: `Generation` bumps on a
+manual `Run.Reset`, `Iteration` bumps on a bounded route rewind that includes
+the family, matching jig's existing provenance vocabulary. The next readiness
+pass re-resolves the producer's current list and journals a fresh
+`FanOutExpanded` event — the list cardinality may differ across generations.
+Prior generations' transcripts and manifests are left in place as immutable
+history; reset never deletes an older `steps/<family-id>/fanout/generation-*`
+file. Every mutating child's integration commit belongs to its family for
+rewind planning, so a reset removes all of that family's affected child
+commits and replays independent survivors in original run-branch order.
+
+**Resume / crash reopen.** A killed-and-restarted run rebuilds the exact same
+children from the durable manifest (never by re-invoking the producer) — see
+"On-disk layout" below and `docs/engine-design.md`. A child left `running`,
+`validating`, stopped, question-blocked, in recovery, or in an integration
+conflict reopens through the same path as an ordinary interrupted step. The
+family itself, if left `running`, is never mistaken for an interrupted
+worker — after reopen it simply waits for (and, once all are terminal,
+re-aggregates) its children.
+
+#### On-disk layout
+
+```
+.jig/runs/<run-id>/
+  steps/<family-id>/
+    output.json                                  # latest aggregate
+    fanout/
+      generation-000-iteration-000.json           # durable expansion manifest
+      generation-000-iteration-001.json           # after a route rewind
+      generation-001-iteration-000.json           # after a manual reset
+  steps/<family-id>.__fanout__.g000.r000.i0000/    # one ordinary step dir per child
+    result.json
+    transcript.jsonl
+    input.md / output.md
+```
+
+Each manifest records the schema version, family id, generation, iteration,
+the exact `@step.field` source reference and its output digest, and every
+ordered `{instance_id, index, item, item_sha256}` — written to a temp file
+and atomically renamed before the engine journals `FanOutExpanded`, so a
+process death between the two leaves either nothing (safe to re-expand) or a
+durable, matching record. A child's directory, transcript, and result are
+otherwise indistinguishable from an ordinary step's.
+
 ### Review step (human-in-the-loop)
 
 Pauses the run, renders an upstream artifact for a human, and captures a verdict.
@@ -1033,10 +1252,12 @@ alignment between ranks is centered, not optimized to reduce edge crossings.
 gates, engine-observed metadata, `review` (human-in-the-loop) steps, scalar
 `output_type` verdicts, schema-enforced producer output (`[step.schema]` /
 `schema_file`) with `stepid.field` refs, forward `when` conditionals, bounded
-`[[step.route]]`.
+`[[step.route]]`, and `[step.foreach]` dynamic fan-out over a runtime-sized
+list (see "`[step.foreach]` — dynamic fan-out" above).
 
-**Deferred:** map/fan-out over a dynamic list (N parallel steps from data),
-exact mid-turn LLM rewind, secrets management, remote/distributed execution.
+**Deferred:** exact mid-turn LLM rewind, secrets management, remote/distributed
+execution. Dynamic fan-out over a runtime-sized list is implemented — see
+"[step.foreach] — dynamic fan-out" below.
 Any unfinished historical run can restore a live scheduler through
 `Manager.Resume` (Specs 20 and 21). Interrupted workers (`running` /
 `validating`) move to the recovery gate; existing review, recovery, stopped,

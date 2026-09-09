@@ -97,6 +97,12 @@ func (v *validator) checkIDs() {
 		switch {
 		case id == "":
 			v.errf("step #%d is missing an id", i+1)
+		// Checked ahead of the general isIdent shape check so an id colliding
+		// with the generated fan-out id marker gets the specific, actionable
+		// error even though a marker (it contains '.') is also never a legal
+		// identifier on its own.
+		case strings.Contains(id, ForEachIDMarker):
+			v.errf("step id %q must not contain reserved marker %q (used for generated fan-out child ids)", id, ForEachIDMarker)
 		case !isIdent(id):
 			v.errf("step id %q must be letters, digits, '_' or '-'", id)
 		case seen[id]:
@@ -142,6 +148,7 @@ func (v *validator) checkStep(s *Step) {
 	v.checkRoutes(s)
 	v.checkContext(s)
 	v.checkStepSecurity(s)
+	v.checkForEach(s)
 }
 
 func (v *validator) checkResourceLimits() {
@@ -378,9 +385,9 @@ func (v *validator) checkAgent(s *Step) {
 		} else if cond.Step != s.ID {
 			v.errf("agent step %q block_on: condition must reference this step's own output (got %q, want %q)", s.ID, cond.Step, s.ID)
 		} else if len(cond.Field) > 0 {
-			// Agent steps always have the base schema; checkFieldRef resolves
-			// against the merged (base + declared) schema.
-			v.checkFieldRef(s.ID, "block_on", s, cond.Field)
+			// Agent steps always have the base schema; block_on evaluates the
+			// step's own per-child output, never the foreach aggregate.
+			v.checkOwnFieldRef(s.ID, "block_on", s, cond.Field)
 		}
 	}
 }
@@ -685,19 +692,26 @@ func (v *validator) checkUserInput(s *Step, in Input) {
 }
 
 // checkFieldRef verifies a dotted field path resolves in the target step's
-// output schema, returning the named Field. For agent steps the effective
-// schema is the merged base + declared schema, so base fields (summary, status,
-// etc.) are always reachable without a declared [step.schema]. A target whose
-// schema_file is still unresolved (baseDir == "") is skipped rather than flagged.
+// reference schema (the normal effective schema for an ordinary producer, or
+// the synthetic aggregate schema for a foreach family — see
+// Step.ReferenceSchema), returning the named Field. Use this for every
+// cross-step reference (inputs, review targets, when/route.when/applies_when).
+// A target whose schema_file is still unresolved (baseDir == "") is skipped
+// rather than flagged.
 func (v *validator) checkFieldRef(stepID, ctx string, target *Step, path []string) (*Field, bool) {
+	return v.checkFieldRefIn(stepID, ctx, target, target.ReferenceSchema(), path)
+}
+
+// checkOwnFieldRef resolves a field path against a step's own per-instance
+// output schema rather than its (possibly aggregate) reference schema. Use
+// this for block_on: it is evaluated once per child against that child's own
+// structured output, never the family aggregate.
+func (v *validator) checkOwnFieldRef(stepID, ctx string, target *Step, path []string) (*Field, bool) {
+	return v.checkFieldRefIn(stepID, ctx, target, target.EffectiveSchema(), path)
+}
+
+func (v *validator) checkFieldRefIn(stepID, ctx string, target *Step, sc *Schema, path []string) (*Field, bool) {
 	name := strings.Join(path, ".")
-	var sc *Schema
-	if target.Type == StepAgent {
-		// Agent steps always have at least the base schema.
-		sc = MergedSchema(target.Schema)
-	} else {
-		sc = target.Schema
-	}
 	if sc == nil {
 		if target.SchemaFile == "" {
 			v.errf("step %q %s references field %q but step %q declares no schema", stepID, ctx, name, target.ID)
@@ -984,7 +998,13 @@ func (v *validator) checkCondValue(stepID, guard string, cond *Condition) {
 		return
 	}
 
-	// No field path: the scalar output_type verdict.
+	// No field path: the scalar output_type verdict. A foreach family has no
+	// single scalar meaning across N children — a guard must name an aggregate
+	// field such as `analyze.all_succeeded`.
+	if ts.ForEach != nil {
+		v.errf("step %q %s: %q is a foreach family; compare an aggregate field (e.g. %s.all_succeeded), not the bare family", stepID, guard, cond.Step, cond.Step)
+		return
+	}
 	ot := ts.OutputType
 	switch cond.Op {
 	case CondTruthy:
@@ -1089,6 +1109,90 @@ func (v *validator) checkStepSecurity(s *Step) {
 	for i, host := range s.Security.OutboundAllowlist {
 		if !isValidHost(host) {
 			v.errf("step %q [step.security] outbound_allowlist[%d] %q is not a valid hostname", s.ID, i, host)
+		}
+	}
+}
+
+// reservedForEachNames are the fan-out metadata names surfaced alongside `as`
+// in the child agent prompt/command environment (position, total, instance
+// id); an `as` binding may not shadow them.
+var reservedForEachNames = map[string]bool{
+	"index":       true,
+	"total":       true,
+	"instance_id": true,
+	"id":          true,
+}
+
+// checkForEach validates an optional [step.foreach] block: the list source,
+// item binding, hard bounds, and the exclusions (route/from="user"/fixed
+// output) that keep a foreach template from doing anything that would race
+// children or prompt N times before dispatch.
+func (v *validator) checkForEach(s *Step) {
+	fe := s.ForEach
+	if fe == nil {
+		return
+	}
+	if s.Type != StepAgent && s.Type != StepCommand {
+		v.errf("step %q: [step.foreach] is only valid on agent or command steps", s.ID)
+		return
+	}
+
+	// items must be an exact "@step.field" reference to a direct dependency's
+	// list field -- never a bare step, a file, an artifact, or a runtime id.
+	ref, isRef := strings.CutPrefix(fe.Items, "@")
+	stepID, field := "", []string(nil)
+	if isRef {
+		stepID, field = parseRef(ref)
+	}
+	switch {
+	case fe.Items == "":
+		v.errf("step %q [step.foreach] requires `items`", s.ID)
+	case !isRef || stepID == "" || len(field) != 1 || field[0] == "":
+		v.errf("step %q [step.foreach] items %q must be an exact @step.field reference", s.ID, fe.Items)
+	default:
+		ti, ok := v.wf.index[stepID]
+		if !ok {
+			v.errf("step %q [step.foreach] items references unknown step %q", s.ID, stepID)
+		} else if !contains(s.DependsOn, stepID) {
+			v.errf("step %q [step.foreach] items producer %q must also appear in depends_on", s.ID, stepID)
+		} else if f, ok := v.checkFieldRef(s.ID, "foreach items", &v.wf.Steps[ti], field); ok && f.Type != FieldList {
+			v.errf("step %q [step.foreach] items %q must reference a list field, got %s", s.ID, fe.Items, f.Type)
+		}
+	}
+
+	switch {
+	case fe.As == "":
+		v.errf("step %q [step.foreach] requires `as`", s.ID)
+	case !isIdent(fe.As):
+		v.errf("step %q [step.foreach] as %q must be an identifier", s.ID, fe.As)
+	case reservedForEachNames[fe.As]:
+		v.errf("step %q [step.foreach] as %q collides with reserved fan-out metadata", s.ID, fe.As)
+	default:
+		for _, in := range s.Inputs {
+			if in.As == fe.As {
+				v.errf("step %q [step.foreach] as %q collides with an input's `as`", s.ID, fe.As)
+				break
+			}
+		}
+	}
+
+	if fe.MaxItems < 1 {
+		v.errf("step %q [step.foreach] max_items must be >= 1, got %d", s.ID, fe.MaxItems)
+	}
+	if fe.MaxParallel < 0 {
+		v.errf("step %q [step.foreach] max_parallel must be >= 0 (0 = inherit only global/resource limits), got %d", s.ID, fe.MaxParallel)
+	}
+
+	if len(s.Routes) > 0 {
+		v.errf("step %q: a foreach template cannot declare [[step.route]]; a route may target the family from elsewhere", s.ID)
+	}
+	if s.Output != "" {
+		v.errf("step %q: a foreach template cannot declare a fixed `output` path; parallel children would race on it", s.ID)
+	}
+	for _, in := range s.Inputs {
+		if in.From == "user" {
+			v.errf("step %q: a foreach template cannot declare a from=\"user\" input", s.ID)
+			break
 		}
 	}
 }

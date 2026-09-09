@@ -16,9 +16,21 @@ func cloneTranscriptItemState(src map[transcriptItemKey]bool) map[transcriptItem
 	return dst
 }
 
+// ensureFamilyExpandedFor expands stepID's foreach family (if any) so a gate
+// arriving for one runtime child always finds a row to focus, without forcing
+// the operator to have expanded the family manually first (plan: "gate
+// entries focus the exact child").
+func (m *Model) ensureFamilyExpandedFor(stepID string) {
+	i, ok := m.index[stepID]
+	if !ok || !m.steps[i].isChild() {
+		return
+	}
+	m.expanded[m.steps[i].parentID] = true
+}
+
 func (m Model) stepRowIndex(stepID string) (int, bool) {
 	for i, row := range m.visibleRows() {
-		if row.isStepRow() && row.stepID == stepID {
+		if (row.isStepRow() || row.isChildRow()) && row.stepID == stepID {
 			return i, true
 		}
 	}
@@ -30,7 +42,7 @@ func (m Model) savedRowIndex(snapshot *gateContextSnapshot) (int, bool) {
 		if row.kind != snapshot.rowKind || row.stepID != snapshot.stepID {
 			continue
 		}
-		if row.isStepRow() {
+		if row.isStepRow() || row.isChildRow() {
 			return i, true
 		}
 		if row.file != nil && row.file.path == snapshot.filePath {
@@ -70,6 +82,7 @@ func (m *Model) saveGateContext(targetStep string) {
 }
 
 func (m *Model) showGateContext(targetStep string) {
+	m.ensureFamilyExpandedFor(targetStep)
 	targetRow, ok := m.stepRowIndex(targetStep)
 	if !ok {
 		return

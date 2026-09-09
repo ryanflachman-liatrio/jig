@@ -870,6 +870,14 @@ type scheduler struct {
 	postExecChain []postExecHandler
 
 	onDone func(RunSnapshot) // called once before the scheduler goroutine exits
+
+	// Runtime fan-out registries (see fanout.go). Runtime children are NEVER
+	// appended to wf.Steps — the static DAG stays pure and visualizable — so
+	// they live only here, keyed by their stable instance id.
+	fanOutFamilies    map[string]*fanOutFamily // family id → its current expansion
+	fanOutFamilyOrder []string                 // family ids in expansion order (deterministic snapshot order)
+	fanOutChildren    map[string]*workflow.Step
+	fanOutItemByChild map[string]FanOutItem
 }
 
 func newScheduler(
@@ -938,7 +946,10 @@ func newScheduler(
 			phCheckBlockOn,
 			phSquashMergeIntegration,
 		},
-		onDone: onDone,
+		onDone:            onDone,
+		fanOutFamilies:    make(map[string]*fanOutFamily),
+		fanOutChildren:    make(map[string]*workflow.Step),
+		fanOutItemByChild: make(map[string]FanOutItem),
 	}
 }
 
@@ -1061,6 +1072,20 @@ func (s *scheduler) nextReady(ctx context.Context) (*workflow.Step, bool) {
 		}
 		st := &s.wf.Steps[i]
 		state := s.states[st.ID]
+
+		// A running foreach family: source-order children take priority over
+		// any other static step this scan would otherwise reach, keeping
+		// dispatch order stable relative to declaration order even though
+		// children never appear in wf.Steps. If nothing in this family is
+		// ready right now (all done, or its family-local cap is full), fall
+		// through to the rest of the static graph rather than blocking on it.
+		if st.ForEach != nil && state.Status == step.StatusRunning {
+			if child, ok := s.nextReadyChild(st.ID); ok {
+				return child, true
+			}
+			continue
+		}
+
 		if state.Status != step.StatusPending {
 			continue
 		}
@@ -1225,6 +1250,11 @@ func (s *scheduler) stepByID(id string) *workflow.Step {
 		if s.wf.Steps[i].ID == id {
 			return &s.wf.Steps[i]
 		}
+	}
+	// Runtime fan-out children live only in this registry, never in wf.Steps
+	// (see fanout.go).
+	if st, ok := s.fanOutChildren[id]; ok {
+		return st
 	}
 	return nil
 }
@@ -1405,6 +1435,14 @@ func (s *scheduler) stepBranchName(stepID string) string {
 // Strategy pattern's single dispatch site (see strategies.go), replacing what
 // was an inline branch per step type.
 func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
+	// A foreach family template never executes directly — dispatching it
+	// expands its bounded list into runtime children instead (see fanout.go).
+	// This check comes before the type-keyed strategy lookup because a
+	// foreach template's Type is still "agent" or "command".
+	if st.ForEach != nil {
+		s.dispatchForEach(ctx, st)
+		return
+	}
 	if strat, ok := stepDispatchStrategies[st.Type]; ok {
 		strat.dispatch(s, ctx, st)
 	}
@@ -1478,6 +1516,13 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	}
 	if st.ResourceClass != "" {
 		s.classInFlight[st.ResourceClass]++
+	}
+	// A fan-out child additionally occupies its family's local slot, on top of
+	// every other cap above.
+	if parentID := s.states[st.ID].ParentID; parentID != "" {
+		if fam := s.fanOutFamilies[parentID]; fam != nil {
+			fam.InFlight++
+		}
 	}
 
 	runID, stepID := s.runID, st.ID
@@ -1810,7 +1855,7 @@ func (s *scheduler) buildRequest(
 		}
 	}
 
-	return StepRequest{
+	req := StepRequest{
 		RunID:           runID,
 		Step:            st,
 		Inputs:          s.preResolvedInputs[st.ID],
@@ -1827,6 +1872,10 @@ func (s *scheduler) buildRequest(
 		Guard:           guard,
 		FindingsPath:    findingsPath,
 	}
+	if item, ok := s.fanOutItemByChild[st.ID]; ok {
+		req.FanOutItem = &item
+	}
+	return req
 }
 
 // handle processes one message from the scheduler's inbox by delegating to
@@ -1998,15 +2047,31 @@ func (s *scheduler) handleReset(m resetMsg) {
 		reply(ResetResult{}, &ResetError{Code: "persistence_required", Target: m.stepID, Err: fmt.Errorf("run has no git worktree")})
 		return
 	}
+	// A runtime fan-out child is not an independently resettable unit — it is
+	// replaced wholesale on the family's next expansion. Point the operator at
+	// the family instead of silently no-oping or resetting just one instance
+	// out from under its siblings (docs/plans/a8-dynamic-foreach-fan-out.md,
+	// "Reset, routes, worktrees, and budgets").
+	if childState := s.states[m.stepID]; childState != nil && childState.ParentID != "" {
+		reply(ResetResult{}, &ResetError{Code: "fanout_child", Target: m.stepID,
+			Err: fmt.Errorf("%q is a fan-out child of %q; reset %q instead", m.stepID, childState.ParentID, childState.ParentID)})
+		return
+	}
 
 	closure := s.closureOf(m.stepID)
 	if len(closure) == 0 {
 		reply(ResetResult{}, &ResetError{Code: "unknown_target", Target: m.stepID, Err: fmt.Errorf("step does not exist")})
 		return
 	}
+	// closureOf/ResetClosure stay pure static-DAG operations (used for
+	// operator previews); the actual scheduler-level reset must additionally
+	// invalidate every family's current children — journal transitions,
+	// artifact cleanup, worktree removal, and commit rewind all operate on
+	// this expanded set.
+	expanded := s.expandFanOutClosure(closure)
 
 	rewindTo, survivors := s.rewindPlan(m.stepID)
-	result := ResetResult{Target: m.stepID, Closure: append([]string(nil), closure...), RewindTo: rewindTo}
+	result := ResetResult{Target: m.stepID, Closure: append([]string(nil), expanded...), RewindTo: rewindTo}
 	// A restored scheduler must not dispatch pending work between journal
 	// invalidation and successful Git/artifact cleanup.
 	s.restoredHold = true
@@ -2017,13 +2082,13 @@ func (s *scheduler) handleReset(m resetMsg) {
 	if err := s.emit(StepsReset{
 		RunID:    s.runID,
 		Target:   m.stepID,
-		Closure:  closure,
+		Closure:  expanded,
 		RewindTo: rewindTo,
 	}); err != nil {
 		reply(ResetResult{}, &ResetError{Code: "journal", Target: m.stepID, Err: err})
 		return
 	}
-	for _, id := range closure {
+	for _, id := range expanded {
 		state := s.states[id]
 		if state == nil {
 			continue
@@ -2059,17 +2124,22 @@ func (s *scheduler) handleReset(m resetMsg) {
 		}
 	}
 
-	// Clear per-step derived outputs for the closure (result.json / output.*).
-	// transcript.jsonl is intentionally kept — the re-run appends a new generation.
-	for _, id := range closure {
+	// Clear per-step derived outputs for the closure (result.json / output.*),
+	// including every current fan-out child's own outputs. transcript.jsonl is
+	// intentionally kept — the re-run appends a new generation. A family's own
+	// fanout/generation-*.json manifests are untouched: ClearStepOutputs only
+	// removes the fixed per-step artifact paths, never that subdirectory, so
+	// older-generation manifests remain as immutable history.
+	for _, id := range expanded {
 		if err := datastore.ClearStepOutputs(s.runDir, id); err != nil {
 			reply(ResetResult{}, &ResetError{Code: "artifact_cleanup", Target: m.stepID, Err: err})
 			return
 		}
 	}
 
-	// Reset in-memory state for each closure step and purge stale routing maps.
-	for _, id := range closure {
+	// Reset in-memory state for each closure step (and every current fan-out
+	// child) and purge stale routing maps.
+	for _, id := range expanded {
 		state := s.states[id]
 		if state == nil {
 			continue
@@ -2104,6 +2174,17 @@ func (s *scheduler) handleReset(m resetMsg) {
 		delete(s.collectedUserInputs, id)
 		delete(s.preResolvedInputs, id)
 		delete(s.stopping, id)
+	}
+	// Remove the current expansion from runtime scheduling for every family in
+	// the (static) closure — a fresh FanOutExpanded/manifest is written the
+	// next time the family becomes dependency-ready and dispatches (see
+	// dispatchForEach). The now-orphaned child ids remain in s.states/
+	// fanOutChildren/fanOutItemByChild as harmless historical residue (never
+	// dispatched again, since they no longer appear in any family's Order) —
+	// deleting the family entry itself is what stops RunSnapshot from folding
+	// the just-reset children back in before the next expansion exists.
+	for _, id := range closure {
+		delete(s.fanOutFamilies, id)
 	}
 	s.restoredHold = false
 	reply(result, nil)
@@ -3065,6 +3146,25 @@ func ResetClosure(wf *workflow.Workflow, targetID string) []string {
 	return out
 }
 
+// expandFanOutClosure returns closure with every foreach family member
+// replaced by itself plus its current runtime children (in source order),
+// immediately after itself. closureOf/ResetClosure stay pure static-DAG
+// operations for operator previews (docs/plans/a8-dynamic-foreach-fan-out.md,
+// "Reset, routes, worktrees, and budgets"); this expansion happens only here,
+// at the point scheduler-level reset performs destructive work — journal
+// transitions, artifact cleanup, worktree removal, and commit rewind must all
+// account for the family's actual current children, not just its declared id.
+func (s *scheduler) expandFanOutClosure(closure []string) []string {
+	out := make([]string, 0, len(closure))
+	for _, id := range closure {
+		out = append(out, id)
+		if fam := s.fanOutFamilies[id]; fam != nil {
+			out = append(out, fam.Order...)
+		}
+	}
+	return out
+}
+
 // rewindPlan computes the git operations needed to reset the run branch for a
 // reset of targetID. It returns:
 //
@@ -3079,7 +3179,12 @@ func (s *scheduler) rewindPlan(targetID string) (rewindTo string, survivors []st
 		return "", nil
 	}
 
-	closure := s.closureOf(targetID)
+	// Every child integration commit belongs to its family for rewind purposes
+	// (docs/plans/a8-dynamic-foreach-fan-out.md, "rewindPlan must treat every
+	// child integration commit as belonging to its family"), so reset removes
+	// all affected child commits together with the family's own and correctly
+	// replays independent survivors in original run-branch order.
+	closure := s.expandFanOutClosure(s.closureOf(targetID))
 	closureSet := make(map[string]bool, len(closure))
 	for _, id := range closure {
 		closureSet[id] = true
@@ -3151,6 +3256,22 @@ func (s *scheduler) transitionRecovery(stepID string, from, to step.Status, reco
 	if err := s.emit(s.transitionEvent(stepID, from, to, recoveryAction)); err != nil {
 		state.Status = previous
 		return false
+	}
+	// Centralized fan-out barrier settlement: every path that can complete a
+	// child (normal success, on_failure="continue", operator recovery-skip, a
+	// resumed/recovered child reaching a real terminal status, validation, and
+	// integration completion) flows through this one transition function, so
+	// this single hook — rather than editing each of those call sites — is
+	// what checks whether a settling family's barrier can now close. It is a
+	// no-op for every ordinary step and for the family's own transition.
+	// terminalStatus's three statuses (succeeded/failed/skipped) are exactly
+	// the set that can satisfy a fan-out family's barrier for one child.
+	// Parked-but-alive statuses (stopped, awaiting_recovery,
+	// awaiting_integration, needs_input) are deliberately excluded: the
+	// family keeps waiting until that child later reaches a real terminal
+	// status.
+	if terminalStatus(to) {
+		s.trySettleFamilyIfChild(stepID)
 	}
 	return true
 }
@@ -3295,15 +3416,37 @@ func (s *scheduler) snapshot() RunSnapshot {
 	for i, wfStep := range s.wf.Steps {
 		st := s.states[wfStep.ID]
 		states[i] = *st
-		switch st.Status {
-		case step.StatusSucceeded, step.StatusFailed, step.StatusSkipped:
-		default:
+		if !terminalStatus(st.Status) {
 			allDone = false
 		}
 		// Cumulative across every attempt (see step.State.SpentUSD), so a run that
 		// retried or reset a step reports the full amount it actually paid.
 		totalCost += st.SpentUSD
 		totalTokens += st.SpentTokens
+	}
+	// Runtime fan-out children never appear in wf.Steps (the static DAG stays
+	// pure), so they are folded in here, family by family in expansion order
+	// and source order within each family, to keep RunSnapshot deterministic.
+	// The family step itself is a zero-cost barrier (its own SpentUSD/Tokens
+	// stay at zero, counted once above) — only its children add to the totals,
+	// so nothing is double-counted.
+	for _, familyID := range s.fanOutFamilyOrder {
+		fam := s.fanOutFamilies[familyID]
+		if fam == nil {
+			continue
+		}
+		for _, childID := range fam.Order {
+			st, ok := s.states[childID]
+			if !ok {
+				continue
+			}
+			states = append(states, *st)
+			if !terminalStatus(st.Status) {
+				allDone = false
+			}
+			totalCost += st.SpentUSD
+			totalTokens += st.SpentTokens
+		}
 	}
 	return RunSnapshot{
 		ID:           s.runID,

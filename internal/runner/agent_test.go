@@ -1533,3 +1533,144 @@ func TestExecute_AcpProfile(t *testing.T) {
 		}
 	})
 }
+
+// TestBuildAgentPromptNoFanOutItem proves req.FanOutItem == nil (every
+// ordinary, non-fanout step) leaves buildAgentPrompt byte-identical to before
+// this feature existed — the fan-out block must never render.
+func TestBuildAgentPromptNoFanOutItem(t *testing.T) {
+	req := engine.StepRequest{
+		Step:   &workflow.Step{AppendSystemPrompt: "Be concise."},
+		Inputs: []engine.ResolvedInput{{Ref: workflow.Input{Path: "notes.md"}, Value: "/abs/notes.md"}},
+	}
+	got := buildAgentPrompt(req)
+	if strings.Contains(got, "Fan-out item") {
+		t.Errorf("non-fanout prompt must not contain a fan-out block:\n%q", got)
+	}
+}
+
+// TestBuildAgentPromptFanOutString proves a string item renders as a labeled
+// JSON block before ordinary inputs, naming as/position/total/instance id.
+func TestBuildAgentPromptFanOutString(t *testing.T) {
+	req := engine.StepRequest{
+		Step:   &workflow.Step{},
+		Inputs: []engine.ResolvedInput{{Ref: workflow.Input{Path: "notes.md"}, Value: "/abs/notes.md"}},
+		FanOutItem: &engine.FanOutItem{
+			TemplateID: "analyze",
+			InstanceID: "analyze.__fanout__.g000.r000.i0001",
+			Index:      1,
+			Total:      3,
+			As:         "target",
+			Item:       []byte(`"api"`),
+			Digest:     "deadbeef",
+		},
+	}
+	got := buildAgentPrompt(req)
+
+	if !strings.Contains(got, "## Fan-out item") {
+		t.Fatalf("missing fan-out heading:\n%q", got)
+	}
+	if !strings.Contains(got, "item 2 of 3") {
+		t.Errorf("expected 1-based display position \"item 2 of 3\", got:\n%q", got)
+	}
+	if !strings.Contains(got, "analyze.__fanout__.g000.r000.i0001") {
+		t.Errorf("missing instance id in prompt:\n%q", got)
+	}
+	if !strings.Contains(got, `"as":"target"`) {
+		t.Errorf("missing as binding in JSON payload:\n%q", got)
+	}
+	if !strings.Contains(got, `"index":1`) {
+		t.Errorf("missing zero-based index in JSON payload:\n%q", got)
+	}
+	if !strings.Contains(got, `"value":"api"`) {
+		t.Errorf("missing string item value:\n%q", got)
+	}
+	// The fan-out block must precede the ordinary inputs section.
+	if strings.Index(got, "Fan-out item") > strings.Index(got, "provided for your task") {
+		t.Error("fan-out block must appear before ordinary inputs")
+	}
+}
+
+// TestBuildAgentPromptFanOutObject proves an object item's fields survive the
+// JSON round-trip exactly, including nested values.
+func TestBuildAgentPromptFanOutObject(t *testing.T) {
+	req := engine.StepRequest{
+		Step: &workflow.Step{},
+		FanOutItem: &engine.FanOutItem{
+			InstanceID: "analyze.__fanout__.g000.r000.i0000",
+			Index:      0,
+			Total:      1,
+			As:         "target",
+			Item:       []byte(`{"name":"api","path":"services/api","tags":["a","b"]}`),
+		},
+	}
+	got := buildAgentPrompt(req)
+	if !strings.Contains(got, `"name":"api"`) || !strings.Contains(got, `"tags":["a","b"]`) {
+		t.Errorf("object item fields not preserved:\n%q", got)
+	}
+}
+
+// TestBuildAgentPromptFanOutJSONEscaping proves a value containing characters
+// that must be escaped in JSON (quotes, newlines, unicode) round-trips through
+// the rendered block as valid JSON rather than corrupting the prompt.
+func TestBuildAgentPromptFanOutJSONEscaping(t *testing.T) {
+	raw, err := json.Marshal(map[string]any{"note": "quote \" newline \n unicode ☃"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := engine.StepRequest{
+		Step: &workflow.Step{},
+		FanOutItem: &engine.FanOutItem{
+			InstanceID: "analyze.__fanout__.g000.r000.i0000",
+			Index:      0,
+			Total:      1,
+			As:         "target",
+			Item:       raw,
+		},
+	}
+	got := buildAgentPrompt(req)
+	start := strings.Index(got, "```json\n") + len("```json\n")
+	end := strings.Index(got[start:], "\n```")
+	if start < len("```json\n") || end < 0 {
+		t.Fatalf("could not locate JSON fence in prompt:\n%q", got)
+	}
+	block := got[start : start+end]
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(block), &decoded); err != nil {
+		t.Fatalf("rendered fan-out block is not valid JSON: %v\nblock:\n%s", err, block)
+	}
+	value, _ := decoded["value"].(map[string]any)
+	if value == nil || value["note"] == nil {
+		t.Fatalf("escaped item value did not round-trip: %v", decoded)
+	}
+}
+
+// TestFanOutPromptDoesNotLeakIntoRedaction proves the fan-out block flows
+// through the same transcript-redaction path as any other prompt content —
+// a secret embedded in an item value is redacted from the transcript exactly
+// like a secret in an ordinary command's output, and redaction does not
+// somehow strip or corrupt the fan-out heading itself.
+func TestFanOutPromptDoesNotLeakIntoRedaction(t *testing.T) {
+	const fakeSecret = "sk-fanout-secret-value"
+	req := engine.StepRequest{
+		Step:    &workflow.Step{ID: "impl"},
+		Secrets: map[string]string{"token": fakeSecret},
+		FanOutItem: &engine.FanOutItem{
+			InstanceID: "analyze.__fanout__.g000.r000.i0000",
+			Index:      0,
+			Total:      1,
+			As:         "target",
+			Item:       []byte(`"` + fakeSecret + `"`),
+		},
+	}
+	prompt := buildAgentPrompt(req)
+	if !strings.Contains(prompt, fakeSecret) {
+		t.Fatal("sanity check: secret should be present in the built prompt before redaction")
+	}
+	redacted := redactSecrets(req, prompt)
+	if strings.Contains(redacted, fakeSecret) {
+		t.Error("secret embedded in a fan-out item leaked through redaction")
+	}
+	if !strings.Contains(redacted, "Fan-out item") {
+		t.Error("redaction must not strip the fan-out heading itself")
+	}
+}

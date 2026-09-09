@@ -12,6 +12,7 @@
 #   - two bounded loops (a human revise loop and an automated QA loop)
 #   - deterministic gates ([step.validate]) and on_failure policies
 #   - inline inputs, worktree isolation, and [defaults] inheritance
+#   - [step.foreach] dynamic fan-out: a runtime-sized per-finding triage family
 #
 # Validate it with:  jig validate .agents/jig/feature.toml
 # =============================================================================
@@ -226,6 +227,32 @@ when           = "qa.passed == 'false'"
 goto           = "implement"
 max_iterations = 2
 feedback       = "@qa"
+
+# -----------------------------------------------------------------------------
+# 7b. Triage findings — [step.foreach] dynamic fan-out: one read-only agent
+#     child per QA finding (qa.qa_findings is a runtime-sized list produced by
+#     the qa agent, not known when this file was written). Bounded by
+#     max_items/max_parallel on top of the workflow's global max_parallel;
+#     dependents (there are none here) would wait for the whole family via its
+#     synthetic aggregate (count/succeeded/failed/all_succeeded/results), never
+#     for an individual child. See docs/workflow-schema.md, "[step.foreach] —
+#     dynamic fan-out".
+# -----------------------------------------------------------------------------
+[[step]]
+id            = "triage_findings"
+type          = "agent"
+depends_on    = ["qa"]
+skill         = "../skills/triage_finding"
+allowed_tools = ["Read", "Grep", "Glob"]
+
+  [step.foreach]
+  items        = "@qa.qa_findings"
+  as           = "finding"
+  max_items    = 10
+  max_parallel = 2
+
+  [step.schema]
+  recommendation = "text"
 
 # -----------------------------------------------------------------------------
 # 8. Final review — human reviews the diff, but only if QA passed (bare bool

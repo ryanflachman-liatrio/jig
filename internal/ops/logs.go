@@ -48,13 +48,23 @@ func readLogsDir(runDir, runID string, opts LogOptions) (LogBatch, error) {
 	if err != nil && len(records) == 0 {
 		return LogBatch{}, fmt.Errorf("logs: read journal: %w", err)
 	}
+	// declaredSteps is the static author graph. discoveredSteps additionally
+	// folds every runtime fan-out child recorded by a FanOutExpanded event
+	// (A8), across every generation — used for `--all` (so it finds every
+	// instance transcript) and to validate `--step`, so a full runtime
+	// instance id (e.g. "analyze.__fanout__.g000.r000.i0001") is accepted, not
+	// just a declared step id. The default tail (neither flag set) stays
+	// scoped to the static graph, unchanged from before A8.
 	steps := declaredSteps(records)
+	if opts.All {
+		steps = discoveredSteps(records)
+	}
 	if len(steps) == 0 {
 		return LogBatch{}, fmt.Errorf("logs: run %q has no declared steps", runID)
 	}
 	if opts.StepID != "" {
 		found := false
-		for _, id := range steps {
+		for _, id := range discoveredSteps(records) {
 			if id == opts.StepID {
 				found = true
 				break
@@ -134,6 +144,34 @@ func declaredSteps(records []engine.JournalRecord) []string {
 		}
 	}
 	return nil
+}
+
+// discoveredSteps is declaredSteps plus every runtime fan-out child recorded
+// by a FanOutExpanded event, in journal order (family declaration order, then
+// each family's children in source-index order as they were expanded). A
+// family re-expanded across generations contributes every generation's child
+// ids — older generations remain readable history, matching the run-owned
+// transcript files that are never deleted on reset.
+func discoveredSteps(records []engine.JournalRecord) []string {
+	steps := declaredSteps(records)
+	seen := make(map[string]bool, len(steps))
+	for _, id := range steps {
+		seen[id] = true
+	}
+	for _, record := range records {
+		expanded, ok := record.Event.(engine.FanOutExpanded)
+		if !ok {
+			continue
+		}
+		for _, inst := range expanded.Instances {
+			if seen[inst.InstanceID] {
+				continue
+			}
+			seen[inst.InstanceID] = true
+			steps = append(steps, inst.InstanceID)
+		}
+	}
+	return steps
 }
 
 func sortLogEntries(entries []LogEntry, steps []string) {

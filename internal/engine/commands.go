@@ -39,6 +39,13 @@ func (m stepDoneMsg) execute(s *scheduler) {
 	} else {
 		s.readOnlyInFlight--
 	}
+	// A fan-out child releases its family's local slot symmetrically with the
+	// acquisition in dispatchWorker.
+	if state := s.states[m.stepID]; state != nil && state.ParentID != "" {
+		if fam := s.fanOutFamilies[state.ParentID]; fam != nil {
+			fam.InFlight--
+		}
+	}
 	delete(s.pendingQuestions, m.stepID)
 	// Accrue this attempt's cost/tokens once, before any early-return branch
 	// (stopped, recovery-parked, failed) — every executor invocation was paid

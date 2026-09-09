@@ -39,6 +39,14 @@ type runRow struct {
 	paused      bool // unfinished historical run (review and/or crash)
 	interrupted bool // Spec 20: unfinished with running/validating workers
 	started     time.Time
+
+	// familyChildren maps a foreach family's step id to its current
+	// generation's runtime child ids (A8), so total/done can fold discovered
+	// children in without ever treating an unknown child StepStatus as a
+	// corrupt run. A generation replacement (reset/route re-expansion) does
+	// not shrink total — the prior generation's children remain counted as
+	// historical residue, exactly like the scheduler's own bookkeeping.
+	familyChildren map[string][]string
 }
 
 func NewModel() Model {

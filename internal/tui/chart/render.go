@@ -395,6 +395,12 @@ func nodeTypeLine(n chartNode) string {
 	if n.loop != nil {
 		line += " " + shared.LoopGlyph
 	}
+	if n.foreach != nil {
+		// Compact "×N foreach" annotation (A8): the static author graph stays
+		// one node per declared family — this never draws a runtime-sized
+		// chart — so max_items is the only cardinality shown.
+		line += " " + shared.ForEachGlyph + strconv.Itoa(n.foreach.maxItems)
+	}
 	if n.retry {
 		s := " " + shared.RetryGlyph
 		if n.maxRetries > 1 {

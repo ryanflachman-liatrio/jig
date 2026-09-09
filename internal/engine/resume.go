@@ -231,6 +231,27 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 			s.skippedByGuard[wf.Steps[i].ID] = true
 		}
 	}
+	// Rebuild runtime fan-out registries from the FanOutExpanded manifests
+	// folded during restoreUnfinishedCheckpoint — the manifest is the
+	// authoritative creation record, never a fresh producer read (see
+	// rebuildFanOutFamily). These must be non-nil maps (dispatchForEach writes
+	// into them directly) even when the run has no foreach family at all.
+	s.fanOutFamilies = checkpoint.fanOutFamilies
+	s.fanOutFamilyOrder = checkpoint.fanOutFamilyOrder
+	s.fanOutChildren = checkpoint.fanOutChildren
+	s.fanOutItemByChild = checkpoint.fanOutItemByChild
+	// A family left Running settles by ordinary child transitions during live
+	// execution (transitionRecovery's trySettleFamilyIfChild hook), which is
+	// edge-triggered on a child reaching a terminal status. If every child was
+	// already terminal before the crash, no such transition will ever occur
+	// again — catch that up once here so the barrier still closes and its
+	// aggregate still gets written. This is a no-op for a family with any
+	// non-terminal child (trySettleFamily itself guards on that) and for a
+	// family that already settled before the crash (guarded by fam.Settled /
+	// state.Status != Running).
+	for _, familyID := range s.fanOutFamilyOrder {
+		s.trySettleFamily(familyID)
+	}
 	if err := s.restoreRunBranch(len(checkpoint.integrations) > 0); err != nil {
 		m.mu.Lock()
 		delete(m.runs, runID)
@@ -289,12 +310,45 @@ type unfinishedCheckpoint struct {
 	stopped             map[string]bool
 	missingInputPayload map[string]string
 	recoverySkipped     map[string]bool
+
+	// Runtime fan-out registries rebuilt from FanOutExpanded events (see
+	// rebuildFanOutFamily below). Mirrors scheduler.fanOutFamilies/
+	// fanOutFamilyOrder/fanOutChildren/fanOutItemByChild exactly — Resume
+	// copies these straight into the new scheduler.
+	fanOutFamilies    map[string]*fanOutFamily
+	fanOutFamilyOrder []string
+	fanOutChildren    map[string]*workflow.Step
+	fanOutItemByChild map[string]FanOutItem
 }
 
+// hasParks reports whether the run has an operator-visible gate to reopen. It
+// deliberately excludes an unsettled foreach family (see hasOutstandingWork
+// below): a family barrier is not a park a human or Recover() call resolves,
+// so it must never hold scheduler dispatch via s.restoredHold the way a real
+// park does.
 func (c *unfinishedCheckpoint) hasParks() bool {
 	return len(c.reviewSessions) > 0 || len(c.interrupted) > 0 || len(c.recoveries) > 0 ||
 		len(c.inputs) > 0 || len(c.questions) > 0 || len(c.integrations) > 0 ||
 		len(c.stopped) > 0 || len(c.missingInputPayload) > 0
+}
+
+// hasOutstandingWork reports whether Resume has anything at all to do: either
+// a real operator park (hasParks) or a foreach family left Running. The latter
+// is not a park — it is a barrier waiting on children that either still need
+// (re)dispatch or are already terminal and only need their settlement
+// transition, which Resume performs itself (see the trySettleFamily catch-up
+// call in Manager.Resume) — but it does mean the run is not actually
+// quiescent, so Resume must not fail closed with "no reopenable park".
+func (c *unfinishedCheckpoint) hasOutstandingWork() bool {
+	if c.hasParks() {
+		return true
+	}
+	for _, familyID := range c.fanOutFamilyOrder {
+		if st := c.states[familyID]; st != nil && st.Status == step.StatusRunning {
+			return true
+		}
+	}
+	return false
 }
 
 func restoreUnfinishedCheckpoint(runDir string, wf *workflow.Workflow, events []Event) (*unfinishedCheckpoint, error) {
@@ -314,6 +368,10 @@ func restoreUnfinishedCheckpoint(runDir string, wf *workflow.Workflow, events []
 	recoverySkipped := make(map[string]bool)
 	interruptedRecovery := make(map[string]bool)
 	lostInputRecovery := make(map[string]bool)
+	fanOutFamilies := make(map[string]*fanOutFamily)
+	var fanOutFamilyOrder []string
+	fanOutChildren := make(map[string]*workflow.Step)
+	fanOutItemByChild := make(map[string]FanOutItem)
 	var started *RunStarted
 	for _, event := range events {
 		switch event := event.(type) {
@@ -322,6 +380,27 @@ func restoreUnfinishedCheckpoint(runDir string, wf *workflow.Workflow, events []
 			started = &copy
 		case RunFinished:
 			return nil, fmt.Errorf("resume: run is already finished")
+		case FanOutExpanded:
+			// FanOutExpanded is the authoritative creation record for runtime
+			// children (docs/plans/a8-dynamic-foreach-fan-out.md, "Durability,
+			// replay, and crash reopen"): rebuild the family and its children
+			// from the matching on-disk manifest — never by re-reading the
+			// producer — and register their step.State entries before any
+			// later StepStatus event for a child instance id is folded below.
+			rebuilt, err := rebuildFanOutFamily(runDir, wf, event, states)
+			if err != nil {
+				return nil, err
+			}
+			if _, exists := fanOutFamilies[event.FamilyID]; !exists {
+				fanOutFamilyOrder = append(fanOutFamilyOrder, event.FamilyID)
+			}
+			fanOutFamilies[event.FamilyID] = rebuilt.family
+			for id, child := range rebuilt.children {
+				fanOutChildren[id] = child
+			}
+			for id, item := range rebuilt.items {
+				fanOutItemByChild[id] = item
+			}
 		case StepStatus:
 			state := states[event.StepID]
 			if state == nil {
@@ -413,20 +492,28 @@ func restoreUnfinishedCheckpoint(runDir string, wf *workflow.Workflow, events []
 		stopped:             make(map[string]bool),
 		missingInputPayload: make(map[string]string),
 		recoverySkipped:     recoverySkipped,
+		fanOutFamilies:      fanOutFamilies,
+		fanOutFamilyOrder:   fanOutFamilyOrder,
+		fanOutChildren:      fanOutChildren,
+		fanOutItemByChild:   fanOutItemByChild,
 	}
-	for i := range wf.Steps {
-		id := wf.Steps[i].ID
+
+	// classifyPark applies the same durable-status classification to any step
+	// id — static or a runtime fan-out child — so a child parked mid-flight
+	// reopens through exactly the same Specs 20/21 path as a static step (the
+	// plan's "Durability, replay, and crash reopen").
+	classifyPark := func(id string) error {
 		state := states[id]
 		switch state.Status {
 		case step.StatusPending, step.StatusSucceeded, step.StatusSkipped, step.StatusFailed:
 		case step.StatusAwaitingReview:
 			req, ok := reviewRequests[id]
 			if !ok {
-				return nil, fmt.Errorf("resume: step %q has no durable review request", id)
+				return fmt.Errorf("resume: step %q has no durable review request", id)
 			}
 			sess, err := restoreReviewSession(runDir, req)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			checkpoint.reviewSessions[id] = sess
 		case step.StatusRunning, step.StatusValidating:
@@ -457,13 +544,131 @@ func restoreUnfinishedCheckpoint(runDir string, wf *workflow.Workflow, events []
 		case step.StatusStopped:
 			checkpoint.stopped[id] = true
 		default:
-			return nil, fmt.Errorf("resume: step %q has unsupported durable status %s", id, state.Status)
+			return fmt.Errorf("resume: step %q has unsupported durable status %s", id, state.Status)
+		}
+		return nil
+	}
+
+	for i := range wf.Steps {
+		id := wf.Steps[i].ID
+		// A foreach family left Running is a barrier waiting on its children,
+		// never a worker that was mid-flight — it must not be misclassified as
+		// interrupted. Its children (folded in below, independently) carry
+		// their own real statuses and reopen normally.
+		if wf.Steps[i].ForEach != nil && states[id].Status == step.StatusRunning {
+			continue
+		}
+		if err := classifyPark(id); err != nil {
+			return nil, err
 		}
 	}
-	if !checkpoint.hasParks() && len(recoverySkipped) == 0 {
+	for _, familyID := range fanOutFamilyOrder {
+		fam := fanOutFamilies[familyID]
+		if fam == nil {
+			continue
+		}
+		for _, childID := range fam.Order {
+			if err := classifyPark(childID); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if !checkpoint.hasOutstandingWork() && len(recoverySkipped) == 0 {
 		return nil, fmt.Errorf("resume: run has no reopenable park")
 	}
 	return checkpoint, nil
+}
+
+// rebuiltFanOutFamily is rebuildFanOutFamily's output: everything
+// restoreUnfinishedCheckpoint needs to fold one FanOutExpanded event into the
+// checkpoint's runtime registries.
+type rebuiltFanOutFamily struct {
+	family   *fanOutFamily
+	children map[string]*workflow.Step
+	items    map[string]FanOutItem
+}
+
+// rebuildFanOutFamily recreates one foreach family's runtime children from its
+// durable, versioned manifest — the authoritative creation record — rather
+// than by re-reading the producer's output. It fails closed (per the plan's
+// "Durability, replay, and crash reopen") when the manifest is missing,
+// corrupt, out of order, or its digest does not match the journaled
+// FanOutExpanded event: a mismatch means the manifest was rewritten (or never
+// durably renamed) after the event was journaled, and Resume must not trust
+// it. It also registers a step.State for each child directly into states so
+// later StepStatus events for that instance id (processed in the same journal
+// pass, in order) find an existing entry exactly like a static step would.
+func rebuildFanOutFamily(runDir string, wf *workflow.Workflow, event FanOutExpanded, states map[string]*step.State) (*rebuiltFanOutFamily, error) {
+	tmpl := wfStepByID(wf, event.FamilyID)
+	if tmpl == nil || tmpl.ForEach == nil {
+		return nil, fmt.Errorf("resume: fan-out family %q is not a foreach step in the current workflow", event.FamilyID)
+	}
+	m, err := datastore.ReadFanOutManifest(runDir, event.FamilyID, event.Generation, event.Iteration)
+	if err != nil {
+		return nil, fmt.Errorf("resume: fan-out family %q generation %d iteration %d: %w", event.FamilyID, event.Generation, event.Iteration, err)
+	}
+	if err := datastore.ValidateFanOutItems(m); err != nil {
+		return nil, fmt.Errorf("resume: fan-out family %q: %w", event.FamilyID, err)
+	}
+	digest, err := datastore.FanOutManifestDigest(m)
+	if err != nil {
+		return nil, fmt.Errorf("resume: fan-out family %q: digest manifest: %w", event.FamilyID, err)
+	}
+	if digest != event.ManifestDigest {
+		return nil, fmt.Errorf("resume: fan-out family %q generation %d iteration %d: on-disk manifest digest %s does not match the journaled digest %s — refusing to trust a manifest that was rewritten (or never durably renamed) after the event was journaled",
+			event.FamilyID, event.Generation, event.Iteration, digest, event.ManifestDigest)
+	}
+	if len(m.Items) != len(event.Instances) {
+		return nil, fmt.Errorf("resume: fan-out family %q generation %d iteration %d: manifest has %d items, journaled event has %d instances",
+			event.FamilyID, event.Generation, event.Iteration, len(m.Items), len(event.Instances))
+	}
+
+	fam := &fanOutFamily{
+		FamilyID:    event.FamilyID,
+		Generation:  event.Generation,
+		Iteration:   event.Iteration,
+		MaxParallel: tmpl.ForEach.MaxParallel,
+	}
+	out := &rebuiltFanOutFamily{
+		family:   fam,
+		children: make(map[string]*workflow.Step, len(m.Items)),
+		items:    make(map[string]FanOutItem, len(m.Items)),
+	}
+	for _, it := range m.Items {
+		child := cloneForEachTemplate(tmpl, it.InstanceID)
+		states[it.InstanceID] = &step.State{
+			ID:          it.InstanceID,
+			Status:      step.StatusPending,
+			ParentID:    event.FamilyID,
+			FanOutIndex: it.Index,
+			FanOutTotal: len(m.Items),
+		}
+		out.children[it.InstanceID] = child
+		out.items[it.InstanceID] = FanOutItem{
+			TemplateID: event.FamilyID,
+			InstanceID: it.InstanceID,
+			Index:      it.Index,
+			Total:      len(m.Items),
+			As:         tmpl.ForEach.As,
+			Item:       it.Item,
+			Digest:     it.ItemSHA256,
+		}
+		fam.Order = append(fam.Order, it.InstanceID)
+	}
+	return out, nil
+}
+
+// wfStepByID returns the static step template with the given id, or nil.
+// restoreUnfinishedCheckpoint runs before any scheduler exists, so it cannot
+// use scheduler.stepByID (which also consults the runtime fan-out registry —
+// irrelevant here, since a foreach family's template is always a static step).
+func wfStepByID(wf *workflow.Workflow, id string) *workflow.Step {
+	for i := range wf.Steps {
+		if wf.Steps[i].ID == id {
+			return &wf.Steps[i]
+		}
+	}
+	return nil
 }
 
 func upsertQuestion(existing []AgentQuestion, question AgentQuestion) []AgentQuestion {
@@ -487,8 +692,12 @@ func removeQuestion(existing []AgentQuestion, requestID string) []AgentQuestion 
 
 func (s *scheduler) rehydrateParks(checkpoint *unfinishedCheckpoint) ([]Event, error) {
 	var events []Event
-	for i := range s.wf.Steps {
-		stepID := s.wf.Steps[i].ID
+	// reopen produces the durable reopen events for one parked step id — static
+	// or a runtime fan-out child alike, reusing the exact Specs 20/21 park-reopen
+	// path (docs/plans/a8-dynamic-foreach-fan-out.md, "Durability, replay, and
+	// crash reopen": "A child ... reopens through the same Specs 20/21 path as
+	// a static step").
+	reopen := func(stepID string) error {
 		state := s.states[stepID]
 		switch state.Status {
 		case step.StatusRunning, step.StatusValidating:
@@ -522,7 +731,7 @@ func (s *scheduler) rehydrateParks(checkpoint *unfinishedCheckpoint) ([]Event, e
 			}
 			if errText != "" {
 				events = append(events, s.parkLostInput(stepID, errText)...)
-				continue
+				return nil
 			}
 			if pending := checkpoint.questions[stepID]; len(pending) > 0 {
 				s.pendingQuestions[stepID] = make(map[string]pendingQuestion, len(pending))
@@ -539,10 +748,35 @@ func (s *scheduler) rehydrateParks(checkpoint *unfinishedCheckpoint) ([]Event, e
 		case step.StatusAwaitingIntegration:
 			paths := mergeConflictPaths(s.runWorktree)
 			if len(paths) == 0 {
-				return nil, fmt.Errorf("resume: step %q is awaiting integration but the run worktree has no unresolved conflict markers", stepID)
+				return fmt.Errorf("resume: step %q is awaiting integration but the run worktree has no unresolved conflict markers", stepID)
 			}
 			request := checkpoint.integrations[stepID]
 			events = append(events, s.integrationConflictRequest(stepID, paths, request.Resolution))
+		}
+		return nil
+	}
+
+	for i := range s.wf.Steps {
+		stepID := s.wf.Steps[i].ID
+		// A foreach family left Running is a barrier, not a worker — see the
+		// matching special case in restoreUnfinishedCheckpoint. Its children
+		// are reopened independently below.
+		if s.wf.Steps[i].ForEach != nil && s.states[stepID].Status == step.StatusRunning {
+			continue
+		}
+		if err := reopen(stepID); err != nil {
+			return nil, err
+		}
+	}
+	for _, familyID := range checkpoint.fanOutFamilyOrder {
+		fam := checkpoint.fanOutFamilies[familyID]
+		if fam == nil {
+			continue
+		}
+		for _, childID := range fam.Order {
+			if err := reopen(childID); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return events, nil

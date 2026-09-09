@@ -572,3 +572,111 @@ func TestCommandExecutor_NeitherRunNorScript(t *testing.T) {
 		t.Errorf("want failed for empty command, got %q", result.Status)
 	}
 }
+
+// TestCommandExecutor_FanOutEnv proves a fan-out child command step gets its
+// bound item as compact JSON under JIG_INPUT_<AS>, plus zero-based index,
+// total, and stable instance id — and that the export uses the same
+// name-normalization convention as declared secrets/artifact inputs.
+func TestCommandExecutor_FanOutEnv(t *testing.T) {
+	rep := &noopReporter{}
+	req := engine.StepRequest{
+		Step: &workflow.Step{ID: "analyze-child", Type: workflow.StepCommand,
+			Run: `printf '%s|%s|%s|%s' "$JIG_INPUT_TARGET" "$JIG_FANOUT_INDEX" "$JIG_FANOUT_TOTAL" "$JIG_FANOUT_INSTANCE_ID"`,
+		},
+		FanOutItem: &engine.FanOutItem{
+			InstanceID: "analyze.__fanout__.g000.r000.i0001",
+			Index:      1,
+			Total:      3,
+			As:         "target",
+			Item:       []byte(`{"name":"api","path":"services/api"}`),
+		},
+	}
+	result, err := NewCommandExecutor("").Execute(context.Background(), req, rep)
+	if err != nil || result.Status != step.StatusSucceeded {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	got := strings.Join(rep.deltas, "")
+	want := `{"name":"api","path":"services/api"}|1|3|analyze.__fanout__.g000.r000.i0001`
+	if got != want {
+		t.Errorf("fan-out env mismatch:\ngot:  %q\nwant: %q", got, want)
+	}
+}
+
+// TestCommandExecutor_FanOutEnvNameNormalization proves the JIG_INPUT_<AS>
+// name is built with the same normalizer as declared secrets/artifact inputs
+// (upper-case, non [A-Z0-9] runes become '_').
+func TestCommandExecutor_FanOutEnvNameNormalization(t *testing.T) {
+	rep := &noopReporter{}
+	req := engine.StepRequest{
+		Step: &workflow.Step{ID: "child", Type: workflow.StepCommand, Run: `printf '%s' "$JIG_INPUT_MY_TARGET_NAME"`},
+		FanOutItem: &engine.FanOutItem{
+			InstanceID: "family.__fanout__.g000.r000.i0000",
+			Index:      0,
+			Total:      1,
+			As:         "my-target.name",
+			Item:       []byte(`"x"`),
+		},
+	}
+	result, err := NewCommandExecutor("").Execute(context.Background(), req, rep)
+	if err != nil || result.Status != step.StatusSucceeded {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if got := strings.Join(rep.deltas, ""); got != `"x"` {
+		t.Errorf("got %q, want %q", got, `"x"`)
+	}
+}
+
+// TestCommandExecutor_FanOutEnvJSONTypes proves a list-valued item exports as
+// compact JSON, not a shell-mangled representation.
+func TestCommandExecutor_FanOutEnvJSONTypes(t *testing.T) {
+	rep := &noopReporter{}
+	req := engine.StepRequest{
+		Step: &workflow.Step{ID: "child", Type: workflow.StepCommand, Run: `printf '%s' "$JIG_INPUT_TARGET"`},
+		FanOutItem: &engine.FanOutItem{
+			InstanceID: "family.__fanout__.g000.r000.i0000",
+			Index:      0,
+			Total:      1,
+			As:         "target",
+			Item:       []byte(`["a","b","c"]`),
+		},
+	}
+	result, err := NewCommandExecutor("").Execute(context.Background(), req, rep)
+	if err != nil || result.Status != step.StatusSucceeded {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if got := strings.Join(rep.deltas, ""); got != `["a","b","c"]` {
+		t.Errorf("got %q, want %q", got, `["a","b","c"]`)
+	}
+}
+
+// TestCommandExecutor_NoFanOutItemLeavesEnvUnaffected proves an ordinary
+// command step (FanOutItem == nil) gets none of the JIG_FANOUT_*/extra
+// JIG_INPUT_* variables — commandFanOutEnv is a true no-op in that case.
+func TestCommandExecutor_NoFanOutItemLeavesEnvUnaffected(t *testing.T) {
+	rep := &noopReporter{}
+	req := engine.StepRequest{
+		Step: &workflow.Step{ID: "plain", Type: workflow.StepCommand,
+			Run: `test -z "${JIG_FANOUT_INDEX:-}" && test -z "${JIG_FANOUT_TOTAL:-}" && test -z "${JIG_FANOUT_INSTANCE_ID:-}" && echo ok`,
+		},
+	}
+	result, err := NewCommandExecutor("").Execute(context.Background(), req, rep)
+	if err != nil || result.Status != step.StatusSucceeded {
+		t.Fatalf("result=%+v err=%v, output=%q", result, err, strings.Join(rep.deltas, ""))
+	}
+	if got := strings.Join(rep.deltas, ""); !strings.Contains(got, "ok") {
+		t.Errorf("expected fan-out env vars to be absent, got %q", got)
+	}
+}
+
+func TestNormalizeEnvName(t *testing.T) {
+	cases := map[string]string{
+		"release_token":   "RELEASE_TOKEN",
+		"my-target.name":  "MY_TARGET_NAME",
+		"already_UPPER99": "ALREADY_UPPER99",
+	}
+	for in, want := range cases {
+		if got := normalizeEnvName(in); got != want {
+			t.Errorf("normalizeEnvName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

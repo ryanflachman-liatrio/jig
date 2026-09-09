@@ -1,0 +1,74 @@
+# Dynamic foreach fan-out demo (A8): discover -> foreach -> synthesize.
+#
+# Non-mutating and bounded, so it runs cleanly under `jig run … --ci`:
+#   - `discover` is a read-only producer agent (no tools) that emits a small
+#     fixed-size `targets` list — see docs/workflow-schema.md,
+#     "[step.foreach] — dynamic fan-out" for the full contract.
+#   - `analyze` is a [step.foreach] COMMAND family: one free, deterministic
+#     shell child per target, bounded by max_items/max_parallel, joined into
+#     one ordered aggregate before `synthesize` may run.
+#   - `synthesize` is a read-only producer agent that consumes the whole
+#     ordered aggregate (`@analyze.results`) once every child has settled.
+#
+# Only `discover` and `synthesize` spend real agent tokens; `analyze`'s N
+# children are plain shell commands, so the family's fan-out width costs
+# nothing extra to prove.
+#
+# Validate:  jig validate examples/dynamic-fanout.toml
+# Run:       jig run examples/dynamic-fanout.toml --ci
+
+[workflow]
+name        = "dynamic-fanout"
+version     = "1"
+description = "Discover a small list, fan out a bounded analysis over it, then synthesize the ordered aggregate."
+
+[defaults]
+max_turns    = 4
+max_parallel = 4
+
+# -----------------------------------------------------------------------------
+# 1. Discover — a read-only producer agent. No tools: it emits a fixed,
+#    small `targets` list without needing to search the repository.
+# -----------------------------------------------------------------------------
+[[step]]
+id            = "discover"
+type          = "agent"
+skill         = "skills/dynamic-fanout-discover"
+allowed_tools = []
+
+  [step.schema]
+  targets = { list = { name = "text", path = "text" } }
+
+# -----------------------------------------------------------------------------
+# 2. Analyze — a [step.foreach] COMMAND family: one deterministic shell child
+#    per discovered target, run under a bounded family-local concurrency cap
+#    on top of the workflow's global max_parallel. Each child receives its
+#    bound target as $JIG_INPUT_TARGET (compact JSON), plus $JIG_FANOUT_INDEX,
+#    $JIG_FANOUT_TOTAL, and $JIG_FANOUT_INSTANCE_ID.
+# -----------------------------------------------------------------------------
+[[step]]
+id         = "analyze"
+type       = "command"
+depends_on = ["discover"]
+run        = 'echo "analyzed target=$JIG_INPUT_TARGET index=$JIG_FANOUT_INDEX/$JIG_FANOUT_TOTAL instance=$JIG_FANOUT_INSTANCE_ID"'
+
+  [step.foreach]
+  items        = "@discover.targets"
+  as           = "target"
+  max_items    = 8
+  max_parallel = 2
+
+# -----------------------------------------------------------------------------
+# 3. Synthesize — a read-only producer agent that consumes the family's whole
+#    ordered aggregate only once every child has settled (`analyze.all_succeeded`
+#    is the family's aggregate guard, evaluated after fan-in, not a per-child
+#    guard). No tools needed: everything it needs is in the aggregate input.
+# -----------------------------------------------------------------------------
+[[step]]
+id            = "synthesize"
+type          = "agent"
+depends_on    = ["analyze"]
+when          = "analyze.all_succeeded"
+skill         = "skills/dynamic-fanout-synthesize"
+inputs        = ["@analyze.results"]
+allowed_tools = []

@@ -115,16 +115,22 @@ type gateContextSnapshot struct {
 	targetStep     string
 }
 
-// visibleRow is one row in the Steps panel flat list. Steps always appear; file
-// rows appear beneath their parent step only when it is expanded.
+// visibleRow is one row in the Steps panel flat list. Steps always appear;
+// child rows (one foreach family instance) appear beneath their family when it
+// is expanded; file rows appear beneath their parent step or child only when
+// that row is itself expanded.
 type visibleRow struct {
-	kind   string // "step" or "file"
+	kind   string // "step", "child", or "file"
 	stepID string
 	file   *outputFile
 }
 
 func (r visibleRow) isStepRow() bool {
 	return r.kind == "step"
+}
+
+func (r visibleRow) isChildRow() bool {
+	return r.kind == "child"
 }
 
 func (r visibleRow) isFileRow() bool {
@@ -223,6 +229,16 @@ type Model struct {
 
 	expanded  map[string]bool
 	stepFiles map[string][]outputFile
+
+	// familyChildren maps a foreach family's step id to the ordered instance
+	// ids of its *current* generation's children (source order). A family that
+	// has never expanded, or one that produced zero items, has no entry (or an
+	// empty slice) here. A reset/route re-expansion overwrites the slice
+	// wholesale — the prior generation's child monitorSteps remain in m.steps
+	// as harmless historical residue (their StepStatus events already folded)
+	// but are no longer reachable by expanding the family, matching the
+	// scheduler's own fanOutFamilies bookkeeping (see engine.fanOutFamily).
+	familyChildren map[string][]string
 
 	selKind string // "file" when a file row is selected, "" otherwise
 	selFile string // absolute path of the selected file
@@ -544,6 +560,21 @@ type monitorStep struct {
 	tokens    int      // total tokens processed; 0 when not yet known
 	iteration int      // current loop iteration (from StepStatus.Iteration)
 	attempt   int      // current retry attempt (from StepStatus.Attempt)
+
+	// parentID/fanOutIndex/fanOutTotal mirror step.State's foreach provenance
+	// (A8): parentID is the family step id for a runtime child, "" for every
+	// ordinary step (including a family step itself — a family is a barrier,
+	// not a child). fanOutIndex/fanOutTotal are the child's source position
+	// and the family's item count at the generation the child belongs to.
+	parentID    string
+	fanOutIndex int
+	fanOutTotal int
+}
+
+// isChild reports whether s is a foreach family's runtime child rather than an
+// ordinary declared step.
+func (s monitorStep) isChild() bool {
+	return s.parentID != ""
 }
 
 type lifecycleActions struct {
@@ -575,6 +606,7 @@ func New(runID string) Model {
 		chatAutoScroll:     true,
 		expanded:           make(map[string]bool),
 		stepFiles:          make(map[string][]outputFile),
+		familyChildren:     make(map[string][]string),
 		simpleMode:         true, // C5 default; WithPrefs overrides from disk
 	}
 }
@@ -660,8 +692,15 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 	if m.stepFiles == nil {
 		m.stepFiles = make(map[string][]outputFile)
 	}
+	m.familyChildren = make(map[string][]string)
 	for i, st := range snap.Steps {
-		ms := monitorStep{id: st.ID, status: st.Status}
+		ms := monitorStep{
+			id:          st.ID,
+			status:      st.Status,
+			parentID:    st.ParentID,
+			fanOutIndex: st.FanOutIndex,
+			fanOutTotal: st.FanOutTotal,
+		}
 		if st.Result != nil && st.Status == step.StatusFailed {
 			ms.err = st.Result.Err
 			ms.subtype = st.Result.Subtype
@@ -675,6 +714,12 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 		ms.tokens = st.SpentTokens
 		m.steps[i] = ms
 		m.index[st.ID] = i
+		// snap.Steps folds runtime fan-out children in family/source order (see
+		// scheduler.snapshot), so appending here as encountered reconstructs
+		// each family's current-generation child order without a second pass.
+		if st.ParentID != "" {
+			m.familyChildren[st.ParentID] = append(m.familyChildren[st.ParentID], st.ID)
+		}
 	}
 	// Re-discover output files per step and clamp cursor to visible row count.
 	for _, st := range snap.Steps {
@@ -953,27 +998,48 @@ func (m Model) gateHelpSection() shared.HelpSection {
 // the root keymap.
 func (m Model) CapturesText() bool { return m.searchOpen || m.textareaActive() }
 
-// visibleRows builds the flat row list for the Steps panel. Steps always
-// appear; file rows appear beneath their parent when it is expanded and has
-// accessible output files.
+// visibleRows builds the flat row list for the Steps panel. Only top-level
+// steps (ordinary steps and foreach families) appear at the outer level — a
+// family's runtime children are folded in only while the family is expanded,
+// in source order; a child's own output files fold in only while the child
+// itself is expanded. An ordinary step's files fold in the same way a family's
+// children do: only while that step's row is expanded.
 func (m Model) visibleRows() []visibleRow {
 	var rows []visibleRow
 	for _, s := range m.steps {
-		rows = append(rows, visibleRow{kind: "step", stepID: s.id})
-		if !m.expanded[s.id] {
-			continue
+		if s.isChild() {
+			continue // folded in beneath its family below, not at top level.
 		}
-		files := m.stepFiles[s.id]
-		for i, f := range files {
-			if f.err != nil {
+		rows = append(rows, visibleRow{kind: "step", stepID: s.id})
+		children := m.familyChildren[s.id]
+		if len(children) > 0 {
+			if !m.expanded[s.id] {
 				continue
 			}
-			rows = append(rows, visibleRow{
-				kind:   "file",
-				stepID: s.id,
-				file:   &files[i],
-			})
+			for _, childID := range children {
+				rows = append(rows, visibleRow{kind: "child", stepID: childID})
+				rows = append(rows, m.fileRowsFor(childID)...)
+			}
+			continue
 		}
+		rows = append(rows, m.fileRowsFor(s.id)...)
+	}
+	return rows
+}
+
+// fileRowsFor returns stepID's expanded, accessible output-file rows, or nil
+// when stepID is collapsed or has no visible files.
+func (m Model) fileRowsFor(stepID string) []visibleRow {
+	if !m.expanded[stepID] {
+		return nil
+	}
+	files := m.stepFiles[stepID]
+	var rows []visibleRow
+	for i, f := range files {
+		if f.err != nil {
+			continue
+		}
+		rows = append(rows, visibleRow{kind: "file", stepID: stepID, file: &files[i]})
 	}
 	return rows
 }
@@ -1021,7 +1087,11 @@ func (m Model) selectedLifecycleActions() lifecycleActions {
 	switch status {
 	case step.StatusSucceeded, step.StatusFailed, step.StatusSkipped,
 		step.StatusStopped, step.StatusAwaitingReview:
-		actions.canReset = true
+		// Reset is a family-level operation only (A8): resetting one runtime
+		// child is rejected by the scheduler (engine.ResetError{Code:
+		// "fanout_child"}), so the Steps panel never advertises it as an
+		// action on a child row — the operator resets the family instead.
+		actions.canReset = !m.steps[i].isChild()
 	}
 	return actions
 }

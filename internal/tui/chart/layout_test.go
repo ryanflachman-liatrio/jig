@@ -235,6 +235,46 @@ label = "Work summary"
 		}
 	})
 
+	t.Run("foreach marks a family node with its max_items bound", func(t *testing.T) {
+		wf := mustDecode(t, `
+[workflow]
+name = "fanout"
+version = "1"
+[defaults]
+max_parallel = 3
+[[step]]
+id = "discover"
+type = "agent"
+skill = "s"
+  [step.schema]
+  targets = { list = { name = "text", path = "text" } }
+[[step]]
+id = "analyze"
+type = "agent"
+skill = "s"
+depends_on = ["discover"]
+  [step.foreach]
+  items = "@discover.targets"
+  as = "target"
+  max_items = 8
+  [step.schema]
+  finding = "text"
+`)
+		lay := layoutChart(wf)
+		if n := nodeByID(lay, "analyze"); n.foreach == nil || n.foreach.maxItems != 8 {
+			t.Errorf("analyze node foreach marker = %+v, want maxItems 8", n.foreach)
+		}
+		// The static graph stays exactly one node per declared family — no
+		// runtime-sized expansion — so the layout has exactly the two declared
+		// nodes regardless of max_items.
+		if len(lay.nodes) != 2 {
+			t.Errorf("node count = %d, want 2 (one node per declared step, never per runtime item)", len(lay.nodes))
+		}
+		if n := nodeByID(lay, "discover"); n.foreach != nil {
+			t.Errorf("discover (the producer, not the family) should carry no foreach marker, got %+v", n.foreach)
+		}
+	})
+
 	t.Run("validate marks a gate node", func(t *testing.T) {
 		wf := mustDecode(t, `
 [workflow]

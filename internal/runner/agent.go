@@ -676,6 +676,14 @@ func buildAgentPrompt(req engine.StepRequest) string {
 		b.WriteString("\n\n")
 	}
 
+	// A fan-out child renders its bound item before ordinary inputs — see
+	// docs/plans/a8-dynamic-foreach-fan-out.md, "Runtime identity and item
+	// delivery". req.FanOutItem is nil for every ordinary step, so this is a
+	// no-op that leaves the prompt byte-identical to the non-fanout case.
+	if req.FanOutItem != nil {
+		b.WriteString(fanOutItemBlock(req.FanOutItem))
+	}
+
 	if len(req.Inputs) > 0 {
 		b.WriteString("The following inputs are provided for your task:\n\n")
 		for _, inp := range req.Inputs {
@@ -702,6 +710,36 @@ func buildAgentPrompt(req engine.StepRequest) string {
 	}
 
 	return strings.TrimSpace(b.String())
+}
+
+// fanOutItemBlock renders a fan-out child's bound item as a clearly labeled
+// JSON block naming the [step.foreach] binding (`as`), this item's 1-based
+// display position and total (human-facing; the JSON payload also carries the
+// 0-based index for exact provenance), and the child's stable instance id.
+// The JSON form (rather than prose interpolation) preserves scalar, object,
+// and nested-list item types exactly as the producer emitted them.
+func fanOutItemBlock(item *engine.FanOutItem) string {
+	var value any
+	_ = json.Unmarshal(item.Item, &value)
+	payload := map[string]any{
+		"as":          item.As,
+		"index":       item.Index,
+		"position":    item.Index + 1,
+		"total":       item.Total,
+		"instance_id": item.InstanceID,
+		"value":       value,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		data = []byte("{}")
+	}
+	var b strings.Builder
+	b.WriteString("## Fan-out item\n\n")
+	fmt.Fprintf(&b, "You are handling item %d of %d (`%s`), bound to `%s`.\n\n", item.Index+1, item.Total, item.InstanceID, item.As)
+	b.WriteString("```json\n")
+	b.Write(data)
+	b.WriteString("\n```\n\n")
+	return b.String()
 }
 
 // resolvedInputLabel returns a bracketed provenance label for one input entry.

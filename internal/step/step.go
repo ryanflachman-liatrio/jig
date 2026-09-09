@@ -60,6 +60,16 @@ type State struct {
 	// zeroes them (reset clears Result/Attempt/Iteration but keeps spend).
 	SpentUSD    float64
 	SpentTokens int
+
+	// ParentID, FanOutIndex, and FanOutTotal are provenance for a runtime
+	// foreach child: the family id it belongs to, its zero-based source
+	// position, and the family's expansion size at creation time. All three
+	// are zero-value ("" / 0 / 0) for every ordinary step and for the family
+	// "barrier" state itself — existing code that never sets them keeps
+	// working unchanged.
+	ParentID    string
+	FanOutIndex int
+	FanOutTotal int
 }
 
 // Result is what execution produced; serialized as result.json by the manifest

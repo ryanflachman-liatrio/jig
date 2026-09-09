@@ -162,6 +162,65 @@ when a step is manually reset so its transcript shows a legible boundary; unlike
 `Attempt`, it gates no budget.
 _Avoid_: Attempt, retry, version, epoch.
 
+## Dynamic fan-out (`[step.foreach]`)
+
+The vocabulary of the runtime-sized `[step.foreach]` fan-out feature (A8,
+`docs/plans/a8-dynamic-foreach-fan-out.md`). **Distinct from** the unrelated
+"fan-out" used elsewhere in this codebase's own docs for the engine's *event*
+distribution — `docs/engine-design.md` talks about the event bus "fan-out" to
+subscribers (journal write, then fan out to the TUI/manifest/ops) and a
+`chan<- Event` slice literally named `subs` for that purpose. That usage means
+"one writer, many readers of the same event stream" and has nothing to do with
+runtime step multiplication. When either sense is ambiguous from context,
+qualify it: "event fan-out" for the bus, "dynamic fan-out" or the terms below
+for this feature.
+
+**Family**:
+The single static DAG node declared with `[step.foreach]` — an ordinary
+`agent` or `command` step whose template runs once per element of a
+runtime-sized list instead of once. The family id is the only one that ever
+appears in `depends_on`/`@ref`/`when`; it is a fan-in barrier, not a step that
+itself executes.
+_Avoid_: Fan-out step (ambiguous with the event-bus sense above), parent step
+(reserve "parent" for `ParentID`, the child-side provenance pointer).
+
+**Child** (or **runtime instance**):
+One runtime clone of a family's template, bound to exactly one element of the
+resolved list, identified by a deterministic id
+(`<family>.__fanout__.g%03d.r%03d.i%04d`). A child is never declared in TOML
+and never appears in `wf.Steps`; it lives only in the scheduler's runtime
+registry for the run's lifetime, executes through the exact same lifecycle as
+an ordinary step (retry, gates, worktree, transcript), and is addressable only
+by an operator/provenance surface (Monitor, ops, logs) — never by another
+step's `@ref`.
+_Avoid_: Instance (acceptable synonym, used in code/journal field names),
+sub-step, task.
+
+**Expansion**:
+The one-time act of resolving a family's bounded producer list into its
+ordered set of children for one generation/iteration: canonicalizing each
+item, writing the durable manifest, and journaling `FanOutExpanded`.
+Re-expansion only happens after a reset or a route rewind that includes the
+family invalidates the current set.
+_Avoid_: Fan-out (the umbrella term for the whole feature, not this one step),
+spawn.
+
+**Barrier** (or **fan-in**):
+The family's role as the single join point its dependents wait on: no
+dependent may dispatch until every child of the current expansion is terminal
+(succeeded/failed/skipped) or operator-accepted. An empty list is a
+successful, immediately-settled barrier.
+_Avoid_: Join (acceptable synonym), gate (reserve "Gate" for the Monitor's
+human-input surface).
+
+**Aggregate**:
+The family's one author-addressable output — an ordered JSON object
+(`count`/`succeeded`/`failed`/`all_succeeded`/`results[]`) written once the
+barrier settles. `results` is ordered by source index, never completion
+order. No workflow reference ever addresses a single child's output directly;
+every `@ref`/`when` against the family resolves against the aggregate.
+_Avoid_: Result (reserve for a single child's own `step.Result`), summary.
+
 ## Harness abstraction
 
 The vocabulary of `internal/harness`, the seam between `AgentExecutor` and the

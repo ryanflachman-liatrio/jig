@@ -39,8 +39,16 @@ func (m Model) listBody() string {
 		return b.String()
 	}
 
+	// Column width is sized from top-level step ids only: a family's runtime
+	// child ids carry the full generation/iteration/index suffix
+	// (workflow.ForEachIDMarker) and render unpadded on their own indented
+	// line, so including them here would blow out the column for every
+	// ordinary step.
 	idWidth := 2
 	for _, s := range m.steps {
+		if s.isChild() {
+			continue
+		}
 		if len(s.id) > idWidth {
 			idWidth = len(s.id)
 		}
@@ -55,13 +63,83 @@ func (m Model) listBody() string {
 				continue
 			}
 			s := m.steps[si]
+			children := m.familyChildren[s.id]
 
 			cursor := "  "
 			if i == m.cursor {
 				cursor = shared.Theme.SelectedBar.Render(shared.CursorBar) + " "
 			}
 
-			// Show expand/collapse affordance if there are any visible (non-errored) files.
+			// Show expand/collapse affordance if there are any visible (non-errored)
+			// files, or — for a foreach family — any children to reveal.
+			hasVisibleFiles := len(children) > 0
+			if !hasVisibleFiles {
+				for _, f := range m.stepFiles[s.id] {
+					if f.err == nil {
+						hasVisibleFiles = true
+						break
+					}
+				}
+			}
+			affordance := " "
+			if hasVisibleFiles {
+				if m.expanded[s.id] {
+					affordance = shared.Theme.Step.Tree.ExpandAffordance.Render(shared.ExpandedMarker)
+				} else {
+					affordance = shared.Theme.Step.Tree.ExpandAffordance.Render(shared.CollapsedMarker)
+				}
+			}
+
+			indicator, style := stepIndicator(s.status)
+
+			// Line 1: status glyph, id, status text (+ policy-limit / foreach badge).
+			head := fmt.Sprintf("%s%s%s  %s  %s",
+				cursor,
+				affordance,
+				indicator,
+				style.Render(shared.PadRight(s.id, idWidth)),
+				statusStyle(s.status).Render(string(s.status)),
+			)
+			if label := subtypeBadgeLabel(s.subtype); label != "" {
+				head += "  " + shared.Theme.Badge.Error.Render(label)
+			}
+			if len(children) > 0 {
+				head += "  " + shared.Theme.Badge.Accent.Render(fmt.Sprintf("×%d", len(children)))
+			}
+			if i == m.cursor {
+				b.WriteString(shared.Theme.SelectedLine.Render(head) + "\n")
+			} else {
+				b.WriteString(head + "\n")
+			}
+
+			// Line 2: dim metadata, indented under the id.
+			var meta []string
+			if len(children) > 0 {
+				meta = append(meta, fanOutProgress(children, m.index, m.steps))
+			}
+			if t := stepTokensStr(s); t != "" {
+				meta = append(meta, t)
+			}
+			if c := stepCostStr(s); c != "" {
+				meta = append(meta, c)
+			}
+			meta = append(meta, stepDuration(s))
+			if n := m.msgCount[s.id]; n > 0 {
+				meta = append(meta, fmt.Sprintf("%d msg", n))
+			}
+			b.WriteString("     " + shared.Theme.Question.Render(strings.Join(meta, " · ")) + "\n")
+		} else if row.isChildRow() {
+			si, ok := m.index[row.stepID]
+			if !ok {
+				continue
+			}
+			s := m.steps[si]
+
+			cursor := "  "
+			if i == m.cursor {
+				cursor = shared.Theme.SelectedBar.Render(shared.CursorBar) + " "
+			}
+
 			hasVisibleFiles := false
 			for _, f := range m.stepFiles[s.id] {
 				if f.err == nil {
@@ -79,13 +157,13 @@ func (m Model) listBody() string {
 			}
 
 			indicator, style := stepIndicator(s.status)
-
-			// Line 1: status glyph, id, status text (+ policy-limit badge).
-			head := fmt.Sprintf("%s%s%s  %s  %s",
+			pos := fmt.Sprintf("[%d/%d]", s.fanOutIndex+1, s.fanOutTotal)
+			head := fmt.Sprintf("%s  %s%s%s  %s  %s",
 				cursor,
+				shared.Theme.Step.Tree.FileRow.Render(pos),
 				affordance,
 				indicator,
-				style.Render(shared.PadRight(s.id, idWidth)),
+				style.Render(s.id),
 				statusStyle(s.status).Render(string(s.status)),
 			)
 			if label := subtypeBadgeLabel(s.subtype); label != "" {
@@ -97,7 +175,6 @@ func (m Model) listBody() string {
 				b.WriteString(head + "\n")
 			}
 
-			// Line 2: dim metadata, indented under the id.
 			var meta []string
 			if t := stepTokensStr(s); t != "" {
 				meta = append(meta, t)
@@ -109,7 +186,7 @@ func (m Model) listBody() string {
 			if n := m.msgCount[s.id]; n > 0 {
 				meta = append(meta, fmt.Sprintf("%d msg", n))
 			}
-			b.WriteString("     " + shared.Theme.Question.Render(strings.Join(meta, " · ")) + "\n")
+			b.WriteString("       " + shared.Theme.Question.Render(strings.Join(meta, " · ")) + "\n")
 		} else if row.isFileRow() {
 			cursor := "  "
 			if i == m.cursor {
@@ -208,6 +285,32 @@ func (m Model) writeFailureReasons(b *strings.Builder) {
 		}
 		b.WriteString("    " + shared.Theme.Error.Render(wrap.Render(s.id+": "+s.err)) + "\n")
 	}
+}
+
+// fanOutProgress renders a foreach family's aggregate progress as text (never
+// color alone — see the plan's "no color-only state" requirement): how many of
+// its current-generation children have reached a terminal status, plus a
+// failed count when any child failed.
+func fanOutProgress(children []string, index map[string]int, steps []monitorStep) string {
+	done, failed := 0, 0
+	for _, id := range children {
+		i, ok := index[id]
+		if !ok {
+			continue
+		}
+		switch steps[i].status {
+		case step.StatusSucceeded, step.StatusFailed, step.StatusSkipped:
+			done++
+		}
+		if steps[i].status == step.StatusFailed {
+			failed++
+		}
+	}
+	s := fmt.Sprintf("%d/%d done", done, len(children))
+	if failed > 0 {
+		s += fmt.Sprintf(", %d failed", failed)
+	}
+	return s
 }
 
 func stepIndicator(s step.Status) (string, lipgloss.Style) {

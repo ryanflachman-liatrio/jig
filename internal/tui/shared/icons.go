@@ -19,12 +19,13 @@ const (
 	CollapsedMarker = "▸"
 	ExpandedMarker  = "▾"
 
-	BarThick   = "▌" // left accent bar on chat blocks
-	CursorBar  = "▌" // selected-row marker
-	RuleGlyph  = "─"
-	LoopGlyph  = "↺"
-	RetryGlyph = "↻"
-	GateGlyph  = "⇢"
+	BarThick     = "▌" // left accent bar on chat blocks
+	CursorBar    = "▌" // selected-row marker
+	RuleGlyph    = "─"
+	LoopGlyph    = "↺"
+	RetryGlyph   = "↻"
+	GateGlyph    = "⇢"
+	ForEachGlyph = "×" // compact "×N" runtime fan-out family annotation (A8)
 
 	// Chart connectors (detail chart view). ArrowDown terminates a normal
 	// depends_on edge into a node; CondArrow marks a `when`-guarded edge;

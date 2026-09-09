@@ -2353,3 +2353,459 @@ idempotent = true
 		})
 	}
 }
+
+// foreachBase is the worked [step.foreach] example from
+// docs/plans/a8-dynamic-foreach-fan-out.md, minus the downstream synthesize
+// step so individual tests can append their own consumer/route.
+const foreachBase = `
+[workflow]
+name = "foreach"
+version = "1"
+
+[[step]]
+id = "discover"
+type = "agent"
+skill = "skills/discover"
+  [step.schema]
+  targets = { list = { name = "text", path = "text" } }
+
+[[step]]
+id = "analyze"
+type = "agent"
+depends_on = ["discover"]
+skill = "skills/analyze"
+
+  [step.foreach]
+  items = "@discover.targets"
+  as = "target"
+  max_items = 32
+  max_parallel = 4
+
+  [step.schema]
+  finding = "text"
+  severity = { enum = ["low", "medium", "high"] }
+`
+
+func TestDecodeForEachValid(t *testing.T) {
+	wf, err := Decode(foreachBase, "")
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	analyze := wf.Steps[wf.index["analyze"]]
+	if analyze.ForEach == nil {
+		t.Fatal("analyze.ForEach is nil")
+	}
+	if analyze.ForEach.Items != "@discover.targets" || analyze.ForEach.As != "target" ||
+		analyze.ForEach.MaxItems != 32 || analyze.ForEach.MaxParallel != 4 {
+		t.Fatalf("ForEach = %+v", analyze.ForEach)
+	}
+
+	// The aggregate reference schema exposes the fixed fan-out contract, not
+	// the template's own declared schema.
+	agg := analyze.ReferenceSchema()
+	for _, name := range []string{"count", "succeeded", "failed", "all_succeeded", "results"} {
+		if _, ok := agg.lookup([]string{name}); !ok {
+			t.Errorf("aggregate schema missing field %q", name)
+		}
+	}
+	if _, ok := agg.lookup([]string{"finding"}); ok {
+		t.Errorf("aggregate schema unexpectedly exposes template field %q", "finding")
+	}
+	// The template's own schema is still reachable for block_on / own-output
+	// checks via EffectiveSchema.
+	if _, ok := analyze.EffectiveSchema().lookup([]string{"finding"}); !ok {
+		t.Error("EffectiveSchema missing declared template field \"finding\"")
+	}
+}
+
+func TestDecodeForEachAggregateFieldRefs(t *testing.T) {
+	// A consumer may compare an aggregate field and consume the whole ordered
+	// results list, but not the bare family scalar.
+	valid := foreachBase + `
+[[step]]
+id = "synthesize"
+type = "agent"
+depends_on = ["analyze"]
+skill = "skills/synthesize"
+inputs = ["@analyze.results"]
+when = "analyze.all_succeeded == \"true\""
+`
+	if _, err := Decode(valid, ""); err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+
+	bareFamily := foreachBase + `
+[[step]]
+id = "synthesize"
+type = "agent"
+depends_on = ["analyze"]
+skill = "skills/synthesize"
+when = "analyze"
+`
+	_, err := Decode(bareFamily, "")
+	if err == nil || !strings.Contains(err.Error(), "foreach family") {
+		t.Fatalf("error = %v, want foreach family rejection", err)
+	}
+}
+
+func TestDecodeForEachInvalid(t *testing.T) {
+	cases := []struct {
+		name string
+		toml string
+		want string
+	}{
+		{
+			name: "items scalar source",
+			toml: `
+[workflow]
+name = "foreach"
+version = "1"
+[[step]]
+id = "discover"
+type = "agent"
+skill = "skills/discover"
+  [step.schema]
+  count = "number"
+[[step]]
+id = "analyze"
+type = "agent"
+depends_on = ["discover"]
+skill = "skills/analyze"
+  [step.foreach]
+  items = "@discover.count"
+  as = "target"
+  max_items = 8
+`,
+			want: "must reference a list field, got number",
+		},
+		{
+			name: "items object source",
+			toml: `
+[workflow]
+name = "foreach"
+version = "1"
+[[step]]
+id = "discover"
+type = "agent"
+skill = "skills/discover"
+  [step.schema]
+  meta = { owner = "text" }
+[[step]]
+id = "analyze"
+type = "agent"
+depends_on = ["discover"]
+skill = "skills/analyze"
+  [step.foreach]
+  items = "@discover.meta"
+  as = "target"
+  max_items = 8
+`,
+			want: "must reference a list field, got object",
+		},
+		{
+			name: "unknown producer",
+			toml: `
+[workflow]
+name = "foreach"
+version = "1"
+[[step]]
+id = "analyze"
+type = "agent"
+skill = "skills/analyze"
+  [step.foreach]
+  items = "@missing.targets"
+  as = "target"
+  max_items = 8
+`,
+			want: `references unknown step "missing"`,
+		},
+		{
+			name: "producer not a direct dependency",
+			toml: `
+[workflow]
+name = "foreach"
+version = "1"
+[[step]]
+id = "discover"
+type = "agent"
+skill = "skills/discover"
+  [step.schema]
+  targets = { list = "text" }
+[[step]]
+id = "analyze"
+type = "agent"
+skill = "skills/analyze"
+  [step.foreach]
+  items = "@discover.targets"
+  as = "target"
+  max_items = 8
+`,
+			want: "must also appear in depends_on",
+		},
+		{
+			name: "bare step ref",
+			toml: `
+[workflow]
+name = "foreach"
+version = "1"
+[[step]]
+id = "discover"
+type = "agent"
+skill = "skills/discover"
+  [step.schema]
+  targets = { list = "text" }
+[[step]]
+id = "analyze"
+type = "agent"
+depends_on = ["discover"]
+skill = "skills/analyze"
+  [step.foreach]
+  items = "@discover"
+  as = "target"
+  max_items = 8
+`,
+			want: "must be an exact @step.field reference",
+		},
+		{
+			name: "non-ref literal path",
+			toml: `
+[workflow]
+name = "foreach"
+version = "1"
+[[step]]
+id = "analyze"
+type = "agent"
+skill = "skills/analyze"
+  [step.foreach]
+  items = "targets.json"
+  as = "target"
+  max_items = 8
+`,
+			want: "must be an exact @step.field reference",
+		},
+		{
+			name: "max_items zero",
+			toml: strings.Replace(foreachBase, "max_items = 32", "max_items = 0", 1),
+			want: "max_items must be >= 1",
+		},
+		{
+			name: "max_parallel negative",
+			toml: strings.Replace(foreachBase, "max_parallel = 4", "max_parallel = -1", 1),
+			want: "max_parallel must be >= 0",
+		},
+		{
+			name: "missing as",
+			toml: strings.Replace(foreachBase, `as = "target"`, "", 1),
+			want: "requires `as`",
+		},
+		{
+			name: "as reserved metadata name",
+			toml: strings.Replace(foreachBase, `as = "target"`, `as = "index"`, 1),
+			want: "reserved fan-out metadata",
+		},
+		{
+			name: "as collides with input",
+			toml: strings.Replace(foreachBase,
+				"skill = \"skills/analyze\"\n\n  [step.foreach]",
+				"skill = \"skills/analyze\"\ninputs = [{ from = \"user\", label = \"note\", as = \"target\" }]\n\n  [step.foreach]",
+				1),
+			want: "collides with an input's `as`",
+		},
+		{
+			name: "unsupported step type: review",
+			toml: `
+[workflow]
+name = "foreach"
+version = "1"
+[[step]]
+id = "discover"
+type = "agent"
+skill = "skills/discover"
+  [step.schema]
+  targets = { list = "text" }
+[[step]]
+id = "analyze"
+type = "review"
+depends_on = ["discover"]
+output_type = { enum = ["a", "b"] }
+  [step.foreach]
+  items = "@discover.targets"
+  as = "target"
+  max_items = 8
+[[step.review]]
+source = "diff"
+label = "x"
+`,
+			want: "is only valid on agent or command steps",
+		},
+		{
+			name: "route on template rejected",
+			toml: foreachBase + `
+[[step.route]]
+when = "analyze == \"x\""
+goto = "analyze"
+max_iterations = 1
+fallback = true
+`,
+			want: "cannot declare [[step.route]]",
+		},
+		{
+			name: "fixed output rejected",
+			toml: strings.Replace(foreachBase, `skill = "skills/analyze"`, "skill = \"skills/analyze\"\noutput = \"analyze.md\"", 1),
+			want: "cannot declare a fixed `output` path",
+		},
+		{
+			name: "from=user input rejected",
+			toml: strings.Replace(foreachBase,
+				"skill = \"skills/analyze\"\n\n  [step.foreach]",
+				"skill = \"skills/analyze\"\ninputs = [{ from = \"user\", label = \"note\", as = \"note\" }]\n\n  [step.foreach]",
+				1),
+			want: "cannot declare a from=\"user\" input",
+		},
+		{
+			name: "reserved fan-out id marker",
+			toml: strings.Replace(foreachBase, `id = "analyze"`, `id = "analyze.__fanout__.g000"`, -1),
+			want: "reserved marker",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Decode(tc.toml, "")
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %q, want substring %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestLoadForEachModuleNamespacing proves foreach.items is rewritten the same
+// way inputs/reviews/conditions are when a foreach template lives inside a
+// module: an internal producer reference gets the module instance prefix.
+func TestLoadForEachModuleNamespacing(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteSkill(t, filepath.Join(dir, "modules", "skills", "discover", "SKILL.md"), "# discover")
+	mustWriteSkill(t, filepath.Join(dir, "modules", "skills", "analyze", "SKILL.md"), "# analyze")
+	modulePath := filepath.Join(dir, "modules", "fanout.toml")
+	mustWrite(t, modulePath, `
+[module]
+schema_version = 1
+
+[module.exports.finding]
+ref = "@analyze.results"
+
+[[step]]
+id = "discover"
+type = "agent"
+skill = "skills/discover"
+  [step.schema]
+  targets = { list = "text" }
+
+[[step]]
+id = "analyze"
+type = "agent"
+depends_on = ["discover"]
+skill = "skills/analyze"
+  [step.foreach]
+  items = "@discover.targets"
+  as = "target"
+  max_items = 8
+`)
+	rootPath := filepath.Join(dir, "workflow.toml")
+	mustWrite(t, rootPath, `
+[workflow]
+name = "modules"
+version = "1"
+
+[[step]]
+id = "spec"
+type = "subworkflow"
+module = "modules/fanout.toml"
+`)
+
+	wf, err := Load(rootPath)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	analyze := wf.Steps[wf.index["spec__analyze"]]
+	if analyze.ForEach == nil {
+		t.Fatal("spec__analyze.ForEach is nil")
+	}
+	if analyze.ForEach.Items != "@spec__discover.targets" {
+		t.Fatalf("ForEach.Items = %q, want namespaced ref", analyze.ForEach.Items)
+	}
+	if !contains(analyze.DependsOn, "spec__discover") {
+		t.Fatalf("depends_on = %v, want namespaced producer", analyze.DependsOn)
+	}
+}
+
+// TestLoadForEachClonedAcrossSnapshot proves cloneStep deep-copies ForEach so
+// mutating one workflow's snapshot never aliases another's.
+func TestLoadForEachClonedAcrossSnapshot(t *testing.T) {
+	wf, err := Decode(foreachBase, "")
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	clone := RestoreExpanded(wf.Meta, wf.Defaults, wf.PublicSteps(), wf.Steps, wf.ModuleSources())
+	clone.Steps[clone.index["analyze"]].ForEach.As = "mutated"
+	if wf.Steps[wf.index["analyze"]].ForEach.As != "target" {
+		t.Fatalf("original ForEach.As mutated to %q; clone is aliased", wf.Steps[wf.index["analyze"]].ForEach.As)
+	}
+}
+
+// TestLoadRejectsForEachModuleInputBinding proves a module cannot source
+// foreach.items from a declared module input: collection-valued module
+// inputs are out of scope for this delivery (no FieldList ModuleValue type).
+func TestLoadRejectsForEachModuleInputBinding(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteSkill(t, filepath.Join(dir, "skills", "collect", "SKILL.md"), "# collect")
+	mustWriteSkill(t, filepath.Join(dir, "modules", "skills", "analyze", "SKILL.md"), "# analyze")
+	modulePath := filepath.Join(dir, "modules", "fanout.toml")
+	mustWrite(t, modulePath, `
+[module]
+schema_version = 1
+
+[module.inputs.targets]
+type = "text"
+
+[module.exports.finding]
+ref = "@analyze.results"
+
+[[step]]
+id = "analyze"
+type = "agent"
+skill = "skills/analyze"
+  [step.foreach]
+  items = "@module.targets"
+  as = "target"
+  max_items = 8
+`)
+	rootPath := filepath.Join(dir, "workflow.toml")
+	mustWrite(t, rootPath, `
+[workflow]
+name = "modules"
+version = "1"
+
+[[step]]
+id = "collect"
+type = "agent"
+skill = "skills/collect"
+  [step.schema]
+  targets = { list = "text" }
+
+[[step]]
+id = "spec"
+type = "subworkflow"
+depends_on = ["collect"]
+module = "modules/fanout.toml"
+with = { targets = "@collect.targets" }
+`)
+
+	_, err := Load(rootPath)
+	if err == nil || !strings.Contains(err.Error(), "collection-valued module inputs are not supported") {
+		t.Fatalf("error = %v, want collection-valued module input rejection", err)
+	}
+}

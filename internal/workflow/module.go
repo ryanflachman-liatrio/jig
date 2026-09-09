@@ -155,6 +155,14 @@ func (e *moduleExpansion) expand(wf *Workflow, baseDir, sourcePath string, stack
 				st.DependsOn = uniqueStrings(append(st.DependsOn, ref))
 			}
 		}
+		if st.ForEach != nil {
+			if st.ForEach.Items, err = rewriteModuleReference(st.ForEach.Items, modules); err != nil {
+				return fmt.Errorf("step %q foreach: %w", st.ID, err)
+			}
+			if ref, fields := parseRef(strings.TrimPrefix(st.ForEach.Items, "@")); strings.HasPrefix(st.ForEach.Items, "@") && ref != "" && ref != "module" && len(fields) > 0 {
+				st.DependsOn = uniqueStrings(append(st.DependsOn, ref))
+			}
+		}
 		var deps []string
 		for _, dep := range st.DependsOn {
 			if mod, ok := modules[dep]; ok {
@@ -276,6 +284,11 @@ func (e *moduleExpansion) moduleData(path string) ([]byte, error) {
 
 func markModuleInputs(wf *Workflow) error {
 	for i := range wf.Steps {
+		if fe := wf.Steps[i].ForEach; fe != nil {
+			if stepID, _ := parseRef(strings.TrimPrefix(fe.Items, "@")); strings.HasPrefix(fe.Items, "@") && stepID == "module" {
+				return fmt.Errorf("module step %q: foreach.items cannot bind a module input (collection-valued module inputs are not supported)", wf.Steps[i].ID)
+			}
+		}
 		for j := range wf.Steps[i].Inputs {
 			in := &wf.Steps[i].Inputs[j]
 			if in.Ref != "module" {
@@ -662,6 +675,9 @@ func prefixStep(s *Step, prefix string, internal map[string]bool) {
 		s.Review[i].Source = prefixFeedback(s.Review[i].Source, prefix, internal)
 		s.Review[i].File = prefixFeedback(s.Review[i].File, prefix, internal)
 	}
+	if s.ForEach != nil {
+		s.ForEach.Items = prefixFeedback(s.ForEach.Items, prefix, internal)
+	}
 }
 
 func prefixCondition(raw, prefix string, internal map[string]bool) string {
@@ -719,14 +735,15 @@ func rebaseModuleAssets(wf *Workflow, baseDir string) {
 	}
 }
 
+// fieldForStep resolves a dotted field path against s's reference schema —
+// the normal effective schema for an ordinary producer, or the synthetic
+// aggregate schema when s is a foreach family (see Step.ReferenceSchema) — so
+// a module export/binding can name an aggregate field like `results` too.
 func fieldForStep(s *Step, path []string) (*Field, bool) {
 	if len(path) == 0 {
 		return nil, false
 	}
-	if s.Type == StepAgent {
-		return MergedSchema(s.Schema).lookup(path)
-	}
-	return s.Schema.lookup(path)
+	return s.ReferenceSchema().lookup(path)
 }
 
 func cloneSteps(in []Step) []Step {
@@ -743,6 +760,10 @@ func cloneStep(in Step) Step {
 	out.Inputs = append([]Input(nil), in.Inputs...)
 	out.Routes = append([]Route(nil), in.Routes...)
 	out.Review = append([]ReviewTarget(nil), in.Review...)
+	if in.ForEach != nil {
+		fe := *in.ForEach
+		out.ForEach = &fe
+	}
 	if in.With != nil {
 		out.With = make(map[string]string, len(in.With))
 		for key, value := range in.With {

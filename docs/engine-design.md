@@ -629,9 +629,142 @@ diff, `revise` loops with feedback, `approve` triggers the final merge gate.
 
 ### Deferred (matches workflow-schema.md MVP-1 scope)
 
-Map/fan-out over dynamic lists, secrets, remote execution. Also deferred:
-journaling `StepOutput` deltas in full (decided to skip at Phase 4 — the
-transcript carries the full content). Reopening a fully-settled run for reset
-is also deferred (A12 / ADR 0008). Specs 20 and 21 make every unfinished worker
-or gate park reopenable through `Manager.Resume`; durable agent identity lives
-in `session.json`.
+Secrets management (beyond named `JIG_SECRET_<NAME>` resolution) and remote
+execution. Also deferred: journaling `StepOutput` deltas in full (decided to
+skip at Phase 4 — the transcript carries the full content). Reopening a
+fully-settled run for reset is also deferred (A12 / ADR 0008). Specs 20 and 21
+make every unfinished worker or gate park reopenable through `Manager.Resume`;
+durable agent identity lives in `session.json`. Dynamic fan-out over a
+runtime-sized list (`[step.foreach]`) was deferred through Phase 5 above and
+is now implemented — see the next section.
+
+### Phase 6 — dynamic `[step.foreach]` fan-out (A8)
+
+Implementation plan:
+[`docs/plans/a8-dynamic-foreach-fan-out.md`](plans/a8-dynamic-foreach-fan-out.md);
+schema/authoring contract: [`workflow-schema.md`](workflow-schema.md),
+"`[step.foreach]` — dynamic fan-out". This section only covers what changed in
+the scheduler/journal/replay design above.
+
+### The family/child registry
+
+A `[step.foreach]` step (a **family**) is validated and stored in `wf.Steps`
+exactly like any other step — the static DAG never grows at runtime. What
+changes is *dispatch*: `dispatch()` recognizes a family template (`st.ForEach
+!= nil`) and routes it to `dispatchForEach` (`internal/engine/fanout.go`)
+instead of a worker. Runtime children are never appended to `wf.Steps`; they
+live only in scheduler-owned maps parallel to `s.states`:
+
+```go
+fanOutFamilies    map[string]*fanOutFamily   // familyID -> current expansion
+fanOutChildren    map[string]*workflow.Step  // childID  -> cloned template
+fanOutItemByChild map[string]FanOutItem      // childID  -> bound item + provenance
+fanOutFamilyOrder []string                   // families in first-expansion order (presentation folding)
+```
+
+`fanOutFamily.Order` is the family's children in strict source order — every
+consumer (ready-selection, settlement, RunSnapshot folding, Monitor/Runs/ops)
+walks this slice rather than a map, so presentation ordering is deterministic
+without a separate sort step.
+
+### Dispatch and fan-in as an extension of the existing loop
+
+`dispatchForEach` does the work the plan's "Scheduler and fan-in semantics"
+section describes as one synchronous sequence: resolve+bound the producer's
+list off `s.states[producer].Result.Structured`, write the versioned manifest
+(`datastore.WriteFanOutManifest`), journal `FanOutExpanded`, register each
+child's `step.State` (tagged with `ParentID`/`FanOutIndex`/`FanOutTotal`),
+transition the family `pending -> running`, then call `trySettleFamily` once
+(handles the zero-item case inline). The family consumes no `inFlight` slot —
+it is a pure barrier — but every child does, plus its family-local slot when
+`max_parallel > 0`.
+
+`nextReady()` gained one extra branch: for each pending family in
+`fanOutFamilyOrder`, `nextReadyChild` scans `fam.Order` for the first child
+that is `pending`, not backing off, under every capacity check (family-local,
+then the same global/resource checks an ordinary step gets), and returns it
+to the ordinary dispatch loop — a family's children are just more entries in
+the same `max_parallel`-bounded ready set, not a separate scheduling regime.
+
+`trySettleFamily` is the **single barrier-settlement choke point**: it is
+invoked from `transitionRecovery` after every child transition that could
+complete the family (ordinary success, `on_failure="continue"`, operator
+recovery-skip, a resumed/recovered child, validation, integration
+completion), via the `trySettleFamilyIfChild(stepID)` hook keyed off
+`state.ParentID`. This means none of those call sites need family-specific
+logic — they transition the child as if it were an ordinary step, and the
+hook decides whether that was the last sibling. When every child in
+`fam.Order` is terminal (`succeeded`/`failed`/`skipped`), it builds the
+ordered aggregate, writes `steps/<family-id>/output.json`, and transitions the
+family `running -> succeeded` exactly once (`fam.Settled` guards against a
+double transition racing two children's terminal events).
+
+### Journal: `FanOutExpanded`
+
+```go
+type FanOutInstanceDescriptor struct{ InstanceID string; Index int; ItemSHA256 string }
+
+type FanOutExpanded struct {
+    SchemaVersion  int
+    RunID          string
+    FamilyID       string
+    Generation, Iteration int
+    ManifestDigest string
+    Instances      []FanOutInstanceDescriptor // id/index/digest only — no raw items
+}
+```
+
+`FanOutExpanded` is the **authoritative creation record** for runtime
+children — the same role `StepStatus` plays for an ordinary step's lifecycle,
+but for existence itself. It carries no item payload (that stays in the
+run-owned manifest), keeping the high-volume journal stream small regardless
+of family width. `RunStarted.Steps` is left unchanged (the static author
+graph); a reader that only understands `RunStarted` still gets a valid, if
+family-collapsed, baseline, while a reader that folds `FanOutExpanded`
+discovers every child.
+
+### Replay and `Manager.Resume`
+
+`restoreUnfinishedCheckpoint` (`internal/engine/resume.go`) folds
+`FanOutExpanded` events in journal order, calling `rebuildFanOutFamily` for
+each: it loads the matching `steps/<family-id>/fanout/generation-*-iteration-*.json`
+manifest, recomputes its digest, and fails closed if that digest doesn't match
+the journaled `ManifestDigest` — a manifest that was rewritten (or never
+durably renamed) after its event was journaled is never silently trusted.
+On a match, it recreates each child's cloned template and `step.State` exactly
+as `dispatchForEach` did originally, then the ordinary `StepStatus` fold
+applies on top — a child left `running`/`validating` reopens to
+`awaiting_recovery` like any interrupted worker; existing review/recovery/
+stopped/input/integration parks restore in place. The **family's own**
+`running` status is left alone rather than reopened as an interrupted worker:
+a family never has a live worker of its own, so after restore the scheduler
+simply resumes waiting for (and, once all are terminal, re-aggregating via
+`trySettleFamily`) its children.
+
+### Reset
+
+`Run.Reset`'s dependency-closure computation (`ResetClosure` /
+`rewindPlan`) expands every family in the target's closure to its *current*
+children before computing the git rewind: each child's integration commit
+belongs to its family for the purpose of "which commits are inside the reset
+set," so resetting a family (or a step upstream of it) removes every affected
+child's commit and replays independent survivors exactly as it would for a
+statically declared step. A manual `Run.Reset` on the family bumps
+`Generation`; a bounded route rewind that includes the family bumps
+`Iteration` instead — both leave `fanOutFamily.Settled = false` and clear the
+current `fanOutFamilies[familyID]`/`fanOutChildren`/`fanOutItemByChild`
+entries for that family, so the next readiness pass re-runs `dispatchForEach`
+from scratch (new manifest, new `FanOutExpanded`, a fresh child set) without
+touching older generations' manifest files or transcripts. Resetting an
+individual runtime child directly is rejected with a typed error directing the
+operator to reset the family instead.
+
+### Persistence invariant
+
+Every fan-out writer follows the same persistence-off convention as the rest
+of the datastore: `datastore.WriteFanOutManifest`/`FanOutManifestPath` return
+immediately (no-op / `""`) when `runDir == ""`, and `trySettleFamily` skips
+the `output.json` write in that mode while still populating
+`Result.Structured` in memory — a persistence-off run gets identical fan-out
+*behavior* (expansion, bounding, aggregation, settlement) with zero
+filesystem writes.

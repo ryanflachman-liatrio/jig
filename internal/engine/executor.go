@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 
 	"jig/internal/interaction"
 	"jig/internal/sentinel"
@@ -94,6 +95,37 @@ type StepRequest struct {
 	// NetworkRequest reports one outbound agent tool-call attempt to the engine.
 	// It is nil for non-agent steps and persistence-off test executors.
 	NetworkRequest func()
+
+	// FanOutItem is non-nil exactly when Step is a runtime child cloned from a
+	// [step.foreach] family template: it carries the one item this child was
+	// created to process, so the agent and command runners can render it
+	// deterministically (see docs/plans/a8-dynamic-foreach-fan-out.md, "Runtime
+	// identity and item delivery"). Nil for every ordinary step and for the
+	// declared family step itself, which never dispatches a worker directly.
+	FanOutItem *FanOutItem
+}
+
+// FanOutItem is the immutable identity and canonical value of one runtime
+// fan-out child. It is attached to StepRequest at dispatch time and never
+// mutated afterward.
+type FanOutItem struct {
+	// TemplateID is the declared foreach family's step id (e.g. "analyze").
+	TemplateID string
+	// InstanceID is this child's full stable runtime id (e.g.
+	// "analyze.__fanout__.g000.r000.i0000").
+	InstanceID string
+	// Index is this item's zero-based source position.
+	Index int
+	// Total is the family's expansion size at the generation this child was
+	// created in.
+	Total int
+	// As is the [step.foreach] binding name the item is delivered under.
+	As string
+	// Item is the item's canonical JSON bytes (compact, key-sorted — see
+	// datastore.ItemDigest, which digests exactly these bytes).
+	Item json.RawMessage
+	// Digest is the SHA-256 hex digest of Item.
+	Digest string
 }
 
 // ResolvedInput pairs an original workflow.Input with its resolved value.

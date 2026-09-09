@@ -63,6 +63,7 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
 	cmd.Env = append(os.Environ(), commandInputEnv(req.Inputs)...)
 	cmd.Env = append(cmd.Env, commandSecretEnv(req.Secrets)...)
+	cmd.Env = append(cmd.Env, commandFanOutEnv(req.FanOutItem)...)
 	// Kill the whole process group (sh plus every child it spawns) on cancel, not
 	// just the shell — otherwise pipeline/background children outlive a Stop and
 	// can hold the output pipe open (see configureProcessGroup).
@@ -147,22 +148,49 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 	}, nil
 }
 
+// normalizeEnvName upper-cases name and replaces every rune outside [A-Z0-9]
+// with '_' — the single naming convention shared by declared secrets,
+// declared artifact inputs, and fan-out item bindings, so a command step's
+// environment always builds names the same way no matter which of the three
+// produced them.
+func normalizeEnvName(name string) string {
+	var b strings.Builder
+	for _, r := range strings.ToUpper(name) {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
+}
+
 func commandSecretEnv(secrets map[string]string) []string {
 	var env []string
 	for name, value := range secrets {
-		var b strings.Builder
-		b.WriteString("JIG_SECRET_")
-		for _, r := range strings.ToUpper(name) {
-			switch {
-			case r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-				b.WriteRune(r)
-			default:
-				b.WriteByte('_')
-			}
-		}
-		env = append(env, b.String()+"="+value)
+		env = append(env, "JIG_SECRET_"+normalizeEnvName(name)+"="+value)
 	}
 	return env
+}
+
+// commandFanOutEnv exports a fan-out child's bound item and position metadata
+// to a command step's environment (docs/plans/a8-dynamic-foreach-fan-out.md,
+// "Runtime identity and item delivery"). item is nil for every ordinary step,
+// in which case this returns nil and no JIG_FANOUT_*/extra JIG_INPUT_* vars
+// are added — ordinary command steps are byte-for-byte unaffected.
+// item.Item is already compact, canonical JSON (see engine.FanOutItem), so it
+// is exported as-is rather than re-encoded.
+func commandFanOutEnv(item *engine.FanOutItem) []string {
+	if item == nil {
+		return nil
+	}
+	return []string{
+		"JIG_INPUT_" + normalizeEnvName(item.As) + "=" + string(item.Item),
+		fmt.Sprintf("JIG_FANOUT_INDEX=%d", item.Index),
+		fmt.Sprintf("JIG_FANOUT_TOTAL=%d", item.Total),
+		"JIG_FANOUT_INSTANCE_ID=" + item.InstanceID,
+	}
 }
 
 func redactSecrets(req engine.StepRequest, text string) string {
@@ -187,17 +215,7 @@ func commandInputEnv(inputs []engine.ResolvedInput) []string {
 		if name == "" {
 			name = input.Ref.Artifact
 		}
-		var b strings.Builder
-		b.WriteString("JIG_INPUT_")
-		for _, r := range strings.ToUpper(name) {
-			switch {
-			case r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-				b.WriteRune(r)
-			default:
-				b.WriteByte('_')
-			}
-		}
-		env = append(env, b.String()+"="+input.Value)
+		env = append(env, "JIG_INPUT_"+normalizeEnvName(name)+"="+input.Value)
 	}
 	return env
 }

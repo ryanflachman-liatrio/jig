@@ -25,9 +25,40 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		m.workflow = ev.Workflow
 		m.steps = make([]monitorStep, len(ev.Steps))
 		m.index = make(map[string]int, len(ev.Steps))
+		m.familyChildren = make(map[string][]string)
 		for i, id := range ev.Steps {
 			m.steps[i] = monitorStep{id: id, status: step.StatusPending}
 			m.index[id] = i
+		}
+
+	case engine.FanOutExpanded:
+		if ev.RunID != m.RunID {
+			return m, nil
+		}
+		// A new expansion for a family already seen (reset/route re-expansion)
+		// replaces its child set wholesale — the prior generation's monitorSteps
+		// stay in m.steps/m.index as historical residue (their transcripts
+		// remain reachable while a step is selected directly) but drop out of
+		// familyChildren, so the family row only ever expands into its current
+		// generation (mirrors engine.scheduler's fanOutFamilies bookkeeping).
+		children := make([]string, 0, len(ev.Instances))
+		for _, inst := range ev.Instances {
+			children = append(children, inst.InstanceID)
+			if _, ok := m.index[inst.InstanceID]; ok {
+				continue
+			}
+			m.steps = append(m.steps, monitorStep{
+				id:          inst.InstanceID,
+				status:      step.StatusPending,
+				parentID:    ev.FamilyID,
+				fanOutIndex: inst.Index,
+				fanOutTotal: len(ev.Instances),
+			})
+			m.index[inst.InstanceID] = len(m.steps) - 1
+		}
+		m.familyChildren[ev.FamilyID] = children
+		if nRows := len(m.visibleRows()); m.cursor >= nRows && nRows > 0 {
+			m.cursor = nRows - 1
 		}
 
 	case engine.StepStatus:
