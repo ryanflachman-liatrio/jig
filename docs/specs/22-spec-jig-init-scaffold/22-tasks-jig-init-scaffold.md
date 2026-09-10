@@ -48,7 +48,7 @@ Audit: `22-audit-jig-init-scaffold.md` (generated after sub-tasks)
 
 ## Tasks
 
-### [~] 1.0 `internal/scaffold` foundation — embedded templates, registry, and write planning
+### [x] 1.0 `internal/scaffold` foundation — embedded templates, registry, and write planning
 
 Build the pure, testable core behind `jig init`: embedded template assets, the
 named registry, name/target validation, template rendering, and the computed
