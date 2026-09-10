@@ -52,7 +52,7 @@ permission_mode = "acceptEdits"
 [[step]]
 id            = "fix"
 type          = "agent"
-skill         = "skills/fix"
+skill         = "../skills/fix"                    # relative to this workflow file
 inputs        = ["@triage"]
 allowed_tools = ["Read", "Edit", "Write", "Bash"]   # mutating -> runs in a git worktree
 
