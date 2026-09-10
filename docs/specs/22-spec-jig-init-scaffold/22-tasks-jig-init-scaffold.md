@@ -48,7 +48,7 @@ Audit: `22-audit-jig-init-scaffold.md` (generated after sub-tasks)
 
 ## Tasks
 
-### [ ] 1.0 `internal/scaffold` foundation — embedded templates, registry, and write planning
+### [~] 1.0 `internal/scaffold` foundation — embedded templates, registry, and write planning
 
 Build the pure, testable core behind `jig init`: embedded template assets, the
 named registry, name/target validation, template rendering, and the computed
@@ -74,16 +74,16 @@ plan-before-write.
 
 #### 1.0 Tasks
 
-- [ ] 1.1 Create `internal/scaffold` with `templates.go` declaring `//go:embed templates` over an `embed.FS`; add a trivial test that the FS is non-empty so the directive cannot silently regress.
-- [ ] 1.2 Author `templates/minimal/workflow.toml.tmpl` as a `text/template` with a `{{ .Name }}` substitution point. Model it on `.agents/jig/golden-path.toml`: one `command` step and one `review` step, no `agent` step, no `skill`, no `backend`/`transport`.
-- [ ] 1.3 Add `registry.go`: a `Template` struct (name, description, asset dir, skill references) and an ordered registry containing `minimal` only for now. Expose `Lookup(name) (Template, error)` returning an error that lists valid names, and `All()` for `--list-templates`.
-- [ ] 1.4 Add `name.go` with `ValidateName(string) (string, error)`: lowercase, then reject empty, any `/` or `\`, `.`/`..` segments, and characters outside `[a-z0-9._-]`. Return the sanitized name. Add `DefaultName(dir string) string` deriving from the target directory's base name.
-- [ ] 1.5 Add `gitignore.go` with a pure `NeedsJigIgnore(existing []byte) bool` (line-aware: skip if a `.jig/` or bare `.jig` entry already exists) and `AppendJigIgnore(existing []byte) []byte` that ensures a trailing newline before appending.
-- [ ] 1.6 Add `scaffold.go` with `Options{Dir, Name, Template}` and `Plan(Options) (*Plan, error)`. `Plan` resolves the target dir to an absolute path, validates the name, looks up the template, renders every asset into memory, and produces an ordered `[]PlannedFile{Path, Contents, Exists}` covering the workflow file, any skill stubs, and the `.gitignore` append. `Plan` performs **no writes**.
-- [ ] 1.7 Assert in `Plan` that every planned path is inside the resolved target dir (join-then-verify-prefix), returning an error otherwise; add a test row driving a malicious `--name`.
-- [ ] 1.8 Derive skill-stub paths with the same join the loader uses — `filepath.Join(filepath.Dir(workflowPath), skillRef)` — rather than hardcoding `.agents/skills`, so `../skills/x` from `.agents/jig/` resolves correctly (see `internal/workflow/skill.go:22`).
-- [ ] 1.9 Write `name_test.go` and `scaffold_test.go` table-driven cases: `TestValidateName` (empty, `../escape`, `a/b`, `.`, `Mixed-Case`, valid), `TestRegistry` (lookup hit, unknown name lists valid names), `TestPlan` (planned path set, `Exists` flags, gitignore decision both ways).
-- [ ] 1.10 Run `gofmt -l -w internal/scaffold && go vet ./internal/scaffold && go test ./internal/scaffold` and capture the clean output as the task 1.0 proof artifact.
+- [x] 1.1 Create `internal/scaffold` with `templates.go` declaring `//go:embed templates` over an `embed.FS`; add a trivial test that the FS is non-empty so the directive cannot silently regress.
+- [x] 1.2 Author `templates/minimal/workflow.toml.tmpl` as a `text/template` with a `{{ .Name }}` substitution point. Model it on `.agents/jig/golden-path.toml`: one `command` step and one `review` step, no `agent` step, no `skill`, no `backend`/`transport`.
+- [x] 1.3 Add `registry.go`: a `Template` struct (name, description, asset dir, skill references) and an ordered registry containing `minimal` only for now. Expose `Lookup(name) (Template, error)` returning an error that lists valid names, and `All()` for `--list-templates`.
+- [x] 1.4 Add `name.go` with `ValidateName(string) (string, error)`: lowercase, then reject empty, any `/` or `\`, `.`/`..` segments, and characters outside `[a-z0-9._-]`. Return the sanitized name. Add `DefaultName(dir string) string` deriving from the target directory's base name.
+- [x] 1.5 Add `gitignore.go` with a pure `NeedsJigIgnore(existing []byte) bool` (line-aware: skip if a `.jig/` or bare `.jig` entry already exists) and `AppendJigIgnore(existing []byte) []byte` that ensures a trailing newline before appending.
+- [x] 1.6 Add `scaffold.go` with `Options{Dir, Name, Template}` and `Plan(Options) (*Plan, error)`. `Plan` resolves the target dir to an absolute path, validates the name, looks up the template, renders every asset into memory, and produces an ordered `[]PlannedFile{Path, Contents, Exists}` covering the workflow file, any skill stubs, and the `.gitignore` append. `Plan` performs **no writes**.
+- [x] 1.7 Assert in `Plan` that every planned path is inside the resolved target dir (join-then-verify-prefix), returning an error otherwise; add a test row driving a malicious `--name`.
+- [x] 1.8 Derive skill-stub paths with the same join the loader uses — `filepath.Join(filepath.Dir(workflowPath), skillRef)` — rather than hardcoding `.agents/skills`, so `../skills/x` from `.agents/jig/` resolves correctly (see `internal/workflow/skill.go:22`).
+- [x] 1.9 Write `name_test.go` and `scaffold_test.go` table-driven cases: `TestValidateName` (empty, `../escape`, `a/b`, `.`, `Mixed-Case`, valid), `TestRegistry` (lookup hit, unknown name lists valid names), `TestPlan` (planned path set, `Exists` flags, gitignore decision both ways).
+- [x] 1.10 Run `gofmt -l -w internal/scaffold && go vet ./internal/scaffold && go test ./internal/scaffold` and capture the clean output as the task 1.0 proof artifact.
 
 ### [ ] 2.0 `jig init` cold start — the default `minimal` scaffold, end to end
 

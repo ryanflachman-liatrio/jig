@@ -1,0 +1,20 @@
+[workflow]
+name        = "{{ .Name }}"
+version     = "1"
+description = "A credential-free first jig workflow."
+
+[[step]]
+id        = "hello"
+type      = "command"
+run       = "printf 'hello from jig\\n'"
+isolation = "none"
+
+[[step]]
+id          = "review"
+type        = "review"
+depends_on  = ["hello"]
+output_type = { enum = ["accept", "revise"] }
+
+[[step.review]]
+source = "@hello"
+label  = "Command output"
