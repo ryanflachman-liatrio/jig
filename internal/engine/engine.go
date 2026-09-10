@@ -164,7 +164,7 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 		if rd, err := datastore.RunDir(m.root, runID); err == nil {
 			runDir = rd
 			_ = persistWorkflowSnapshot(runDir, wf)
-			if lock, lockErr := acquireRunLock(runDir); lockErr == nil {
+			if lock, lockErr := AcquireRunLease(runDir); lockErr == nil {
 				run.runLock = lock
 			} else {
 				m.mu.Lock()
@@ -191,7 +191,7 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	onDone := func(snap RunSnapshot) {
 		run.finalSnap = snap
 		security.stop()
-		releaseRunLock(run.runLock)
+		_ = run.runLock.Close()
 		run.runLock = nil
 		close(run.done)
 	}
@@ -250,7 +250,7 @@ type Run struct {
 	ID      string
 	cancel  context.CancelFunc
 	inbox   chan schedMsg
-	runLock *os.File
+	runLock *RunLease
 	// done is closed by the scheduler goroutine before it exits.
 	// finalSnap is written before done is closed; reads after observing
 	// done closed see the written value (Go memory model, channel close).

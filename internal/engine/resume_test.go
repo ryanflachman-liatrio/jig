@@ -26,7 +26,7 @@ func TestRunLockState(t *testing.T) {
 	if _, err := os.Stat(datastore.SchedulerLockPath(runDir)); !os.IsNotExist(err) {
 		t.Fatalf("probe created lock file: %v", err)
 	}
-	lock, err := acquireRunLock(runDir)
+	lock, err := AcquireRunLease(runDir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,9 @@ func TestRunLockState(t *testing.T) {
 	if err != nil || !held {
 		t.Fatalf("held lock: held=%t err=%v", held, err)
 	}
-	releaseRunLock(lock)
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
 	held, err = RunLockState(runDir)
 	if err != nil || held {
 		t.Fatalf("stale lock file: held=%t err=%v", held, err)
