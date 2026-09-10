@@ -25,4 +25,4 @@
 ╰───────────────────────────────╯╰─────────────────────────────────────────────────────────────────╯
   Human actions  ·  no pending actions                                                              
  cd1234ef · feature · plan · 12.4k tok · $0.0800 · LIVE                                             
-  running  ·  enter transcript  •  j/k select  •  space expand/collapse  •  ? more  ·  simple       
+  running  ·  enter transcript  •  Y copy transcript  •  j/k select  •  ? more  ·  simple           

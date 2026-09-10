@@ -73,4 +73,4 @@
 ╰──────────────────────────────╯╰──────────────────────────────────────────────╯
   Human actions  ·  no pending actions
  run-1 · demo · a · LIVE
-  running  ·  enter transcript  •  j/k select  •  ? more  ·  simple
+  running  ·  enter transcript  •  Y copy transcript  •  ? more  ·  simple

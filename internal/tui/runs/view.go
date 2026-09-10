@@ -45,8 +45,10 @@ func (m Model) View() string {
 // HelpSections satisfies the root's helpProvider bridge: the run-list
 // navigation and actions plus the global chord.
 func (m Model) HelpSections() []shared.HelpSection {
+	copyID := m.keys.CopyID
+	copyID.SetEnabled(len(m.visibleRows()) > 0)
 	return []shared.HelpSection{
-		{Title: "Runs", Bindings: []keybind.Binding{m.keys.Up, m.keys.Down, m.keys.Open, m.keys.NewRun, m.keys.Resume, m.keys.Delete, m.keys.Back}},
+		{Title: "Runs", Bindings: []keybind.Binding{m.keys.Up, m.keys.Down, m.keys.Open, m.keys.NewRun, m.keys.Resume, m.keys.Delete, copyID, m.keys.Back}},
 		{Title: "Global", Bindings: shared.GlobalHelpBindings(m.CapturesText())},
 	}
 }
@@ -54,7 +56,9 @@ func (m Model) HelpSections() []shared.HelpSection {
 func (m Model) CapturesText() bool { return false }
 
 func (m Model) footerView() string {
-	footer := shared.Theme.Footer.Render("  " + shared.HintString(m.keys.NewRun, m.keys.Resume, m.keys.Open, m.keys.Delete, m.keys.Back, shared.KeyHelp, shared.KeyQuit))
+	copyID := m.keys.CopyID
+	copyID.SetEnabled(len(m.visibleRows()) > 0)
+	footer := shared.Theme.Footer.Render("  " + shared.HintString(m.keys.NewRun, m.keys.Resume, m.keys.Open, m.keys.Delete, copyID, m.keys.Back, shared.KeyHelp, shared.KeyQuit))
 	if m.notice != "" {
 		return shared.Theme.Error.Render("  "+m.notice) + "\n" + footer
 	}

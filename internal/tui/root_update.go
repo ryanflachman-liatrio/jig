@@ -15,6 +15,10 @@ import (
 	"jig/internal/workflow"
 )
 
+// clipboardStateProbe is exported through this package's internal tests to
+// inspect notice/busy state without depending on the private struct name.
+var _ = clipboardState{}
+
 func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
@@ -197,6 +201,22 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case runs.ResumeRunMsg:
 		return m, resumeRunCmd(m.manager, msg.RunID)
+
+	// ── clipboard ────────────────────────────────────────────────────────
+	// A ClipboardRequest is admitted here before any active-screen handler
+	// runs, so navigation cannot orphan a pending request nor let a stale
+	// completion overwrite a newer one.
+	case shared.ClipboardRequest:
+		return m.admitClipboard(msg)
+
+	case clipboardResultMsg:
+		return m.completeClipboard(msg)
+
+	case clipboardImmediateNoticeMsg:
+		return m.applyImmediateNotice(msg)
+
+	case clipboardNoticeMsg:
+		return m, nil
 	}
 
 	// All other messages go to the active screen.

@@ -87,6 +87,11 @@ type rootModel struct {
 	// the operator presses a leave-Monitor chord (0.4 / A6).
 	leaveConfirm bool
 
+	// clipboard is root-owned copy-request state. The root admits a single
+	// request at a time and matches completions by id, so a stale loader
+	// finishing after navigation cannot overwrite a newer request.
+	clipboard clipboardState
+
 	width  int
 	height int
 }
@@ -158,6 +163,9 @@ func (m rootModel) View() tea.View {
 		content = m.monitor.View()
 	default:
 		content = m.homeView()
+	}
+	if notice := m.clipboard.notice; notice != "" {
+		content = renderClipboardNoticeOverlay(content, notice, m.width, m.height)
 	}
 	// The help overlay is a global modal: composite it over the active screen (via
 	// a lipgloss Canvas) so the screen shows through around the box, and the same
