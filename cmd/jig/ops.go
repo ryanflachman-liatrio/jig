@@ -273,6 +273,8 @@ func printHelp() {
 	fmt.Fprintln(os.Stdout, `usage: jig <command> [arguments]
 
 Commands:
+  notifications check WORKFLOW.toml [--root PATH]
+                            inspect notification readiness without sending
   validate WORKFLOW.toml    validate a workflow
   run WORKFLOW.toml         run a workflow headlessly
   status [RUN_ID]           list or inspect persisted runs

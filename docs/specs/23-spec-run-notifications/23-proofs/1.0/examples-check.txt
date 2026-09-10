@@ -1,0 +1,27 @@
+$ ./jig validate .agents/jig/bugfix.toml
+ok: "bugfix" v1 — 4 step(s)
+exit: 0
+$ ./jig validate .agents/jig/feature.toml
+ok: "feature" v1 — 16 step(s)
+exit: 0
+$ ./jig validate .agents/jig/golden-path.toml
+ok: "golden-path" v1 — 2 step(s)
+exit: 0
+$ ./jig validate .agents/jig/implementation-review.toml
+ok: "implementation-review" v1 — 2 step(s)
+exit: 0
+$ ./jig validate .agents/jig/mixed-transport.toml
+ok: "mixed-transport" v1 — 2 step(s)
+exit: 0
+$ ./jig validate .agents/jig/research.toml
+ok: "research" v1 — 3 step(s)
+exit: 0
+$ ./jig validate .agents/jig/review-ui-demo.toml
+ok: "review-ui-demo" v1 — 1 step(s)
+exit: 0
+$ ./jig validate .agents/jig/review.toml
+ok: "review" v1 — 2 step(s)
+exit: 0
+$ ./jig validate .agents/jig/sdd.toml
+ok: "sdd" v1 — 48 step(s)
+exit: 0

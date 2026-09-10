@@ -1,0 +1,2 @@
+$ gofmt -l cmd/jig/main.go cmd/jig/notifications.go cmd/jig/notifications_test.go cmd/jig/ops.go cmd/jig/wire.go internal/notification/config.go internal/notification/config_test.go internal/notification/readiness.go internal/workflow/load.go internal/workflow/module.go internal/workflow/notification.go internal/workflow/notification_profiles.go internal/workflow/notification_test.go internal/workflow/schema.go
+exit: 0

@@ -1,0 +1,17 @@
+$ ./jig validate <temporary-fixture>/inline.toml
+ok: "notification-inline" v1 — 1 step(s)
+exit: 0
+$ ./jig notifications check <temporary-fixture>/inline.toml --root <temporary-fixture>/missing
+notification policy events: attention_required, run_failed, run_succeeded
+notifications enabled: false
+status: disabled
+destination ops: type= enabled=false events=[run_failed] status=globally_disabled
+Local readiness only; delivery is not verified and desktop visibility is not guaranteed. No notifications were sent.
+exit: 0
+$ ./jig notifications check <temporary-fixture>/inline.toml --root <temporary-fixture>
+notification policy events: attention_required, run_failed, run_succeeded
+notifications enabled: true
+status: ready
+destination ops: type=webhook enabled=true events=[run_failed] status=ready
+Local readiness only; delivery is not verified and desktop visibility is not guaranteed. No notifications were sent.
+exit: 0

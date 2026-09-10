@@ -132,6 +132,9 @@ var mutatingTools = map[string]bool{
 
 // Workflow is a parsed workflow file.
 type Workflow struct {
+	Notification       *NotificationConfig `toml:"notification"`
+	notificationPolicy NotificationPolicy
+
 	Meta     Meta     `toml:"workflow"`
 	Defaults Defaults `toml:"defaults"`
 	Steps    []Step   `toml:"step"`

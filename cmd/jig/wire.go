@@ -34,8 +34,12 @@ func newManager(root string) (*engine.Manager, error) {
 // resolveNamedSecret keeps secret values outside workflow TOML. The name is
 // normalized the same way command execution exposes JIG_SECRET_<NAME>.
 func resolveNamedSecret(name string) (string, error) {
+	return resolveNamedSecretWithLookup(name, os.LookupEnv)
+}
+
+func resolveNamedSecretWithLookup(name string, lookup func(string) (string, bool)) (string, error) {
 	key := "JIG_SECRET_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
-	value, ok := os.LookupEnv(key)
+	value, ok := lookup(key)
 	if !ok {
 		return "", fmt.Errorf("%s is not set", key)
 	}

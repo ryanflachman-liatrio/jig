@@ -126,3 +126,63 @@ There is intentionally no `jig diff` yet. Current persistence does not retain
 an immutable base plus patch content strongly enough to reconstruct a reliable
 historical diff. A later contract must add durable provenance or patch snapshots
 instead of guessing from the current checkout.
+
+## Notification readiness
+
+`jig notifications check WORKFLOW.toml [--root PATH]` validates author policy and
+inspects local notification bindings without sending network requests or
+showing desktop notifications. Policy/check support is available; live delivery
+and reopen integration remain pending in Spec 23.
+
+The root defaults to `.jig`, like other operational commands. Bindings are read
+from `<root>/notifications.toml`; `--root ''` disables file lookup. Missing config
+is silently disabled. Global and per-destination enablement both default to
+false. For example:
+
+```toml
+enabled = true
+
+[[destination]]
+id = "desktop"
+type = "desktop"
+enabled = true
+
+[[destination]]
+id = "team-alerts"
+type = "slack"
+enabled = true
+url_secret = "slack-notifications"
+
+[[destination]]
+id = "ops"
+type = "webhook"
+enabled = true
+url_secret = "ops-notifications"
+bearer_secret = "ops-notifications-token"
+```
+
+Aliases must be unique, and this version permits at most one destination of each
+`desktop`, `slack`, and `webhook` type. Only webhooks accept `bearer_secret`;
+desktop destinations accept neither secret field. Unknown fields are errors.
+The operator can disable destinations but cannot add policy events or routes.
+
+Network URLs are complete values in named secrets, never inline config values.
+For example, `slack-notifications` resolves `JIG_SECRET_SLACK_NOTIFICATIONS`:
+uppercase the reference and replace hyphens with underscores. The notification
+feature does not add secrets to child environments. Only requested, enabled
+network destinations resolve secrets. HTTPS URLs require a host and cannot
+contain userinfo or fragments. Disabled destinations need no secret values.
+
+Exit codes: **0** means locally ready or explicitly disabled/empty, **1** means
+invalid workflow/profile/config or failed readiness, and **2** means usage error.
+Output lists events, aliases, enablement, and fixed status codes, without secret
+values or raw external errors. Malformed/unreadable config disables the invocation;
+a missing secret or unavailable desktop prerequisite affects that destination.
+
+macOS checks for `/usr/bin/osascript`. Linux checks for `notify-send` and a
+`DBUS_SESSION_BUS_ADDRESS`; libnotify tooling and a notification-capable local
+desktop session are needed. Other platforms report unsupported desktop delivery.
+These checks cannot verify a running notification service, OS permission,
+banner visibility, or that a person read anything. Network readiness checks do
+not verify TLS connectivity, receiver acceptance, or Slack channel access.
+The check command sends nothing. Terminal bell is a separate feature.

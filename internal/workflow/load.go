@@ -66,6 +66,9 @@ func decodeWorkflowLocked(data, baseDir, sourcePath string, locked map[string]Mo
 	if err != nil {
 		return nil, err
 	}
+	if err := wf.resolveNotification(baseDir); err != nil {
+		return nil, err
+	}
 	if hasSubworkflow(wf) {
 		if err := expandModules(wf, baseDir, sourcePath, locked); err != nil {
 			return nil, err
@@ -96,6 +99,10 @@ func decodePrepared(data, baseDir string) (*Workflow, error) {
 	// consume their whole subtree, so their internals never show up here.
 	if keys := md.Undecoded(); len(keys) > 0 {
 		return nil, fmt.Errorf("unknown key(s) in workflow: %s", formatKeys(keys))
+	}
+
+	if wf.Module != nil && wf.Notification != nil {
+		return nil, fmt.Errorf("notification policy is only valid in the root workflow")
 	}
 
 	// Resolve prompt-bearing files before profiles/defaults so file-derived

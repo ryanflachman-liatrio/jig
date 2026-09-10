@@ -37,6 +37,7 @@ go build ./cmd/jig            # build ./jig
 
 go run ./cmd/jig                                  # launch the TUI
 go run ./cmd/jig validate .agents/jig/feature.toml   # validate a workflow
+go run ./cmd/jig notifications check examples/notifications-profiled.toml # local readiness, no sends
 ```
 
 ## A workflow, briefly
