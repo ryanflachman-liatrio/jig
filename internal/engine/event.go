@@ -246,6 +246,9 @@ type SecurityFinding struct {
 	Severity    string `json:"severity"` // "low" | "medium" | "high" | "critical"
 	Action      string `json:"action"`   // "observed" | "blocked" | "escalated"
 	Fingerprint string `json:"fingerprint"`
+	Iteration   int    `json:"-"`
+	Attempt     int    `json:"-"`
+	Generation  int    `json:"-"`
 }
 
 // FanOutExpandedVersion is the only FanOutExpanded schema version this

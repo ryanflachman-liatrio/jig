@@ -1,6 +1,18 @@
 # Agent security monitoring runs out-of-band and raises findings rather than killing the run
 
-Status: proposed.
+Status: accepted.
+
+> Implementation status (A6, 2026-09-09): Tier 2 now uses a fixed embedded
+> roster and a run-owned signal channel rather than working-directory discovery
+> or a manager-wide subscriber. Classifier clients are isolated per invocation,
+> bounded by timeout, and disconnected deterministically; they are not a
+> persistent client pool. Cost/degradation state survives reopen in
+> `security-monitor-state.json`. A zero fleet budget means unlimited monitoring,
+> not Tier-2-disabled. Raw transcripts may still contain values the pattern
+> detector misses; A6 guarantees redaction at the classifier input and finding
+> detail boundaries. Budget degradation is recorded as `budget-exhausted`.
+> The decision rationale below is retained as historical context where its
+> implementation wording differs.
 
 jig wraps every agent step in a two-tier security layer: a synchronous
 deterministic guard (Tier 1) and an asynchronous LLM monitor fleet (Tier 2).
@@ -95,4 +107,5 @@ an automated abort would cause too many unwarranted interruptions.
 - **Security is on by default.** No workflow change is needed to get Tier-1
   protection. Tier-2 requires a running Claude client (used by the supervisor)
   and is gated by `tier2_enabled` (default true) and `fleet_budget_usd`.
-  A zero-budget workflow gets Tier-1 protection only.
+  A zero budget means no Tier-2 ceiling; `tier2_enabled = false` is the explicit
+  way to disable the fleet.

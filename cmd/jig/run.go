@@ -107,7 +107,11 @@ func runRun(args []string) int {
 		}
 	}()
 
-	mgr := newManager(*root)
+	mgr, err := newManager(*root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return headless.ExitFailed
+	}
 	result := headless.Run(ctx, headless.Options{
 		WorkflowPath: rest[0],
 		Manager:      mgr,

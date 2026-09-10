@@ -445,6 +445,23 @@ func TestAgentExecutor_UsesExecutionDirForSession(t *testing.T) {
 	}
 }
 
+func TestAgentExecutor_UsesRepoRootWhenPersistenceHasNoExecutionView(t *testing.T) {
+	repoRoot := t.TempDir()
+	h := &harness.FakeHarness{
+		Sess: harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}}),
+	}
+	result, err := NewAgentExecutorFixed(h).Execute(context.Background(), engine.StepRequest{
+		Step:     &workflow.Step{ID: "agent", Type: workflow.StepAgent},
+		RepoRoot: repoRoot,
+	}, &captureReporter{})
+	if err != nil || result.Status != step.StatusSucceeded {
+		t.Fatalf("Execute = %+v, %v", result, err)
+	}
+	if h.OpenSpec.Cwd != repoRoot {
+		t.Errorf("SessionSpec.Cwd = %q, want repo root %q", h.OpenSpec.Cwd, repoRoot)
+	}
+}
+
 // TestCaptureStream_NoTranscript verifies that with an empty TranscriptPath no
 // file is written and no liveness Message signals fire (persistence off path).
 func TestCaptureStream_NoTranscript(t *testing.T) {

@@ -1,21 +1,19 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
+	"sync"
 	"time"
 
 	claudecode "github.com/severity1/claude-agent-sdk-go"
 
 	"jig/internal/sentinel"
-	"jig/internal/workflow"
 )
 
-// monitorJSONSchema is the structured-output contract for all Tier-2 monitor
-// agents. Monitors must emit exactly these three fields; no base schema is
-// applied (unlike regular agent steps, which always carry summary/status).
 var monitorJSONSchema = map[string]any{
 	"type": "object",
 	"properties": map[string]any{
@@ -27,108 +25,145 @@ var monitorJSONSchema = map[string]any{
 	"additionalProperties": false,
 }
 
-// MonitorAdapter implements sentinel.MonitorDispatcher by calling the Claude
-// Agent SDK directly. Each Dispatch is a single-turn, tools-off, persistence-off
-// invocation; it does not go through AgentExecutor because monitors require a
-// custom JSON schema that differs from the base schema all agent steps carry.
-type MonitorAdapter struct{}
-
-// NewMonitorAdapter returns a MonitorAdapter. It holds no state and is safe for
-// concurrent Dispatch calls from the supervisor.
-func NewMonitorAdapter() *MonitorAdapter { return &MonitorAdapter{} }
-
-// Dispatch runs the monitor agent file against the transcript window text and
-// returns whether the monitor flagged a finding.
-func (a *MonitorAdapter) Dispatch(ctx context.Context, monitorFile, windowText string) (sentinel.MonitorResult, error) {
-	data, err := os.ReadFile(monitorFile)
-	if err != nil {
-		return sentinel.MonitorResult{}, fmt.Errorf("read monitor %q: %w", monitorFile, err)
-	}
-	model, prompt, err := workflow.ParseAgentFileContent(data)
-	if err != nil {
-		return sentinel.MonitorResult{}, fmt.Errorf("parse monitor %q: %w", monitorFile, err)
-	}
-	// Short model aliases used in monitor frontmatter (e.g. "haiku") map to the
-	// current Haiku model ID. Non-empty full IDs pass through unchanged.
-	if model == "" || model == "haiku" {
-		model = "claude-haiku-4-5-20251001"
-	}
-
-	client := claudecode.NewClient(
-		claudecode.WithModel(model),
-		claudecode.WithIncludePartialMessages(true),
-		claudecode.WithJSONSchema(monitorJSONSchema),
-		claudecode.WithPermissionMode(claudecode.PermissionModeDefault),
-		claudecode.WithMaxTurns(1), // classifiers are single-turn
-	)
-	if err := client.Connect(ctx); err != nil {
-		return sentinel.MonitorResult{}, fmt.Errorf("monitor connect: %w", err)
-	}
-	defer func() { _ = client.Disconnect() }()
-
-	// The monitor file body is the system-context section of the query; the
-	// transcript window is the data to analyze. Separating them with a delimiter
-	// makes the boundary explicit so the monitor can treat window content as data.
-	query := prompt
-	if query != "" {
-		query += "\n\n---\n\n"
-	}
-	query += windowText
-
-	msgChan := client.ReceiveMessages(ctx)
-	// Monitors are single-turn; close the send channel immediately so the SDK
-	// does not wait for injected tool results.
-	sendCh := make(chan claudecode.StreamMessage, 1)
-	if err := client.QueryStream(ctx, sendCh); err != nil {
-		close(sendCh)
-		return sentinel.MonitorResult{}, fmt.Errorf("monitor query stream: %w", err)
-	}
-	close(sendCh)
-
-	if err := client.Query(ctx, query); err != nil {
-		return sentinel.MonitorResult{}, fmt.Errorf("monitor query: %w", err)
-	}
-
-	return drainMonitorChannel(msgChan)
+type monitorClient interface {
+	Connect(context.Context, ...claudecode.StreamMessage) error
+	Disconnect() error
+	QueryStream(context.Context, <-chan claudecode.StreamMessage) error
+	ReceiveMessages(context.Context) <-chan claudecode.Message
 }
 
-// drainMonitorChannel reads the SDK message stream and extracts the monitor's
-// structured verdict from the ResultMessage.
-func drainMonitorChannel(msgChan <-chan claudecode.Message) (sentinel.MonitorResult, error) {
-	var result sentinel.MonitorResult
-	start := time.Now()
-	_ = start
+type monitorClientFactory func(...claudecode.Option) monitorClient
 
-	for msg := range msgChan {
-		rm, ok := msg.(*claudecode.ResultMessage)
-		if !ok {
-			continue
-		}
-		if rm.TotalCostUSD != nil {
-			result.CostUSD = *rm.TotalCostUSD
-		}
-		if rm.IsError {
-			return result, fmt.Errorf("monitor agent error: %s", rm.Subtype)
-		}
-		if rm.StructuredOutput == nil {
-			return result, fmt.Errorf("monitor returned no structured output")
-		}
-		raw, err := json.Marshal(rm.StructuredOutput)
-		if err != nil {
-			return result, fmt.Errorf("marshal monitor output: %w", err)
-		}
-		var out struct {
-			Flagged  bool   `json:"flagged"`
-			Severity string `json:"severity"`
-			Detail   string `json:"detail"`
-		}
-		if err := json.Unmarshal(raw, &out); err != nil {
-			return result, fmt.Errorf("parse monitor output: %w", err)
-		}
-		result.Flagged = out.Flagged
-		result.Severity = out.Severity
-		result.Detail = out.Detail
-		return result, nil
+type MonitorAdapter struct {
+	newClient monitorClientFactory
+	timeout   time.Duration
+}
+
+func NewMonitorAdapter() *MonitorAdapter {
+	return &MonitorAdapter{newClient: func(opts ...claudecode.Option) monitorClient {
+		return claudecode.NewClient(opts...)
+	}, timeout: 30 * time.Second}
+}
+
+func newMonitorAdapter(factory monitorClientFactory) *MonitorAdapter {
+	return &MonitorAdapter{newClient: factory, timeout: 30 * time.Second}
+}
+
+func monitorOptions(spec sentinel.MonitorSpec) []claudecode.Option {
+	emptySurface := func(o *claudecode.Options) {
+		o.Tools = []string{}
+		o.AllowedTools = []string{}
+		o.DisallowedTools = []string{}
+		o.SettingSources = []claudecode.SettingSource{}
 	}
-	return result, fmt.Errorf("monitor channel closed without ResultMessage")
+	denyTools := claudecode.WithCanUseTool(func(context.Context, string, map[string]any, claudecode.ToolPermissionContext) (claudecode.PermissionResult, error) {
+		return claudecode.NewPermissionResultDeny("security classifiers cannot invoke tools"), nil
+	})
+	return []claudecode.Option{
+		emptySurface,
+		claudecode.WithSkillsDisabled(),
+		claudecode.WithModel(spec.Model),
+		claudecode.WithSystemPrompt(spec.Prompt),
+		claudecode.WithJSONSchema(monitorJSONSchema),
+		claudecode.WithPermissionMode(claudecode.PermissionModeDefault),
+		claudecode.WithMaxTurns(1),
+		denyTools,
+	}
+}
+
+func (a *MonitorAdapter) Dispatch(ctx context.Context, spec sentinel.MonitorSpec, windowText string) (sentinel.MonitorResult, error) {
+	if spec.Model == "" || spec.Prompt == "" {
+		return sentinel.MonitorResult{}, fmt.Errorf("monitor definition is incomplete")
+	}
+	timeout := a.timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	dispatchCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	client := a.newClient(monitorOptions(spec)...)
+	if err := client.Connect(dispatchCtx); err != nil {
+		return sentinel.MonitorResult{}, fmt.Errorf("monitor connect: %w", err)
+	}
+	defer client.Disconnect()
+
+	messages := client.ReceiveMessages(dispatchCtx)
+	sendCh := make(chan claudecode.StreamMessage, 1)
+	var closeOnce sync.Once
+	closeSend := func() { closeOnce.Do(func() { close(sendCh) }) }
+	defer closeSend()
+	if err := client.QueryStream(dispatchCtx, sendCh); err != nil {
+		return sentinel.MonitorResult{}, fmt.Errorf("monitor query stream: %w", err)
+	}
+	sendCh <- claudecode.StreamMessage{
+		Type:    "user",
+		Message: map[string]any{"role": "user", "content": windowText},
+	}
+	result, err := drainMonitorChannel(dispatchCtx, messages)
+	result.Launched = true
+	return result, err
+}
+
+func drainMonitorChannel(ctx context.Context, messages <-chan claudecode.Message) (sentinel.MonitorResult, error) {
+	var result sentinel.MonitorResult
+	for {
+		select {
+		case <-ctx.Done():
+			return result, ctx.Err()
+		case msg, ok := <-messages:
+			if !ok {
+				return result, fmt.Errorf("monitor channel closed without ResultMessage")
+			}
+			rm, ok := msg.(*claudecode.ResultMessage)
+			if !ok {
+				continue
+			}
+			if rm.TotalCostUSD != nil {
+				result.CostUSD, result.CostKnown = *rm.TotalCostUSD, true
+			}
+			if rm.IsError {
+				return result, fmt.Errorf("monitor agent returned an error result")
+			}
+			if rm.StructuredOutput == nil {
+				return result, fmt.Errorf("monitor returned no structured output")
+			}
+			if err := decodeMonitorVerdict(rm.StructuredOutput, &result); err != nil {
+				return result, err
+			}
+			return result, nil
+		}
+	}
+}
+
+func decodeMonitorVerdict(value any, result *sentinel.MonitorResult) error {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("marshal monitor output: %w", err)
+	}
+	var verdict struct {
+		Flagged  *bool   `json:"flagged"`
+		Severity *string `json:"severity"`
+		Detail   *string `json:"detail"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&verdict); err != nil {
+		return fmt.Errorf("parse monitor output: %w", err)
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("parse monitor output: trailing data")
+	}
+	if verdict.Flagged == nil || verdict.Severity == nil || verdict.Detail == nil {
+		return fmt.Errorf("monitor output is missing required fields")
+	}
+	switch *verdict.Severity {
+	case "low", "medium", "high", "critical":
+	default:
+		return fmt.Errorf("monitor output has unknown severity")
+	}
+	if !*verdict.Flagged && (*verdict.Severity != "low" || *verdict.Detail != "") {
+		return fmt.Errorf("unflagged monitor output must use low severity and empty detail")
+	}
+	result.Flagged, result.Severity, result.Detail = *verdict.Flagged, *verdict.Severity, sentinel.RedactText(*verdict.Detail)
+	return nil
 }

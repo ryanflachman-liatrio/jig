@@ -49,7 +49,11 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	mgr := newManager(".jig")
+	mgr, err := newManager(".jig")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing jig: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Alt screen and the background canvas are declared on the View in v2 (see
 	// rootModel.View), not as program options here.

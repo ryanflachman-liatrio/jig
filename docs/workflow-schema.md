@@ -1202,7 +1202,7 @@ tier2_enabled      = true          # Tier-2: out-of-band LLM monitor fleet
 outbound_allowlist = ["api.github.com", "storage.googleapis.com"]
 fleet_budget_usd   = 0.10          # per-run Tier-2 cost ceiling; 0 = no limit
 concurrency_cap    = 4             # max simultaneous Tier-2 dispatches; 0 = engine default
-batch_size         = 5             # transcript entries before forcing a monitor flush
+batch_size         = 5             # transcript-advance signals before forcing a monitor flush
 debounce_ms        = 500           # debounce window before flushing
 ```
 
@@ -1213,9 +1213,9 @@ debounce_ms        = 500           # debounce window before flushing
 | `tier2_enabled` | bool | Toggle Tier-2 LLM monitor fleet. Default: `true`. |
 | `outbound_allowlist` | [string] | Hosts permitted for `WebFetch` and curl/wget. Validated as hostnames at load time. |
 | `fleet_budget_usd` | float | Per-run Tier-2 spend ceiling. When exceeded, Tier-2 degrades to Tier-1-only without blocking the run. `0` means no ceiling. Must be `>= 0`. |
-| `concurrency_cap` | int | Max simultaneous Tier-2 monitor dispatches. Must be `>= 1` when set; `0` uses the engine default. |
-| `batch_size` | int | Flush window size (entry count). `0` uses the engine default. |
-| `debounce_ms` | int | Flush debounce in milliseconds. `0` uses the engine default. |
+| `concurrency_cap` | int | Upper bound on simultaneous Tier-2 dispatches. A6 dispatch is serial, so values above one do not promise parallel calls. Must be `>= 1` when set; `0` uses the engine default. |
+| `batch_size` | int | Transcript-advance signal count that forces a flush; the classifier tail is independently capped at 20 entries / 32,000 rendered bytes. `0` uses the engine default (5). |
+| `debounce_ms` | int | Maximum wait before flushing a nonempty signal batch. `0` uses the engine default (500 ms). |
 
 ### `[step.security]`
 
@@ -1242,6 +1242,11 @@ agent_file = "agents/security-reviewer.md"
 **Inheritance** follows the same zero-value precedence as `model`/`effort`: an
 explicit per-step value wins, else `[defaults.security]`, else the engine's
 built-in default (on).
+
+Tier 1 and Tier 2 are independently resolved after inheritance. A step may
+explicitly enable Tier 2 when the default disables it, and disabling Tier 1 does
+not disable Tier 2. `fleet_budget_usd = 0` means no Tier-2 ceiling, not zero
+available budget.
 
 For the full two-tier architecture, findings format, redaction guarantee, and
 escalation policy, see [`docs/security-monitoring.md`](security-monitoring.md).

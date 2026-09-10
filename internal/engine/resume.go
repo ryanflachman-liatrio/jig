@@ -210,8 +210,10 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 		return fail(err)
 	}
 	repoRoot := filepath.Dir(filepath.Clean(m.root))
+	var security *runSecurity
 	onDone := func(snap RunSnapshot) {
 		run.finalSnap = snap
+		security.stop()
 		releaseRunLock(run.runLock)
 		run.runLock = nil
 		close(run.done)
@@ -283,6 +285,10 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 		_ = w.Close()
 		cancel()
 		return fail(fmt.Errorf("journal reopened parks: %w", err))
+	}
+	security = startRunSecurity(ctx, wf, runID, runDir, m.monitors, subs, inbox, true)
+	if security != nil {
+		s.securitySignals = security.signals
 	}
 	go s.runLoop(ctx)
 	return run, nil

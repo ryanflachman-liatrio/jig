@@ -268,3 +268,20 @@ func RedactJSON(toolName string, raw []byte) []byte {
 	}
 	return []byte(result)
 }
+
+// RedactText removes known and entropy-shaped secrets from arbitrary monitor
+// boundary text while retaining a labeled marker useful to the classifier.
+func RedactText(text string) string {
+	result := text
+	for _, pat := range secretPatterns {
+		for _, match := range pat.re.FindAllString(text, -1) {
+			result = strings.ReplaceAll(result, match, Redact(pat.name, match))
+		}
+	}
+	for _, token := range strings.FieldsFunc(text, isTokenSep) {
+		if len(token) >= minSecretLen && shannonEntropy(token) >= entropyThreshold {
+			result = strings.ReplaceAll(result, token, Redact("high-entropy", token))
+		}
+	}
+	return result
+}

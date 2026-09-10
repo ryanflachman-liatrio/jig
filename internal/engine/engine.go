@@ -183,97 +183,25 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	if m.root != "" {
 		repoRoot = filepath.Dir(filepath.Clean(m.root))
 	}
+	security := startRunSecurity(ctx, wf, runID, runDir, m.monitors, subs, inbox, false)
+
 	// onDone is called by the scheduler goroutine before it exits.
 	// Writing finalSnap before closing done satisfies the memory-model
 	// happens-before requirement so Snapshot() reads are lock-free.
 	onDone := func(snap RunSnapshot) {
 		run.finalSnap = snap
+		security.stop()
 		releaseRunLock(run.runLock)
 		run.runLock = nil
 		close(run.done)
 	}
 	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir, m.root, repoRoot, onDone)
+	if security != nil {
+		s.securitySignals = security.signals
+	}
 	s.resolver = m.resolver
 	s.secretResolver = secrets
 	go s.run(ctx)
-
-	// Tier-2: start the supervisor out-of-band when monitors are configured and
-	// persistence is on (runDir non-empty — transcripts exist to read).
-	if len(m.monitors) > 0 && runDir != "" {
-		secOn := wf.Defaults.Security.Enabled == nil || *wf.Defaults.Security.Enabled
-		t2On := wf.Defaults.Security.Tier2Enabled == nil || *wf.Defaults.Security.Tier2Enabled
-		if secOn && t2On {
-			sigCh := make(chan sentinel.StepSignal, 128)
-
-			// Bridge StepMessage liveness events from the live bus channel to the
-			// supervisor's signal channel. Drops are safe: a missed signal only
-			// delays the next flush; the supervisor re-reads from disk on the next
-			// signal it does receive.
-			liveCh, _ := m.Subscribe()
-			go func() {
-				defer close(sigCh)
-				for {
-					select {
-					case <-ctx.Done():
-						return
-					case ev, ok := <-liveCh:
-						if !ok {
-							return
-						}
-						if sm, ok := ev.(StepMessage); ok {
-							select {
-							case sigCh <- sentinel.StepSignal{
-								RunID:     sm.RunID,
-								StepID:    sm.StepID,
-								Seq:       sm.Seq,
-								Iteration: sm.Iteration,
-							}:
-							default:
-							}
-						}
-					}
-				}
-			}()
-
-			// notify converts a sentinel.Finding to an engine SecurityFinding event
-			// and fans it out to all bus subscribers (TUI) and the scheduler inbox
-			// (critical-finding escalation). Called from the supervisor goroutine.
-			notify := func(f sentinel.Finding) {
-				sf := SecurityFinding{
-					RunID:       f.RunID,
-					StepID:      f.StepID,
-					Tier:        string(f.Tier),
-					Monitor:     f.Monitor,
-					Severity:    string(f.Severity),
-					Action:      string(f.Action),
-					Fingerprint: f.Fingerprint,
-				}
-				fanOutCtrl(subs, sf)
-				select {
-				case inbox <- securityFindingMsg{sf: sf}:
-				default:
-				}
-			}
-
-			var sink *sentinel.Writer
-			if fw, err := sentinel.NewWriter(datastore.FindingsPath(runDir)); err == nil {
-				sink = fw
-			}
-
-			sup := sentinel.NewSupervisor(
-				runID,
-				sigCh,
-				sink,
-				m.monitors,
-				wf.Defaults.Security.FleetBudgetUSD,
-				func(stepID string) string {
-					return datastore.TranscriptPath(runDir, stepID)
-				},
-				notify,
-			)
-			go sup.Run(ctx)
-		}
-	}
 
 	return run, nil
 }
@@ -680,16 +608,20 @@ func (securityFindingMsg) isSchedMsg() {}
 // It is created per-dispatch and passed to the executor; the executor
 // may call it from its own goroutine, so fanOutLive must not touch scheduler state.
 type reporter struct {
-	subs   []sub
-	ev     func(Event)
-	stepID string
-	inbox  chan<- schedMsg
+	subs     []sub
+	ev       func(Event)
+	stepID   string
+	inbox    chan<- schedMsg
+	security func(int)
 }
 
 func (r *reporter) Output(delta string)          { r.ev(StepOutput{Delta: delta}) }
 func (r *reporter) ToolCall(tool, detail string) { r.ev(StepToolCall{Tool: tool, Detail: detail}) }
 func (r *reporter) Message(seq, iteration int) {
 	r.ev(StepMessage{Seq: seq, Iteration: iteration})
+	if r.security != nil {
+		r.security(seq)
+	}
 }
 
 // Finding routes a SecurityFinding through the ctrl channel (must-not-drop).
@@ -764,6 +696,7 @@ type scheduler struct {
 	secretResolver   SecretResolver
 	seq              int
 	fatalJournalErr  error // stops scheduling when state cannot be made durable
+	securitySignals  chan<- sentinel.StepSignal
 
 	// Phase 5: worktree lifecycle.
 	jigRoot    string            // .jig/ root; "" when persistence is disabled
@@ -1529,6 +1462,11 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	runID, stepID := s.runID, st.ID
 	subs := s.subs
 	inbox := s.inbox
+	executionCoords := sentinel.ExecutionCoordinates{
+		Generation: s.states[st.ID].Generation,
+		Iteration:  s.states[st.ID].Iteration,
+		Attempt:    s.states[st.ID].Attempt,
+	}
 	rep := &reporter{
 		subs:   subs,
 		stepID: stepID,
@@ -1548,6 +1486,7 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 			case SecurityFinding:
 				// Must-not-drop: rides ctrl, not live.
 				e.RunID, e.StepID = runID, stepID
+				e.Generation, e.Iteration, e.Attempt = executionCoords.Generation, executionCoords.Iteration, executionCoords.Attempt
 				fanOutCtrl(subs, e)
 				// Also notify the scheduler so critical findings can escalate
 				// to the recovery gate. Non-blocking: the scheduler's inbox is
@@ -1558,6 +1497,16 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 				}
 			}
 		},
+	}
+	if stepTier2Enabled(st, s.runDir) && s.securitySignals != nil {
+		allowlist := append([]string(nil), st.Security.OutboundAllowlist...)
+		rep.security = func(seq int) {
+			signal := sentinel.StepSignal{RunID: runID, StepID: stepID, Seq: seq, ExecutionCoordinates: executionCoords, OutboundAllowlist: allowlist}
+			select {
+			case s.securitySignals <- signal:
+			default:
+			}
+		}
 	}
 	var artifactDir, transcriptPath string
 	if s.runDir != "" {
@@ -1949,6 +1898,9 @@ func (s *scheduler) handleSecurityFinding(sf SecurityFinding) {
 	state, ok := s.states[sf.StepID]
 	if !ok {
 		return // unknown step — finding already recorded above
+	}
+	if sf.Generation != state.Generation || sf.Iteration != state.Iteration || sf.Attempt != state.Attempt {
+		return
 	}
 	switch state.Status {
 	case step.StatusRunning, step.StatusNeedsInput:

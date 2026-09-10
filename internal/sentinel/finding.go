@@ -44,11 +44,13 @@ const (
 // Finding is one security event recorded by either tier. It never carries a raw
 // secret: the Redact helper enforces this at construction.
 type Finding struct {
-	Ts        time.Time `json:"ts"`
-	RunID     string    `json:"run_id"`
-	StepID    string    `json:"step_id"`
-	Iteration int       `json:"iteration"`
-	Tier      Tier      `json:"tier"`
+	Ts         time.Time `json:"ts"`
+	RunID      string    `json:"run_id"`
+	StepID     string    `json:"step_id"`
+	Iteration  int       `json:"iteration"`
+	Generation int       `json:"-"`
+	Attempt    int       `json:"-"`
+	Tier       Tier      `json:"tier"`
 	// Monitor is the rule or monitor name that produced this finding
 	// (e.g. "secret-leak", "prompt-injection").
 	Monitor  string   `json:"monitor"`

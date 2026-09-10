@@ -30,7 +30,7 @@ func newStub(marker, severity string, costUSD float64) *stubDispatcher {
 	}
 }
 
-func (s *stubDispatcher) Dispatch(_ context.Context, _, windowText string) (MonitorResult, error) {
+func (s *stubDispatcher) Dispatch(_ context.Context, _ MonitorSpec, windowText string) (MonitorResult, error) {
 	s.calls.Add(1)
 	flagged := strings.Contains(windowText, s.marker)
 	if flagged {
@@ -39,7 +39,7 @@ func (s *stubDispatcher) Dispatch(_ context.Context, _, windowText string) (Moni
 		default:
 		}
 	}
-	return MonitorResult{Flagged: flagged, Severity: s.severity, CostUSD: s.costUSD}, nil
+	return MonitorResult{Flagged: flagged, Severity: s.severity, CostUSD: s.costUSD, CostKnown: true, Launched: true}, nil
 }
 
 // seedTranscript writes n entries to path. If markerAt >= 0, that index gets an
@@ -105,15 +105,15 @@ func TestSupervisorBatching(t *testing.T) {
 		"run1",
 		sig,
 		fw,
-		[]MonitorDef{{File: "prompt-injection.md", Monitor: "prompt-injection", Dispatcher: stub}},
-		10.0, // high budget, won't degrade
+		[]MonitorDef{{Monitor: "prompt-injection", Dispatcher: stub}},
 		func(stepID string) string {
 			if stepID == "impl" {
 				return tPath
 			}
 			return ""
 		},
-		nil, // no notify in tests
+		nil,
+		SupervisorOptions{BudgetUSD: 10.0},
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -185,15 +185,15 @@ func TestSupervisorBudgetDegrade(t *testing.T) {
 		"run2",
 		sig,
 		fw,
-		[]MonitorDef{{File: "prompt-injection.md", Monitor: "prompt-injection", Dispatcher: stub}},
-		budget,
+		[]MonitorDef{{Monitor: "prompt-injection", Dispatcher: stub}},
 		func(stepID string) string {
 			if stepID == "step1" {
 				return tPath
 			}
 			return ""
 		},
-		nil, // no notify in tests
+		nil,
+		SupervisorOptions{BudgetUSD: budget},
 	)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -279,7 +279,7 @@ func TestSupervisorClosesSinkOnExit(t *testing.T) {
 		t.Fatalf("NewWriter: %v", err)
 	}
 
-	sup := NewSupervisor("run", make(chan StepSignal), fw, nil, 0, func(string) string { return "" }, nil)
+	sup := NewSupervisor("run", make(chan StepSignal), fw, nil, func(string) string { return "" }, nil, SupervisorOptions{})
 
 	done := make(chan struct{})
 	go func() { sup.Run(context.Background()); close(done) }()

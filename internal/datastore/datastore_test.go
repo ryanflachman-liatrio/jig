@@ -183,6 +183,16 @@ func TestTranscriptPath(t *testing.T) {
 	}
 }
 
+func TestSecurityMonitorStatePath(t *testing.T) {
+	if got := SecurityMonitorStatePath(""); got != "" {
+		t.Fatalf("persistence-off path = %q", got)
+	}
+	runDir := filepath.Join("some", "run")
+	if got, want := SecurityMonitorStatePath(runDir), filepath.Join(runDir, "security-monitor-state.json"); got != want {
+		t.Fatalf("path = %q, want %q", got, want)
+	}
+}
+
 func TestInputPath(t *testing.T) {
 	p := InputPath("/some/run/dir", "my-step")
 	want := filepath.Join("/some/run/dir", "steps", "my-step", "input.md")

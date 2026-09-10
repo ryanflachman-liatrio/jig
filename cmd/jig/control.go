@@ -94,13 +94,17 @@ func parseControlRecoveryAction(s string) error {
 	}
 }
 
-func headlessOptions(f controlFlags, mode headless.OutputMode, mgrRoot string) headless.Options {
+func headlessOptions(f controlFlags, mode headless.OutputMode, mgrRoot string) (headless.Options, error) {
+	manager, err := newManager(mgrRoot)
+	if err != nil {
+		return headless.Options{}, err
+	}
 	return headless.Options{
-		Manager: newManager(mgrRoot), Root: mgrRoot, Output: mode, Quiet: *f.quiet,
+		Manager: manager, Root: mgrRoot, Output: mode, Quiet: *f.quiet,
 		Timeout: *f.timeout, ApproveMerge: *f.approveMerge, DiscardMerge: *f.discardMerge,
 		OnRecovery: *f.onRecovery, OnConflict: *f.onConflict, CI: *f.ci,
 		Stdout: os.Stdout, Stderr: os.Stderr,
-	}
+	}, nil
 }
 
 func runResume(args []string) int {
@@ -126,7 +130,11 @@ func runResume(args []string) int {
 	}
 	ctx, signalCode, stop := controlSignalContext()
 	defer stop()
-	opts := headlessOptions(f, mode, *f.root)
+	opts, err := headlessOptions(f, mode, *f.root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return headless.ExitFailed
+	}
 	result := ops.ResumeRun(ctx, opts, fs.Args()[0])
 	if result.Err != nil && result.Envelope.RunID == "" {
 		fmt.Fprintf(os.Stderr, "error: %v\n", result.Err)
@@ -202,7 +210,11 @@ func runReset(args []string) int {
 
 	ctx, signalCode, stop := controlSignalContext()
 	defer stop()
-	opts := headlessOptions(f, mode, *f.root)
+	opts, err := headlessOptions(f, mode, *f.root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return headless.ExitFailed
+	}
 	_, result := ops.ApplyReset(ctx, opts, fs.Args()[0], *target)
 	if result.Err != nil && result.Envelope.RunID == "" {
 		fmt.Fprintf(os.Stderr, "error: %v\n", result.Err)

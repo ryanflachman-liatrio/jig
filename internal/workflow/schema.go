@@ -279,8 +279,8 @@ type SecurityConfig struct {
 	// the engine default. Must be >= 1 when explicitly set.
 	ConcurrencyCap int `toml:"concurrency_cap"`
 
-	// BatchSize and DebounceMs control how Tier-2 batches incoming transcript
-	// entries before dispatching a monitor agent. 0 = use engine defaults.
+	// BatchSize and DebounceMs control how Tier-2 batches transcript-advance
+	// signals before dispatching a monitor agent. 0 = use engine defaults.
 	BatchSize  int `toml:"batch_size"`
 	DebounceMs int `toml:"debounce_ms"`
 }

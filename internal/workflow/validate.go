@@ -1255,6 +1255,12 @@ func (v *validator) checkSecurityConfig() {
 	if sec.ConcurrencyCap < 0 {
 		v.errf("[defaults.security] concurrency_cap must be >= 1 when set, got %d", sec.ConcurrencyCap)
 	}
+	if sec.BatchSize < 0 {
+		v.errf("[defaults.security] batch_size must be >= 1 when set, got %d", sec.BatchSize)
+	}
+	if sec.DebounceMs < 0 {
+		v.errf("[defaults.security] debounce_ms must be >= 1 when set, got %d", sec.DebounceMs)
+	}
 	for i, host := range sec.OutboundAllowlist {
 		if !isValidHost(host) {
 			v.errf("[defaults.security] outbound_allowlist[%d] %q is not a valid hostname", i, host)
