@@ -85,7 +85,7 @@ plan-before-write.
 - [x] 1.9 Write `name_test.go` and `scaffold_test.go` table-driven cases: `TestValidateName` (empty, `../escape`, `a/b`, `.`, `Mixed-Case`, valid), `TestRegistry` (lookup hit, unknown name lists valid names), `TestPlan` (planned path set, `Exists` flags, gitignore decision both ways).
 - [x] 1.10 Run `gofmt -l -w internal/scaffold && go vet ./internal/scaffold && go test ./internal/scaffold` and capture the clean output as the task 1.0 proof artifact.
 
-### [ ] 2.0 `jig init` cold start — the default `minimal` scaffold, end to end
+### [~] 2.0 `jig init` cold start — the default `minimal` scaffold, end to end
 
 Wire the `init` subcommand into `cmd/jig`, write the plan to disk, append the
 `.gitignore` line, self-validate the emitted workflow through `workflow.Load`,
@@ -119,22 +119,22 @@ default.
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Add `Plan.Apply(force bool) (*Result, error)` to `scaffold.go`: create parent directories, write each planned file with `0o644`, apply the gitignore append, and return a `Result` recording created vs. overwritten paths in plan order. Collision handling itself lands in 3.0 — for now `Apply` assumes a clean target.
-- [ ] 2.2 On a mid-`Apply` write error, return the error together with the `Result` accumulated so far so the caller can report which paths already exist.
-- [ ] 2.3 Add `Verify(result *Result) error` that calls `workflow.Load(<written workflow path>)` — the full loader, not `Decode` with an empty `baseDir`, so skill and review resolution actually run — and wraps any error with the workflow path.
-- [ ] 2.4 Create `cmd/jig/init.go` with `runInit(args []string) int` using `flag.NewFlagSet("init", flag.ContinueOnError)` and `fs.SetOutput(os.Stderr)`. Define `--template` (default `minimal`), `--name`, `--dir` (default `.`), `--force`, `--dry-run`, `--list-templates`. No positional arguments, so no `reorderArgs` is needed.
-- [ ] 2.5 **(audit remediation)** Split `runInit` into a thin `runInit(args []string) int` that supplies `os.Stdout`/`os.Stderr`, and an inner `initMain(args []string, stdout, stderr io.Writer) int` holding all logic. Every subsequent print goes through the injected writers so output is assertable in tests rather than only observable in a transcript.
-- [ ] 2.6 Map outcomes to exit codes using `headless.ExitOK` and `headless.ExitUsage`: `0` success, `1` operational failure (write error, post-write validation failure, and — from 3.0 — collision), `2` usage (bad flag, invalid `--name`, unknown template).
-- [ ] 2.7 Print `created <path>` lines to stdout in plan order, then a next-step hint naming `jig validate <path>`, `jig run <path>`, and `jig doctor`. Send warnings and errors to stderr, matching the stream split documented in `docs/operations.md`.
-- [ ] 2.8 Add `case "init": os.Exit(runInit(os.Args[2:]))` to the `main.go` dispatch switch, and add `init` to the unknown-command usage line at `main.go:44`.
-- [ ] 2.9 Add the `init` line to `printHelp` in `cmd/jig/ops.go:272`, placed first in the command list since it is the entry point for a new user.
-- [ ] 2.10 Write `cmd/jig/init_test.go` `TestInit`: scaffold into `t.TempDir()` via `--dir`, assert exit code 0, assert the expected file set exists, assert `[workflow] name` matches `--name`, and assert the emitted workflow loads through `workflow.Load`.
-- [ ] 2.11 Add a `TestInit` row covering the post-write validation failure branch (inject an intentionally broken template through the package seam, not the CLI) asserting exit code 1 and that the loader error text is surfaced.
-- [ ] 2.12 **(audit remediation)** Add `TestInitRejectsUnsafeName`: drive `initMain` with `--name ../escape`, `--name a/b`, `--name .`, and `--name ""`, asserting exit code `2` for each **and** that the target directory contains no new files afterwards — covering the "without creating anything" half of the requirement.
-- [ ] 2.13 **(audit remediation)** Add `TestInitSuccessOutput`: assert the captured stdout contains one `created ` line per planned path in plan order and a next-step hint naming `jig validate`, `jig run`, and `jig doctor`; assert stderr is empty on the success path.
-- [ ] 2.14 **(audit remediation)** Add a test asserting `printHelp` output contains an `init` line, so the registration in 2.9 cannot be silently dropped.
-- [ ] 2.15 Add gitignore coverage: a case with no `.gitignore`, one with an unrelated `.gitignore`, and one already containing `.jig/` — asserting exactly one `.jig/` line results in each.
-- [ ] 2.16 Capture the cold-start proof artifacts: `jig init` in a fresh `git init` temp dir, `jig validate` printing `ok:`, `env -u ANTHROPIC_API_KEY jig run … --ci` exiting 0, and `jig --help` showing the `init` line.
+- [x] 2.1 Add `Plan.Apply(force bool) (*Result, error)` to `scaffold.go`: create parent directories, write each planned file with `0o644`, apply the gitignore append, and return a `Result` recording created vs. overwritten paths in plan order. Collision handling itself lands in 3.0 — for now `Apply` assumes a clean target.
+- [x] 2.2 On a mid-`Apply` write error, return the error together with the `Result` accumulated so far so the caller can report which paths already exist.
+- [x] 2.3 Add `Verify(result *Result) error` that calls `workflow.Load(<written workflow path>)` — the full loader, not `Decode` with an empty `baseDir`, so skill and review resolution actually run — and wraps any error with the workflow path.
+- [x] 2.4 Create `cmd/jig/init.go` with `runInit(args []string) int` using `flag.NewFlagSet("init", flag.ContinueOnError)` and `fs.SetOutput(os.Stderr)`. Define `--template` (default `minimal`), `--name`, `--dir` (default `.`), `--force`, `--dry-run`, `--list-templates`. No positional arguments, so no `reorderArgs` is needed.
+- [x] 2.5 **(audit remediation)** Split `runInit` into a thin `runInit(args []string) int` that supplies `os.Stdout`/`os.Stderr`, and an inner `initMain(args []string, stdout, stderr io.Writer) int` holding all logic. Every subsequent print goes through the injected writers so output is assertable in tests rather than only observable in a transcript.
+- [x] 2.6 Map outcomes to exit codes using `headless.ExitOK` and `headless.ExitUsage`: `0` success, `1` operational failure (write error, post-write validation failure, and — from 3.0 — collision), `2` usage (bad flag, invalid `--name`, unknown template).
+- [x] 2.7 Print `created <path>` lines to stdout in plan order, then a next-step hint naming `jig validate <path>`, `jig run <path>`, and `jig doctor`. Send warnings and errors to stderr, matching the stream split documented in `docs/operations.md`.
+- [x] 2.8 Add `case "init": os.Exit(runInit(os.Args[2:]))` to the `main.go` dispatch switch, and add `init` to the unknown-command usage line at `main.go:44`.
+- [x] 2.9 Add the `init` line to `printHelp` in `cmd/jig/ops.go:272`, placed first in the command list since it is the entry point for a new user.
+- [x] 2.10 Write `cmd/jig/init_test.go` `TestInit`: scaffold into `t.TempDir()` via `--dir`, assert exit code 0, assert the expected file set exists, assert `[workflow] name` matches `--name`, and assert the emitted workflow loads through `workflow.Load`.
+- [x] 2.11 Add a `TestInit` row covering the post-write validation failure branch (inject an intentionally broken template through the package seam, not the CLI) asserting exit code 1 and that the loader error text is surfaced.
+- [x] 2.12 **(audit remediation)** Add `TestInitRejectsUnsafeName`: drive `initMain` with `--name ../escape`, `--name a/b`, `--name .`, and `--name ""`, asserting exit code `2` for each **and** that the target directory contains no new files afterwards — covering the "without creating anything" half of the requirement.
+- [x] 2.13 **(audit remediation)** Add `TestInitSuccessOutput`: assert the captured stdout contains one `created ` line per planned path in plan order and a next-step hint naming `jig validate`, `jig run`, and `jig doctor`; assert stderr is empty on the success path.
+- [x] 2.14 **(audit remediation)** Add a test asserting `printHelp` output contains an `init` line, so the registration in 2.9 cannot be silently dropped.
+- [x] 2.15 Add gitignore coverage: a case with no `.gitignore`, one with an unrelated `.gitignore`, and one already containing `.jig/` — asserting exactly one `.jig/` line results in each.
+- [x] 2.16 Capture the cold-start proof artifacts: `jig init` in a fresh `git init` temp dir, `jig validate` printing `ok:`, `env -u ANTHROPIC_API_KEY jig run … --ci` exiting 0, and `jig --help` showing the `init` line.
 
 ### [ ] 3.0 Collision safety — `--dry-run`, fail-closed refusal, `--force`
 

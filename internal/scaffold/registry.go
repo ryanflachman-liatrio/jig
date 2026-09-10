@@ -1,9 +1,14 @@
 package scaffold
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
+
+// ErrUnknownTemplate identifies template selections that a CLI should report
+// as usage.
+var ErrUnknownTemplate = errors.New("unknown scaffold template")
 
 // Template describes one embedded scaffold. Adding a scaffold should require
 // only its assets and one registry entry, not changes to planning or writing.
@@ -34,7 +39,7 @@ func Lookup(name string) (Template, error) {
 	for i, candidate := range registry {
 		names[i] = candidate.Name
 	}
-	return Template{}, fmt.Errorf("unknown template %q (valid templates: %s)", name, strings.Join(names, ", "))
+	return Template{}, fmt.Errorf("%w %q (valid templates: %s)", ErrUnknownTemplate, name, strings.Join(names, ", "))
 }
 
 // All returns every scaffold template in display order.

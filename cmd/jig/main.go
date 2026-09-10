@@ -20,6 +20,8 @@ func main() {
 	// Subcommands run and exit before the TUI takes over the terminal.
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "init":
+			os.Exit(runInit(os.Args[2:]))
 		case "validate":
 			os.Exit(runValidate(os.Args[2:]))
 		case "prune":
@@ -41,7 +43,7 @@ func main() {
 			return
 		default:
 			fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
-			fmt.Fprintln(os.Stderr, "usage: jig <validate|run|status|logs|doctor|resume|reset|prune>")
+			fmt.Fprintln(os.Stderr, "usage: jig <init|validate|run|status|logs|doctor|resume|reset|prune>")
 			os.Exit(2)
 		}
 	}

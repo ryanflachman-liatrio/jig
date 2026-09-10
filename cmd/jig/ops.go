@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -270,9 +271,14 @@ func reorderArgs(args []string, takesValue map[string]bool, maxPositionals int) 
 }
 
 func printHelp() {
-	fmt.Fprintln(os.Stdout, `usage: jig <command> [arguments]
+	printHelpTo(os.Stdout)
+}
+
+func printHelpTo(w io.Writer) {
+	fmt.Fprintln(w, `usage: jig <command> [arguments]
 
 Commands:
+  init                      scaffold a valid workflow
   validate WORKFLOW.toml    validate a workflow
   run WORKFLOW.toml         run a workflow headlessly
   status [RUN_ID]           list or inspect persisted runs

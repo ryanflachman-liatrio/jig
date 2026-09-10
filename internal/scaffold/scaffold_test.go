@@ -133,6 +133,88 @@ func TestAppendJigIgnore(t *testing.T) {
 	}
 }
 
+func TestApply(t *testing.T) {
+	t.Run("writes the complete plan and verifies it", func(t *testing.T) {
+		target := filepath.Join(t.TempDir(), "demo")
+		plan, err := Plan(Options{Dir: target, Name: "demo"})
+		if err != nil {
+			t.Fatalf("Plan: %v", err)
+		}
+
+		result, err := plan.Apply(false)
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+		if len(result.Files) != len(plan.Files) {
+			t.Fatalf("written files = %d, want %d", len(result.Files), len(plan.Files))
+		}
+		for i, written := range result.Files {
+			if written.Path != plan.Files[i].Path || written.Overwritten {
+				t.Fatalf("written file %d = %#v, want created %s", i, written, plan.Files[i].Path)
+			}
+			info, err := os.Stat(written.Path)
+			if err != nil {
+				t.Fatalf("stat %s: %v", written.Path, err)
+			}
+			if got := info.Mode().Perm(); got != 0o644 {
+				t.Fatalf("mode for %s = %o, want 644", written.Path, got)
+			}
+		}
+		if err := Verify(result); err != nil {
+			t.Fatalf("Verify: %v", err)
+		}
+	})
+
+	t.Run("returns completed writes with a later error", func(t *testing.T) {
+		target := t.TempDir()
+		first := filepath.Join(target, "first.txt")
+		blocked := filepath.Join(target, "blocked")
+		if err := os.Mkdir(blocked, 0o755); err != nil {
+			t.Fatalf("Mkdir: %v", err)
+		}
+		plan := &WritePlan{
+			TargetDir:    target,
+			WorkflowPath: first,
+			Files: []PlannedFile{
+				{Path: first, Contents: []byte("complete\n")},
+				{Path: blocked, Contents: []byte("cannot replace a directory\n"), Exists: true},
+			},
+		}
+
+		result, err := plan.Apply(true)
+		if err == nil {
+			t.Fatal("Apply unexpectedly succeeded")
+		}
+		if len(result.Files) != 1 || result.Files[0].Path != first {
+			t.Fatalf("partial result = %#v, want first completed path", result)
+		}
+		if _, err := os.Stat(first); err != nil {
+			t.Fatalf("completed file was not written: %v", err)
+		}
+	})
+}
+
+func TestVerifyReportsWorkflowPath(t *testing.T) {
+	target := t.TempDir()
+	workflowPath := filepath.Join(target, ".agents", "jig", "broken.toml")
+	plan := &WritePlan{
+		TargetDir:    target,
+		WorkflowPath: workflowPath,
+		Files: []PlannedFile{{
+			Path:     workflowPath,
+			Contents: []byte("[workflow]\nname ="),
+		}},
+	}
+	result, err := plan.Apply(false)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	err = Verify(result)
+	if err == nil || !strings.Contains(err.Error(), workflowPath) {
+		t.Fatalf("Verify error = %v, want workflow path", err)
+	}
+}
+
 func plannedPaths(files []PlannedFile) []string {
 	paths := make([]string, len(files))
 	for i, file := range files {

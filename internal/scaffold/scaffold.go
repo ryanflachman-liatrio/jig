@@ -7,6 +7,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"jig/internal/workflow"
 )
 
 // Options selects the target and embedded template for a scaffold plan.
@@ -34,6 +36,20 @@ type WritePlan struct {
 	Template     Template
 	WorkflowPath string
 	Files        []PlannedFile
+}
+
+// WrittenFile records one completed write and whether it replaced an existing
+// non-append target.
+type WrittenFile struct {
+	Path        string
+	Overwritten bool
+}
+
+// Result records completed writes in plan order. It is returned even when a
+// later write fails so callers can report partial progress.
+type Result struct {
+	WorkflowPath string
+	Files        []WrittenFile
 }
 
 // Plan renders a complete scaffold into memory without modifying the target.
@@ -138,6 +154,68 @@ func ensureInside(root, candidate string) error {
 	}
 	if relative == ".." || filepath.IsAbs(relative) || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("planned path %s escapes target directory %s", candidate, root)
+	}
+	return nil
+}
+
+// Apply writes every planned file in order. Collision reporting is owned by
+// the caller; this method still fails closed if a non-append target exists and
+// force is false.
+func (plan *WritePlan) Apply(force bool) (*Result, error) {
+	result := &Result{WorkflowPath: plan.WorkflowPath}
+	for _, file := range plan.Files {
+		if err := ensureInside(plan.TargetDir, file.Path); err != nil {
+			return result, err
+		}
+		if file.Exists && !file.Append && !force {
+			return result, fmt.Errorf("refusing to overwrite %s without force", file.Path)
+		}
+		if err := os.MkdirAll(filepath.Dir(file.Path), 0o755); err != nil {
+			return result, fmt.Errorf("create parent directory for %s: %w", file.Path, err)
+		}
+		if err := writePlannedFile(file, force); err != nil {
+			return result, err
+		}
+		result.Files = append(result.Files, WrittenFile{
+			Path:        file.Path,
+			Overwritten: file.Exists && !file.Append,
+		})
+	}
+	return result, nil
+}
+
+func writePlannedFile(file PlannedFile, force bool) error {
+	flags := os.O_WRONLY | os.O_CREATE
+	if file.Append {
+		flags |= os.O_APPEND
+	} else if force {
+		flags |= os.O_TRUNC
+	} else {
+		flags |= os.O_EXCL
+	}
+
+	handle, err := os.OpenFile(file.Path, flags, 0o644)
+	if err != nil {
+		return fmt.Errorf("write %s: %w", file.Path, err)
+	}
+	if _, err := handle.Write(file.Contents); err != nil {
+		_ = handle.Close()
+		return fmt.Errorf("write %s: %w", file.Path, err)
+	}
+	if err := handle.Close(); err != nil {
+		return fmt.Errorf("write %s: %w", file.Path, err)
+	}
+	return nil
+}
+
+// Verify loads the emitted workflow through the same full validation path used
+// by `jig validate`.
+func Verify(result *Result) error {
+	if result == nil || result.WorkflowPath == "" {
+		return fmt.Errorf("verify scaffold: workflow path is empty")
+	}
+	if _, err := workflow.Load(result.WorkflowPath); err != nil {
+		return fmt.Errorf("verify scaffold workflow %s: %w", result.WorkflowPath, err)
 	}
 	return nil
 }
