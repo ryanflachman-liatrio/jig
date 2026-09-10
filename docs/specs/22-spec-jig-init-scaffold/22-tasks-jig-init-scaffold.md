@@ -184,7 +184,7 @@ write-boundary invariants, partial-failure reporting.
 - [x] 3.11 Add a test asserting `init` never deletes: pre-create an unrelated file in `.agents/jig/` and confirm it survives a `--force` run.
 - [x] 3.12 Capture the collision proof artifacts, including `git status --porcelain` printing nothing after `--dry-run`, and `echo $?` for each of the three exit-code claims.
 
-### [ ] 4.0 The `starter` template — agent step, review gate, and emitted skill stubs
+### [x] 4.0 The `starter` template — agent step, review gate, and emitted skill stubs
 
 Add the second registry entry and prove the registry is a data-only extension
 point. `starter` carries an `agent` step, a `review` step with a bounded
@@ -220,15 +220,15 @@ skill-stub path derivation, `SKILL.md` front-matter validity.
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Author `templates/starter/workflow.toml.tmpl`: an `agent` step referencing `../skills/<name>`, a `review` step with `output_type = { enum = [...] }` and a bounded `[[step.route]]` back-edge with `max_iterations`, and a deterministic `[step.validate]` gate. Validate it by hand with `jig validate` before wiring it up.
-- [ ] 4.2 Author the matching `templates/starter/skills/<name>/SKILL.md.tmpl` stub with front matter carrying a non-empty `name`, a `description`, and `disable-model-invocation: true` — matching `.agents/skills/plan/SKILL.md` — plus a clearly marked TODO body.
-- [ ] 4.3 Add the `starter` registry entry with its description and its skill references, verifying no change is needed to `Plan`, `Apply`, or `Collisions` — if any is needed, fix the design so the registry stays a data-only extension point.
-- [ ] 4.4 Confirm the skill-stub path derivation from 1.8 places `../skills/<name>` at `.agents/skills/<name>/SKILL.md`, and add an explicit assertion for that resolved path.
-- [ ] 4.5 Add `TestTemplatesValidate` in `internal/scaffold`: iterate `All()`, scaffold each into its own `t.TempDir()`, and load the result with `workflow.Load`, failing with the template name in the message. This is the guard for Success Metric 2.
-- [ ] 4.6 **(audit remediation)** Add `TestMinimalTemplateIsOffline`: scaffold `minimal`, load it with `workflow.Load`, and assert **no** step has `type = "agent"` and **no** step declares a `skill`. This is the automated guard for Goal 2 — without it, adding an agent step to `minimal` would still pass 4.5 while silently breaking the no-credential promise.
-- [ ] 4.7 Add a `cmd/jig` test row for `--template nope` asserting exit code 2 and that the error text lists both valid names.
-- [ ] 4.8 Add a test asserting each emitted `SKILL.md` parses: load the scaffolded `starter` workflow and confirm the agent step's resolved prompt is non-empty, proving `parseSkillFile` accepted the stub front matter.
-- [ ] 4.9 Capture the task 4.0 proof artifacts: `--list-templates` output, `--template starter` path listing plus a passing `jig validate`, and the `--template nope` exit-2 capture.
+- [x] 4.1 Author `templates/starter/workflow.toml.tmpl`: an `agent` step referencing `../skills/<name>`, a `review` step with `output_type = { enum = [...] }` and a bounded `[[step.route]]` back-edge with `max_iterations`, and a deterministic `[step.validate]` gate. Validate it by hand with `jig validate` before wiring it up.
+- [x] 4.2 Author the matching `templates/starter/skills/<name>/SKILL.md.tmpl` stub with front matter carrying a non-empty `name`, a `description`, and `disable-model-invocation: true` — matching `.agents/skills/plan/SKILL.md` — plus a clearly marked TODO body.
+- [x] 4.3 Add the `starter` registry entry with its description and its skill references, verifying no change is needed to `Plan`, `Apply`, or `Collisions` — if any is needed, fix the design so the registry stays a data-only extension point.
+- [x] 4.4 Confirm the skill-stub path derivation from 1.8 places `../skills/<name>` at `.agents/skills/<name>/SKILL.md`, and add an explicit assertion for that resolved path.
+- [x] 4.5 Add `TestTemplatesValidate` in `internal/scaffold`: iterate `All()`, scaffold each into its own `t.TempDir()`, and load the result with `workflow.Load`, failing with the template name in the message. This is the guard for Success Metric 2.
+- [x] 4.6 **(audit remediation)** Add `TestMinimalTemplateIsOffline`: scaffold `minimal`, load it with `workflow.Load`, and assert **no** step has `type = "agent"` and **no** step declares a `skill`. This is the automated guard for Goal 2 — without it, adding an agent step to `minimal` would still pass 4.5 while silently breaking the no-credential promise.
+- [x] 4.7 Add a `cmd/jig` test row for `--template nope` asserting exit code 2 and that the error text lists both valid names.
+- [x] 4.8 Add a test asserting each emitted `SKILL.md` parses: load the scaffolded `starter` workflow and confirm the agent step's resolved prompt is non-empty, proving `parseSkillFile` accepted the stub front matter.
+- [x] 4.9 Capture the task 4.0 proof artifacts: `--list-templates` output, `--template starter` path listing plus a passing `jig validate`, and the `--template nope` exit-2 capture.
 
 ### [ ] 5.0 Documented contract and backlog closure
 

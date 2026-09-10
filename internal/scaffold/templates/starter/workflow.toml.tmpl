@@ -1,0 +1,29 @@
+[workflow]
+name        = "{{ .Name }}"
+version     = "1"
+description = "A starter jig workflow with an agent and review loop."
+
+[[step]]
+id       = "draft"
+type     = "agent"
+skill    = "../skills/draft"
+isolation = "none"
+
+[[step]]
+id          = "review"
+type        = "review"
+depends_on  = ["draft"]
+output_type = { enum = ["approve", "revise"] }
+
+  [step.validate]
+  command = "test -f .agents/jig/{{ .Name }}.toml"
+
+[[step.route]]
+when           = "review == 'revise'"
+goto           = "draft"
+max_iterations = 3
+feedback       = "@review"
+
+[[step.review]]
+source = "@draft"
+label  = "Draft"

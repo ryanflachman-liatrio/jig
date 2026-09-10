@@ -238,12 +238,90 @@ func TestVerifyReportsWorkflowPath(t *testing.T) {
 	}
 }
 
+func TestTemplatesValidate(t *testing.T) {
+	for _, template := range All() {
+		t.Run(template.Name, func(t *testing.T) {
+			target := t.TempDir()
+			plan, err := Plan(Options{Dir: target, Name: "demo", Template: template.Name})
+			if err != nil {
+				t.Fatalf("Plan(%s): %v", template.Name, err)
+			}
+			result, err := plan.Apply(false)
+			if err != nil {
+				t.Fatalf("Apply(%s): %v", template.Name, err)
+			}
+			if err := Verify(result); err != nil {
+				t.Fatalf("Verify(%s): %v", template.Name, err)
+			}
+		})
+	}
+}
+
+func TestStarterSkillPathAndPrompt(t *testing.T) {
+	target := t.TempDir()
+	plan, err := Plan(Options{Dir: target, Name: "demo", Template: "starter"})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	wantSkillPath := filepath.Join(target, ".agents", "skills", "draft", "SKILL.md")
+	if got := plannedPaths(plan.Files); !containsPath(got, wantSkillPath) {
+		t.Fatalf("planned paths = %v, want skill path %s", got, wantSkillPath)
+	}
+	result, err := plan.Apply(false)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	wf, err := workflow.Load(result.WorkflowPath)
+	if err != nil {
+		t.Fatalf("workflow.Load: %v", err)
+	}
+	for _, step := range wf.Steps {
+		if step.Type == workflow.StepAgent {
+			if step.AgentPrompt() == "" {
+				t.Fatal("starter agent prompt is empty")
+			}
+			return
+		}
+	}
+	t.Fatal("starter workflow has no agent step")
+}
+
+func TestMinimalTemplateIsOffline(t *testing.T) {
+	target := t.TempDir()
+	plan, err := Plan(Options{Dir: target, Name: "demo", Template: "minimal"})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	result, err := plan.Apply(false)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	wf, err := workflow.Load(result.WorkflowPath)
+	if err != nil {
+		t.Fatalf("workflow.Load: %v", err)
+	}
+	for _, step := range wf.Steps {
+		if step.Type == workflow.StepAgent || step.Skill != "" {
+			t.Fatalf("minimal step = %#v, want no agent or skill", step)
+		}
+	}
+}
+
 func plannedPaths(files []PlannedFile) []string {
 	paths := make([]string, len(files))
 	for i, file := range files {
 		paths[i] = file.Path
 	}
 	return paths
+}
+
+func containsPath(paths []string, want string) bool {
+	for _, path := range paths {
+		if path == want {
+			return true
+		}
+	}
+	return false
 }
 
 type fileSnapshot struct {

@@ -21,14 +21,14 @@ func TestRegistry(t *testing.T) {
 		if err == nil {
 			t.Fatal("Lookup(missing) unexpectedly succeeded")
 		}
-		if !strings.Contains(err.Error(), "minimal") {
+		if !strings.Contains(err.Error(), "minimal") || !strings.Contains(err.Error(), "starter") {
 			t.Fatalf("Lookup(missing) error %q does not list valid templates", err)
 		}
 	})
 
 	t.Run("all is ordered and isolated", func(t *testing.T) {
 		all := All()
-		if len(all) != 1 || all[0].Name != "minimal" {
+		if len(all) != 2 || all[0].Name != "minimal" || all[1].Name != "starter" {
 			t.Fatalf("All() = %#v", all)
 		}
 		all[0].Name = "changed"

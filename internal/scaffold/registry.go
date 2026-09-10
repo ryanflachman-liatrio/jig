@@ -25,6 +25,12 @@ var registry = []Template{
 		Description: "A credential-free command and review workflow.",
 		AssetDir:    "templates/minimal",
 	},
+	{
+		Name:        "starter",
+		Description: "An agent draft workflow with a bounded review loop.",
+		AssetDir:    "templates/starter",
+		SkillRefs:   []string{"../skills/draft"},
+	},
 }
 
 // Lookup returns the named scaffold template.

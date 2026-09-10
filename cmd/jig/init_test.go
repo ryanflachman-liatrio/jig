@@ -290,3 +290,14 @@ func TestInitListTemplates(t *testing.T) {
 		t.Fatalf("list templates created target: stat error = %v", err)
 	}
 }
+
+func TestInitRejectsUnknownTemplate(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := initMain([]string{"--template", "nope"}, &stdout, &stderr)
+	if code != headless.ExitUsage {
+		t.Fatalf("initMain exit = %d, want %d", code, headless.ExitUsage)
+	}
+	if stdout.Len() != 0 || !strings.Contains(stderr.String(), "minimal") || !strings.Contains(stderr.String(), "starter") {
+		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+}
