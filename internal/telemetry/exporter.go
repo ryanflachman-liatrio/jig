@@ -396,6 +396,13 @@ func (e *EventExporter) onStepsReset(ctx context.Context, ev engine.StepsReset) 
 	))
 }
 
+// StepLabelsFor exposes stepLabelsFor for callers outside the package (e.g.
+// cmd/jig wiring MetricMux around the runner Mux). Semantics match the
+// private helper; see docs/observability.md for the label allow-list.
+func (e *EventExporter) StepLabelsFor(runID, stepID string) []attribute.KeyValue {
+	return e.stepLabelsFor(runID, stepID)
+}
+
 // stepLabelsFor returns the fixed step-scoped label set: workflow, step,
 // step_type, backend, transport, model. Every attribute is recorded even
 // when empty so downstream aggregation shapes are stable.

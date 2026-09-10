@@ -49,11 +49,15 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	mgr := newManager(".jig")
+	tel := setupTelemetry(ctx, ".jig")
+	defer tel.shutdown(context.Background())
+
+	mgr := newManager(".jig", tel)
+	tel.attach(ctx, mgr)
 
 	// Alt screen and the background canvas are declared on the View in v2 (see
 	// rootModel.View), not as program options here.
-	p := tea.NewProgram(tui.New(ctx, mgr))
+	p := tea.NewProgram(tui.NewWithHook(ctx, mgr, tel.registerRun, tel.mode()))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running program: %v\n", err)
 		os.Exit(1)

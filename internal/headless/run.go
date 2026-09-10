@@ -40,6 +40,9 @@ func Run(ctx context.Context, opts Options) Result {
 			Error: &ErrorInfo{Code: "start_error", Message: err.Error()},
 		}}
 	}
+	if opts.OnRunStart != nil {
+		opts.OnRunStart(run.ID, wf)
+	}
 	return supervise(ctx, opts, wf, run, live, ctrl, w)
 }
 

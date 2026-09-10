@@ -96,7 +96,7 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.handles[msg.runID] = msg.run
 		m.runs = m.runs.MarkLive(msg.runID)
-		m.monitor = monitor.New(msg.runID).WithPrefs(m.manager.Root())
+		m.monitor = monitor.New(msg.runID).WithPrefs(m.manager.Root()).WithTelemetryMode(m.telemetryMode)
 		m.monitor.RunDir = m.manager.RunDir(msg.runID)
 		m.monitor = m.monitor.WithJournal(msg.events)
 		m.monitor.SetRun(msg.run)
@@ -369,7 +369,7 @@ func (m rootModel) updateEngineEvent(msg monitor.EngineEventMsg) (tea.Model, tea
 // already reflected.
 func (m rootModel) openMonitor(runID string) (tea.Model, tea.Cmd) {
 	if m.monitor.RunID != runID {
-		m.monitor = monitor.New(runID).WithPrefs(m.manager.Root())
+		m.monitor = monitor.New(runID).WithPrefs(m.manager.Root()).WithTelemetryMode(m.telemetryMode)
 		// RunDir lets the monitor read per-step transcripts from disk. Set it
 		// before WithSnapshot so it preserves it.
 		m.monitor.RunDir = m.manager.RunDir(runID)
@@ -420,10 +420,13 @@ func (m rootModel) startRun(wf *workflow.Workflow) (tea.Model, tea.Cmd) {
 	if err != nil {
 		return m, nil
 	}
+	if m.startHook != nil {
+		m.startHook(run.ID, wf)
+	}
 	m.handles[run.ID] = run
 	m.runs = m.runs.WithWorkflow(wf)
 	// Navigate straight to the monitor so prompts and review gates are visible immediately.
-	m.monitor = monitor.New(run.ID).WithPrefs(m.manager.Root())
+	m.monitor = monitor.New(run.ID).WithPrefs(m.manager.Root()).WithTelemetryMode(m.telemetryMode)
 	m.monitor.RunDir = m.manager.RunDir(run.ID)
 	m.monitor.SetRun(run)
 	m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
