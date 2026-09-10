@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"jig/internal/datastore"
 	"jig/internal/interaction"
@@ -83,63 +82,6 @@ func loadWorkflowSnapshot(runDir string) (*workflow.Workflow, error) {
 	return workflow.DecodeLocked(snap.TOML, snap.BaseDir, snap.SourcePath, snap.ModuleSources)
 }
 
-func acquireRunLock(runDir string) (*os.File, error) {
-	if runDir == "" {
-		return nil, nil
-	}
-	f, err := os.OpenFile(datastore.SchedulerLockPath(runDir), os.O_CREATE|os.O_RDWR, 0o644)
-	if err != nil {
-		return nil, err
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = f.Close()
-		return nil, fmt.Errorf("run already has a live scheduler")
-	}
-	return f, nil
-}
-
-func releaseRunLock(f *os.File) {
-	if f == nil {
-		return
-	}
-	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-	_ = f.Close()
-}
-
-// RunLockState reports whether another process currently owns the scheduler
-// lock. A missing lock file is free; probing never creates it or keeps a lock.
-func RunLockState(runDir string) (bool, error) {
-	if runDir == "" {
-		return false, fmt.Errorf("engine: persistence required to inspect a run lock")
-	}
-	info, err := os.Stat(runDir)
-	if err != nil {
-		return false, fmt.Errorf("engine: inspect run directory: %w", err)
-	}
-	if !info.IsDir() {
-		return false, fmt.Errorf("engine: run path is not a directory")
-	}
-	path := datastore.SchedulerLockPath(runDir)
-	f, err := os.Open(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("engine: open scheduler lock: %w", err)
-	}
-	defer f.Close()
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		if err == syscall.EWOULDBLOCK || err == syscall.EAGAIN {
-			return true, nil
-		}
-		return false, fmt.Errorf("engine: probe scheduler lock: %w", err)
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_UN); err != nil {
-		return false, fmt.Errorf("engine: release scheduler lock probe: %w", err)
-	}
-	return false, nil
-}
-
 // LoadWorkflowSnapshot reads and verifies the immutable workflow captured at
 // run start. Historical commands must use this instead of current author TOML.
 func LoadWorkflowSnapshot(runDir string) (*workflow.Workflow, error) {
@@ -164,12 +106,12 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	if err != nil {
 		return nil, fmt.Errorf("engine: resolve run: %w", err)
 	}
-	lock, err := acquireRunLock(runDir)
+	lock, err := AcquireRunLease(runDir)
 	if err != nil {
 		return nil, err
 	}
 	fail := func(err error) (*Run, error) {
-		releaseRunLock(lock)
+		_ = lock.Close()
 		return nil, err
 	}
 
@@ -214,7 +156,7 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	onDone := func(snap RunSnapshot) {
 		run.finalSnap = snap
 		security.stop()
-		releaseRunLock(run.runLock)
+		_ = run.runLock.Close()
 		run.runLock = nil
 		close(run.done)
 	}
