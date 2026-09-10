@@ -85,7 +85,7 @@ plan-before-write.
 - [x] 1.9 Write `name_test.go` and `scaffold_test.go` table-driven cases: `TestValidateName` (empty, `../escape`, `a/b`, `.`, `Mixed-Case`, valid), `TestRegistry` (lookup hit, unknown name lists valid names), `TestPlan` (planned path set, `Exists` flags, gitignore decision both ways).
 - [x] 1.10 Run `gofmt -l -w internal/scaffold && go vet ./internal/scaffold && go test ./internal/scaffold` and capture the clean output as the task 1.0 proof artifact.
 
-### [~] 2.0 `jig init` cold start — the default `minimal` scaffold, end to end
+### [x] 2.0 `jig init` cold start — the default `minimal` scaffold, end to end
 
 Wire the `init` subcommand into `cmd/jig`, write the plan to disk, append the
 `.gitignore` line, self-validate the emitted workflow through `workflow.Load`,
