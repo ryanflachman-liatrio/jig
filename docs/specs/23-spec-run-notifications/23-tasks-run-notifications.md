@@ -120,7 +120,7 @@ operator-owned bindings on reopen.
 
 ## Tasks
 
-### [~] 1.0 Configure reusable notification policy and inspect local readiness
+### [x] 1.0 Configure reusable notification policy and inspect local readiness
 
 Add the strict root-workflow notification schema, project-local reusable
 profiles, presence-aware replacement/default resolution, operator-owned local
