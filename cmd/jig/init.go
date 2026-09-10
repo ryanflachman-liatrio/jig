@@ -34,11 +34,11 @@ func initMain(args []string, stdout, stderr io.Writer) int {
 		return headless.ExitUsage
 	}
 
-	// These flags are registered now so the CLI contract is discoverable; their
-	// read-only behavior lands with collision safety in the next parent task.
-	if *dryRun || *listTemplates {
-		fmt.Fprintln(stderr, "error: preview and template listing require collision safety support")
-		return headless.ExitUsage
+	if *listTemplates {
+		for _, template := range scaffold.All() {
+			fmt.Fprintf(stdout, "%s: %s\n", template.Name, template.Description)
+		}
+		return headless.ExitOK
 	}
 	if flagWasSet(fs, "name") {
 		if _, err := scaffold.ValidateName(*name); err != nil {
@@ -59,9 +59,21 @@ func initMain(args []string, stdout, stderr io.Writer) int {
 		}
 		return headless.ExitFailed
 	}
+	if *dryRun {
+		printPlanned(stdout, plan)
+		return headless.ExitOK
+	}
+
+	if collisions := plan.Collisions(); len(collisions) > 0 && !*force {
+		fmt.Fprintln(stderr, "error: scaffold files already exist; rerun with --force to overwrite:")
+		for _, collision := range collisions {
+			fmt.Fprintln(stderr, collision)
+		}
+		return headless.ExitFailed
+	}
 
 	result, err := plan.Apply(*force)
-	printCreated(stdout, result)
+	printWritten(stdout, result)
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v\n", err)
 		return headless.ExitFailed
@@ -77,11 +89,25 @@ func initMain(args []string, stdout, stderr io.Writer) int {
 	return headless.ExitOK
 }
 
-func printCreated(stdout io.Writer, result *scaffold.Result) {
+func printPlanned(stdout io.Writer, plan *scaffold.WritePlan) {
+	for _, file := range plan.Files {
+		verb := "would create"
+		if file.Exists && !file.Append {
+			verb = "would overwrite"
+		}
+		fmt.Fprintf(stdout, "%s %s\n", verb, file.Path)
+	}
+}
+
+func printWritten(stdout io.Writer, result *scaffold.Result) {
 	if result == nil {
 		return
 	}
 	for _, file := range result.Files {
-		fmt.Fprintf(stdout, "created %s\n", file.Path)
+		verb := "created"
+		if file.Overwritten {
+			verb = "overwrote"
+		}
+		fmt.Fprintf(stdout, "%s %s\n", verb, file.Path)
 	}
 }

@@ -81,6 +81,9 @@ func TestPlan(t *testing.T) {
 		if got, want := string(plan.Files[1].Contents), "\n.jig/\n"; got != want {
 			t.Fatalf("gitignore append = %q, want %q", got, want)
 		}
+		if got, want := plan.Collisions(), []string{workflowPath}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("Collisions() = %v, want %v", got, want)
+		}
 	})
 
 	t.Run("skips gitignore already covering jig", func(t *testing.T) {
@@ -108,6 +111,26 @@ func TestPlan(t *testing.T) {
 			t.Fatalf("Plan traversal error = %v", err)
 		}
 	})
+}
+
+func TestPlanNoWriteOnDryRun(t *testing.T) {
+	target := t.TempDir()
+	existing := filepath.Join(target, "existing.txt")
+	if err := os.WriteFile(existing, []byte("unchanged"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before := directorySnapshot(t, target)
+	plan, err := Plan(Options{Dir: target, Name: "demo"})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(plan.Files) == 0 {
+		t.Fatal("Plan returned no files")
+	}
+	after := directorySnapshot(t, target)
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("Plan modified target: before = %#v, after = %#v", before, after)
+	}
 }
 
 func TestAppendJigIgnore(t *testing.T) {
@@ -221,4 +244,38 @@ func plannedPaths(files []PlannedFile) []string {
 		paths[i] = file.Path
 	}
 	return paths
+}
+
+type fileSnapshot struct {
+	Mode     fs.FileMode
+	Size     int64
+	Modified int64
+}
+
+func directorySnapshot(t *testing.T, root string) map[string]fileSnapshot {
+	t.Helper()
+	snapshot := make(map[string]fileSnapshot)
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		snapshot[relative] = fileSnapshot{
+			Mode:     info.Mode(),
+			Size:     info.Size(),
+			Modified: info.ModTime().UnixNano(),
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("snapshot %s: %v", root, err)
+	}
+	return snapshot
 }

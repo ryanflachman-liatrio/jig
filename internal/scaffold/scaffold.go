@@ -38,6 +38,23 @@ type WritePlan struct {
 	Files        []PlannedFile
 }
 
+// Collisions returns non-append targets that already exist, in write order.
+// A .gitignore append is deliberately excluded because it is idempotent and
+// never replaces its existing contents.
+func (plan *WritePlan) Collisions() []string {
+	if plan == nil {
+		return nil
+	}
+
+	var collisions []string
+	for _, file := range plan.Files {
+		if file.Exists && !file.Append {
+			collisions = append(collisions, file.Path)
+		}
+	}
+	return collisions
+}
+
 // WrittenFile records one completed write and whether it replaced an existing
 // non-append target.
 type WrittenFile struct {

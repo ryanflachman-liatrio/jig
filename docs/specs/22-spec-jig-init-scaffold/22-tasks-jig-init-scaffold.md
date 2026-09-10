@@ -136,7 +136,7 @@ default.
 - [x] 2.15 Add gitignore coverage: a case with no `.gitignore`, one with an unrelated `.gitignore`, and one already containing `.jig/` — asserting exactly one `.jig/` line results in each.
 - [x] 2.16 Capture the cold-start proof artifacts: `jig init` in a fresh `git init` temp dir, `jig validate` printing `ok:`, `env -u ANTHROPIC_API_KEY jig run … --ci` exiting 0, and `jig --help` showing the `init` line.
 
-### [ ] 3.0 Collision safety — `--dry-run`, fail-closed refusal, `--force`
+### [x] 3.0 Collision safety — `--dry-run`, fail-closed refusal, `--force`
 
 Make `init` safe in a non-empty repository. Detect every collision against the
 plan from 1.0 before writing, refuse with exit 1 and a stderr collision list,
@@ -171,18 +171,18 @@ write-boundary invariants, partial-failure reporting.
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Add `Plan.Collisions() []string` returning every planned path whose `Exists` flag is set, in plan order. The `.gitignore` append is not a collision — it is an idempotent modification, not an overwrite.
-- [ ] 3.2 Change `initMain` to call `Collisions()` before `Apply`: when non-empty and `--force` is unset, print each colliding path to stderr with a one-line explanation naming `--force`, write nothing, and return exit code 1.
-- [ ] 3.3 Implement `--dry-run` entirely in `initMain` by printing `would create <path>` / `would overwrite <path>` lines from the plan and returning before `Apply` is ever called — so the read-only guarantee is structural, not a flag checked deep inside the writer.
-- [ ] 3.4 Make `--dry-run` dominant over `--force`: when both are set, preview (including `would overwrite` lines) and write nothing. Document the precedence in the flag help text.
-- [ ] 3.5 Make `--list-templates` print name + description for every `All()` entry to stdout and return `ExitOK` before any planning, so it works in a directory where planning would fail.
-- [ ] 3.6 Report overwritten paths distinctly from created paths under `--force` (`overwrote <path>` vs `created <path>`), driven by the `Result` from 2.1.
-- [ ] 3.7 Add `TestPlanNoWriteOnDryRun` in `internal/scaffold`: snapshot the temp dir's full file listing and mtimes, run the plan path used by dry-run, and assert the listing is byte-identical afterwards.
-- [ ] 3.8 Add `cmd/jig/init_test.go` `TestInitCollision` with rows for: second bare run (exit 1, nothing modified), `--force` (exit 0, contents replaced), `--dry-run` (exit 0, nothing modified), and `--dry-run --force` (exit 0, nothing modified).
-- [ ] 3.9 **(audit remediation)** Extend `TestInitCollision` to assert output content, not just exit codes: the collision case writes each colliding path to **stderr** and nothing to stdout; the dry-run case writes `would create`/`would overwrite` lines to **stdout** and creates nothing; the force case emits `overwrote` lines distinct from `created` lines.
-- [ ] 3.10 **(audit remediation)** Add `TestInitListTemplates`: assert `--list-templates` exits `0`, writes every registry name and its description to stdout, writes nothing to stderr, and creates no files — including when run in a directory where planning would fail.
-- [ ] 3.11 Add a test asserting `init` never deletes: pre-create an unrelated file in `.agents/jig/` and confirm it survives a `--force` run.
-- [ ] 3.12 Capture the collision proof artifacts, including `git status --porcelain` printing nothing after `--dry-run`, and `echo $?` for each of the three exit-code claims.
+- [x] 3.1 Add `Plan.Collisions() []string` returning every planned path whose `Exists` flag is set, in plan order. The `.gitignore` append is not a collision — it is an idempotent modification, not an overwrite.
+- [x] 3.2 Change `initMain` to call `Collisions()` before `Apply`: when non-empty and `--force` is unset, print each colliding path to stderr with a one-line explanation naming `--force`, write nothing, and return exit code 1.
+- [x] 3.3 Implement `--dry-run` entirely in `initMain` by printing `would create <path>` / `would overwrite <path>` lines from the plan and returning before `Apply` is ever called — so the read-only guarantee is structural, not a flag checked deep inside the writer.
+- [x] 3.4 Make `--dry-run` dominant over `--force`: when both are set, preview (including `would overwrite` lines) and write nothing. Document the precedence in the flag help text.
+- [x] 3.5 Make `--list-templates` print name + description for every `All()` entry to stdout and return `ExitOK` before any planning, so it works in a directory where planning would fail.
+- [x] 3.6 Report overwritten paths distinctly from created paths under `--force` (`overwrote <path>` vs `created <path>`), driven by the `Result` from 2.1.
+- [x] 3.7 Add `TestPlanNoWriteOnDryRun` in `internal/scaffold`: snapshot the temp dir's full file listing and mtimes, run the plan path used by dry-run, and assert the listing is byte-identical afterwards.
+- [x] 3.8 Add `cmd/jig/init_test.go` `TestInitCollision` with rows for: second bare run (exit 1, nothing modified), `--force` (exit 0, contents replaced), `--dry-run` (exit 0, nothing modified), and `--dry-run --force` (exit 0, nothing modified).
+- [x] 3.9 **(audit remediation)** Extend `TestInitCollision` to assert output content, not just exit codes: the collision case writes each colliding path to **stderr** and nothing to stdout; the dry-run case writes `would create`/`would overwrite` lines to **stdout** and creates nothing; the force case emits `overwrote` lines distinct from `created` lines.
+- [x] 3.10 **(audit remediation)** Add `TestInitListTemplates`: assert `--list-templates` exits `0`, writes every registry name and its description to stdout, writes nothing to stderr, and creates no files — including when run in a directory where planning would fail.
+- [x] 3.11 Add a test asserting `init` never deletes: pre-create an unrelated file in `.agents/jig/` and confirm it survives a `--force` run.
+- [x] 3.12 Capture the collision proof artifacts, including `git status --porcelain` printing nothing after `--dry-run`, and `echo $?` for each of the three exit-code claims.
 
 ### [ ] 4.0 The `starter` template — agent step, review gate, and emitted skill stubs
 
