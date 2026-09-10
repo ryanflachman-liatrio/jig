@@ -54,7 +54,7 @@ and comparison to high-rated TUIs (lazygit, k9s, yazi, btop) plus agent peers
 | ID | Goal | Kind | Notes |
 |----|------|------|-------|
 | A17 | Forge / PR automation (open PR, push, checks) | C | Local merge gate only. |
-| A18 | OTel / Prometheus / OTLP export | C | **Planned.** Optional opt-in exporter for run/step lifecycle, cost, tokens, duration, gate/review/security signals. Metrics + spans; OTLP push or Prometheus pull. Plan: [`a18-otel-prometheus-export.md`](a18-otel-prometheus-export.md). |
+| A18 | OTel / Prometheus / OTLP export | C | **Implemented.** Optional opt-in exporter for run/step lifecycle, cost, tokens, duration, gate/review/security signals. Metrics + spans; OTLP push, Prometheus scrape, and stdout — off by default, in-machine by default, redacted always. Plan: [`a18-otel-prometheus-export.md`](a18-otel-prometheus-export.md). Docs: [`docs/observability.md`](../observability.md). Posture: [ADR 0012](../adr/0012-observability-export.md). |
 | A19 | Remote / distributed workers | S | Single-machine only. |
 | A20 | `jig init` / workflow scaffold | C | Hand-authored TOML. |
 | A21 | Graph export (Mermaid / DOT / SVG) | C | In-TUI chart only. |
@@ -235,6 +235,7 @@ If only twenty goals get attention:
 - `docs/specs/21-spec-unfinished-park-reopen/` — reopen needs_input / stopped / integration / pre-crash recovery parks after process death (A3 residual)
 - `docs/plans/tui-lazygit-polish/` — chrome polish (phases 0–2 landed)
 - `docs/plans/a18-otel-prometheus-export.md` — OTel / Prometheus / OTLP export (A18)
+- `docs/observability.md` — A18 operator contract (env vars, metric/span catalog, security stance)
 - `docs/plan-codex-acp-concurrency-diagnostics.md`
 - `docs/plan-acp-structured-edit-telemetry.md`
-- ADRs 0002, 0003, 0008
+- ADRs 0002, 0003, 0008, 0012
