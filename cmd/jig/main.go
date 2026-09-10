@@ -22,6 +22,8 @@ func main() {
 		switch os.Args[1] {
 		case "init":
 			os.Exit(runInit(os.Args[2:]))
+		case "notifications":
+			os.Exit(runNotifications(os.Args[2:]))
 		case "validate":
 			os.Exit(runValidate(os.Args[2:]))
 		case "prune":
@@ -43,7 +45,7 @@ func main() {
 			return
 		default:
 			fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
-			fmt.Fprintln(os.Stderr, "usage: jig <init|validate|run|status|logs|doctor|resume|reset|prune>")
+			fmt.Fprintln(os.Stderr, "usage: jig <init|validate|run|status|logs|doctor|resume|reset|prune|notifications>")
 			os.Exit(2)
 		}
 	}

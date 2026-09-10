@@ -83,6 +83,9 @@ func (e *moduleExpansion) expand(wf *Workflow, baseDir, sourcePath string, stack
 		if err != nil {
 			return fmt.Errorf("step %q: module %q: %w", raw.ID, raw.Module, err)
 		}
+		if child.Notification != nil {
+			return fmt.Errorf("notification policy is only valid in the root workflow")
+		}
 		if child.Module == nil {
 			return fmt.Errorf("step %q: module %q is missing [module]", raw.ID, raw.Module)
 		}

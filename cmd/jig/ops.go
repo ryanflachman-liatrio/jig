@@ -279,6 +279,8 @@ func printHelpTo(w io.Writer) {
 
 Commands:
   init                      scaffold a valid workflow
+  notifications check WORKFLOW.toml [--root PATH]
+                            inspect notification readiness without sending
   validate WORKFLOW.toml    validate a workflow
   run WORKFLOW.toml         run a workflow headlessly
   status [RUN_ID]           list or inspect persisted runs

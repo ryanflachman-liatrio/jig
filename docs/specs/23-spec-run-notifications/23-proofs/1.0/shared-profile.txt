@@ -1,0 +1,21 @@
+$ ./jig validate examples/notifications-profiled.toml
+ok: "notifications-profiled" v1 — 1 step(s)
+exit: 0
+$ ./jig notifications check examples/notifications-profiled.toml --root <temporary-fixture>/missing
+notification policy events: attention_required, run_failed
+notifications enabled: false
+status: disabled
+destination desktop: type= enabled=false events=[attention_required] status=globally_disabled
+destination team-alerts: type= enabled=false events=[run_failed] status=globally_disabled
+Local readiness only; delivery is not verified and desktop visibility is not guaranteed. No notifications were sent.
+exit: 0
+$ ./jig validate examples/notifications-override.toml
+ok: "notifications-override" v1 — 1 step(s)
+exit: 0
+$ ./jig notifications check examples/notifications-override.toml --root <temporary-fixture>/missing
+notification policy events: attention_required, run_failed
+notifications enabled: false
+status: disabled
+destination ops: type= enabled=false events=[run_failed] status=globally_disabled
+Local readiness only; delivery is not verified and desktop visibility is not guaranteed. No notifications were sent.
+exit: 0
