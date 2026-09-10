@@ -230,7 +230,7 @@ skill-stub path derivation, `SKILL.md` front-matter validity.
 - [x] 4.8 Add a test asserting each emitted `SKILL.md` parses: load the scaffolded `starter` workflow and confirm the agent step's resolved prompt is non-empty, proving `parseSkillFile` accepted the stub front matter.
 - [x] 4.9 Capture the task 4.0 proof artifacts: `--list-templates` output, `--template starter` path listing plus a passing `jig validate`, and the `--template nope` exit-2 capture.
 
-### [ ] 5.0 Documented contract and backlog closure
+### [x] 5.0 Documented contract and backlog closure
 
 Make `init` part of jig's stated operator contract. Document flags, created
 paths, collision semantics, and exit codes in `docs/operations.md`; move the
@@ -263,12 +263,12 @@ no-credential statement, README ordering, A20 row marked Done.
 
 #### 5.0 Tasks
 
-- [ ] 5.1 Add a `## Scaffold a project` section to `docs/operations.md` placed before `## Inspect runs`, documenting every flag, the exact created-path list per template, collision semantics, and `--dry-run` dominance.
-- [ ] 5.2 State explicitly in that section that the default `minimal` scaffold requires no agent credential and spends no tokens.
-- [ ] 5.3 Add an `init` row to the exit-code table in `docs/operations.md` (`0` success, `1` operational failure including collision and post-write validation failure, `2` usage; no gate/timeout/signal columns apply).
-- [ ] 5.4 **(audit remediation)** Assert the documented exit codes against the constants in a test — `headless.ExitOK == 0`, `headless.ExitUsage == 2`, and the operational-failure literal `1` used by `initMain` — so the table in 5.3 has a single tested source of truth rather than a hand-copied set of numbers.
-- [ ] 5.5 Update the `README.md` install-and-run block so `jig init` is the first command shown, ahead of `jig validate`, with a one-line note that it works in an empty repository.
-- [ ] 5.6 Correct the stale `cmd/jig` row in the `docs/TESTING.md` coverage table: it currently reads "No tests" although `ops_test.go` and `run_test.go` exist; name those plus the new `init_test.go`. (Recorded in the audit as a deliberate, approved scope addition beyond the spec's FRs.)
-- [ ] 5.7 Mark the A20 row in `docs/plans/open-goals.md` **Done** with a link to this spec, matching the A1/A2/A3/A11 row format, and update the A20 entry in the section D ranked list the same way those rows were struck through.
-- [ ] 5.8 Run the full gate set and capture it: `go test ./... -count=1`, `gofmt -l .` (empty), `go vet ./...`, and the `for workflow in .agents/jig/*.toml` validate loop from `docs/TESTING.md`.
-- [ ] 5.9 Re-read the spec's Functional Requirements one unit at a time against the implementation and confirm each has a landed test or captured artifact; note any gap in the task file rather than silently closing it.
+- [x] 5.1 Add a `## Scaffold a project` section to `docs/operations.md` placed before `## Inspect runs`, documenting every flag, the exact created-path list per template, collision semantics, and `--dry-run` dominance.
+- [x] 5.2 State explicitly in that section that the default `minimal` scaffold requires no agent credential and spends no tokens.
+- [x] 5.3 Add an `init` row to the exit-code table in `docs/operations.md` (`0` success, `1` operational failure including collision and post-write validation failure, `2` usage; no gate/timeout/signal columns apply).
+- [x] 5.4 **(audit remediation)** Assert the documented exit codes against the constants in a test — `headless.ExitOK == 0`, `headless.ExitUsage == 2`, and the operational-failure literal `1` used by `initMain` — so the table in 5.3 has a single tested source of truth rather than a hand-copied set of numbers.
+- [x] 5.5 Update the `README.md` install-and-run block so `jig init` is the first command shown, ahead of `jig validate`, with a one-line note that it works in an empty repository.
+- [x] 5.6 Correct the stale `cmd/jig` row in the `docs/TESTING.md` coverage table: it currently reads "No tests" although `ops_test.go` and `run_test.go` exist; name those plus the new `init_test.go`. (Recorded in the audit as a deliberate, approved scope addition beyond the spec's FRs.)
+- [x] 5.7 Mark the A20 row in `docs/plans/open-goals.md` **Done** with a link to this spec, matching the A1/A2/A3/A11 row format, and update the A20 entry in the section D ranked list the same way those rows were struck through. (The ranked list has no A20 entry to update.)
+- [x] 5.8 Run the full gate set and capture it: `go test ./... -count=1`, `gofmt -l .` (empty), `go vet ./...`, and the `for workflow in .agents/jig/*.toml` validate loop from `docs/TESTING.md`.
+- [x] 5.9 Re-read the spec's Functional Requirements one unit at a time against the implementation and confirm each has a landed test or captured artifact; note any gap in the task file rather than silently closing it. All requirements map to Tasks 1–5 and their proof artifacts; no implementation gap found.

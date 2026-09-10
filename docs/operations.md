@@ -4,6 +4,34 @@
 the same `.jig/runs/<run-id>/` journal, captured workflow, scheduler lock, and
 step transcripts as the engine.
 
+## Scaffold a project
+
+```bash
+jig init
+jig init --template starter --name feature-review --dir ../project
+jig init --dry-run
+```
+
+`init` creates a workflow before any TUI or agent starts. The default
+`minimal` template writes `.agents/jig/<name>.toml` and, when needed, a single
+`.jig/` entry in the target's `.gitignore`. It contains only command and review
+steps, so it requires no agent credential and spends no tokens. The `starter`
+template additionally writes `.agents/skills/draft/SKILL.md`, which satisfies
+its agent step's skill reference.
+
+`--template NAME` selects `minimal` (the default) or `starter`; use
+`--list-templates` to print their descriptions without planning or writing.
+`--name NAME` sets the safe workflow identifier and filename, while `--dir
+PATH` selects the target directory. `--force` replaces scaffold workflow or
+skill files that already exist. Without it, `init` lists every collision on
+stderr, writes nothing, and exits 1. `--dry-run` prints `would create` or
+`would overwrite` lines and exits without modifying files; it takes precedence
+over `--force`.
+
+On success, stdout lists every created or overwritten path followed by `jig
+validate`, `jig run`, and `jig doctor` next steps. The emitted workflow is
+loaded through the normal validator before `init` reports success.
+
 ## Inspect runs
 
 ```bash
@@ -116,6 +144,7 @@ and errors use stderr.
 |---|---:|---:|---:|---:|---:|---:|
 | `status`, `logs`, `doctor` | 0 | 1 | 2 | — | — | logs follow: 130/143 |
 | `resume`, applied `reset` | 0 | 1 | 2 | 3 | 4 | 130/143 |
+| `init` | 0 | 1 | 2 | — | — | — |
 
 For interactive gates or a run rejected by unattended control, open bare
 `jig` and use the run monitor.

@@ -35,6 +35,7 @@ Requires Go 1.25 (see [`mise.toml`](mise.toml)).
 ```bash
 go build ./cmd/jig            # build ./jig
 
+jig init                                        # create a workflow in an empty repository
 go run ./cmd/jig                                  # launch the TUI
 go run ./cmd/jig validate .agents/jig/feature.toml   # validate a workflow
 ```

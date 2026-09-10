@@ -301,3 +301,26 @@ func TestInitRejectsUnknownTemplate(t *testing.T) {
 		t.Fatalf("stdout = %q, stderr = %q", stdout.String(), stderr.String())
 	}
 }
+
+func TestInitExitCodes(t *testing.T) {
+	if headless.ExitOK != 0 {
+		t.Fatalf("ExitOK = %d, want 0", headless.ExitOK)
+	}
+	if headless.ExitUsage != 2 {
+		t.Fatalf("ExitUsage = %d, want 2", headless.ExitUsage)
+	}
+	if got := initMain([]string{"--template", "nope"}, &bytes.Buffer{}, &bytes.Buffer{}); got != 2 {
+		t.Fatalf("unknown template exit = %d, want operational usage code 2", got)
+	}
+
+	target := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	if got := initMain([]string{"--dir", target, "--name", "demo"}, &stdout, &stderr); got != 0 {
+		t.Fatalf("successful init exit = %d, want 0", got)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if got := initMain([]string{"--dir", target, "--name", "demo"}, &stdout, &stderr); got != 1 {
+		t.Fatalf("collision exit = %d, want operational failure code 1", got)
+	}
+}

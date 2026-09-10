@@ -31,7 +31,7 @@ done
 |---------|-------|-------|
 | `internal/workflow` | **Tested** | `workflow_test.go` — the real coverage lives here: parsing, defaulting, and the full validation surface. |
 | `internal/tui` | No tests | Bubble Tea UI; exercised manually via `go run ./cmd/jig`. |
-| `cmd/jig` | No tests | Thin entry point; covered indirectly by `validate` against the examples. |
+| `cmd/jig` | **Tested** | `ops_test.go`, `run_test.go`, and `init_test.go` cover operations, headless execution, and scaffolding. |
 | `internal/engine`, `runner`, `step`, `manifest`, `datastore` | Not implemented | Empty placeholders — no code, no tests yet. |
 
 ## Conventions (follow the existing style)

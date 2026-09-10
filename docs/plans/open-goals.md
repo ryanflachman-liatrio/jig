@@ -56,7 +56,7 @@ and comparison to high-rated TUIs (lazygit, k9s, yazi, btop) plus agent peers
 | A17 | Forge / PR automation (open PR, push, checks) | C | Local merge gate only. |
 | A18 | OTel / Prometheus / OTLP export | C | Tokens/cost stay in TUI + `result.json`. |
 | A19 | Remote / distributed workers | S | Single-machine only. |
-| A20 | `jig init` / workflow scaffold | C | Hand-authored TOML. |
+| A20 | `jig init` / workflow scaffold | C | **Done** (Spec 22). [`jig init` scaffold specification](../specs/22-spec-jig-init-scaffold/22-spec-jig-init-scaffold.md). |
 | A21 | Graph export (Mermaid / DOT / SVG) | C | In-TUI chart only. |
 | A22 | Run share / anonymized export bundle | C | Local `.jig/runs` only. |
 | A23 | Multi-operator shared run store | C | Single local operator. |
