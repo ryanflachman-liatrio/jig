@@ -146,8 +146,8 @@ func TestBuildDiffPresentationHandlesPatchShapes(t *testing.T) {
 					t.Fatalf("files = %d, want 4", len(p.display.Files))
 				}
 				wantFiles := []struct {
-					name         string
-					start, end   int
+					name       string
+					start, end int
 				}{
 					{"renamed.txt", 1, 4},
 					{"copy.txt", 5, 8},

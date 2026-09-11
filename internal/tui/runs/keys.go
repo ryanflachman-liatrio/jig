@@ -3,14 +3,14 @@ package runs
 import keybind "charm.land/bubbles/v2/key"
 
 type runsKeys struct {
-	Up      keybind.Binding // matched
-	Down    keybind.Binding // matched
-	Open    keybind.Binding // matched
-	NewRun  keybind.Binding // matched
-	Resume  keybind.Binding // matched
-	Delete  keybind.Binding // matched
-	CopyID  keybind.Binding // matched (y: copy selected run ID)
-	Back    keybind.Binding // matched
+	Up     keybind.Binding // matched
+	Down   keybind.Binding // matched
+	Open   keybind.Binding // matched
+	NewRun keybind.Binding // matched
+	Resume keybind.Binding // matched
+	Delete keybind.Binding // matched
+	CopyID keybind.Binding // matched (y: copy selected run ID)
+	Back   keybind.Binding // matched
 }
 
 func defaultKeys() runsKeys {
