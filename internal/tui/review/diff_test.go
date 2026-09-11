@@ -126,9 +126,38 @@ func TestBuildDiffPresentationHandlesPatchShapes(t *testing.T) {
 				if len(p.hunks) != 0 {
 					t.Fatalf("hunks = %#v, want none", p.hunks)
 				}
-				for _, row := range p.rows {
-					if row.kind != diffRowMetadata || row.hasOld || row.hasNew || row.fileIndex != -1 {
+				// Header-only files (rename, copy, mode-only, binary) still
+				// carry FileIndex on every metadata row so a whole-file copy
+				// can slice the original patch content, but they have no code
+				// rows so hasOld/hasNew stay false.
+				wantOwners := []int{0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 3, 3, 3}
+				if len(p.rows) != len(wantOwners) {
+					t.Fatalf("rows = %d, want %d", len(p.rows), len(wantOwners))
+				}
+				for i, row := range p.rows {
+					if row.kind != diffRowMetadata || row.hasOld || row.hasNew {
 						t.Errorf("metadata row = %#v", row)
+					}
+					if row.fileIndex != wantOwners[i] {
+						t.Errorf("row %d file = %d, want %d", i+1, row.fileIndex, wantOwners[i])
+					}
+				}
+				if len(p.display.Files) != 4 {
+					t.Fatalf("files = %d, want 4", len(p.display.Files))
+				}
+				wantFiles := []struct {
+					name         string
+					start, end   int
+				}{
+					{"renamed.txt", 1, 4},
+					{"copy.txt", 5, 8},
+					{"script.sh", 9, 11},
+					{"image.png", 12, 14},
+				}
+				for i, want := range wantFiles {
+					got := p.display.Files[i]
+					if got.Name != want.name || got.StartPatchLine != want.start || got.EndPatchLine != want.end {
+						t.Errorf("file %d = %#v, want %+v", i, got, want)
 					}
 				}
 			},
