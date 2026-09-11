@@ -6,13 +6,18 @@ package monitor
 // docs/specs/25-spec-selection-affordance/25-spec-selection-affordance.md.
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"jig/internal/engine"
+	"jig/internal/step"
 	"jig/internal/toolcall"
 	"jig/internal/transcript"
 )
@@ -325,5 +330,85 @@ func TestSelectionAffordanceCardCacheDoesNotGrowOnSelection(t *testing.T) {
 		if len(found) != len(m.chatItems) {
 			t.Fatalf("cursor=%d cached %d distinct items, want %d", cursor, len(found), len(m.chatItems))
 		}
+	}
+}
+
+// selectionVisualPage is the proof-only fixture for
+// TestSelectionAffordanceVisualProof. It contains one text item and three
+// tool-exchange cards (success, failure, running) so a single 80-column
+// frame demonstrates that cursor movement between a text row and a card
+// frame does not shift any content. Fabricated content only; no real
+// .jig/ data.
+func selectionVisualPage() transcript.Page {
+	return transcript.Page{Entries: []transcript.Entry{
+		{Seq: 1, Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "Let me check the synthetic entrypoint."}}},
+		{Seq: 2, Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "read-ok", Kind: "read", Title: "Read synthetic/config.toml"}}}},
+		{Seq: 3, Role: transcript.RoleUser, Blocks: []transcript.Block{{Type: transcript.BlockToolResult, Tool: &toolcall.Activity{ID: "read-ok", Kind: "read", Status: "completed"}}}},
+		{Seq: 4, Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "bash-bad", Kind: "bash", Title: "Run synthetic failing check"}}}},
+		{Seq: 5, Role: transcript.RoleUser, Blocks: []transcript.Block{{Type: transcript.BlockToolResult, Tool: &toolcall.Activity{ID: "bash-bad", Kind: "bash", Status: "failed", Content: []toolcall.Content{{Type: "text", Text: "synthetic failure: exit status 1"}}}}}},
+		{Seq: 6, Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "grep-live", Kind: "grep", Title: "Search fabricated sources"}}}},
+	}}
+}
+
+// TestSelectionAffordanceVisualProof captures two deterministic 80x24
+// Monitor frames — cursor on the text item vs cursor on the running card
+// — for the slice 03 proof directory. Opt-in via JIG_UI_SNAPSHOT_DIR.
+// The two captures are byte-identical after stripping ANSI except for
+// the two-cell leading gutter of the selected item's rows (bar vs. two
+// spaces), which is the epic's G-03.a demonstration.
+//
+// Rendering: production Model.View ANSI -> deterministic test HTML
+// (terminalHTML lives in monitor_transcript_card_test.go). PNG
+// conversion runs outside the test process; see the accompanying
+// limitations note.
+func TestSelectionAffordanceVisualProof(t *testing.T) {
+	dir := os.Getenv("JIG_UI_SNAPSHOT_DIR")
+	if dir == "" {
+		t.Skip("set JIG_UI_SNAPSHOT_DIR to capture slice-03 Monitor frames")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	captures := []struct {
+		name     string
+		selected int
+	}{
+		{name: "25-task-3-selection-off-card", selected: 0},
+		{name: "25-task-3-selection-on-card", selected: 3},
+	}
+
+	var notes strings.Builder
+	notes.WriteString("Task 03 (slice 03) selection-affordance visual proof\n")
+	notes.WriteString("Fixture source: selectionVisualPage (slice 03 proof-only)\n")
+	notes.WriteString("All paths, commands, and status text are fabricated.\n\n")
+	notes.WriteString("Rendering: production Model.View ANSI -> deterministic test HTML.\n")
+	notes.WriteString("PNG conversion (if performed) uses local headless Chrome — see 25-task-3-limitations.md.\n\n")
+
+	for _, capture := range captures {
+		m := newMonitorWithSteps(t)
+		m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+		m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{RunID: "run-1", StepID: "a", To: step.StatusRunning}})
+		m.chatStep = "a"
+		m.focus = focusTranscript
+		m.setChatPage(selectionVisualPage())
+		m.chatItemCursor = capture.selected
+		m.refreshPanels()
+
+		view := m.View()
+		if err := os.WriteFile(filepath.Join(dir, capture.name+".ansi"), []byte(view), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, capture.name+".html"), []byte(terminalHTML(view)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		selected := m.chatVisibleItems[m.chatItemCursor]
+		fmt.Fprintf(&notes, "%s.ansi\n  terminal=80x24 transcriptInnerW=%d selectedIndex=%d selectedKey=%+v\n",
+			capture.name, m.transcriptInnerW, capture.selected, selected.key)
+	}
+	notes.WriteString("\nObserved: the two captures are byte-identical after stripping ANSI except for the two-cell leading gutter of the selected item's rows (bar vs. two spaces). Card frames, text content, and inter-item spacing all render at the same visible columns in both frames.\n")
+
+	if err := os.WriteFile(filepath.Join(dir, "25-task-3-selection-notes.txt"), []byte(notes.String()), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

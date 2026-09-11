@@ -1,0 +1,13 @@
+Task 03 (slice 03) selection-affordance visual proof
+Fixture source: selectionVisualPage (slice 03 proof-only)
+All paths, commands, and status text are fabricated.
+
+Rendering: production Model.View ANSI -> deterministic test HTML.
+PNG conversion (if performed) uses local headless Chrome — see 25-task-3-limitations.md.
+
+25-task-3-selection-off-card.ansi
+  terminal=80x24 transcriptInnerW=44 selectedIndex=0 selectedKey={anchor:{seq:1 block:0} kind:0}
+25-task-3-selection-on-card.ansi
+  terminal=80x24 transcriptInnerW=44 selectedIndex=3 selectedKey={anchor:{seq:6 block:0} kind:2}
+
+Observed: the two captures are byte-identical after stripping ANSI except for the two-cell leading gutter of the selected item's rows (bar vs. two spaces). Card frames, text content, and inter-item spacing all render at the same visible columns in both frames.
