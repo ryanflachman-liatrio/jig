@@ -135,10 +135,11 @@ type Workflow struct {
 	Notification       *NotificationConfig `toml:"notification"`
 	notificationPolicy NotificationPolicy
 
-	Meta     Meta     `toml:"workflow"`
-	Defaults Defaults `toml:"defaults"`
-	Steps    []Step   `toml:"step"`
-	Module   *Module  `toml:"module"`
+	Meta      Meta      `toml:"workflow"`
+	Defaults  Defaults  `toml:"defaults"`
+	Telemetry Telemetry `toml:"telemetry"`
+	Steps     []Step    `toml:"step"`
+	Module    *Module   `toml:"module"`
 
 	// index maps step id -> position in Steps, populated by applyDefaults so
 	// validation and later execution can resolve references in O(1).
@@ -219,9 +220,19 @@ func (wf *Workflow) ModuleSources() []ModuleSource {
 // at run start. It intentionally does not reload module files: resume uses this
 // locked graph even when the checkout has since changed.
 func RestoreExpanded(meta Meta, defaults Defaults, publicSteps, steps []Step, sources []ModuleSource) *Workflow {
+	return RestoreExpandedWithTelemetry(meta, defaults, Telemetry{}, publicSteps, steps, sources)
+}
+
+// RestoreExpandedWithTelemetry is [RestoreExpanded] with the workflow-scoped
+// [telemetry] policy carried in the snapshot. Callers that captured a
+// Telemetry block at run start use this variant so a resumed run keeps the
+// same exporter policy the operator authored, even if the on-disk TOML has
+// since drifted.
+func RestoreExpandedWithTelemetry(meta Meta, defaults Defaults, telemetry Telemetry, publicSteps, steps []Step, sources []ModuleSource) *Workflow {
 	wf := &Workflow{
 		Meta:          meta,
 		Defaults:      defaults,
+		Telemetry:     telemetry,
 		Steps:         cloneSteps(steps),
 		publicSteps:   cloneSteps(publicSteps),
 		moduleSources: append([]ModuleSource(nil), sources...),
@@ -257,6 +268,35 @@ type Meta struct {
 	Name        string `toml:"name"`
 	Version     string `toml:"version"`
 	Description string `toml:"description"`
+}
+
+// Telemetry is the top-level [telemetry] table (A18). It controls whether
+// the optional OpenTelemetry / Prometheus / OTLP exporter is enabled for
+// this workflow and how instruments are named. Endpoint URL, headers, and
+// exporter selection remain env-scoped (OTel-standard OTEL_* vars) or per-
+// operator (.jig/telemetry.json); this block is per-workflow policy only.
+//
+// The exporter is off by default: an empty [telemetry] table (or an
+// entirely missing one) yields Enabled == false, which produces a noop
+// telemetry.Provider at run start regardless of env configuration.
+type Telemetry struct {
+	// Enabled opts this workflow into the exporter. Requires that env or
+	// .jig/telemetry.json already selected an exporter target (Prometheus
+	// bind or OTLP endpoint); otherwise validate() rejects the workflow
+	// with an actionable message so the operator does not get silence.
+	Enabled bool `toml:"enabled"`
+	// MetricPrefix overrides the default "jig" prefix on every registered
+	// instrument. Must match [a-zA-Z][a-zA-Z0-9_]{0,31} so it is a legal
+	// Prometheus / OTel metric name prefix.
+	MetricPrefix string `toml:"metric_prefix"`
+	// ExportThinkingCounts opts into a per-turn assistant-thinking-delta
+	// counter. Content is never exported — count only. Default false because
+	// chain-of-thought volume can be operator-sensitive.
+	ExportThinkingCounts bool `toml:"export_thinking_counts"`
+	// ResourceAttributes are merged into the OTel resource for this
+	// workflow's runs. Keys must be legal OTel attribute keys (dotted,
+	// lowercase, snake-friendly).
+	ResourceAttributes map[string]string `toml:"resource_attributes"`
 }
 
 // SecurityConfig configures the two-tier agent security monitoring layer.

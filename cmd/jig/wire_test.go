@@ -4,7 +4,7 @@ import "testing"
 
 func TestNewManagerUsesPortableBuiltinRoster(t *testing.T) {
 	t.Chdir(t.TempDir())
-	mgr, err := newManager("")
+	mgr, err := newManager("", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

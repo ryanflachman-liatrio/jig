@@ -15,6 +15,7 @@ import (
 	"jig/internal/tui/runs"
 	"jig/internal/tui/selector"
 	"jig/internal/tui/shared"
+	"jig/internal/workflow"
 )
 
 // screen identifies which top-level surface is currently driving the UI.
@@ -83,6 +84,16 @@ type rootModel struct {
 	// directory until the scheduler goroutine has stopped writing to it).
 	pendingDeletions map[string]bool
 
+	// startHook is invoked (when non-nil) immediately after Manager.Start
+	// returns. cmd/jig uses it to notify the telemetry exporter of the run's
+	// workflow metadata; other callers pass nil.
+	startHook func(runID string, wf *workflow.Workflow)
+
+	// telemetryMode is the resolved telemetry exporter mode (off | prom |
+	// otlp | both) used to render an "otel:<mode>" badge in the monitor
+	// status line. Empty or "off" hides the badge.
+	telemetryMode string
+
 	// leaveConfirm asks before abandoning a dirty review compose buffer when
 	// the operator presses a leave-Monitor chord (0.4 / A6).
 	leaveConfirm bool
@@ -132,6 +143,22 @@ func (m rootModel) activeProvider() helpProvider {
 // New returns jig's root TUI model. mgr is the engine manager; it must be
 // non-nil. The theme is dark-only, so no terminal-background detection is needed.
 func New(ctx context.Context, mgr *engine.Manager) tea.Model {
+	return NewWithHook(ctx, mgr, nil)
+}
+
+// NewWithHook is [New] with an optional startHook invoked immediately after
+// Manager.Start returns successfully. cmd/jig uses it to register the run's
+// workflow metadata with the telemetry exporter so per-step metrics carry
+// step_type / backend / transport / model labels.
+//
+// telemetryMode, when non-empty and not "off", is rendered in the monitor
+// status line as an "otel:<mode>" badge so the operator can see at a glance
+// whether the exporter is publishing.
+func NewWithHook(ctx context.Context, mgr *engine.Manager, startHook func(runID string, wf *workflow.Workflow), telemetryMode ...string) tea.Model {
+	mode := ""
+	if len(telemetryMode) > 0 {
+		mode = telemetryMode[0]
+	}
 	live, ctrl := mgr.Subscribe()
 	return rootModel{
 		active:           screenHome,
@@ -144,6 +171,8 @@ func New(ctx context.Context, mgr *engine.Manager) tea.Model {
 		ctrlEvents:       ctrl,
 		handles:          make(map[string]*engine.Run),
 		pendingDeletions: make(map[string]bool),
+		startHook:        startHook,
+		telemetryMode:    mode,
 	}
 }
 

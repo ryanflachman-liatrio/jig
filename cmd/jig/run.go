@@ -107,11 +107,16 @@ func runRun(args []string) int {
 		}
 	}()
 
-	mgr, err := newManager(*root)
+	tel := setupTelemetry(ctx, *root)
+	defer tel.shutdown(context.Background())
+
+	mgr, err := newManager(*root, tel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return headless.ExitFailed
 	}
+	tel.attach(ctx, mgr)
+
 	result := headless.Run(ctx, headless.Options{
 		WorkflowPath: rest[0],
 		Manager:      mgr,
@@ -126,6 +131,7 @@ func runRun(args []string) int {
 		CI:           *ci,
 		Stdout:       os.Stdout,
 		Stderr:       os.Stderr,
+		OnRunStart:   tel.registerRun,
 	})
 
 	if result.ExitCode == headless.ExitInterrupted && gotSignal == syscall.SIGTERM {

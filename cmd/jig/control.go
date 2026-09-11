@@ -94,17 +94,20 @@ func parseControlRecoveryAction(s string) error {
 	}
 }
 
-func headlessOptions(f controlFlags, mode headless.OutputMode, mgrRoot string) (headless.Options, error) {
-	manager, err := newManager(mgrRoot)
+func headlessOptions(ctx context.Context, f controlFlags, mode headless.OutputMode, mgrRoot string) (headless.Options, *telemetryHandle, error) {
+	tel := setupTelemetry(ctx, mgrRoot)
+	mgr, err := newManager(mgrRoot, tel)
 	if err != nil {
-		return headless.Options{}, err
+		return headless.Options{}, tel, err
 	}
+	tel.attach(ctx, mgr)
 	return headless.Options{
-		Manager: manager, Root: mgrRoot, Output: mode, Quiet: *f.quiet,
+		Manager: mgr, Root: mgrRoot, Output: mode, Quiet: *f.quiet,
 		Timeout: *f.timeout, ApproveMerge: *f.approveMerge, DiscardMerge: *f.discardMerge,
 		OnRecovery: *f.onRecovery, OnConflict: *f.onConflict, CI: *f.ci,
 		Stdout: os.Stdout, Stderr: os.Stderr,
-	}, nil
+		OnRunStart: tel.registerRun,
+	}, tel, nil
 }
 
 func runResume(args []string) int {
@@ -130,7 +133,8 @@ func runResume(args []string) int {
 	}
 	ctx, signalCode, stop := controlSignalContext()
 	defer stop()
-	opts, err := headlessOptions(f, mode, *f.root)
+	opts, tel, err := headlessOptions(ctx, f, mode, *f.root)
+	defer tel.shutdown(context.Background())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return headless.ExitFailed
@@ -210,7 +214,8 @@ func runReset(args []string) int {
 
 	ctx, signalCode, stop := controlSignalContext()
 	defer stop()
-	opts, err := headlessOptions(f, mode, *f.root)
+	opts, tel, err := headlessOptions(ctx, f, mode, *f.root)
+	defer tel.shutdown(context.Background())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return headless.ExitFailed

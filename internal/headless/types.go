@@ -55,6 +55,12 @@ type Options struct {
 
 	Stdout io.Writer
 	Stderr io.Writer
+
+	// OnRunStart, when non-nil, is invoked immediately after Manager.Start
+	// returns successfully. cmd/jig uses it to notify the telemetry exporter
+	// of the run's workflow metadata (backend / transport / model per step)
+	// so subsequent StepStatus events carry those labels. Optional.
+	OnRunStart func(runID string, wf *workflow.Workflow)
 }
 
 // Recovery / conflict policy values (CLI + Policy).

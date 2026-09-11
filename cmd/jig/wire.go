@@ -8,19 +8,31 @@ import (
 	"jig/internal/engine"
 	"jig/internal/harness"
 	"jig/internal/runner"
+	"jig/internal/telemetry"
 	"jig/internal/workflow"
 )
 
 // newManager builds the production Manager used by both the TUI and
 // `jig run`. Keeping registration in one place prevents the two clients from
 // drifting on executor / harness / secret wiring.
-func newManager(root string) (*engine.Manager, error) {
+//
+// When a non-nil telemetryHandle is supplied, the runner Mux is wrapped in a
+// telemetry.MetricMux so every step opens a jig.step span and reports a
+// jig.step.duration histogram. The wrap is a zero-cost pass-through when the
+// handle carries a noop Provider, so callers can invoke this unconditionally.
+func newManager(root string, tel *telemetryHandle) (*engine.Manager, error) {
 	mux := runner.NewMux()
 	mux.Register(workflow.StepCommand, runner.NewCommandExecutor(""))
 	mux.Register(workflow.StepCheck, runner.NewCheckExecutor(""))
 	mux.Register(workflow.StepAgent, runner.NewAgentExecutor(harness.For))
 	mux.Register(workflow.StepReview, runner.NewFakeExecutor(nil, runner.FakeOutcome{}))
-	mgr := engine.NewManager(mux, root)
+
+	var exec engine.Executor = mux
+	if tel != nil && tel.Provider != nil {
+		exec = telemetry.NewMetricMux(mux, tel.Provider, tel.stepLabelsFor)
+	}
+
+	mgr := engine.NewManager(exec, root)
 	mgr.SetIntegrationResolver(runner.NewIntegrationResolver(harness.For))
 	mgr.SetSecretResolver(resolveNamedSecret)
 	monitors, err := runner.BuiltinMonitors()

@@ -433,6 +433,32 @@ optional streamed deltas). The scheduler cannot tell it from the real thing —
 that is the point: an engine test is a workflow TOML string + a scripted fake
 + an expected event sequence, run under `-race`.
 
+### `internal/telemetry` — event bus subscriber (A18)
+
+`internal/telemetry` is the observability seam. It attaches to
+`Manager.Subscribe()` as a read-only subscriber and translates the same events
+the TUI already consumes into OpenTelemetry metrics and spans. The engine and
+runner learn nothing about OTel — the seam lives entirely inside cmd/jig
+wiring:
+
+- `EventExporter` owns one drain goroutine per attach, reading live+ctrl and
+  emitting counters/histograms for run and step lifecycle, gate/review/security
+  events, fan-out expansions, and resets. When it cannot keep up it drops the
+  event and increments `jig.exporter.dropped` — the manager already advertises
+  drop-on-full for its live channel, so the exporter mirrors that contract
+  without applying backpressure.
+- `MetricMux` wraps `runner.Mux` in `cmd/jig/wire.go` so per-step spans and
+  duration histograms are recorded at executor boundaries. The wrap is
+  zero-cost when telemetry is off, so `newManager` invokes it unconditionally.
+- `TelemetryReporter` wraps `engine.Reporter` so `Reporter.ToolCall` and
+  `NetworkRequest` observations become counter increments and, when tracing
+  is on, child spans of the enclosing per-step span.
+
+Persistence-off remains valid: the exporter still initialises from env in a
+persistence-off engine test and skips only the measurements that would need a
+run directory. See [ADR 0012](adr/0012-observability-export.md) for the full
+posture and [`observability.md`](observability.md) for the operator contract.
+
 ### `internal/datastore` and `internal/manifest`
 
 - `datastore.RunDir(root, runID)` creates

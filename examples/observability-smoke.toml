@@ -1,0 +1,64 @@
+# Headless smoke fixture that exercises the A18 telemetry exporter.
+#
+# The workflow itself is deliberately tiny — one command step and one check
+# step — so the interesting signal is the metric surface, not the workflow.
+# Run with a Prometheus listener on a random loopback port:
+#
+#   JIG_TELEMETRY_MODE=prom \
+#     JIG_TELEMETRY_PROMETHEUS_ADDR=127.0.0.1:0 \
+#     go run ./cmd/jig run examples/observability-smoke.toml --ci
+#
+# The status line prints an "otel:prom" badge when running under the TUI. In
+# headless mode the exporter still installs; scrape the printed address to see
+# the jig.* metric families defined in docs/observability.md.
+#
+# For OTLP push, replace the JIG_TELEMETRY_* env vars with:
+#   OTEL_EXPORTER_OTLP_ENDPOINT + OTEL_EXPORTER_OTLP_PROTOCOL + JIG_TELEMETRY_MODE=otlp.
+# The workflow requires no further changes — A18 is purely an out-of-band
+# subscriber.
+
+[workflow]
+name        = "observability-smoke"
+version     = "1"
+description = "Deterministic smoke workflow that exercises A18 telemetry."
+
+[defaults]
+resource_limits = { checks = 1 }
+
+# Enable the exporter for this workflow. The env / .jig/telemetry.json layer
+# still has to select an exporter target: enabled = true on its own does not
+# spin up an exporter (see docs/observability.md).
+[telemetry]
+enabled       = true
+metric_prefix = "jig"
+resource_attributes = { deployment_environment = "smoke", workflow_owner = "jig" }
+
+[[step]]
+id          = "hello"
+type        = "command"
+output_type = "bool"
+run         = "true"
+
+[[step]]
+id             = "smoke_check"
+type           = "check"
+depends_on     = ["hello"]
+applies_when   = "hello"
+resource_class = "checks"
+output_type    = { enum = ["pass", "fail", "skip", "error"] }
+run = """
+mkdir -p .jig
+printf '{"schema_version":1,"outcome":"pass","findings":[{"id":"smoke","severity":"info","message":"ok"}]}' > .jig/smoke.findings.json
+"""
+
+  [step.findings]
+  schema_version = 1
+  file = ".jig/smoke.findings.json"
+  required_tools = ["mkdir", "printf"]
+
+# Same automatic remediation as headless-smoke.toml so a real failure cannot
+# loop forever in CI.
+[[step.route]]
+when           = "smoke_check != 'pass'"
+goto           = "hello"
+max_iterations = 1

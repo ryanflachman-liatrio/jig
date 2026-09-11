@@ -54,6 +54,7 @@ internal/
   datastore/        run-dir layout, path helpers, retention under .jig/ [DONE]
   ops/              status/log/doctor reports + resume/reset preflight  [DONE]
   headless/         shared start/resume supervision and gate policy      [DONE]
+  telemetry/        optional OTel/Prometheus/OTLP exporter (subscriber)  [DONE]
 .agents/jig/        executable workflows, scripts, and workflow templates
 .agents/skills/     reusable agent skills used by those workflows
 docs/               this file, TESTING.md, workflow-schema.md
@@ -294,6 +295,30 @@ the full algorithm rationale.
   the cherry-pick step is a no-op.
 - Reset is available only on an unfinished, quiescent run. A fully-settled run
   is locked — reopening a finished run to reset it is a deferred follow-up.
+
+## `internal/telemetry` — the observability seam
+
+Optional OpenTelemetry exporter. This is the only package that imports
+`go.opentelemetry.io/otel/...`; the engine, runner, and TUI stay OTel-free.
+
+- `EventExporter` attaches to `Manager.Subscribe()` and translates the live
+  event stream to OTel metrics (per-run/step counters and histograms, gate/
+  review/security counters, tool activity, exporter self-observability). It
+  never mutates engine state and never applies backpressure — a slow collector
+  drops events and increments a self-observability counter.
+- `MetricMux` wraps `runner.Mux` in `cmd/jig/wire.go` so per-step spans and
+  duration histograms are recorded at executor boundaries. Zero-cost pass-
+  through when telemetry is off, so callers wrap it unconditionally.
+- `TelemetryReporter` wraps `engine.Reporter` so per-tool observations
+  (`Reporter.ToolCall`, `NetworkRequest`) become counter increments and child
+  spans without touching the scheduler.
+- Configuration layers: OTel-standard `OTEL_*` env → `JIG_TELEMETRY_*` env →
+  `.jig/telemetry.json` → workflow `[telemetry]` block. Defaults leave the
+  exporter off; `OTEL_SDK_DISABLED=true` is the kill switch.
+
+Full posture is fixed by [ADR 0012](adr/0012-observability-export.md); the
+metric catalog, span catalog, and operator contract live in
+[`observability.md`](observability.md).
 
 ## Dependencies
 
