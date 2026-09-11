@@ -1,0 +1,8 @@
+=== RUN   TestDiagnosticsOverlayToggle
+--- PASS: TestDiagnosticsOverlayToggle (0.00s)
+=== RUN   TestDiagnosticsOverlayNilRenderer
+--- PASS: TestDiagnosticsOverlayNilRenderer (0.00s)
+=== RUN   TestDiagnosticsOverlayEmptySnapshot
+--- PASS: TestDiagnosticsOverlayEmptySnapshot (0.00s)
+PASS
+ok  	jig/internal/tui	0.027s
