@@ -701,11 +701,63 @@ func writeVerbatim(b *strings.Builder, text string) {
 	}
 }
 
+// isStructuralBlank reports whether a line's raw bytes contain only ASCII
+// whitespace. An ANSI escape byte (\x1b), a printable glyph, or any other
+// non-whitespace byte makes it false. This is the semantic inverse of the
+// predicate used inside stripBlankEdges (which strips SGR before testing):
+// a tinted padding row emitted by the shared card primitive contains
+// \x1b[48;2;...m bytes and therefore counts as content here, so slice 04
+// per-item edge trimming preserves it while a plain " " line does not.
+func isStructuralBlank(line string) bool {
+	for i := 0; i < len(line); i++ {
+		switch line[i] {
+		case ' ', '\t', '\r', '\v', '\f':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// trimStructuralBlankEdges drops leading and trailing structurally-blank
+// lines (see isStructuralBlank) and returns the surviving lines joined with
+// "\n". An entirely blank input returns "". The trailing newline is not
+// reintroduced; the caller decides its own line terminator. Used by
+// itemTranscriptBody so an item whose renderer emits edge whitespace does
+// not stack that whitespace on top of the inter-item separator, while
+// items that emit no visible content contribute an empty string the
+// caller can skip.
+func trimStructuralBlankEdges(s string) string {
+	if s == "" {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	start := 0
+	end := len(lines)
+	for start < end && isStructuralBlank(lines[start]) {
+		start++
+	}
+	for end > start && isStructuralBlank(lines[end-1]) {
+		end--
+	}
+	if start >= end {
+		return ""
+	}
+	return strings.Join(lines[start:end], "\n")
+}
+
 // stripBlankEdges drops leading and trailing lines that are blank when ANSI
 // escape sequences are removed, then appends a single trailing newline.
 // Glamour always emits a blank first line above a code block (its internal
 // top-margin row) and a trailing blank; this trims both so the content sits
 // flush in the panel without wasted screen rows.
+//
+// This is the SGR-aware sibling of trimStructuralBlankEdges: it treats a
+// row containing only styling bytes as blank (Glamour's top/bottom margins),
+// while trimStructuralBlankEdges preserves any row whose raw bytes contain
+// a non-whitespace character (tinted card padding). Do not unify the two —
+// their call sites depend on the semantic difference.
 func stripBlankEdges(s string) string {
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
 	start := 0
