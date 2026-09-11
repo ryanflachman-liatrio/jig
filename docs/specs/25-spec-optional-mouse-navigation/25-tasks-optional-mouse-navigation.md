@@ -71,7 +71,7 @@ through FR-04.
 - [x] 1.8 Expand the Home negative matrix for release, motion, secondary click, horizontal wheel, modifier-bearing click/wheel, row gaps, headers/filter/pagination, panel borders/titles, trailing coordinates outside content, and active workflow filtering; assert identical selection/focus/overlay state and nil action commands (FR-03, FR-04, FR-12, and FR-13).
 - [x] 1.9 Run the focused selector, Runs, and root Home mouse tests, then record a sanitized synthetic wide/narrow Home terminal capture at `artifacts/25-1-home-mouse-navigation.txt` showing pointer selection in both panels followed by existing keyboard opening (FR-01 through FR-04).
 
-### [~] 2.0 Add Monitor row selection and pointer-targeted transcript scrolling
+### [x] 2.0 Add Monitor row selection and pointer-targeted transcript scrolling
 
 Route supported mouse input only to the visible Monitor panel under the
 pointer. Steps clicks select ordinary steps, fan-out children, and output-file
@@ -102,7 +102,7 @@ non-targets. Covers FR-05 through FR-10.
 - [x] 2.9 Complete the Monitor routing matrix for Steps/Transcript focus crossed with pointer location, 120x35 wide and 60x24 narrow layouts, focused Gate behavior, hidden panels, blank content, security/status/input/gate/footer strips, panel borders/titles, and resize-before-next-event coordinates (FR-06, FR-07, FR-08, FR-10, FR-12, and FR-13).
 - [x] 2.10 Run the focused Monitor tests and record `artifacts/25-2-monitor-mouse-navigation.txt` from a long fabricated transcript and expanded Steps tree at both required sizes, including pointer movement followed by unchanged keyboard controls and no lifecycle actions (FR-05 through FR-10).
 
-### [ ] 3.0 Enable Detail wheel scrolling and enforce mouse input isolation
+### [~] 3.0 Enable Detail wheel scrolling and enforce mouse input isolation
 
 Allow only plain vertical wheel movement inside the rendered Detail content
 viewport, in list and chart modes, with a clamped three-line increment and no
@@ -122,15 +122,15 @@ through FR-14.
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Add failing `internal/tui/detail/detail_test.go` cases for unmodified wheel up/down inside list and chart content at top/middle/bottom, asserting an exact three-line clamped offset and unchanged mode/horizontal offset; add loading, empty, border/title/footer, outside, click, modifier, horizontal-wheel, and zero/tiny-dimension no-op cases (FR-11 and FR-13).
-- [ ] 3.2 Define Detail's viewport content rectangle from the same panel/footer/frame calculations used by `View` and `resize`, and update `detail.Model.Update` to accept only an eligible plain vertical wheel translated into a three-line viewport movement; consume all Detail clicks and unsupported mouse events without forwarding them to the viewport (FR-11 and FR-13).
-- [ ] 3.3 Add root-level exclusion tests covering global help, command palette, delete/leave confirmation, active workflow filtering, and the Detail overlay. For each state, place the pointer both inside and outside the visible overlay and assert no underlying Home/Monitor focus, selection, scroll, or action command changes; assert Detail's content wheel is the sole exception (FR-12 through FR-14).
-- [ ] 3.4 Update root mouse precedence in `internal/tui/root_update.go` so global help, palette, and confirmations consume mouse input before active-screen dispatch; route Home Detail events only to Detail; otherwise route supported mouse messages to Home or Monitor without changing the ordering or handling of resize, engine, clipboard, or navigation messages (FR-12 and FR-14).
-- [ ] 3.5 Add Monitor exclusion tests for helpchat, notification diagnostics/global help overlays as applicable, open review workspace, focused open Gate, transcript search, question/custom-answer input, prompt/recovery editors, and other active text capture. Assert a pending but closed/unfocused Gate still allows ordinary visible-panel navigation (FR-12).
-- [ ] 3.6 Centralize Monitor mouse eligibility ahead of generic non-key dispatch so excluded mouse input is consumed rather than delivered to helpchat, review, search, textarea, Gate, or a focus-selected viewport; preserve all non-mouse messages and the current keyboard focus/input paths (FR-12 and FR-14).
-- [ ] 3.7 Complete cross-surface malformed/unsupported-input tests for motion, release, secondary buttons, horizontal wheels, modifiers, negative coordinates, coordinates at or beyond terminal bounds, zero-sized regions, and stale pre-resize panel positions; assert no panic, mutation, command, or hidden-panel addressing (FR-13).
-- [ ] 3.8 Run focused Detail/root/Monitor exclusion tests plus the existing keyboard focus-cycle, filtering, help/palette, review-anchor/draft, Gate-input, and engine-event tests to prove mouse routing has not become a second scheduler or input owner (FR-14).
-- [ ] 3.9 Record `artifacts/25-3-detail-input-isolation.txt` with sanitized Detail list/chart wheel evidence, keyboard close, and unchanged underlying Home state, plus an overlay/text-capture pass-through rejection example (FR-11 through FR-14).
+- [x] 3.1 Add failing `internal/tui/detail/detail_test.go` cases for unmodified wheel up/down inside list and chart content at top/middle/bottom, asserting an exact three-line clamped offset and unchanged mode/horizontal offset; add loading, empty, border/title/footer, outside, click, modifier, horizontal-wheel, and zero/tiny-dimension no-op cases (FR-11 and FR-13).
+- [x] 3.2 Define Detail's viewport content rectangle from the same panel/footer/frame calculations used by `View` and `resize`, and update `detail.Model.Update` to accept only an eligible plain vertical wheel translated into a three-line viewport movement; consume all Detail clicks and unsupported mouse events without forwarding them to the viewport (FR-11 and FR-13).
+- [x] 3.3 Add root-level exclusion tests covering global help, command palette, delete/leave confirmation, active workflow filtering, and the Detail overlay. For each state, place the pointer both inside and outside the visible overlay and assert no underlying Home/Monitor focus, selection, scroll, or action command changes; assert Detail's content wheel is the sole exception (FR-12 through FR-14).
+- [x] 3.4 Update root mouse precedence in `internal/tui/root_update.go` so global help, palette, and confirmations consume mouse input before active-screen dispatch; route Home Detail events only to Detail; otherwise route supported mouse messages to Home or Monitor without changing the ordering or handling of resize, engine, clipboard, or navigation messages (FR-12 and FR-14).
+- [x] 3.5 Add Monitor exclusion tests for helpchat, notification diagnostics/global help overlays as applicable, open review workspace, focused open Gate, transcript search, question/custom-answer input, prompt/recovery editors, and other active text capture. Assert a pending but closed/unfocused Gate still allows ordinary visible-panel navigation (FR-12).
+- [x] 3.6 Centralize Monitor mouse eligibility ahead of generic non-key dispatch so excluded mouse input is consumed rather than delivered to helpchat, review, search, textarea, Gate, or a focus-selected viewport; preserve all non-mouse messages and the current keyboard focus/input paths (FR-12 and FR-14).
+- [x] 3.7 Complete cross-surface malformed/unsupported-input tests for motion, release, secondary buttons, horizontal wheels, modifiers, negative coordinates, coordinates at or beyond terminal bounds, zero-sized regions, and stale pre-resize panel positions; assert no panic, mutation, command, or hidden-panel addressing (FR-13).
+- [x] 3.8 Run focused Detail/root/Monitor exclusion tests plus the existing keyboard focus-cycle, filtering, help/palette, review-anchor/draft, Gate-input, and engine-event tests to prove mouse routing has not become a second scheduler or input owner (FR-14).
+- [x] 3.9 Record `artifacts/25-3-detail-input-isolation.txt` with sanitized Detail list/chart wheel evidence, keyboard close, and unchanged underlying Home state, plus an overlay/text-capture pass-through rejection example (FR-11 through FR-14).
 
 ### [ ] 4.0 Document and prove the complete keyboard-primary mouse contract
 

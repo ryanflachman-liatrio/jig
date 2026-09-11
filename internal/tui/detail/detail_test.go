@@ -59,6 +59,56 @@ func TestDetailRunsCarriesWorkflowContext(t *testing.T) {
 	}
 }
 
+func TestDetailMouseWheelScrollsThreeLinesAndConsumesOtherMouse(t *testing.T) {
+	newLong := func() Model {
+		m := New("synthetic.toml")
+		m, _ = m.Update(tea.WindowSizeMsg{Width: 60, Height: 12})
+		m.Loaded = true
+		m.vp.SetContent(strings.Repeat("line\n", 80))
+		m.vp.GotoTop()
+		return m
+	}
+
+	for _, viewMode := range []bool{false, true} {
+		m := newLong()
+		m.viewMode = viewMode
+		beforeX := m.vp.XOffset()
+		m, cmd := m.Update(tea.MouseWheelMsg{X: 2, Y: 2, Button: tea.MouseWheelDown})
+		if cmd != nil || m.vp.YOffset() != 3 || m.vp.XOffset() != beforeX || m.viewMode != viewMode {
+			t.Fatalf("mode=%v down offset/x/mode/cmd = %d/%d/%v/%v", viewMode, m.vp.YOffset(), m.vp.XOffset(), m.viewMode, cmd)
+		}
+		m, _ = m.Update(tea.MouseWheelMsg{X: 2, Y: 2, Button: tea.MouseWheelUp})
+		if m.vp.YOffset() != 0 {
+			t.Fatalf("mode=%v up offset = %d, want 0", viewMode, m.vp.YOffset())
+		}
+		m.vp.GotoBottom()
+		bottom := m.vp.YOffset()
+		m, _ = m.Update(tea.MouseWheelMsg{X: 2, Y: 2, Button: tea.MouseWheelDown})
+		if m.vp.YOffset() != bottom {
+			t.Fatalf("mode=%v wheel past bottom moved offset to %d from %d", viewMode, m.vp.YOffset(), bottom)
+		}
+		m, _ = m.Update(tea.MouseWheelMsg{X: 2, Y: 2, Button: tea.MouseWheelUp})
+		if m.vp.YOffset() != bottom-3 {
+			t.Fatalf("mode=%v wheel from bottom offset = %d, want %d", viewMode, m.vp.YOffset(), bottom-3)
+		}
+	}
+
+	for _, msg := range []tea.MouseMsg{
+		tea.MouseClickMsg{X: 2, Y: 2, Button: tea.MouseLeft},
+		tea.MouseWheelMsg{X: 2, Y: 2, Button: tea.MouseWheelLeft},
+		tea.MouseWheelMsg{X: 2, Y: 2, Button: tea.MouseWheelDown, Mod: tea.ModCtrl},
+		tea.MouseWheelMsg{X: -1, Y: 2, Button: tea.MouseWheelDown},
+		tea.MouseWheelMsg{X: 2, Y: 0, Button: tea.MouseWheelDown},
+		tea.MouseWheelMsg{X: 2, Y: 11, Button: tea.MouseWheelDown},
+	} {
+		m := newLong()
+		m, cmd := m.Update(msg)
+		if cmd != nil || m.vp.YOffset() != 0 {
+			t.Fatalf("%T changed Detail offset/cmd = %d/%v", msg, m.vp.YOffset(), cmd)
+		}
+	}
+}
+
 // ansiStrip removes SGR sequences so index math over visible text is meaningful.
 func ansiStrip(s string) string {
 	var b []byte

@@ -1,0 +1,24 @@
+Spec 25 Task 3 — synthetic Detail and input-isolation capture
+
+Detail list mode
+  wheel down inside content -> vertical offset +3
+  wheel up -> vertical offset -3, clamped at top
+  wheel down at bottom -> unchanged
+  horizontal offset and view mode -> unchanged
+
+Detail chart mode
+  wheel down/up inside content -> exact three-line bounded movement
+  click, horizontal wheel, modifier-bearing wheel, title/border/footer/outside -> no-op
+  keyboard q/esc remains the only close path
+  underlying Home focus and selection -> unchanged
+
+Pass-through rejection
+  global help, command palette, delete/leave confirmation -> mouse consumed at root
+  workflow filter -> mouse consumed before Home list routing
+  Monitor helpchat, diagnostics, review workspace, search, focused Gate/editor -> mouse consumed
+  pending but unfocused Gate -> visible panel navigation remains enabled
+
+Focused verification
+  ok  jig/internal/tui/detail
+  ok  jig/internal/tui/monitor
+  ok  jig/internal/tui

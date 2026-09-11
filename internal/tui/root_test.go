@@ -611,3 +611,54 @@ func TestHomeMouseClickNoOpCases(t *testing.T) {
 		}
 	})
 }
+
+func TestRootMouseIsConsumedByGlobalAndHomeInteractionSurfaces(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(rootModel) rootModel
+	}{
+		{name: "global help", setup: func(m rootModel) rootModel { m.showHelp = true; return m }},
+		{name: "command palette", setup: func(m rootModel) rootModel { m.palette = m.palette.Show(nil); return m }},
+		{name: "delete confirmation", setup: func(m rootModel) rootModel { m.confirmDelete = true; return m }},
+		{name: "leave confirmation", setup: func(m rootModel) rootModel { m.leaveConfirm = true; return m }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			model, _, _ := homeWithWorkflows(t)
+			before := tc.setup(model.(rootModel))
+			path, _ := before.selector.SelectedPath()
+			after, cmd := before.Update(tea.MouseWheelMsg{X: 3, Y: 2, Button: tea.MouseWheelDown})
+			got := after.(rootModel)
+			gotPath, _ := got.selector.SelectedPath()
+			if cmd != nil || gotPath != path || got.homeFocus != before.homeFocus {
+				t.Fatalf("mouse passed through %s: path=%q focus=%v cmd=%v", tc.name, gotPath, got.homeFocus, cmd)
+			}
+		})
+	}
+
+	t.Run("workflow filter", func(t *testing.T) {
+		model, _, _ := homeWithWorkflows(t)
+		model, _ = model.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
+		before := model.(rootModel)
+		path, _ := before.selector.SelectedPath()
+		after, cmd := before.Update(tea.MouseWheelMsg{X: 3, Y: 2, Button: tea.MouseWheelDown})
+		got := after.(rootModel)
+		gotPath, _ := got.selector.SelectedPath()
+		if cmd != nil || gotPath != path || !got.selector.CapturesText() {
+			t.Fatalf("filtering mouse changed path/capture/cmd = %q/%v/%v", gotPath, got.selector.CapturesText(), cmd)
+		}
+	})
+
+	t.Run("Detail prevents Home pass-through", func(t *testing.T) {
+		model, _, _ := homeWithWorkflows(t)
+		model, _ = model.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
+		before := model.(rootModel)
+		path, _ := before.selector.SelectedPath()
+		after, _ := before.Update(primaryClick(3, 5))
+		got := after.(rootModel)
+		gotPath, _ := got.selector.SelectedPath()
+		if !got.showDetailOverlay || gotPath != path || got.homeFocus != before.homeFocus {
+			t.Fatalf("Detail click passed through: overlay=%v path=%q focus=%v", got.showDetailOverlay, gotPath, got.homeFocus)
+		}
+	})
+}

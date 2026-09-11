@@ -41,6 +41,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case workflowLoadedMsg:
 		return m.applyLoaded(msg), nil
 
+	case tea.MouseMsg:
+		return m.updateMouse(msg)
+
 	case tea.KeyPressMsg:
 		switch {
 		case keybind.Matches(msg, m.keys.Runs):
@@ -60,6 +63,33 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.vp, cmd = m.vp.Update(msg)
 	return m, cmd
+}
+
+func (m Model) updateMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
+	wheel, ok := msg.(tea.MouseWheelMsg)
+	if !ok {
+		return m, nil
+	}
+	mouse := wheel.Mouse()
+	if mouse.Mod != 0 || mouse.X < 0 || mouse.Y < 0 || mouse.X >= m.width || mouse.Y >= m.height || !m.Ready || !m.Loaded {
+		return m, nil
+	}
+	hFrame, vFrame := shared.PanelFrame()
+	ox, oy := shared.PanelContentOrigin()
+	footerH := lipgloss.Height(m.footerView())
+	w, h := m.width-hFrame, m.height-footerH-vFrame
+	if w <= 0 || h <= 0 || mouse.X < ox || mouse.Y < oy || mouse.X >= ox+w || mouse.Y >= oy+h {
+		return m, nil
+	}
+	switch wheel.Button {
+	case tea.MouseWheelUp:
+		m.vp.ScrollUp(3)
+	case tea.MouseWheelDown:
+		m.vp.ScrollDown(3)
+	default:
+		return m, nil
+	}
+	return m, nil
 }
 
 func (m Model) applyLoaded(msg workflowLoadedMsg) Model {

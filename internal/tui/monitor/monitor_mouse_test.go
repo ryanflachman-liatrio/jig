@@ -120,3 +120,50 @@ func TestMonitorMouseUnsupportedAndInvalidAreNoOps(t *testing.T) {
 		t.Fatalf("unsupported input moved cursor from %d to %d", before, m.cursor)
 	}
 }
+
+func TestMonitorMouseExcludedInteractionSurfaces(t *testing.T) {
+	base := newMonitorWithSteps(t)
+	base, _ = base.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	panels := base.mousePanels()
+	event := tea.MouseWheelMsg{X: panels.steps.x, Y: panels.steps.y, Button: tea.MouseWheelDown}
+
+	cases := []struct {
+		name  string
+		setup func(Model) Model
+	}{
+		{name: "helpchat", setup: func(m Model) Model { m.helpOpen = true; return m }},
+		{name: "diagnostics", setup: func(m Model) Model { m.showDiagnostics = true; return m }},
+		{name: "review workspace", setup: func(m Model) Model { m.reviewOpen = true; return m }},
+		{name: "transcript search", setup: func(m Model) Model { m.searchOpen = true; return m }},
+		{name: "focused gate", setup: func(m Model) Model {
+			m.inputQueue = append(m.inputQueue, pendingInputEntry{kind: inputKindFinalMerge})
+			m.focus = focusGate
+			return m
+		}},
+		{name: "prompt editor", setup: func(m Model) Model {
+			m.inputQueue = append(m.inputQueue, pendingInputEntry{kind: inputKindPrompt})
+			m.focus = focusGate
+			return m
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := tc.setup(base)
+			before := m.cursor
+			m, cmd := m.Update(event)
+			if cmd != nil || m.cursor != before {
+				t.Fatalf("excluded mouse changed cursor/cmd = %d/%v", m.cursor, cmd)
+			}
+		})
+	}
+
+	t.Run("pending but unfocused gate allows panel navigation", func(t *testing.T) {
+		m := base
+		m.inputQueue = append(m.inputQueue, pendingInputEntry{kind: inputKindFinalMerge})
+		m.focus = focusSteps
+		m, _ = m.Update(event)
+		if m.cursor != 2 {
+			t.Fatalf("pending unfocused gate blocked Steps wheel: cursor=%d", m.cursor)
+		}
+	})
+}

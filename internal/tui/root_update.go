@@ -32,11 +32,19 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Mouse click-to-open is Home/selector-only; Monitor and other root
 	// surfaces define no mouse behavior of their own for this feature.
 	case tea.MouseMsg:
-		if m.active != screenHome {
+		if m.showHelp || m.palette.Open() || m.confirmDelete || m.leaveConfirm {
 			return m, nil
 		}
-		mm, cmd := m.updateHome(msg)
-		return mm, cmd
+		if m.active == screenHome {
+			mm, cmd := m.updateHome(msg)
+			return mm, cmd
+		}
+		if m.active == screenMonitor {
+			var cmd tea.Cmd
+			m.monitor, cmd = m.monitor.Update(msg)
+			return m, cmd
+		}
+		return m, nil
 
 	// ── engine events ─────────────────────────────────────────────────────
 	case monitor.EngineEventMsg:
