@@ -189,6 +189,17 @@ func sameRecord(a, b sourceRecord) bool {
 	return a.name == b.name && a.present == b.present && a.mode == b.mode && a.size == b.size && a.modified.Equal(b.modified) && a.dev == b.dev && a.ino == b.ino
 }
 
+// fileRecord looks up one selected source's consistency record by its
+// relative name (e.g. "journal.jsonl" or "steps/<id>/transcript.jsonl").
+func (inv inventory) fileRecord(name string) (sourceRecord, bool) {
+	for _, f := range inv.files {
+		if f.name == name {
+			return f, true
+		}
+	}
+	return sourceRecord{}, false
+}
+
 func sameStrings(a, b []string) bool {
 	if len(a) != len(b) {
 		return false

@@ -40,12 +40,14 @@ func main() {
 			os.Exit(runResume(os.Args[2:]))
 		case "reset":
 			os.Exit(runReset(os.Args[2:]))
+		case "export":
+			os.Exit(runExport(os.Args[2:]))
 		case "help", "-h", "--help":
 			printHelp()
 			return
 		default:
 			fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
-			fmt.Fprintln(os.Stderr, "usage: jig <init|validate|run|status|logs|doctor|resume|reset|prune|notifications>")
+			fmt.Fprintln(os.Stderr, "usage: jig <init|validate|run|status|logs|doctor|resume|reset|prune|export|notifications>")
 			os.Exit(2)
 		}
 	}

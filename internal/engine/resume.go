@@ -62,6 +62,20 @@ func loadWorkflowSnapshot(runDir string) (*workflow.Workflow, error) {
 	if err != nil {
 		return nil, err
 	}
+	return DecodeWorkflowSnapshot(data)
+}
+
+// LoadWorkflowSnapshot reads and verifies the immutable workflow captured at
+// run start. Historical commands must use this instead of current author TOML.
+func LoadWorkflowSnapshot(runDir string) (*workflow.Workflow, error) {
+	return loadWorkflowSnapshot(runDir)
+}
+
+// DecodeWorkflowSnapshot verifies and decodes an already-read workflow.json
+// payload. It performs no I/O itself, so callers with a confined or bounded
+// file handle (e.g. a traversal-resistant os.Root read) can validate a
+// snapshot's checksums without going through a path-based loader.
+func DecodeWorkflowSnapshot(data []byte) (*workflow.Workflow, error) {
 	var snap workflowSnapshot
 	if err := json.Unmarshal(data, &snap); err != nil {
 		return nil, fmt.Errorf("decode workflow snapshot: %w", err)
@@ -80,12 +94,6 @@ func loadWorkflowSnapshot(runDir string) (*workflow.Workflow, error) {
 		return workflow.RestoreExpanded(snap.Meta, snap.Defaults, snap.PublicSteps, snap.ExpandedSteps, snap.ModuleSources), nil
 	}
 	return workflow.DecodeLocked(snap.TOML, snap.BaseDir, snap.SourcePath, snap.ModuleSources)
-}
-
-// LoadWorkflowSnapshot reads and verifies the immutable workflow captured at
-// run start. Historical commands must use this instead of current author TOML.
-func LoadWorkflowSnapshot(runDir string) (*workflow.Workflow, error) {
-	return loadWorkflowSnapshot(runDir)
 }
 
 // Resume restores every durable unfinished park under one scheduler. Workers
