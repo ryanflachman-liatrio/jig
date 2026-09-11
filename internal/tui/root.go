@@ -222,5 +222,8 @@ func (m rootModel) View() tea.View {
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.BackgroundColor = shared.Theme.Canvas
+	// Cell-motion (not all-motion) is enough for click-to-open: this feature
+	// only needs button press events, not hover/drag motion tracking.
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }

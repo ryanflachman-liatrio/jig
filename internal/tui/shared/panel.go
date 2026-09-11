@@ -218,3 +218,13 @@ func PanelFrame() (hFrame, vFrame int) {
 	b := Theme.Panel.FocusedBorder
 	return b.GetHorizontalFrameSize(), b.GetVerticalFrameSize() + 1
 }
+
+// PanelContentOrigin returns the pane-local (x, y) cell offset of the first
+// content cell inside a panel rendered by Panel: past the left border+padding
+// and the hand-built title row (the border's own top edge is omitted, see
+// BorderTop(false) in DefaultTheme). Hit-testing on panel content measures
+// from this point; PanelFrame is for sizing the content area instead.
+func PanelContentOrigin() (x, y int) {
+	b := Theme.Panel.FocusedBorder
+	return b.GetBorderLeftSize() + b.GetPaddingLeft(), b.GetBorderTopSize() + 1
+}

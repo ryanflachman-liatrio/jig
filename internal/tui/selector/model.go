@@ -33,6 +33,12 @@ type Model struct {
 	err     error
 	width   int
 	height  int
+
+	// itemHeight/itemSpacing mirror the delegate's own row geometry (set once
+	// from the delegate at construction) so ItemAt's row math can never drift
+	// from what the list actually renders.
+	itemHeight  int
+	itemSpacing int
 }
 
 func New() Model {
@@ -57,7 +63,13 @@ func New() Model {
 	l.SetShowHelp(false)
 	l.SetShowStatusBar(false)
 	l.SetStatusBarItemName("workflow", "workflows")
-	return Model{list: l, keys: defaultKeys(), loading: true}
+	return Model{
+		list:        l,
+		keys:        defaultKeys(),
+		loading:     true,
+		itemHeight:  delegate.Height(),
+		itemSpacing: delegate.Spacing(),
+	}
 }
 
 func (m Model) Init() tea.Cmd {
