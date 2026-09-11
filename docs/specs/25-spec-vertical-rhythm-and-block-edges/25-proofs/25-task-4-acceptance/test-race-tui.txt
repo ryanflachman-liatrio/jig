@@ -1,0 +1,15 @@
+$ go test -race ./internal/tui/...
+ok  	jig/internal/tui	2.597s
+ok  	jig/internal/tui/chart	1.166s
+ok  	jig/internal/tui/chat	1.124s
+ok  	jig/internal/tui/detail	1.131s
+ok  	jig/internal/tui/diffview	1.107s
+ok  	jig/internal/tui/monitor	4.282s
+ok  	jig/internal/tui/palette	1.109s
+ok  	jig/internal/tui/prefs	1.010s
+ok  	jig/internal/tui/question	1.110s
+ok  	jig/internal/tui/review	1.642s
+ok  	jig/internal/tui/runs	1.165s
+ok  	jig/internal/tui/selector	1.149s
+ok  	jig/internal/tui/shared	1.225s
+EXIT=0

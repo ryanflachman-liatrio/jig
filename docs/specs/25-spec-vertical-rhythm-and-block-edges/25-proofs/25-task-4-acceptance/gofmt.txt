@@ -1,0 +1,2 @@
+$ gofmt -l internal/tui/monitor/monitor_transcript.go internal/tui/monitor/monitor_transcript_items.go internal/tui/monitor/monitor_transcript_items_view.go internal/tui/monitor/monitor_transcript_test.go internal/tui/monitor/monitor_vertical_rhythm_test.go
+EXIT=0
