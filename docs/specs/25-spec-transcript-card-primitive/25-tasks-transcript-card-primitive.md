@@ -177,7 +177,7 @@ page replacement, filtering, refresh, expansion, and resize.
 - [x] 4.8 Exercise a full 300-entry synthetic page through repeated render, paging, normalization, search/filter, expansion, and clipboard paths; assert existing page/detail bounds and absence of render-time filesystem/network/backend activity.
 - [x] 4.9 Add `BenchmarkTranscriptCardPage` for cached repeated rendering of the 300-entry page with allocation reporting, then record command, Go version, OS/architecture, CPU, result, and comparison with the 100 ms repaint budget in `25-proofs/25-task-4-benchmark.txt` without adding a timing assertion to CI tests.
 
-### [~] 5.0 Demonstrate the integrated visual states and run acceptance checks
+### [x] 5.0 Demonstrate the integrated visual states and run acceptance checks
 
 Produce reviewer-safe component and Monitor evidence at realistic dimensions,
 verify failed/running work is visually prominent beside quiet success, and run
@@ -191,9 +191,9 @@ the repository checks applicable to the completed Go/TUI change.
 
 #### 5.0 Tasks
 
-- [ ] 5.1 Build a deterministic synthetic Monitor fixture containing adjacent successful, failed, running, and incomplete exchanges plus an expanded structured edit; ensure every path, command, and output is fabricated.
-- [ ] 5.2 Capture the integrated Monitor at the primary review size with failed and successful cards adjacent; save `25-task-5-monitor-states.png` and companion notes containing terminal dimensions, `transcriptInnerW`, selected item, expansion state, fixture source, and observed state colors.
-- [ ] 5.3 Capture narrow and wide Monitor views from the same fixture and verify rounded alignment, header shortening, selection cues, state prominence, and details remaining below the card; store both captures under `25-proofs/`.
-- [ ] 5.4 Run and record the focused shared and Monitor tests from Tasks 1–4, including the 300-entry benchmark and `go test -race ./internal/tui/...`; distinguish ordinary pass, intentional skip, assertion failure, and environment/toolchain failure.
+- [x] 5.1 Build a deterministic synthetic Monitor fixture containing adjacent successful, failed, running, and incomplete exchanges plus an expanded structured edit; ensure every path, command, and output is fabricated.
+- [x] 5.2 Capture the integrated Monitor at the primary review size with failed and successful cards adjacent; save `25-task-5-monitor-states.png` and companion notes containing terminal dimensions, `transcriptInnerW`, selected item, expansion state, fixture source, and observed state colors.
+- [x] 5.3 Capture narrow and wide Monitor views from the same fixture and verify rounded alignment, header shortening, selection cues, state prominence, and details remaining below the card; store both captures under `25-proofs/`.
+- [x] 5.4 Run and record the focused shared and Monitor tests from Tasks 1–4, including the 300-entry benchmark and `go test -race ./internal/tui/...`; distinguish ordinary pass, intentional skip, assertion failure, and environment/toolchain failure.
 - [x] 5.5 Format only the changed Go files with `gofmt -w <changed-go-files>`, confirm `gofmt -l <changed-go-files>` is empty, and capture clean results for `go build ./cmd/jig`, `go test ./...`, `go vet ./...`, and `git diff --check`.
-- [ ] 5.6 Review the final diff against every FR and non-goal: confirm no detail-section conversion, grouping/header-grammar redesign, storage/harness/backend change, new dependency, light-theme work, or unrelated slice-00 cleanup entered the change; record any unavailable visual proof as a precise limitation.
+- [x] 5.6 Review the final diff against every FR and non-goal: confirm no detail-section conversion, grouping/header-grammar redesign, storage/harness/backend change, new dependency, light-theme work, or unrelated slice-00 cleanup entered the change; record any unavailable visual proof as a precise limitation.

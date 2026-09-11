@@ -149,6 +149,10 @@ func TestRenderCardStateBorders(t *testing.T) {
 			if card.borderStyle().GetForeground() != tt.style.GetForeground() {
 				t.Fatalf("card border foreground = %v, want %v", card.borderStyle().GetForeground(), tt.style.GetForeground())
 			}
+			bar := composeBorderBar(20, "╭", "╮", 3, "", card.borderStyle())
+			if got := lipgloss.Width(bar); got != 20 {
+				t.Fatalf("state-colored bar width = %d, want 20", got)
+			}
 		})
 	}
 	muted := Card{Width: 20, State: CardError, BorderMuted: true}

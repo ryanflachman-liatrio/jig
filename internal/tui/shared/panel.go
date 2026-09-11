@@ -169,7 +169,11 @@ func composeBorderBar(width int, left, right string, capLength int, label string
 	if width < 3 {
 		return strings.Repeat(" ", width)
 	}
-	edge := lipgloss.NewStyle().Foreground(border.GetBorderLeftForeground())
+	foreground := border.GetBorderLeftForeground()
+	if _, unset := foreground.(lipgloss.NoColor); unset {
+		foreground = border.GetForeground()
+	}
+	edge := lipgloss.NewStyle().Foreground(foreground)
 	capLength = min(max(capLength, 0), width-lipgloss.Width(left)-lipgloss.Width(right))
 	cap := strings.Repeat("─", capLength)
 	budget := max(width-lipgloss.Width(left)-lipgloss.Width(right)-capLength-2, 0)
