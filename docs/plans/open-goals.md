@@ -77,7 +77,7 @@ palette, status line, simple mode, Esc). Remaining distance is operator amenitie
 
 | ID | Goal | Who has it | jig today |
 |----|------|------------|-----------|
-| B1 | **Clipboard yank / OSC52** — copy run id, step output, selection | lazygit, Crush, nvim | Missing |
+| B1 | **Clipboard yank / OSC52** — copy run id, step output, selection | lazygit, Crush, nvim | Implemented via [spec 23](../specs/23-spec-clipboard-yank/23-spec-clipboard-yank.md); see [`docs/clipboard.md`](../clipboard.md). Monitor file-line selection is a follow-up. |
 | B2 | **Attention signal on gate wait** — terminal bell / optional notify | Claude Code, ops TUIs | Visual only |
 | B3 | **Fuzzy command palette** + richer named actions | fzf, k9s, gum, Crush | Substring + key-redispatch |
 | B4 | **Which-key / next-keys overlay** after prefixes | Helix, nvim | Silent `gg` only |
@@ -133,7 +133,7 @@ Ranked. Status: **have** / **partial** / **missing**.
 | ID | Goal | Status | Why it changes the feel |
 |----|------|--------|-------------------------|
 | T1 | **Token-stream polish in the monitor** — show in-progress assistant text with a live cursor; finalize to markdown only when the block completes (same strategy as `internal/tui/chat`) | partial | Peers feel “alive”; jig monitor mostly reloads pages + a typing tail. Flicker-free streaming is the #1 readability difference. |
-| T2 | **Copy / yank selected transcript item** — collapsed summary *or* expanded detail via OSC52 / system clipboard | missing | Operators cannot paste evidence into PRs/issues without leaving the TUI. Highest daily friction. |
+| T2 | **Copy / yank selected transcript item** — collapsed summary *or* expanded detail via OSC52 / system clipboard | implemented | Spec 23: `y` copies the current item (collapse-independent), `Y` copies the whole recorded step transcript. See [`docs/clipboard.md`](../clipboard.md). |
 | T3 | **Open location** — from tool locations / edit paths, open `path:line` in `$EDITOR` or configured opener | missing | Zed/IDE agents make locations actionable; jig renders paths as inert text. |
 | T4 | **In-transcript edit cards with optional unified diff** — keep “New code” default; toggle before/after hunks without leaving Transcript | partial | New-code Glamour cards exist; peers show patch impact inline. Full diff today lives mainly in review/diffview. |
 | T5 | **Smart burst folding** — presentation-only collapse of consecutive successful tool rows between prose (Claude-style tool storms) | missing | Spec 15 removed heavy Spec 11 group chrome; without *light* burst folding, parallel tool spam still overwhelms. |
@@ -190,7 +190,7 @@ If only twenty goals get attention:
 
 1. ~~A1 Headless `jig run`~~ **done** — see [`docs/headless.md`](../headless.md)
 2. **T1 Transcript streaming polish**
-3. **T2 Clipboard yank**
+3. ~~T2 Clipboard yank~~ **done** — see [`docs/clipboard.md`](../clipboard.md) (Monitor file-line selection deferred)
 4. A6 Restore Tier-2 monitors
 5. A4 / A5 Cursor + Claude ACP resume parity
 6. B2 Gate attention bell/notify
@@ -202,7 +202,7 @@ If only twenty goals get attention:
 12. **T4 Inline edit/diff cards**
 13. A8 Map/foreach fan-out
 14. A7 Codex parallel reliability
-15. B1 (covered by T2) / B4 Which-key
+15. ~~B1 (covered by T2)~~ **done** / B4 Which-key
 16. **T6 Noise & secrets policy**
 17. B5 Theme skins + light mode
 18. **T7 Per-turn tokens/timing**
