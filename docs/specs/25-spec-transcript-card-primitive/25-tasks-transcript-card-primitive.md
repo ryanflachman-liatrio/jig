@@ -104,7 +104,7 @@ panels and breadcrumbs must retain their current appearance and dimensions.
 - [x] 1.8 Implement top, divider, and bottom card bars: join nonempty header/meta with styled ` · `, preserve supplied label styles, color only border glyphs, draw labeled first-section dividers, suppress an unlabeled first rule, and keep every unlabeled bar continuous with no internal space gap.
 - [x] 1.9 Add table-driven `card_test.go`, `styles_test.go`, and panel regression cases covering every Task 1 proof condition and measuring every row with `lipgloss.Width`; render the sanitized 40/60/90 state gallery and record it in `25-proofs/25-task-1-card-gallery.txt`.
 
-### [~] 2.0 Make card bodies wrap and tint safely across styled content
+### [x] 2.0 Make card bodies wrap and tint safely across styled content
 
 Complete the card body renderer so multiline, indented, blank, unbroken, and
 ANSI-styled content wraps without truncation while the optional state tint
@@ -123,9 +123,9 @@ covers every visible cell and remains contained to each card row.
 - [x] 2.3 Compose each body row as border + resolved left padding + styled content + fill + resolved right padding + border, then enforce the requested visible width for normal and defensive sizes without allowing ANSI byte counts to enter the geometry math.
 - [x] 2.4 Implement a final SGR stabilization pass for tinted rows that restores the card background after full/default resets (`CSI m`, `CSI 0 m`) and background reset (`CSI 49 m`), including combined parameters, without mistaking zero components inside RGB parameters for attribute resets.
 - [x] 2.5 Preserve intentional inner backgrounds until their reset, preserve foreground/emphasis sequences, tint borders/padding/fill/blank rows, close every tinted row with a default-background reset, and ensure `Tint: false` emits no card background.
-- [ ] 2.6 Add an ANSI-state test helper that tracks the effective background at every visible cell rather than searching each line for one escape sequence; assert complete neutral/error tint coverage and a plain sentinel after the rendered card to prove containment.
-- [ ] 2.7 Render a Go fence through a deterministic Glamour renderer configured with `shared.CodeBlockFormatter`, place its output in neutral and error cards, and cover synthetic resets, combined SGR, foreground preservation, explicit inner backgrounds, blank lines, indentation, unbroken words, and exact normal/defensive widths in `card_test.go`.
-- [ ] 2.8 Generate the sanitized styled gallery at recorded terminal dimensions and save its output plus per-row width/background audit as `25-proofs/25-task-2-styled-gallery.txt`.
+- [x] 2.6 Add an ANSI-state test helper that tracks the effective background at every visible cell rather than searching each line for one escape sequence; assert complete neutral/error tint coverage and a plain sentinel after the rendered card to prove containment.
+- [x] 2.7 Render a Go fence through a deterministic Glamour renderer configured with `shared.CodeBlockFormatter`, place its output in neutral and error cards, and cover synthetic resets, combined SGR, foreground preservation, explicit inner backgrounds, blank lines, indentation, unbroken words, and exact normal/defensive widths in `card_test.go`.
+- [x] 2.8 Generate the sanitized styled gallery at recorded terminal dimensions and save its output plus per-row width/background audit as `25-proofs/25-task-2-styled-gallery.txt`.
 
 ### [~] 3.0 Render Monitor tool exchanges as truthful header cards
 

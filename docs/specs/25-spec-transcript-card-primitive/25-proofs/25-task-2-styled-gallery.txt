@@ -1,0 +1,39 @@
+Task 02 synthetic styled-content gallery
+Fixture: internal/tui/shared TestRenderCardStyledGallery
+Terminal width: 60 cells
+States: success (neutral tint) and error (error tint)
+Data classification: fabricated Go and prose only
+
+Both state=success and state=error produced 18 rows. Every row measured exactly
+60 visible cells. The ANSI-state walker verified that every visible cell had an
+effective card or intentional inner background, and the sentinel immediately
+after the card had the default terminal background.
+
+╭─── Synthetic styled content ─────────────────────────────╮
+├─── Plain ────────────────────────────────────────────────┤
+│   indented text                                          │
+│                                                          │
+│ longwordlongwordlongwordlongwordlongwordlongwordlongword │
+│ longword                                                 │
+├─── Glamour + Chroma ─────────────────────────────────────┤
+│                                                          │
+│                                                          │
+│                                                          │
+│   ╭────────────────────────────────────────────╮         │
+│     │ func synthetic() string { return "ok" }            │
+│   │                                                      │
+│     │                                                    │
+│   │                                                      │
+│                                                          │
+│   ╰────────────────────────────────────────────╯         │
+╰──────────────────────────────────────────────────────────╯
+
+ANSI is stripped above for geometry review. The source output includes the jig
+Chroma formatter's foreground/background sequences. The stateful audit covers
+CSI m, CSI 0 m, CSI 49 m, combined SGR parameters, a deliberate inner RGB
+background containing zero components, and an RGB foreground containing zeros.
+
+Verification command:
+go test ./internal/tui/shared -run '^TestRenderCardStyledGallery$' -count=1 -v
+
+Result: PASS for success and error; background-audit=PASS.

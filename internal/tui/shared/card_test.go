@@ -2,9 +2,12 @@ package shared
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
+	"charm.land/glamour/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
@@ -196,12 +199,168 @@ func TestRenderCardHeaderOnly(t *testing.T) {
 }
 
 func TestRenderCardTintRestoresAfterContentReset(t *testing.T) {
-	out := RenderCard(Card{Width: 40, State: CardError, Tint: true, Sections: []CardSection{{Lines: []string{"before\x1b[0mafter\x1b[49mend"}}}})
-	if got := strings.Count(out, "\x1b[48;2;42;26;30m"); got < 3 {
-		t.Fatalf("error tint reapplied %d times, want reset stabilization", got)
+	tests := []struct {
+		name  string
+		state CardState
+		base  string
+	}{
+		{name: "neutral", state: CardSuccess, base: "48;2;26;25;31"},
+		{name: "error", state: CardError, base: "48;2;42;26;30"},
 	}
-	if !strings.HasSuffix(out, "\x1b[49m") {
-		t.Fatalf("tinted card did not reset background at row boundary: %q", out)
+	content := "plain\x1b[mfull\x1b[1;0;31mcombined\x1b[48;2;0;80;0minner\x1b[49mback\x1b[38;2;255;0;0mred"
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := RenderCard(Card{Width: 80, State: tt.state, Tint: true, Sections: []CardSection{{Lines: []string{content, ""}}}})
+			assertCardWidth(t, out, 80)
+			assertTintCoverage(t, out, tt.base)
+			if !strings.Contains(out, "\x1b[48;2;0;80;0m") {
+				t.Fatal("intentional inner background was removed")
+			}
+			if strings.Contains(out, "\x1b[38;2;255;0;0m\x1b[48;2;") {
+				t.Fatal("RGB zero component was mistaken for a reset")
+			}
+		})
+	}
+	if out := RenderCard(Card{Width: 20, Tint: false}); strings.Contains(out, "\x1b[48;") {
+		t.Fatalf("Tint=false added a background: %q", out)
+	}
+}
+
+var testSGR = regexp.MustCompile(`\x1b\[([0-9;]*)m`)
+
+func assertTintCoverage(t *testing.T, card, base string) {
+	t.Helper()
+	background := "default"
+	input := card + "X"
+	pos := 0
+	visible := 0
+	for _, match := range testSGR.FindAllStringSubmatchIndex(input, -1) {
+		for _, r := range input[pos:match[0]] {
+			if r == '\n' {
+				continue
+			}
+			visible++
+			if background == "default" {
+				t.Fatalf("visible cell %d has default background", visible)
+			}
+		}
+		background = applyTestBackground(background, input[match[2]:match[3]])
+		pos = match[1]
+	}
+	tail := input[pos:]
+	if tail != "X" || background != "default" {
+		t.Fatalf("sentinel background = %q tail=%q, want default", background, tail)
+	}
+	if !strings.Contains(card, "\x1b["+base+"m") {
+		t.Fatalf("card does not contain expected base tint %q", base)
+	}
+}
+
+func applyTestBackground(current, params string) string {
+	if params == "" {
+		return "default"
+	}
+	fields := strings.Split(params, ";")
+	for i := 0; i < len(fields); i++ {
+		code, _ := strconv.Atoi(fields[i])
+		switch code {
+		case 0, 49:
+			current = "default"
+		case 40, 41, 42, 43, 44, 45, 46, 47, 100, 101, 102, 103, 104, 105, 106, 107:
+			current = fields[i]
+		case 48:
+			if i+1 >= len(fields) {
+				continue
+			}
+			switch fields[i+1] {
+			case "2":
+				if i+4 < len(fields) {
+					current = strings.Join(fields[i:i+5], ";")
+					i += 4
+				}
+			case "5":
+				if i+2 < len(fields) {
+					current = strings.Join(fields[i:i+3], ";")
+					i += 2
+				}
+			}
+		case 38, 58:
+			if i+1 < len(fields) && fields[i+1] == "2" {
+				i += min(4, len(fields)-i-1)
+			} else if i+1 < len(fields) && fields[i+1] == "5" {
+				i += min(2, len(fields)-i-1)
+			}
+		}
+	}
+	return current
+}
+
+func TestRenderCardContentWrappingAndStyledCode(t *testing.T) {
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithStyles(Theme.Markdown),
+		glamour.WithWordWrap(34),
+		glamour.WithChromaFormatter(CodeBlockFormatter(30)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := renderer.Render("```go\nfunc synthetic() string { return \"ok\" }\n```\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name    string
+		width   int
+		content []string
+	}{
+		{name: "explicit lines and indentation", width: 40, content: []string{"  indented\n\nline with trailing spaces   ", strings.Repeat("unbroken", 12)}},
+		{name: "styled code fence", width: 40, content: []string{strings.TrimRight(code, "\n")}},
+		{name: "defensive width", width: 5, content: []string{"abcdef", ""}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := RenderCard(Card{Width: tt.width, State: CardSuccess, Tint: true, Sections: []CardSection{{Lines: tt.content}}})
+			assertCardWidth(t, out, tt.width)
+			assertTintCoverage(t, out, "48;2;26;25;31")
+			plain := ansi.Strip(out)
+			if strings.Contains(plain, "spaces   \n") {
+				t.Fatal("trailing whitespace survived wrapping")
+			}
+		})
+	}
+}
+
+func TestRenderCardStyledGallery(t *testing.T) {
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithStyles(Theme.Markdown),
+		glamour.WithWordWrap(50),
+		glamour.WithChromaFormatter(CodeBlockFormatter(46)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := renderer.Render("```go\nfunc synthetic() string { return \"ok\" }\n```\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []CardState{CardSuccess, CardError} {
+		out := RenderCard(Card{
+			Width:  60,
+			Header: "Synthetic styled content",
+			State:  state,
+			Tint:   true,
+			Sections: []CardSection{
+				{Label: "Plain", Lines: []string{"  indented text", "", strings.Repeat("longword", 8)}},
+				{Label: "Glamour + Chroma", Lines: []string{strings.TrimRight(code, "\n")}},
+			},
+		})
+		assertCardWidth(t, out, 60)
+		base := "48;2;26;25;31"
+		if state == CardError {
+			base = "48;2;42;26;30"
+		}
+		assertTintCoverage(t, out, base)
+		t.Logf("state=%v width=60 rows=%d background-audit=PASS\n%s", state, lipgloss.Height(out), ansi.Strip(out))
 	}
 }
 
