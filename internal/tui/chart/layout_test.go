@@ -1,6 +1,7 @@
 package chart
 
 import (
+	"reflect"
 	"testing"
 
 	"jig/internal/workflow"
@@ -26,6 +27,16 @@ func nodeByID(lay chartLayout, id string) chartNode {
 		}
 	}
 	return chartNode{}
+}
+
+func rankIDs(lay chartLayout) [][]string {
+	ids := make([][]string, len(lay.ranks))
+	for rank, nodes := range lay.ranks {
+		for _, node := range nodes {
+			ids[rank] = append(ids[rank], lay.nodes[node].id)
+		}
+	}
+	return ids
 }
 
 func TestLayoutChart(t *testing.T) {
@@ -99,6 +110,158 @@ run = "x"
 		if lay.nodes[rank1[0]].id != "first" || lay.nodes[rank1[1]].id != "second" {
 			t.Errorf("within-rank order = [%s %s], want [first second]",
 				lay.nodes[rank1[0]].id, lay.nodes[rank1[1]].id)
+		}
+	})
+
+	t.Run("reduces crossings across multiple ranks without changing topology", func(t *testing.T) {
+		wf := mustDecode(t, `
+[workflow]
+name = "crossings"
+version = "1"
+[[step]]
+id = "left"
+type = "command"
+run = "x"
+[[step]]
+id = "right"
+type = "command"
+run = "x"
+[[step]]
+id = "right_branch"
+type = "command"
+depends_on = ["right"]
+run = "x"
+[[step]]
+id = "left_branch"
+type = "command"
+depends_on = ["left"]
+run = "x"
+[[step]]
+id = "left_result"
+type = "command"
+depends_on = ["left_branch"]
+run = "x"
+[[step]]
+id = "right_result"
+type = "command"
+depends_on = ["right_branch"]
+run = "x"
+`)
+
+		lay := layoutChart(wf)
+		wantRank := map[string]int{
+			"left": 0, "right": 0,
+			"left_branch": 1, "right_branch": 1,
+			"left_result": 2, "right_result": 2,
+		}
+		for id, rank := range wantRank {
+			if got := nodeByID(lay, id).rank; got != rank {
+				t.Errorf("%s rank = %d, want %d", id, got, rank)
+			}
+		}
+
+		originalRanks := [][]int{{0, 1}, {2, 3}, {4, 5}}
+		before := countForwardCrossings(originalRanks, lay.nodes, lay.edges)
+		after := countForwardCrossings(lay.ranks, lay.nodes, lay.edges)
+		if before != 2 || after != 0 {
+			t.Errorf("crossings = %d after reduction, want 0 (original %d, want 2)", after, before)
+		}
+		wantOrder := rankIDs(lay)
+		for i := 0; i < 10; i++ {
+			if got := rankIDs(layoutChart(wf)); !reflect.DeepEqual(got, wantOrder) {
+				t.Fatalf("layout %d rank order = %v, want stable %v", i+2, got, wantOrder)
+			}
+		}
+
+		wantEdges := [][2]string{
+			{"right", "right_branch"},
+			{"left", "left_branch"},
+			{"left_branch", "left_result"},
+			{"right_branch", "right_result"},
+		}
+		for i, edge := range lay.edges {
+			got := [2]string{lay.nodes[edge.from].id, lay.nodes[edge.to].id}
+			if got != wantEdges[i] {
+				t.Errorf("edge %d = %v, want %v", i, got, wantEdges[i])
+			}
+		}
+	})
+
+	t.Run("stable orders and equal scores retain TOML order", func(t *testing.T) {
+		tests := []struct {
+			name string
+			src  string
+			want [][]string
+		}{
+			{
+				name: "already uncrossed",
+				src: `
+[workflow]
+name = "uncrossed"
+version = "1"
+[[step]]
+id = "a"
+type = "command"
+run = "x"
+[[step]]
+id = "b"
+type = "command"
+run = "x"
+[[step]]
+id = "x"
+type = "command"
+depends_on = ["a"]
+run = "x"
+[[step]]
+id = "y"
+type = "command"
+depends_on = ["b"]
+run = "x"
+`,
+				want: [][]string{{"a", "b"}, {"x", "y"}},
+			},
+			{
+				name: "equal barycenters",
+				src: `
+[workflow]
+name = "ties"
+version = "1"
+[[step]]
+id = "a"
+type = "command"
+run = "x"
+[[step]]
+id = "b"
+type = "command"
+run = "x"
+[[step]]
+id = "first"
+type = "command"
+depends_on = ["a", "b"]
+run = "x"
+[[step]]
+id = "second"
+type = "command"
+depends_on = ["a", "b"]
+run = "x"
+`,
+				want: [][]string{{"a", "b"}, {"first", "second"}},
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				wf := mustDecode(t, tt.src)
+				first := layoutChart(wf)
+				if got := rankIDs(first); !reflect.DeepEqual(got, tt.want) {
+					t.Fatalf("rank order = %v, want %v", got, tt.want)
+				}
+				for i := 0; i < 10; i++ {
+					if got := rankIDs(layoutChart(wf)); !reflect.DeepEqual(got, rankIDs(first)) {
+						t.Fatalf("layout %d rank order = %v, want stable %v", i+2, got, rankIDs(first))
+					}
+				}
+			})
 		}
 	})
 

@@ -19,8 +19,8 @@ import (
 // regardless of the order edges are drawn — which keeps the output deterministic
 // and golden-testable. A parallel class grid colors each connector cell by edge
 // class (normal / conditional / back-edge). Node boxes are drawn on top, so a
-// long edge that must cross an intermediate rank passes behind the boxes (the
-// documented MVP tradeoff: no crossing-minimization).
+// long edge that must cross an intermediate rank passes behind the boxes; the
+// pure layout pass applies bounded crossing reduction before rendering.
 
 // Connector geometry. Boxes are a uniform width (content + padding + border);
 // ranks stack with chartVGap blank rows between them, leaving room for a
@@ -31,7 +31,7 @@ const (
 	chartVGap        = 2  // blank rows between ranks: [bus row, arrow row]
 	chartBoxMaxInner = 18 // cap on box content width so wide graphs still fit
 	chartBoxPadBrd   = 4  // padding (1+1) + border (1+1) added around inner width
-	chartBoxHeight   = 4  // top border + 2 content lines + bottom border
+	chartBoxHeight   = 5  // top border + 3 content lines + bottom border
 	chartLabelMax    = 24 // max visible cells for an inline edge condition label
 )
 
@@ -368,8 +368,8 @@ func RenderChart(wf *workflow.Workflow, width int) string {
 	return lipgloss.NewCanvas(canvasW, totalH).Compose(comp).Render()
 }
 
-// chartInnerWidth is the uniform box content width: the widest node's id or
-// type line, capped so a wide graph still fits (longer text is truncated).
+// chartInnerWidth is the uniform box content width: the widest node id, type
+// line, or gate label, capped so a wide graph still fits.
 func chartInnerWidth(nodes []chartNode) int {
 	w := len("id")
 	for _, n := range nodes {
@@ -377,6 +377,9 @@ func chartInnerWidth(nodes []chartNode) int {
 			w = v
 		}
 		if v := lipgloss.Width(nodeTypeLine(n)); v > w {
+			w = v
+		}
+		if v := lipgloss.Width(n.gateLabel); v > w {
 			w = v
 		}
 	}
@@ -423,9 +426,11 @@ func renderNodeBox(n chartNode, innerW int) string {
 
 	id := shared.TruncateTitle(n.id, innerW)
 	typ := shared.TruncateTitle(nodeTypeLine(n), innerW)
+	gate := shared.TruncateTitle(n.gateLabel, innerW)
 	line1 := shared.PadRight(shared.Theme.Step.ID.Render(id), lipgloss.Width(id), innerW)
 	line2 := shared.PadRight(label.Render(typ), lipgloss.Width(typ), innerW)
-	return box.Render(line1 + "\n" + line2)
+	line3 := shared.PadRight(shared.Theme.Chart.Gate.Render(gate), lipgloss.Width(gate), innerW)
+	return box.Render(line1 + "\n" + line2 + "\n" + line3)
 }
 
 // render turns the connector grid into a styled string: an override rune wins,

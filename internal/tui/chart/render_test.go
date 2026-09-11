@@ -9,12 +9,15 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
+
+	"jig/internal/tui/shared"
 )
 
 // updateGolden regenerates the .golden fixtures instead of comparing against
 // them: `go test ./internal/tui/chart -run TestChartGolden -update`. Because
 // the chart layout is fully deterministic (longest-path ranks over depends_on +
-// Steps-order within a rank), the rendered art is stable and safe to golden-test.
+// bounded within-rank crossing reduction), the rendered art is stable and safe
+// to golden-test.
 var updateGolden = flag.Bool("update", false, "update chart golden files")
 
 // ansiEscape strips SGR color codes so the goldens are readable box-art and do
@@ -112,6 +115,45 @@ id = "plan"
 type = "agent"
 depends_on = ["back", "front"]
 skill = "s"
+`,
+		},
+		{
+			// Two reversed dependency pairs across three ranks demonstrate that
+			// the layout reorders within ranks to remove avoidable crossings.
+			name:  "crossing_reduced",
+			width: 72,
+			src: `
+[workflow]
+name = "crossing-reduced"
+version = "1"
+[[step]]
+id = "left"
+type = "command"
+run = "x"
+[[step]]
+id = "right"
+type = "command"
+run = "x"
+[[step]]
+id = "right_branch"
+type = "command"
+depends_on = ["right"]
+run = "x"
+[[step]]
+id = "left_branch"
+type = "command"
+depends_on = ["left"]
+run = "x"
+[[step]]
+id = "left_result"
+type = "command"
+depends_on = ["left_branch"]
+run = "x"
+[[step]]
+id = "right_result"
+type = "command"
+depends_on = ["right_branch"]
+run = "x"
 `,
 		},
 		{
@@ -305,6 +347,113 @@ func TestChartForEachHorizontalScroll(t *testing.T) {
 	for i, line := range strings.Split(got, "\n") {
 		if w := lipgloss.Width(line); w > requested*4 {
 			t.Fatalf("line %d implausibly wide (%d) — rendering likely runaway, not a deliberate scrollable canvas:\n%s", i, w, plain)
+		}
+	}
+}
+
+func TestGateLabelsRenderInsideNode(t *testing.T) {
+	tests := []struct {
+		name     string
+		validate string
+		want     string
+	}{
+		{name: "command", validate: `command = "go test ./..."`, want: "go test ./..."},
+		{name: "schema", validate: `output_schema = "result.schema.json"`, want: "schema"},
+		{name: "contains", validate: `output_contains = "ready"`, want: `contains "ready"`},
+		{name: "exists", validate: `output_exists = true`, want: "exists"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wf := mustDecode(t, `
+[workflow]
+name = "gate-label"
+version = "1"
+[[step]]
+id = "verify"
+type = "command"
+run = "x"
+output = "result.txt"
+[step.validate]
+`+tt.validate)
+			got := ansiEscape.ReplaceAllString(RenderChart(wf, 72), "")
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("chart missing %q gate label:\n%s", tt.want, got)
+			}
+			if !strings.Contains(got, "command "+shared.GateGlyph) {
+				t.Errorf("chart missing command gate marker:\n%s", got)
+			}
+		})
+	}
+}
+
+func TestNodeBoxGateLabelTruncationAndMarkerComposition(t *testing.T) {
+	const innerW = chartBoxMaxInner
+	gateLabel := "驗證結果包含很多文字 and more"
+	node := chartNode{
+		id:         "combined",
+		typ:        "agent",
+		gate:       true,
+		gateLabel:  gateLabel,
+		retry:      true,
+		maxRetries: 3,
+		loop:       &chartLoop{target: "combined", maxIter: 2},
+		foreach:    &chartForEach{maxItems: 8},
+	}
+
+	got := ansiEscape.ReplaceAllString(renderNodeBox(node, innerW), "")
+	for _, marker := range []string{
+		shared.GateGlyph,
+		shared.LoopGlyph,
+		shared.ForEachGlyph + "8",
+		shared.RetryGlyph + "3",
+	} {
+		if !strings.Contains(got, marker) {
+			t.Errorf("node box missing marker %q:\n%s", marker, got)
+		}
+	}
+	wantGate := shared.TruncateTitle(gateLabel, innerW)
+	if !strings.Contains(got, wantGate) {
+		t.Errorf("node box missing Unicode-aware truncated gate label %q:\n%s", wantGate, got)
+	}
+	if lipgloss.Width(wantGate) > innerW {
+		t.Errorf("truncated gate label width = %d, want <= %d", lipgloss.Width(wantGate), innerW)
+	}
+	if gotHeight := lipgloss.Height(got); gotHeight != chartBoxHeight {
+		t.Errorf("node box height = %d, want uniform %d:\n%s", gotHeight, chartBoxHeight, got)
+	}
+
+	nonGate := ansiEscape.ReplaceAllString(renderNodeBox(chartNode{id: "plain", typ: "command"}, innerW), "")
+	if gotHeight := lipgloss.Height(nonGate); gotHeight != chartBoxHeight {
+		t.Errorf("non-gated node box height = %d, want uniform %d:\n%s", gotHeight, chartBoxHeight, nonGate)
+	}
+}
+
+func TestChartGateLabelNarrowWidth(t *testing.T) {
+	const label = "驗證結果包含很多文字 and more"
+	wf := mustDecode(t, `
+[workflow]
+name = "narrow-gate"
+version = "1"
+[[step]]
+id = "verify"
+type = "command"
+run = "x"
+[step.validate]
+command = "`+label+`"
+`)
+
+	const requested = 8
+	got := ansiEscape.ReplaceAllString(RenderChart(wf, requested), "")
+	want := shared.TruncateTitle(label, chartBoxMaxInner)
+	for _, visible := range []string{"verify", "command " + shared.GateGlyph, want} {
+		if !strings.Contains(got, visible) {
+			t.Errorf("narrow chart missing %q:\n%s", visible, got)
+		}
+	}
+	for i, line := range strings.Split(got, "\n") {
+		if width := lipgloss.Width(line); width > requested*4 {
+			t.Fatalf("line %d implausibly wide (%d), want bounded scrollable output:\n%s", i, width, got)
 		}
 	}
 }
