@@ -68,7 +68,7 @@ Extend chart node geometry and rendering so every `[step.validate]` form display
 - [x] 2.2 Render a gated node's existing `gateLabel` inside the node using the shared chart/node theme styles and `shared.TruncateTitle`; preserve the ID, type/gate glyph, loop, retry, and foreach annotations without introducing hard-coded styling.
 - [x] 2.3 Add focused renderer tests in `internal/tui/chart/render_test.go` for command, schema, contains, and exists validation forms, including a Unicode/long-label truncation case and combined gate-plus-loop/retry/foreach marker behavior.
 
-### [~] 3.0 Verify Detail-chart behavior and chart regressions
+### [x] 3.0 Verify Detail-chart behavior and chart regressions
 
 Update fixed-width chart evidence and retain Detail-screen viewport behavior after the layout and node-height changes. Prove narrow charts, static foreach nodes, conditional labels, route back-edges, and non-gated nodes remain within the A25 boundary.
 
