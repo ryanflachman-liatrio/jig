@@ -76,9 +76,10 @@ func (m rootModel) homeHelpSections() []shared.HelpSection {
 		newRun := m.runs.Keys().NewRun
 		resume := m.runs.Keys().Resume
 		del := m.runs.Keys().Delete
+		copyID := m.runs.Keys().CopyID
 		return []shared.HelpSection{
 			{Title: "Runs", Bindings: []keybind.Binding{
-				open, newRun, resume, del, keys.Nav, keys.Pane,
+				open, newRun, resume, del, copyID, keys.Nav, keys.Pane,
 			}},
 			{Title: "Global", Bindings: shared.GlobalHelpBindings(false)},
 		}

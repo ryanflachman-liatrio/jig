@@ -1,0 +1,139 @@
+=== RUN   TestClipboardDocumentationContract
+--- PASS: TestClipboardDocumentationContract (0.00s)
+=== RUN   TestClipboardHelpDispatchMatrix
+=== RUN   TestClipboardHelpDispatchMatrix/runs/y/empty-list
+=== RUN   TestClipboardHelpDispatchMatrix/runs/y/single-row
+=== RUN   TestClipboardHelpDispatchMatrix/runs/Y/no-such-binding
+=== RUN   TestClipboardHelpDispatchMatrix/monitor/messages/y/transcript-item-empty
+=== RUN   TestClipboardHelpDispatchMatrix/monitor/messages/Y/transcript-snapshot
+=== RUN   TestClipboardHelpDispatchMatrix/monitor/overview/Y/step-transcript
+=== RUN   TestClipboardHelpDispatchMatrix/monitor/overview/y/unavailable
+=== RUN   TestClipboardHelpDispatchMatrix/review/source/y/line
+=== RUN   TestClipboardHelpDispatchMatrix/review/source/Y/document
+=== RUN   TestClipboardHelpDispatchMatrix/review/preview/y/block
+=== RUN   TestClipboardHelpDispatchMatrix/review/preview/Y/document
+=== RUN   TestClipboardHelpDispatchMatrix/review/diff/y/hunk
+=== RUN   TestClipboardHelpDispatchMatrix/review/diff/Y/file-diff
+=== RUN   TestClipboardHelpDispatchMatrix/review/composer/y/captures-text
+--- PASS: TestClipboardHelpDispatchMatrix (0.57s)
+    --- PASS: TestClipboardHelpDispatchMatrix/runs/y/empty-list (0.00s)
+    --- PASS: TestClipboardHelpDispatchMatrix/runs/y/single-row (0.00s)
+    --- PASS: TestClipboardHelpDispatchMatrix/runs/Y/no-such-binding (0.00s)
+    --- PASS: TestClipboardHelpDispatchMatrix/monitor/messages/y/transcript-item-empty (0.00s)
+    --- PASS: TestClipboardHelpDispatchMatrix/monitor/messages/Y/transcript-snapshot (0.00s)
+    --- PASS: TestClipboardHelpDispatchMatrix/monitor/overview/Y/step-transcript (0.00s)
+    --- PASS: TestClipboardHelpDispatchMatrix/monitor/overview/y/unavailable (0.00s)
+    --- PASS: TestClipboardHelpDispatchMatrix/review/source/y/line (0.01s)
+    --- PASS: TestClipboardHelpDispatchMatrix/review/source/Y/document (0.01s)
+    --- PASS: TestClipboardHelpDispatchMatrix/review/preview/y/block (0.00s)
+    --- PASS: TestClipboardHelpDispatchMatrix/review/preview/Y/document (0.00s)
+    --- PASS: TestClipboardHelpDispatchMatrix/review/diff/y/hunk (0.00s)
+    --- PASS: TestClipboardHelpDispatchMatrix/review/diff/Y/file-diff (0.00s)
+    --- PASS: TestClipboardHelpDispatchMatrix/review/composer/y/captures-text (0.54s)
+=== RUN   TestClipboardOverlayEditorConfirmationPriority
+=== RUN   TestClipboardOverlayEditorConfirmationPriority/help_overlay
+=== RUN   TestClipboardOverlayEditorConfirmationPriority/palette
+=== RUN   TestClipboardOverlayEditorConfirmationPriority/delete-confirm
+--- PASS: TestClipboardOverlayEditorConfirmationPriority (0.01s)
+    --- PASS: TestClipboardOverlayEditorConfirmationPriority/help_overlay (0.00s)
+    --- PASS: TestClipboardOverlayEditorConfirmationPriority/palette (0.00s)
+    --- PASS: TestClipboardOverlayEditorConfirmationPriority/delete-confirm (0.00s)
+=== RUN   TestClipboardBusyRefusesOverlappingRequest
+--- PASS: TestClipboardBusyRefusesOverlappingRequest (0.00s)
+=== RUN   TestClipboardRootIntegration
+--- PASS: TestClipboardRootIntegration (0.00s)
+PASS
+ok  	jig/internal/tui	0.605s
+testing: warning: no tests to run
+PASS
+ok  	jig/internal/tui/chart	0.028s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	jig/internal/tui/chat	0.023s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	jig/internal/tui/detail	0.026s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	jig/internal/tui/diffview	0.026s [no tests to run]
+=== RUN   TestClipboardFilePayload
+=== RUN   TestClipboardFilePayload/markdown
+=== RUN   TestClipboardFilePayload/json
+=== RUN   TestClipboardFilePayload/jsonl
+=== RUN   TestClipboardFilePayload/crlf_preserved
+--- PASS: TestClipboardFilePayload (0.00s)
+    --- PASS: TestClipboardFilePayload/markdown (0.00s)
+    --- PASS: TestClipboardFilePayload/json (0.00s)
+    --- PASS: TestClipboardFilePayload/jsonl (0.00s)
+    --- PASS: TestClipboardFilePayload/crlf_preserved (0.00s)
+=== RUN   TestClipboardFileSnapshot
+--- PASS: TestClipboardFileSnapshot (0.00s)
+=== RUN   TestClipboardTranscriptSnapshot
+--- PASS: TestClipboardTranscriptSnapshot (0.00s)
+=== RUN   TestClipboardTranscriptBoundsAndErrors
+--- PASS: TestClipboardTranscriptBoundsAndErrors (0.00s)
+=== RUN   TestClipboardItemPayloads
+--- PASS: TestClipboardItemPayloads (0.00s)
+=== RUN   TestClipboardItemPageBoundary
+--- PASS: TestClipboardItemPageBoundary (0.00s)
+=== RUN   TestClipboardFileCmdReturnsRequest
+--- PASS: TestClipboardFileCmdReturnsRequest (0.00s)
+=== RUN   TestClipboardTranscriptCmdRoutesToUnavailable
+--- PASS: TestClipboardTranscriptCmdRoutesToUnavailable (0.00s)
+=== RUN   TestClipboardTranscriptRoundTrip
+--- PASS: TestClipboardTranscriptRoundTrip (0.00s)
+=== RUN   TestClipboardTranscriptKeyReturnsCommand
+--- PASS: TestClipboardTranscriptKeyReturnsCommand (0.00s)
+PASS
+ok  	jig/internal/tui/monitor	0.033s
+testing: warning: no tests to run
+PASS
+ok  	jig/internal/tui/palette	0.029s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	jig/internal/tui/prefs	0.008s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	jig/internal/tui/question	0.025s [no tests to run]
+testing: warning: no tests to run
+PASS
+ok  	jig/internal/tui/review	0.017s [no tests to run]
+=== RUN   TestClipboardRunID
+--- PASS: TestClipboardRunID (0.00s)
+=== RUN   TestClipboardRunIDEmptyList
+--- PASS: TestClipboardRunIDEmptyList (0.00s)
+=== RUN   TestClipboardRunIDFilteredList
+--- PASS: TestClipboardRunIDFilteredList (0.00s)
+PASS
+ok  	jig/internal/tui/runs	0.019s
+testing: warning: no tests to run
+PASS
+ok  	jig/internal/tui/selector	0.016s [no tests to run]
+=== RUN   TestClipboardEligibilityAndLimits
+=== RUN   TestClipboardEligibilityAndLimits/empty_input
+=== RUN   TestClipboardEligibilityAndLimits/plain_text
+=== RUN   TestClipboardEligibilityAndLimits/preserves_tabs_and_CRLF
+=== RUN   TestClipboardEligibilityAndLimits/strips_ansi_color
+=== RUN   TestClipboardEligibilityAndLimits/strips_OSC_hyperlink
+=== RUN   TestClipboardEligibilityAndLimits/strips_bell
+=== RUN   TestClipboardEligibilityAndLimits/rejects_NUL
+=== RUN   TestClipboardEligibilityAndLimits/rejects_invalid_utf8
+=== RUN   TestClipboardEligibilityAndLimits/sanitize-only_becomes_empty
+=== RUN   TestClipboardEligibilityAndLimits/unicode_preserved
+=== RUN   TestClipboardEligibilityAndLimits/exact_limit
+=== RUN   TestClipboardEligibilityAndLimits/oversized
+--- PASS: TestClipboardEligibilityAndLimits (0.00s)
+    --- PASS: TestClipboardEligibilityAndLimits/empty_input (0.00s)
+    --- PASS: TestClipboardEligibilityAndLimits/plain_text (0.00s)
+    --- PASS: TestClipboardEligibilityAndLimits/preserves_tabs_and_CRLF (0.00s)
+    --- PASS: TestClipboardEligibilityAndLimits/strips_ansi_color (0.00s)
+    --- PASS: TestClipboardEligibilityAndLimits/strips_OSC_hyperlink (0.00s)
+    --- PASS: TestClipboardEligibilityAndLimits/strips_bell (0.00s)
+    --- PASS: TestClipboardEligibilityAndLimits/rejects_NUL (0.00s)
+    --- PASS: TestClipboardEligibilityAndLimits/rejects_invalid_utf8 (0.00s)
+    --- PASS: TestClipboardEligibilityAndLimits/sanitize-only_becomes_empty (0.00s)
+    --- PASS: TestClipboardEligibilityAndLimits/unicode_preserved (0.00s)
+    --- PASS: TestClipboardEligibilityAndLimits/exact_limit (0.00s)
+    --- PASS: TestClipboardEligibilityAndLimits/oversized (0.00s)
+PASS
+ok  	jig/internal/tui/shared	0.020s

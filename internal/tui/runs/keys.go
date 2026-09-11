@@ -9,6 +9,7 @@ type runsKeys struct {
 	NewRun keybind.Binding // matched
 	Resume keybind.Binding // matched
 	Delete keybind.Binding // matched
+	CopyID keybind.Binding // matched (y: copy selected run ID)
 	Back   keybind.Binding // matched
 }
 
@@ -20,6 +21,7 @@ func defaultKeys() runsKeys {
 		NewRun: keybind.NewBinding(keybind.WithKeys("r"), keybind.WithHelp("r", "new run")),
 		Resume: keybind.NewBinding(keybind.WithKeys("R"), keybind.WithHelp("R", "resume paused/interrupted")),
 		Delete: keybind.NewBinding(keybind.WithKeys("d"), keybind.WithHelp("d", "delete")),
+		CopyID: keybind.NewBinding(keybind.WithKeys("y"), keybind.WithHelp("y", "copy run id")),
 		Back:   keybind.NewBinding(keybind.WithKeys("esc", "q", "backspace", "h", "left"), keybind.WithHelp("esc", "back")),
 	}
 }

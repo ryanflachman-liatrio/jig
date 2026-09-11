@@ -282,6 +282,45 @@ func (m Model) updateGate(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			m.refreshPanels()
 			return m, nil
 		}
+		// y/Y build a clipboard request from the workspace's captured state
+		// and hand it to the root without ever calling workspace.Update — so
+		// no draft persistence side-effect can escape a copy key. Copy is
+		// only honoured in browse/select-range modes; when the composer or
+		// summary editor captures text, the key is a literal input.
+		if entry.workspace.Mode() != reviewworkspace.ModeSummary &&
+			!entry.workspace.CapturesText() {
+			key := msg.String()
+			if entry.workspace.MatchesCopyItem(key) {
+				req, ok := entry.workspace.CopyItemRequest()
+				if !ok {
+					target := shared.ClipboardTarget{Surface: shared.ClipboardSurfaceReviewLine, Label: entry.stepID}
+					return m, func() tea.Msg {
+						return shared.ClipboardRequest{
+							Target: target,
+							Loader: func() shared.ClipboardPayload {
+								return shared.ClipboardPayload{Err: shared.ErrClipboardUnavailable}
+							},
+						}
+					}
+				}
+				return m, func() tea.Msg { return req }
+			}
+			if entry.workspace.MatchesCopyAll(key) {
+				req, ok := entry.workspace.CopyAllRequest()
+				if !ok {
+					target := shared.ClipboardTarget{Surface: shared.ClipboardSurfaceReviewDocument, Label: entry.stepID}
+					return m, func() tea.Msg {
+						return shared.ClipboardRequest{
+							Target: target,
+							Loader: func() shared.ClipboardPayload {
+								return shared.ClipboardPayload{Err: shared.ErrClipboardUnavailable}
+							},
+						}
+					}
+				}
+				return m, func() tea.Msg { return req }
+			}
+		}
 		workspace, cmd := entry.workspace.Update(msg)
 		m.inputQueue[m.activeInputIdx].workspace = &workspace
 		m.refreshPanels()

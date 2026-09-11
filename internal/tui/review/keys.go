@@ -11,6 +11,7 @@ type keyMap struct {
 	PrevHunk, NextHunk, FoldHunk keybind.Binding
 	Edit, Delete, Summary        keybind.Binding
 	Confirm, Cancel, NextKind    keybind.Binding
+	CopyItem, CopyAll            keybind.Binding
 }
 
 func defaultKeyMap() keyMap {
@@ -31,6 +32,7 @@ func defaultKeyMap() keyMap {
 		Edit:     b([]string{"e"}, "edit comment"), Delete: b([]string{"x"}, "delete comment"),
 		Summary: b([]string{"S"}, "finish review"), Confirm: b([]string{"enter"}, "confirm"),
 		Cancel: b([]string{"esc"}, "cancel"), NextKind: b([]string{"tab"}, "next kind"),
+		CopyItem: b([]string{"y"}, "copy"), CopyAll: b([]string{"Y"}, "copy all"),
 	}
 }
 
@@ -74,7 +76,34 @@ func (m Model) Help() []KeyHelp {
 	if m.docs[m.active].meta.Format == "markdown" {
 		help = append(help, KeyHelp{Key: "s", Description: "view"})
 	}
+	help = append(help, KeyHelp{Key: "y", Description: m.contextualCopyItemLabel()})
+	help = append(help, KeyHelp{Key: "Y", Description: m.contextualCopyAllLabel()})
 	return append(help, KeyHelp{Key: "esc", Description: "close/cancel"})
+}
+
+// contextualCopyItemLabel names the y-target so the operator sees exactly
+// what will be copied in the current mode: a line, a range, a hunk, or a
+// preview block.
+func (m Model) contextualCopyItemLabel() string {
+	if m.activeDocumentMode() == DocumentPreview {
+		return "copy block"
+	}
+	if m.mode == ModeSelectRange {
+		return "copy range"
+	}
+	if diff := m.parsedDiffPresentation(); diff != nil && m.hunkForPatchLine(m.cursor) != nil {
+		return "copy hunk"
+	}
+	return "copy line"
+}
+
+// contextualCopyAllLabel names the Y-target: whole document, or the current
+// file's full diff when the source is a parsed multi-file patch.
+func (m Model) contextualCopyAllLabel() string {
+	if diff := m.parsedDiffPresentation(); diff != nil && m.fileForPatchLine(m.cursor) != nil {
+		return "copy file diff"
+	}
+	return "copy document"
 }
 
 type KeyHelp struct{ Key, Description string }

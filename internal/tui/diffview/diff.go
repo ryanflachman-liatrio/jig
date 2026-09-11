@@ -37,9 +37,20 @@ type Hunk struct {
 	Header                       string
 }
 
+// File tracks one file's full span within the original patch content. The span
+// includes every metadata row (diff --git, index, mode, ---/+++) that
+// introduces the file as well as every hunk row parsed for it, so a copy of
+// the whole file's diff round-trips byte-for-byte against the source content.
+type File struct {
+	FileIndex                    int
+	Name                         string
+	StartPatchLine, EndPatchLine int
+}
+
 type Presentation struct {
 	Rows     []Row
 	Hunks    []Hunk
+	Files    []File
 	ParseErr error
 }
 
@@ -83,7 +94,10 @@ func Parse(content string) *Presentation {
 	}
 	if err := projectHunks(presentation, lines, hunks); err != nil {
 		presentation.ParseErr = fmt.Errorf("project diff: %w", err)
+		return presentation
 	}
+	presentation.Files = computeFileSpans(lines, files)
+	assignMetadataToFiles(presentation.Rows, presentation.Files)
 	return presentation
 }
 
@@ -149,12 +163,143 @@ func projectHunks(presentation *Presentation, lines []string, hunks []parsedHunk
 	return nil
 }
 
-func FileName(file *gitdiff.File) string {
-	name := file.NewName
-	if name == "" || name == "/dev/null" {
-		name = file.OldName
+// computeFileSpans locates each parsed file's introducing header row so that a
+// caller can slice the original source content for the whole file's diff. The
+// spans are 1-indexed inclusive over the raw patch lines. Header detection
+// prefers `diff --git` for git-style patches, falls back to `--- ` file
+// headers for plain unified patches, and finally uses the first hunk header
+// when neither is present (the hunk-only fallback path in Parse).
+func computeFileSpans(lines []string, files []*gitdiff.File) []File {
+	if len(files) == 0 {
+		return nil
 	}
-	name = strings.TrimPrefix(strings.TrimPrefix(name, "a/"), "b/")
+	starts := make([]int, len(files))
+	cursor := 0
+	for i, f := range files {
+		start := findFileHeader(lines, cursor, f)
+		if start < 0 {
+			return nil
+		}
+		starts[i] = start
+		cursor = start + 1
+	}
+	spans := make([]File, len(files))
+	for i, f := range files {
+		end := len(lines)
+		if i+1 < len(starts) {
+			end = starts[i+1]
+		}
+		spans[i] = File{
+			FileIndex:      i,
+			Name:           FileName(f),
+			StartPatchLine: starts[i] + 1,
+			EndPatchLine:   end,
+		}
+	}
+	return spans
+}
+
+// findFileHeader locates the introducing line for a parsed file, searching
+// from cursor onward. Returns the 0-indexed line number or -1 if no plausible
+// header is found (the caller then leaves file spans unreported so review
+// keeps its raw-fallback path). Order of preference: git-style `diff --git`,
+// plain `--- a/<name>` (or `--- /dev/null` for deletes), and finally the
+// first hunk header. Every check tolerates a trailing CR.
+func findFileHeader(lines []string, cursor int, file *gitdiff.File) int {
+	for i := cursor; i < len(lines); i++ {
+		if isGitFileHeader(strings.TrimSuffix(lines[i], "\r"), file) {
+			return i
+		}
+	}
+	for i := cursor; i < len(lines); i++ {
+		if isPlainFileHeader(strings.TrimSuffix(lines[i], "\r"), file) {
+			return i
+		}
+	}
+	for i := cursor; i < len(lines); i++ {
+		if isHunkHeader(lines[i]) {
+			return i
+		}
+	}
+	return -1
+}
+
+func isGitFileHeader(line string, file *gitdiff.File) bool {
+	if !strings.HasPrefix(line, "diff --git ") {
+		return false
+	}
+	rest := strings.TrimPrefix(line, "diff --git ")
+	names := extractPathPair(rest)
+	if names == nil {
+		return true
+	}
+	return matchesName(names[0], file.OldName) || matchesName(names[1], file.NewName)
+}
+
+func isPlainFileHeader(line string, file *gitdiff.File) bool {
+	if !strings.HasPrefix(line, "--- ") {
+		return false
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(line, "--- "))
+	if rest == "/dev/null" {
+		return file.OldName == "" || file.IsNew
+	}
+	if matchesName(rest, file.OldName) || matchesName(rest, file.NewName) {
+		return true
+	}
+	return false
+}
+
+// extractPathPair pulls the "a/x b/y" pair out of a `diff --git` line body.
+// Returns nil for unparseable shapes so the caller falls back to filename
+// matching rather than rejecting the header outright.
+func extractPathPair(rest string) []string {
+	fields := strings.Fields(rest)
+	if len(fields) < 2 {
+		return nil
+	}
+	return []string{fields[0], fields[1]}
+}
+
+func matchesName(candidate, name string) bool {
+	return normalizeDiffName(candidate) != "" && normalizeDiffName(candidate) == normalizeDiffName(name)
+}
+
+// normalizeDiffName strips the a/ or b/ diff prefix and trailing CR/space so
+// the comparison tolerates CRLF-terminated headers and gitdiff variants that
+// keep the prefix in File.OldName/NewName for prefix-less patches.
+func normalizeDiffName(name string) string {
+	name = strings.TrimSpace(strings.TrimSuffix(name, "\r"))
+	name = strings.TrimPrefix(name, "a/")
+	name = strings.TrimPrefix(name, "b/")
+	return name
+}
+
+// assignMetadataToFiles fills the FileIndex on RowMetadata rows so callers
+// (e.g. review's clipboard code) can find the file a cursor is currently in
+// regardless of whether the cursor sits on a hunk row or on metadata.
+func assignMetadataToFiles(rows []Row, files []File) {
+	if len(files) == 0 {
+		return
+	}
+	for i := range rows {
+		if rows[i].FileIndex >= 0 {
+			continue
+		}
+		for _, f := range files {
+			if rows[i].PatchLine >= f.StartPatchLine && rows[i].PatchLine <= f.EndPatchLine {
+				rows[i].FileIndex = f.FileIndex
+				break
+			}
+		}
+	}
+}
+
+func FileName(file *gitdiff.File) string {
+	name := normalizeDiffName(file.NewName)
+	if name == "" || name == "/dev/null" {
+		name = normalizeDiffName(file.OldName)
+	}
 	if name == "" || name == "/dev/null" {
 		return "file"
 	}
