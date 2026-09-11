@@ -532,7 +532,7 @@ of FR-06, FR-12, and FR-15.
   refusals, confinement matrix, limit edges, cancellation cleanup, and streaming
   benchmark under the task 4.0 artifact directory.
 
-### [ ] 5.0 Publish the export contract and close offline acceptance
+### [x] 5.0 Publish the export contract and close offline acceptance
 
 Document the command and versioned archive as a stable recipient-facing
 contract, link it from the README, and verify every parent slice together with
@@ -570,38 +570,38 @@ FR-16.
 
 #### 5.0 Tasks
 
-- [ ] 5.1 Write the recipient/operator export contract in
+- [x] 5.1 Write the recipient/operator export contract in
   `docs/operations.md` or a linked dedicated document: exact command grammar,
   mode warnings, eligible/refused states, selected and excluded sources,
   archive/member/field versions, aliases/times, state authority, gap codes,
   all limits, publication/cancellation, streams/exits, and local-only/no-backend
   behavior. State explicitly that neither mode guarantees anonymity.
-- [ ] 5.2 Update `README.md` to make `jig export` discoverable and link the full
+- [x] 5.2 Update `README.md` to make `jig export` discoverable and link the full
   contract; update `docs/TESTING.md` to replace stale package coverage claims
   with the current offline, helper-process, archive-parsing, disclosure-scan,
   and race-test conventions.
-- [ ] 5.3 Add one deterministic end-to-end acceptance test that builds or drives
+- [x] 5.3 Add one deterministic end-to-end acceptance test that builds or drives
   the real CLI entry against temporary intact and damaged run stores, creates
   structural and text bundles, inspects them with standard ZIP/JSON readers,
   checks exact stdout/stderr/exits, and verifies before/after source hashes. It
   must use no live workflow validation, model, backend, credential, or network.
-- [ ] 5.4 Add a requirements assertion or compact test-data matrix mapping every
+- [x] 5.4 Add a requirements assertion or compact test-data matrix mapping every
   FR-01 through FR-17 to at least one executable test/proof name, so deleting a
   planned acceptance case cannot silently leave the documentation-only coverage
   table as the sole evidence.
-- [ ] 5.5 Run and save sanitized outputs for `go test ./internal/runexport ./cmd/jig -race -count=1`,
+- [x] 5.5 Run and save sanitized outputs for `go test ./internal/runexport ./cmd/jig -race -count=1`,
   `go test ./... -count=1`, `go vet ./...`, and `gofmt -l .` (which must print
   nothing). Fix only regressions caused by this feature; do not alter unrelated
   user work.
-- [ ] 5.6 Validate every `.agents/jig/*.toml` with `go run ./cmd/jig validate`
+- [x] 5.6 Validate every `.agents/jig/*.toml` with `go run ./cmd/jig validate`
   and save the successful output, confirming the CLI addition did not change
   workflow schema/defaulting or require example migrations.
-- [ ] 5.7 Re-run the three demo captures using only synthetic fixtures and save
+- [x] 5.7 Re-run the three demo captures using only synthetic fixtures and save
   an artifact index that points to help/structural/text/partial outputs,
   disclosure scans, lock/confinement/bounds/cancellation results, source hashes,
   and repository quality gates. Verify no artifact is a raw run archive or
   contains a private fixture seed.
-- [ ] 5.8 Only after 5.3–5.7 pass, update A22 in
+- [x] 5.8 Only after 5.3–5.7 pass, update A22 in
   `docs/plans/open-goals.md` to **Done** with links to this spec, task list,
   proofs, and validation path. Leave all hosted sharing, TUI/viewer/import,
   raw backup, live snapshots, custom redaction, persistence-schema, and backend
