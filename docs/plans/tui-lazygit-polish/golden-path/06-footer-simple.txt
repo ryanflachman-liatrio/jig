@@ -25,4 +25,4 @@
 ╰───────────────────────────────╯╰─────────────────────────────────────────────────────────────────╯
   GATE · needs input  ·  Step: gate  ·  1 pending  ·  tab to open                                   
  cd1234ef · golden-path · gate · 1.2k tok · $0.0200 · LIVE                                          
-  awaiting review  ·  tab gate  •  enter transcript  •  Y copy transcript  •  ? more  ·  simple     
+  awaiting review  ·  tab gate  •  enter transcript  •  j/k select  •  ? more  ·  simple            
