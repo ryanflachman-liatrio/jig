@@ -7,9 +7,9 @@
 | `internal/tui/root.go` | `rootModel.View()` sets `v.MouseMode = tea.MouseModeCellMotion` alongside the existing `AltScreen`/`BackgroundColor`. |
 | `internal/tui/root_test.go` | Root-model tests: `MouseMode` assertion, click-to-open happy path (independent of keyboard selection), and the full no-op table (non-primary button, release/wheel/motion, out-of-bounds, filtering, Detail already open, Monitor active). |
 | `internal/tui/root_update.go` | Root's `Update` switch: `tea.MouseMsg` is dispatched to `updateHome` only when `m.active == screenHome`; a no-op otherwise (Monitor/other root surfaces). |
-| `internal/tui/home.go` | `homeLayout()` is the new single source of truth for the narrow/wide split (replacing duplicated math previously inline in `homeView`/`sizeHomeChildren`); `updateHomeMouse` translates a root-level click into workflow-pane-local coordinates and calls `m.selector.ItemAt`, then `m.openDetailOverlay` on a hit — the same destination as the `d` key. |
-| `internal/tui/selector/model.go` | `Model` gained `itemHeight`/`itemSpacing` fields (copied from the delegate at construction) so `ItemAt`'s row math can never drift from what the list actually renders. |
-| `internal/tui/selector/hit.go` (new) | `Model.ItemAt(x, y int) (string, bool)` — the hit-testing seam: maps a pane-local point to a visible-window item's path, accounting for the list's own reserved title/filter and pagination rows, current page, and filtered item set. |
+| `internal/tui/home.go` | `homeLayout()` is the new single source of truth for the narrow/wide split (replacing duplicated math previously inline in `homeView`/`sizeHomeChildren`); `updateHomeMouse` translates a root-level click into workflow-pane-local coordinates and calls `m.selector.SelectItemAt`, moving the keyboard cursor to the clicked row — it does **not** open Detail; only the `d` key does that. |
+| `internal/tui/selector/model.go` | `Model` gained `itemHeight`/`itemSpacing` fields (copied from the delegate at construction) so hit-testing's row math can never drift from what the list actually renders. |
+| `internal/tui/selector/hit.go` (new) | `itemAtPoint(x, y int) (int, workflowItem, bool)` is the shared hit-testing seam, mapping a pane-local point to a visible-window item's global list index and value. `Model.ItemAt(x, y) (string, bool)` (path lookup, used by tests) and `Model.SelectItemAt(x, y) (Model, bool)` (moves the list's keyboard cursor via `list.Model.Select`) both compose it. |
 | `internal/tui/selector/hit_test.go` (new) | Table-driven geometry tests: unfiltered, pagination, filtering, resize, Unicode width, boundary rows, a two-width render fixture, and a bounded `FuzzItemAt`. |
 | `internal/tui/shared/panel.go` | Added `PanelContentOrigin()` — the pane-local (x, y) of the first content cell inside a `Panel`-rendered pane, reused by `ItemAt` instead of re-deriving border/padding offsets. |
 | `charm.land/bubbles/v2/list` (vendor, read-only) | `VisibleItems()`, `Paginator.GetSliceBounds`, `ItemDelegate.Height()/Spacing()` — the existing primitives `ItemAt` composes; confirmed empirically (not just from reading source) that the list always reserves one title/filter row and one pagination row regardless of state, which is why item rows start 2 cells below the panel's top-left content origin. |
@@ -19,7 +19,8 @@
 
 - Unit tests live alongside the code they test, following the repository's existing pattern.
 - `go test ./internal/tui/selector/... -v` and `go test ./internal/tui/... -run TestHomeMouse -v` for targeted runs; `go test -race ./internal/tui/...` for the final race pass.
-- **Implementation-time refinement (user-confirmed):** the spec's wording ("same detail view as pressing Enter") referred to the *standalone* selector's `Open`/Enter binding, which emits `selector.ShowDetailMsg`. Inside the actual embedded Home screen, keyboard Enter on a workflow row focuses the Runs pane, not Detail — only the `d` key opens Detail. Asked the user which behavior a click should match; confirmed a click should open the Detail overlay (matching `d`), not focus Runs (matching Home's actual Enter). Implemented accordingly: `ItemAt` returns a path directly and `updateHomeMouse` calls `m.openDetailOverlay` directly, the same way the `d`-key handler already does — no `ShowDetailMsg` round trip needed for the embedded path. The standalone `selector.ShowDetailMsg`/root `case selector.ShowDetailMsg` path is unchanged and still exists for driving the selector outside Home (e.g. tests).
+- **Implementation-time refinement (user-confirmed, superseded — see below):** the spec's original wording ("same detail view as pressing Enter") referred to the *standalone* selector's `Open`/Enter binding, which emits `selector.ShowDetailMsg`. Inside the actual embedded Home screen, keyboard Enter on a workflow row focuses the Runs pane, not Detail — only the `d` key opens Detail. Asked the user which behavior a click should match; the user first confirmed a click should open the Detail overlay (matching `d`). This was implemented as `ItemAt` returning a path and `updateHomeMouse` calling `m.openDetailOverlay` directly, mirroring the `d`-key handler.
+- **Post-implementation revision (user-directed):** after seeing the click-opens-Detail behavior in practice, the user asked for it to be changed: a click on a row that is not currently keyboard-selected should *select* that row (the same as `j`/`k`), not jump straight to Detail; Detail-opening stays exclusively on the `d` key. Reworked accordingly: `hit.go` now factors the shared geometry into `itemAtPoint`, `ItemAt` (path lookup, still used by `hit_test.go`) is unchanged in behavior, and a new `Model.SelectItemAt(x, y) (Model, bool)` moves the list's keyboard cursor via `list.Model.Select(idx)`. `updateHomeMouse` calls `SelectItemAt` and no longer calls `openDetailOverlay`. The standalone `selector.ShowDetailMsg`/root `case selector.ShowDetailMsg` path is unchanged and still exists for driving the selector outside Home (e.g. tests) — it was never wired to the mouse path in either revision.
 
 ## Tasks
 
@@ -40,23 +41,23 @@
 - [x] 1.5 `TestHomeMouseClickNoOpCases` subtests for Detail-open and Monitor-active.
 - [x] 1.6 Ran `go test ./internal/tui/... -run 'TestRootViewMouseModeCellMotion|TestHomeMouseClick' -v` — all pass (proofs file).
 
-### [x] 2.0 Open a workflow from a valid visible row click
+### [x] 2.0 Select a workflow row from a valid visible row click
 
 #### 2.0 Proof Artifact(s)
 
 - Test: `TestItemAtClickIsIndependentOfKeyboardSelection`, `TestItemAtPagination`, `TestItemAtFiltered` (`internal/tui/selector/hit_test.go`) — a click resolves by rendered row, not keyboard cursor.
-- Test: `TestHomeMouseClickOpensDetailOverlaySameAsDKey` and `TestHomeMouseClickOpensRowNotKeyboardSelection` (`internal/tui/root_test.go`) — full click → Detail-overlay path, matching the `d`-key destination, including for a non-selected row.
+- Test: `TestHomeMouseClickSelectsRowWithoutOpeningDetail` and `TestHomeMouseClickSelectsRowNotKeyboardSelection` (`internal/tui/root_test.go`) — full click → selection-only path (`SelectedPath()` updates to the clicked row; Detail overlay stays closed), including for a row other than the current keyboard selection.
 - Test: `TestHomeMouseClickNoOpCases/while_filtering` — click during active filtering is a no-op.
 - CLI: `go test ./internal/tui/... ./internal/tui/selector/...` passes — see proofs file.
 
 #### 2.0 Tasks
 
-- [x] 2.1 Added `Model.ItemAt(x, y int) (string, bool)` (`internal/tui/selector/hit.go`).
+- [x] 2.1 Added `Model.ItemAt(x, y int) (string, bool)` and `Model.SelectItemAt(x, y int) (Model, bool)` (`internal/tui/selector/hit.go`), sharing geometry via `itemAtPoint`.
 - [x] 2.2 Added `homeLayout()` (`internal/tui/home.go`) as the single source of truth for pane rectangles; `updateHomeMouse` translates root coordinates into workflow-pane-local coordinates and bounds-checks against it.
-- [x] 2.3 A valid `ItemAt` hit calls `m.openDetailOverlay(path)` directly (see the user-confirmed refinement note above — this is the actual "same as Enter" destination in Home's real semantics, matching the `d` key).
+- [x] 2.3 A valid `SelectItemAt` hit moves the list's keyboard cursor via `list.Model.Select(idx)` and does **not** call `m.openDetailOverlay` (revised post-implementation per user direction — see the note above; Detail-opening is exclusively the `d` key).
 - [x] 2.4 Guarded with `m.selector.CapturesText()` in `updateHomeMouse`.
 - [x] 2.5 `TestItemAtClickIsIndependentOfKeyboardSelection`, `TestItemAtPagination`, `TestItemAtFiltered`.
-- [x] 2.6 `TestHomeMouseClickOpensDetailOverlaySameAsDKey`, `TestHomeMouseClickOpensRowNotKeyboardSelection`.
+- [x] 2.6 `TestHomeMouseClickSelectsRowWithoutOpeningDetail`, `TestHomeMouseClickSelectsRowNotKeyboardSelection`.
 - [x] 2.7 Ran `go test ./internal/tui/... ./internal/tui/selector/...` — all pass, including pre-existing `selector_test.go`/`root_test.go`.
 
 ### [x] 3.0 Keep hit regions aligned with rendered selector geometry

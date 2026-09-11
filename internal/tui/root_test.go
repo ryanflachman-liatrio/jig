@@ -415,11 +415,12 @@ func TestRootViewMouseModeCellMotion(t *testing.T) {
 	}
 }
 
-// TestHomeMouseClickOpensDetailOverlaySameAsDKey covers the click-to-open
-// happy path: a primary click on a visible workflow row opens the same
-// Detail overlay as pressing 'd' on that row, independent of the keyboard
-// cursor, and does so for a row other than the first.
-func TestHomeMouseClickOpensDetailOverlaySameAsDKey(t *testing.T) {
+// TestHomeMouseClickSelectsRowWithoutOpeningDetail covers the click-to-select
+// happy path: a primary click on a visible workflow row moves the keyboard
+// selection to that row (the same as j/k would), independent of which row
+// was previously selected, but does not open the Detail overlay — only the
+// 'd' key does that.
+func TestHomeMouseClickSelectsRowWithoutOpeningDetail(t *testing.T) {
 	m, alphaPath, _ := homeWithWorkflows(t)
 
 	// alpha is row 0 (rendered at pane-local/root y=2-3, see selector's
@@ -432,20 +433,19 @@ func TestHomeMouseClickOpensDetailOverlaySameAsDKey(t *testing.T) {
 		}
 	}
 	root := m.(rootModel)
-	if !root.showDetailOverlay {
-		t.Fatal("expected click on a workflow row to open the Detail overlay")
+	if root.showDetailOverlay {
+		t.Fatal("expected click on a workflow row to select it, not open the Detail overlay")
 	}
-	m, _ = m.Update(detail.New(alphaPath).Init()())
-	view := m.View().Content
-	if !strings.Contains(view, "alpha") || !strings.Contains(view, "hello") {
-		t.Fatalf("detail overlay missing clicked workflow content:\n%s", view)
+	if path, ok := root.selector.SelectedPath(); !ok || path != alphaPath {
+		t.Fatalf("expected click to select alpha, got %q", path)
 	}
 }
 
-// TestHomeMouseClickOpensRowNotKeyboardSelection asserts a click opens the
-// row actually under the pointer, even though the keyboard cursor still sits
-// on the first item (cold-start auto-selects the first workflow).
-func TestHomeMouseClickOpensRowNotKeyboardSelection(t *testing.T) {
+// TestHomeMouseClickSelectsRowNotKeyboardSelection asserts a click moves the
+// selection to the row actually under the pointer, even though the keyboard
+// cursor still sits on the first item (cold-start auto-selects the first
+// workflow).
+func TestHomeMouseClickSelectsRowNotKeyboardSelection(t *testing.T) {
 	m, _, betaPath := homeWithWorkflows(t)
 	root := m.(rootModel)
 	if path, ok := root.selector.SelectedPath(); !ok || !strings.Contains(path, "alpha") {
@@ -460,13 +460,11 @@ func TestHomeMouseClickOpensRowNotKeyboardSelection(t *testing.T) {
 		}
 	}
 	root = m.(rootModel)
-	if !root.showDetailOverlay {
-		t.Fatal("expected click on beta's row to open the Detail overlay")
+	if root.showDetailOverlay {
+		t.Fatal("expected click on beta's row to select it, not open the Detail overlay")
 	}
-	m, _ = m.Update(detail.New(betaPath).Init()())
-	view := m.View().Content
-	if !strings.Contains(view, "beta") {
-		t.Fatalf("detail overlay opened the wrong workflow:\n%s", view)
+	if path, ok := root.selector.SelectedPath(); !ok || path != betaPath {
+		t.Fatalf("expected click to select beta, got %q", path)
 	}
 }
 

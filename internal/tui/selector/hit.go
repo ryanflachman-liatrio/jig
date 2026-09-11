@@ -2,9 +2,10 @@ package selector
 
 import "jig/internal/tui/shared"
 
-// ItemAt returns the path of the workflow item whose rendered row contains
-// the pane-local point (x, y) — (0, 0) is the outer top-left corner of the
-// panel Home renders this selector into (see shared.Panel), the same
+// itemAtPoint resolves the pane-local point (x, y) to the visible item drawn
+// there, along with its global index in the list's current filtered item set
+// (the index list.Model.Select expects) — (0, 0) is the outer top-left corner
+// of the panel Home renders this selector into (see shared.Panel), the same
 // coordinate space SetPaneSize/PaneBody size and render into.
 //
 // The row math mirrors bubbles' own list.Model layout exactly: the list
@@ -15,9 +16,9 @@ import "jig/internal/tui/shared"
 // own Paginator. This is why hit testing can't be a flat width×height
 // division: filtering, pagination, and scrolling all change which item (if
 // any) is actually drawn at a given row.
-func (m Model) ItemAt(x, y int) (string, bool) {
+func (m Model) itemAtPoint(x, y int) (int, workflowItem, bool) {
 	if m.loading || m.err != nil {
-		return "", false
+		return 0, workflowItem{}, false
 	}
 
 	ox, oy := shared.PanelContentOrigin()
@@ -29,31 +30,55 @@ func (m Model) ItemAt(x, y int) (string, bool) {
 
 	cx, cy := x-ox, y-(oy+1)
 	if cx < 0 || cy < 0 || cx >= contentW || cy >= contentH {
-		return "", false
+		return 0, workflowItem{}, false
 	}
 
 	items := m.list.VisibleItems()
 	if len(items) == 0 {
-		return "", false
+		return 0, workflowItem{}, false
 	}
 	slot := m.itemHeight + m.itemSpacing
 	if slot <= 0 {
-		return "", false
+		return 0, workflowItem{}, false
 	}
 	onPage := cy / slot
 	if cy%slot >= m.itemHeight {
-		return "", false // the spacing gap between rows
+		return 0, workflowItem{}, false // the spacing gap between rows
 	}
 
 	pager := m.list.Paginator
 	start, end := pager.GetSliceBounds(len(items))
 	page := items[start:end]
 	if onPage >= len(page) {
-		return "", false // trailing blank fill below the last item on this page
+		return 0, workflowItem{}, false // trailing blank fill below the last item on this page
 	}
 	item, ok := page[onPage].(workflowItem)
+	if !ok {
+		return 0, workflowItem{}, false
+	}
+	return start + onPage, item, true
+}
+
+// ItemAt returns the path of the workflow item whose rendered row contains
+// the pane-local point (x, y). See itemAtPoint for the coordinate space and
+// row-resolution rules.
+func (m Model) ItemAt(x, y int) (string, bool) {
+	_, item, ok := m.itemAtPoint(x, y)
 	if !ok {
 		return "", false
 	}
 	return item.path, true
+}
+
+// SelectItemAt moves the keyboard cursor to the workflow item whose rendered
+// row contains the pane-local point (x, y), the same way pressing j/k would,
+// without opening its Detail overlay — only the 'd' key does that. See
+// itemAtPoint for the coordinate space and row-resolution rules.
+func (m Model) SelectItemAt(x, y int) (Model, bool) {
+	idx, _, ok := m.itemAtPoint(x, y)
+	if !ok {
+		return m, false
+	}
+	m.list.Select(idx)
+	return m, true
 }

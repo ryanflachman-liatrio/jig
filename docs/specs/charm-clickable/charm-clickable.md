@@ -2,23 +2,25 @@
 
 ## Introduction/Overview
 
-Make the startup workflow selector open a workflow when the operator clicks a
-visible workflow row with the mouse. The selector currently supports keyboard
-navigation and Enter, but the Bubble Tea v2 list does not translate mouse
-coordinates into list selections; this feature adds that event flow while
-keeping the existing `selector.ShowDetailMsg` navigation contract.
+Make the startup workflow selector respond to a mouse click on a visible
+workflow row by selecting that row, the same as moving the keyboard cursor to
+it with `j`/`k`. The selector currently supports keyboard navigation and
+Enter, but the Bubble Tea v2 list does not translate mouse coordinates into
+list selections; this feature adds that event flow. Opening the Detail
+overlay remains exclusively a keyboard action (the `d` key); a click never
+opens Detail.
 
-The primary goal is predictable mouse interaction: a click must open exactly the
-workflow row rendered at that location, including after filtering, pagination,
-scrolling, resizing, and changes in terminal width.
+The primary goal is predictable mouse interaction: a click must select exactly
+the workflow row rendered at that location, including after filtering,
+pagination, scrolling, resizing, and changes in terminal width.
 
 ## Goals
 
 1. Enable terminal cell-motion mouse delivery at the root Bubble Tea view so
    primary mouse clicks can reach the selector.
-2. Make a valid click on a visible workflow row emit the existing
-   `selector.ShowDetailMsg` with that row's path, producing the same detail view
-   as pressing Enter.
+2. Make a valid click on a visible workflow row move the selector's keyboard
+   cursor to that row's item, the same as pressing `j`/`k` until it is
+   reached — without opening the Detail overlay.
 3. Keep hit testing synchronized with the selector's actual rendered geometry,
    including the outer panel, list content area, row spacing, filtering,
    pagination, scrolling, borders, and Unicode display widths.
@@ -31,11 +33,15 @@ scrolling, resizing, and changes in terminal width.
 ## User Stories
 
 - As an operator browsing workflows, I want to click a visible workflow row so
-  that I can open it without first moving the keyboard cursor.
+  that I can select it without first moving the keyboard cursor there.
 - As an operator using a filtered or scrolled list, I want the click target to
-  match the row I see so that mouse selection never opens a different workflow.
+  match the row I see so that mouse selection never selects a different
+  workflow than the one I clicked.
 - As an operator clicking outside the list, I want nothing to happen so that
   decorative UI and footer hints are not treated as workflows.
+- As an operator, I want a click to only change the selection so that opening
+  Detail remains a deliberate `d` keypress, never an accidental side effect of
+  a click.
 - As a maintainer, I want mouse hit testing to use the selector's rendered
   layout state so that future layout changes do not silently make click targets
   inaccurate.
@@ -67,32 +73,34 @@ preserving the existing full-screen TUI configuration.
   mouse mode is enabled alongside the existing alternate-screen and background
   settings.
 
-### Unit 2 — Open a workflow from a valid visible row click
+### Unit 2 — Select a workflow row from a valid visible row click
 
-**Purpose:** Add the end-to-end click-to-detail interaction using the existing
-`ShowDetailMsg` contract.
+**Purpose:** Add the end-to-end click-to-select interaction: a click moves the
+keyboard cursor to the clicked row without opening Detail.
 
 **Functional Requirements:**
 
 - The system shall identify the workflow item occupying the clicked visible row
   in the selector's current list state.
-- For a click inside a valid workflow row, the system shall emit exactly one
-  `selector.ShowDetailMsg` containing that item's workflow path.
-- The root shall handle the mouse-produced `ShowDetailMsg` through the same
-  detail-opening path used by keyboard Enter, including the normal detail model
-  loading and sizing behavior.
+- For a click inside a valid workflow row, the system shall move the
+  selector's keyboard cursor to that item, the same as if `j`/`k` had been
+  pressed until it was reached.
 - A click shall not require the clicked row to be the keyboard-selected row
-  before opening it.
-- Mouse opening shall remain disabled while the selector's filter editor is
-  capturing text; clicks in the filter/editor area shall not open a workflow.
+  before selecting it, and shall not open the Detail overlay regardless of
+  whether the clicked row was already selected.
+- The root shall not treat a click as a `ShowDetailMsg` or any other
+  Detail-opening trigger; only the `d` key opens Detail.
+- Mouse selection shall remain disabled while the selector's filter editor is
+  capturing text; clicks in the filter/editor area shall not change the
+  selection.
 
 **Proof Artifacts:**
 
-- Table-driven selector-model test: representative row coordinates produce the
-  expected workflow path, including a row other than the current keyboard
-  selection.
-- Root-model test: a valid row click results in the same detail screen and
-  workflow content as the equivalent `ShowDetailMsg` from Enter.
+- Table-driven selector-model test: representative row coordinates move the
+  keyboard cursor to the expected workflow item, including a row other than
+  the current keyboard selection.
+- Root-model test: a valid row click updates `SelectedPath()` to the clicked
+  row's workflow and leaves the Detail overlay closed.
 
 ### Unit 3 — Keep hit regions aligned with rendered selector geometry
 
@@ -142,12 +150,13 @@ selector or non-selector interactions.
 
 **Functional Requirements:**
 
-- The system shall perform no state change and emit no `ShowDetailMsg` for
+- The system shall perform no state change and no selection change for
   non-primary mouse actions, negative or out-of-bounds coordinates,
   panel-border, footer, blank-space, loading, error, or empty-selector clicks.
 - The system shall ignore mouse clicks when the active root screen is detail,
   runs, or monitor unless those screens already define an unrelated mouse
-  interaction; this feature shall not introduce cross-screen workflow opening.
+  interaction; this feature shall not introduce cross-screen navigation or
+  selection changes.
 - The system shall preserve keyboard Enter, filtering, cursor navigation,
   pagination, and existing global help/quit behavior.
 - The implementation shall be race-safe under the repository's normal test
@@ -157,7 +166,8 @@ selector or non-selector interactions.
 **Proof Artifacts:**
 
 - Negative-case table test: invalid coordinates and non-selector states
-  demonstrate no-op behavior and absence of panics.
+  demonstrate no-op behavior (no selection change, no Detail overlay, no
+  panics).
 - Regression test: existing selector keyboard tests continue to pass, including
   Enter during and outside filtering.
 - Command output: `go build ./cmd/jig`, `go test ./...`, `go vet ./...`, and
@@ -182,9 +192,10 @@ selector or non-selector interactions.
 ## Design Considerations
 
 - A primary-button click on a rendered workflow row is the supported gesture.
-  The interaction should feel equivalent to selecting that row and pressing
-  Enter, but it must open the row actually under the pointer even when another
-  row is keyboard-selected.
+  The interaction should feel equivalent to moving the keyboard cursor to that
+  row, and it must select the row actually under the pointer even when another
+  row is keyboard-selected. It must never open the Detail overlay by itself —
+  that remains the `d` key's job.
 - Hit testing should be owned by the selector because the selector owns list
   state and knows filtering, visible items, panel sizing, and footer geometry.
   The root owns view-level mouse configuration and event delivery, then forwards
@@ -207,8 +218,9 @@ selector or non-selector interactions.
   composition and `tea.View` configuration.
 - Follow Bubble Tea v2 and Bubbles v2 APIs already used by the repository; do
   not introduce a second UI framework or a parallel event bus.
-- Reuse the existing `selector.ShowDetailMsg` and root detail-opening flow
-  rather than creating a duplicate navigation message or direct screen switch.
+- Reuse the list's existing selection primitive (`list.Model.Select`) rather
+  than introducing a parallel selection-state field; a click must not route
+  through `selector.ShowDetailMsg` or any other Detail-opening flow.
 - Keep all styling through the existing shared theme singleton. This feature
   requires no new colors or ad-hoc Lipgloss styles.
 - Keep files focused by concern. Layout or hit-testing helpers belong near the
@@ -244,9 +256,10 @@ selector or non-selector interactions.
 - Resizing can occur before or between mouse events. Recompute or invalidate
   layout state when `tea.WindowSizeMsg` is processed so stale dimensions cannot
   route a click to a neighboring row.
-- Keep event handling synchronous and deterministic: return a command producing
-  `ShowDetailMsg` in the same pattern as keyboard Enter, with no goroutine,
-  filesystem access, or network operation in hit testing.
+- Keep event handling synchronous and deterministic: a valid click updates the
+  list's selection directly (`list.Model.Select`), the same as a `j`/`k`
+  keypress, with no goroutine, filesystem access, or network operation in hit
+  testing.
 - If Bubble Tea's concrete mouse message exposes multiple mouse actions, accept
   only the primary-button press/click action needed by this feature and ignore
   motion, release, wheel, and other buttons. The implementation should match
@@ -259,9 +272,10 @@ selector or non-selector interactions.
 ## Security Considerations
 
 - Workflow names, descriptions, and paths are untrusted local metadata. Mouse
-  hit testing shall use the already discovered item identity and existing
-  `ShowDetailMsg` path flow; it shall not construct shell commands, evaluate TOML
-  content, or bypass existing workflow loading/validation boundaries.
+  hit testing shall use the already discovered item identity and the list's
+  existing selection primitive; it shall not construct shell commands,
+  evaluate TOML content, or bypass existing workflow loading/validation
+  boundaries.
 - The feature does not add credentials, authentication, authorization, network
   access, or filesystem write behavior. No secrets, terminal captures, or run
   artifacts may be added to tests or committed as proof artifacts.
@@ -278,10 +292,12 @@ selector or non-selector interactions.
    map to the rendered item, including filtered, paginated, scrolled, resized,
    and Unicode-width fixtures.
 2. 100% of invalid, out-of-bounds, footer, border, loading, error, empty, and
-   non-selector cases produce no `ShowDetailMsg` and no panic.
-3. A manual TUI smoke test can open a workflow by clicking each visible row at
-   two terminal sizes and after filtering/scrolling, with the resulting detail
-   view showing the clicked workflow.
+   non-selector cases produce no selection change, no Detail overlay, and no
+   panic.
+3. A manual TUI smoke test can select a workflow by clicking each visible row
+   at two terminal sizes and after filtering/scrolling, with the keyboard
+   cursor moving to the clicked row and the Detail overlay staying closed
+   until `d` is pressed.
 4. Existing keyboard selector and root navigation tests remain green, and the
    full repository build, test, vet, and formatting checks complete successfully.
 5. The implementation adds no new configuration surface and no dependency
@@ -290,5 +306,8 @@ selector or non-selector interactions.
 ## Open Questions
 
 No open questions at this time. The supported gesture is a primary-button click
-on a visible selector row; all other mouse actions and selector regions are
-defined as no-ops for this feature.
+on a visible selector row, which selects that row (matching keyboard `j`/`k`
+navigation); all other mouse actions and selector regions are defined as
+no-ops for this feature, and opening Detail remains exclusively the `d` key
+(user-confirmed behavior change from the original click-opens-Detail design —
+see the task list's implementation-time note).
