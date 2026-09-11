@@ -1,6 +1,8 @@
 package notification
 
 import (
+	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -253,6 +255,138 @@ func TestLifecycleReopenReplayNoDuplicate(t *testing.T) {
 	time.Sleep(80 * time.Millisecond)
 	if fake.count() != 1 {
 		t.Fatalf("replay of parked ReviewRequest emitted a second attention: sent=%d events=%v", fake.count(), fake.events())
+	}
+}
+
+// TestAttentionCoalescingBurst proves FR-14/task-3.4's core contract: roughly
+// a hundred attention arrivals for one run/epoch/destination inside the
+// coalescing window collapse into exactly one delivered notification, a
+// resolved wait vanishes from that summary instead of being sent, and
+// duplicate/overlapping destination routes still enqueue at most one logical
+// notification per destination. Bounding to ten displayed descriptors with a
+// total/omitted count is proved separately by TestBuildOutboundPayloadCoalescingAndBounds
+// against the raw Attention list this test produces.
+func TestAttentionCoalescingBurst(t *testing.T) {
+	policy := workflow.NotificationPolicy{
+		Events: []workflow.NotificationEvent{workflow.AttentionRequired},
+		Routes: []workflow.NotificationRoute{
+			{Destination: "ops", Events: []workflow.NotificationEvent{workflow.AttentionRequired}},
+		},
+	}
+
+	fakeD := &fakeDispatcher{}
+	SetPolicyLookup(func(runID string) workflow.NotificationPolicy { return policy })
+	t.Cleanup(func() { SetPolicyLookup(nil) })
+
+	// Capture the flush callback instead of firing it, so the test controls
+	// exactly when the 500ms coalescing window closes.
+	var mu sync.Mutex
+	var pendingFlush func()
+	timer := func(d time.Duration, cb func()) StoppableTimer {
+		if d != 500*time.Millisecond {
+			t.Fatalf("expected the default 500ms window, got %s", d)
+		}
+		mu.Lock()
+		pendingFlush = cb
+		mu.Unlock()
+		return &noopTimer{}
+	}
+
+	// Two overlapping routes to the SAME destination alias, mirroring what a
+	// misresolved binding set would look like; destinationsForEvent must
+	// still collapse them to a single logical destination.
+	bindings := []Binding{
+		NewBinding("ops", Webhook, []workflow.NotificationEvent{workflow.AttentionRequired}, "https://example.invalid/a", ""),
+		NewBinding("ops", Webhook, []workflow.NotificationEvent{workflow.AttentionRequired}, "https://example.invalid/a", ""),
+	}
+	lc := NewLifecycle(fakeD, NewDiagnosticStore(), func(workflow.NotificationPolicy) []Binding {
+		return bindings
+	}, WithLifecycleTimer(timer), WithLifecycleIDGen(func() string { return "notif-burst" }))
+
+	lc.RunRegistered(engine.RunRegistration{RunID: "r-burst", Workflow: "wf", Epoch: 9})
+
+	const burst = 100
+	for i := 0; i < burst; i++ {
+		lc.Publish(engine.ReviewRequest{
+			RunID:   "r-burst",
+			StepID:  fmt.Sprintf("step-%03d", i),
+			RoundID: fmt.Sprintf("round-%03d", i),
+		})
+	}
+	if fakeD.count() != 0 {
+		t.Fatalf("window closed early: %d notifications enqueued before flush", fakeD.count())
+	}
+
+	// Resolve one wait before the window closes; it must not appear in the
+	// coalesced summary.
+	lc.Publish(engine.ReviewSubmitted{RunID: "r-burst", StepID: "step-050", RoundID: "round-050"})
+
+	mu.Lock()
+	flush := pendingFlush
+	mu.Unlock()
+	if flush == nil {
+		t.Fatal("no coalescing timer was scheduled for the burst")
+	}
+	flush()
+
+	if got := fakeD.count(); got != 1 {
+		t.Fatalf("expected exactly one coalesced notification for %d rapid arrivals, got %d", burst, got)
+	}
+	sent := fakeD.sent[0]
+	if got := len(sent.Attention); got != burst-1 {
+		t.Fatalf("coalesced summary has %d descriptors, want %d (one resolved wait excluded)", got, burst-1)
+	}
+	for _, d := range sent.Attention {
+		if d.StepID == "step-050" {
+			t.Fatalf("resolved wait step-050 leaked into the coalesced summary")
+		}
+	}
+	if len(sent.Destinations) != 1 {
+		t.Fatalf("overlapping routes to the same destination produced %d destinations, want 1", len(sent.Destinations))
+	}
+
+	// A second, later arrival must open a fresh window rather than extending
+	// the one that already flushed. Resolve every wait still standing from
+	// the burst first so the second summary reflects only the new arrival —
+	// each flush reports the full currently-unresolved set, so any wait left
+	// open from the first window would otherwise legitimately reappear here.
+	for i := 0; i < burst; i++ {
+		if i == 50 {
+			continue // already resolved above
+		}
+		lc.Publish(engine.ReviewSubmitted{
+			RunID:   "r-burst",
+			StepID:  fmt.Sprintf("step-%03d", i),
+			RoundID: fmt.Sprintf("round-%03d", i),
+		})
+	}
+	lc.Publish(engine.ReviewRequest{RunID: "r-burst", StepID: "step-late", RoundID: "round-late"})
+	mu.Lock()
+	flush2 := pendingFlush
+	mu.Unlock()
+	if flush2 == nil {
+		t.Fatal("no new coalescing timer scheduled for the late arrival")
+	}
+	flush2()
+	if got := fakeD.count(); got != 2 {
+		t.Fatalf("expected a second coalesced notification for the late arrival, got %d total", got)
+	}
+	if got := len(fakeD.sent[1].Attention); got != 1 || fakeD.sent[1].Attention[0].StepID != "step-late" {
+		t.Fatalf("second window carried unexpected attention: %+v", fakeD.sent[1].Attention)
+	}
+
+	// Downstream payload bounding (task 3.4's ten-descriptor cap) applies to
+	// exactly the raw list this coalescing pass produced.
+	payload := BuildOutboundPayload(sent)
+	var decoded jsonPayload
+	if err := json.Unmarshal(payload.JSON, &decoded); err != nil {
+		t.Fatalf("unmarshal payload JSON: %v", err)
+	}
+	if decoded.AttentionCount != MaxDisplayedAttention {
+		t.Fatalf("payload displayed %d attention items, want %d", decoded.AttentionCount, MaxDisplayedAttention)
+	}
+	if decoded.OmittedCount != burst-1-MaxDisplayedAttention {
+		t.Fatalf("payload omitted count = %d, want %d", decoded.OmittedCount, burst-1-MaxDisplayedAttention)
 	}
 }
 

@@ -424,10 +424,13 @@ func destinationsForEvent(bindings []Binding, policy workflow.NotificationPolicy
 		}
 	}
 	var out []Binding
+	seen := make(map[string]bool, len(bindings))
 	for _, b := range bindings {
-		if allowed[b.Alias][event] {
-			out = append(out, b)
+		if !allowed[b.Alias][event] || seen[b.Alias] {
+			continue
 		}
+		seen[b.Alias] = true
+		out = append(out, b)
 	}
 	return out
 }
