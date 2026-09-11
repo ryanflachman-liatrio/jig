@@ -132,7 +132,7 @@ through FR-14.
 - [x] 3.8 Run focused Detail/root/Monitor exclusion tests plus the existing keyboard focus-cycle, filtering, help/palette, review-anchor/draft, Gate-input, and engine-event tests to prove mouse routing has not become a second scheduler or input owner (FR-14).
 - [x] 3.9 Record `artifacts/25-3-detail-input-isolation.txt` with sanitized Detail list/chart wheel evidence, keyboard close, and unchanged underlying Home state, plus an overlay/text-capture pass-through rejection example (FR-11 through FR-14).
 
-### [~] 4.0 Document and prove the complete keyboard-primary mouse contract
+### [x] 4.0 Document and prove the complete keyboard-primary mouse contract
 
 Document the supported click and wheel surfaces, the distinction between
 selection and activation, list-selection versus content-scrolling behavior,
