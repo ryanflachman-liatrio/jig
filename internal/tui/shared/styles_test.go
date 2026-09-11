@@ -103,3 +103,49 @@ func TestCardStylesUseSemanticPaletteRoles(t *testing.T) {
 		t.Fatal("card tint backgrounds are missing or indistinguishable")
 	}
 }
+
+func TestChatToolStylesAndStatusIconStylesDeriveFromTokens(t *testing.T) {
+	theme := DefaultTheme()
+
+	if theme.Chat.ToolTitle.GetForeground() != theme.Chat.TranscriptActivity.GetForeground() {
+		t.Fatalf("ToolTitle foreground = %v, want plain foreground base (matching TranscriptActivity)",
+			theme.Chat.ToolTitle.GetForeground())
+	}
+	if theme.Chat.ToolDescription.GetForeground() != theme.Chat.TranscriptDetail.GetForeground() {
+		t.Fatalf("ToolDescription foreground = %v, want muted (matching TranscriptDetail)",
+			theme.Chat.ToolDescription.GetForeground())
+	}
+	if theme.Chat.ToolMeta.GetForeground() != theme.Chat.Hint.GetForeground() {
+		t.Fatalf("ToolMeta foreground = %v, want dim (matching Chat.Hint)",
+			theme.Chat.ToolMeta.GetForeground())
+	}
+	if !theme.Chat.ToolBadge.GetBold() {
+		t.Fatal("ToolBadge should be bold to read as a discrete pill")
+	}
+	if theme.Chat.ToolBadge.GetBackground() == nil {
+		t.Fatal("ToolBadge should have a background so it visually detaches from the row")
+	}
+
+	// Per-state header icons share their foreground with the corresponding
+	// Card.Border* style, so the header icon and card border read as one
+	// indicator of state (spec FR-02.9).
+	stateCases := []struct {
+		name  string
+		state ToolDisplayState
+		want  lipgloss.Style
+	}{
+		{"success", ToolDisplaySuccess, theme.Card.BorderSuccess},
+		{"error", ToolDisplayError, theme.Card.BorderError},
+		{"running", ToolDisplayRunning, theme.Card.BorderRunning},
+		{"unknown use", ToolDisplayUnknownUse, theme.Card.BorderWarning},
+		{"unknown result", ToolDisplayUnknownResult, theme.Card.BorderWarning},
+	}
+	for _, tc := range stateCases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, style := ToolStatusIcon(tc.state, "")
+			if got, want := style.GetForeground(), tc.want.GetForeground(); got != want {
+				t.Fatalf("state %v icon fg = %v, want %v", tc.name, got, want)
+			}
+		})
+	}
+}

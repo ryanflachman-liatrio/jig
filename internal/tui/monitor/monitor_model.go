@@ -441,14 +441,18 @@ type toolCorrelationKey struct {
 	toolUseID  string
 }
 
-type toolDisplayState int
+// toolDisplayState re-exports shared.ToolDisplayState so presentation
+// helpers in `internal/tui/shared` (RenderStatusLine, ToolStatusIcon) can
+// consume the same values without depending on Monitor. The normalizer in
+// `monitor_transcript_items.go` owns transitions between these values.
+type toolDisplayState = shared.ToolDisplayState
 
 const (
-	toolDisplaySuccess toolDisplayState = iota
-	toolDisplayError
-	toolDisplayRunning
-	toolDisplayUnknownUse
-	toolDisplayUnknownResult
+	toolDisplaySuccess       = shared.ToolDisplaySuccess
+	toolDisplayError         = shared.ToolDisplayError
+	toolDisplayRunning       = shared.ToolDisplayRunning
+	toolDisplayUnknownUse    = shared.ToolDisplayUnknownUse
+	toolDisplayUnknownResult = shared.ToolDisplayUnknownResult
 )
 
 // transcriptItem is the immutable, page-local conversation unit consumed by

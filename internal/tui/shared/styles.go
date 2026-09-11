@@ -102,6 +102,15 @@ type Styles struct {
 		TranscriptDetail   lipgloss.Style
 		TranscriptLabel    lipgloss.Style
 		TranscriptError    lipgloss.Style
+
+		// Tool* style the four slots of the status-line header grammar (slice
+		// 02). Each slot is styled independently: ToolTitle in plain fg,
+		// ToolDescription muted, ToolMeta dim, ToolBadge as a neutral pill.
+		// Callers may still override any slot via StatusLine.*Style fields.
+		ToolTitle       lipgloss.Style
+		ToolDescription lipgloss.Style
+		ToolMeta        lipgloss.Style
+		ToolBadge       lipgloss.Style
 	}
 	// Badge renders a compact status pill: onPrimary text on a solid status
 	// background. Only ever wraps plain (unstyled) text so the background stays
@@ -294,6 +303,10 @@ func DefaultTheme() Styles {
 	s.Chat.TranscriptDetail = lipgloss.NewStyle().Foreground(fgMuted)
 	s.Chat.TranscriptLabel = lipgloss.NewStyle().Bold(true).Foreground(fgMuted)
 	s.Chat.TranscriptError = lipgloss.NewStyle().Foreground(danger).Bold(true)
+	s.Chat.ToolTitle = lipgloss.NewStyle().Foreground(fgBase)
+	s.Chat.ToolDescription = lipgloss.NewStyle().Foreground(fgMuted)
+	s.Chat.ToolMeta = lipgloss.NewStyle().Foreground(fgDim)
+	s.Chat.ToolBadge = lipgloss.NewStyle().Bold(true).Foreground(onPrimary).Background(bgLess)
 
 	badge := lipgloss.NewStyle().Bold(true).Foreground(onPrimary).Padding(0, 1)
 	s.Badge.Error = badge.Background(danger)
