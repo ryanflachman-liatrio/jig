@@ -249,7 +249,7 @@ func (m *Model) rebuildRenderer() {
 	fileStyle.CodeBlock.StyleBlock.Margin = &zero
 	m.fileRenderer = newMarkdownRenderer(fileStyle, wordWrap)
 
-	insetWidth := wordWrap - 4 // "  ▌ " prefix added by withBar
+	insetWidth := wordWrap - 4 // "    " prefix added by writeNewCodeCards
 	if insetWidth < 1 {
 		insetWidth = 1
 	}
