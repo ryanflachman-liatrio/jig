@@ -19,15 +19,23 @@ import (
 )
 
 type workflowSnapshot struct {
-	SourcePath    string                  `json:"source_path,omitempty"`
-	BaseDir       string                  `json:"base_dir,omitempty"`
-	SHA256        string                  `json:"sha256"`
-	TOML          string                  `json:"toml"`
-	ModuleSources []workflow.ModuleSource `json:"module_sources,omitempty"`
-	Meta          workflow.Meta           `json:"meta"`
-	Defaults      workflow.Defaults       `json:"defaults"`
-	PublicSteps   []workflow.Step         `json:"public_steps,omitempty"`
-	ExpandedSteps []workflow.Step         `json:"expanded_steps,omitempty"`
+	SourcePath    string                       `json:"source_path,omitempty"`
+	BaseDir       string                       `json:"base_dir,omitempty"`
+	SHA256        string                       `json:"sha256"`
+	TOML          string                       `json:"toml"`
+	ModuleSources []workflow.ModuleSource      `json:"module_sources,omitempty"`
+	Meta          workflow.Meta                `json:"meta"`
+	Defaults      workflow.Defaults            `json:"defaults"`
+	PublicSteps   []workflow.Step              `json:"public_steps,omitempty"`
+	ExpandedSteps []workflow.Step              `json:"expanded_steps,omitempty"`
+	// Notification is the run's frozen resolved notification policy — the
+	// list of events and destination aliases that were in effect when the
+	// run started. It is secret-free: aliases only, no URL, bearer, or
+	// operator enablement. Absent means notification-disabled (older
+	// snapshots), which is not the same as an explicit disabled policy but
+	// the observable behavior is identical.
+	Notification       *workflow.NotificationPolicy `json:"notification,omitempty"`
+	NotificationSHA256 string                       `json:"notification_sha256,omitempty"`
 }
 
 func persistWorkflowSnapshot(runDir string, wf *workflow.Workflow) error {
@@ -49,6 +57,14 @@ func persistWorkflowSnapshot(runDir string, wf *workflow.Workflow) error {
 		Defaults:      wf.Defaults,
 		PublicSteps:   wf.PublicSteps(),
 		ExpandedSteps: wf.Steps,
+	}
+	policy := wf.NotificationPolicy()
+	if len(policy.Events) > 0 || len(policy.Routes) > 0 {
+		snap.Notification = &policy
+		hash, err := notificationPolicyDigest(policy)
+		if err == nil {
+			snap.NotificationSHA256 = hash
+		}
 	}
 	data, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {
@@ -76,10 +92,42 @@ func loadWorkflowSnapshot(runDir string) (*workflow.Workflow, error) {
 			return nil, fmt.Errorf("workflow snapshot module checksum mismatch")
 		}
 	}
-	if len(snap.ExpandedSteps) > 0 {
-		return workflow.RestoreExpanded(snap.Meta, snap.Defaults, snap.PublicSteps, snap.ExpandedSteps, snap.ModuleSources), nil
+	if snap.Notification != nil && snap.NotificationSHA256 != "" {
+		want, err := notificationPolicyDigest(*snap.Notification)
+		if err != nil || want != snap.NotificationSHA256 {
+			return nil, fmt.Errorf("workflow snapshot notification policy checksum mismatch")
+		}
 	}
-	return workflow.DecodeLocked(snap.TOML, snap.BaseDir, snap.SourcePath, snap.ModuleSources)
+	var wf *workflow.Workflow
+	if len(snap.ExpandedSteps) > 0 {
+		wf = workflow.RestoreExpanded(snap.Meta, snap.Defaults, snap.PublicSteps, snap.ExpandedSteps, snap.ModuleSources)
+	} else {
+		decoded, err := workflow.DecodeLocked(snap.TOML, snap.BaseDir, snap.SourcePath, snap.ModuleSources)
+		if err != nil {
+			return nil, err
+		}
+		wf = decoded
+	}
+	// Overwrite the workflow's notification policy with the frozen snapshot
+	// value: reopen must never re-read current profile files. When no
+	// notification policy was persisted we still call SetResolvedNotificationPolicy
+	// with the zero value so a later mutation of the source profile cannot
+	// silently promote a legacy run to notification-enabled.
+	if snap.Notification != nil {
+		wf.SetResolvedNotificationPolicy(*snap.Notification)
+	} else {
+		wf.SetResolvedNotificationPolicy(workflow.NotificationPolicy{})
+	}
+	return wf, nil
+}
+
+func notificationPolicyDigest(policy workflow.NotificationPolicy) (string, error) {
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // LoadWorkflowSnapshot reads and verifies the immutable workflow captured at
