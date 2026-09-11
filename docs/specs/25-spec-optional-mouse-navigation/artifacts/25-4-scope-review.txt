@@ -1,0 +1,36 @@
+Spec 25 Task 4 — scope and artifact review
+
+git diff --check HEAD~3
+Outcome: PASS (exit 0, no output)
+
+Changed implementation/test paths
+  docs/TUI.md
+  internal/tui/detail/detail_test.go
+  internal/tui/detail/update.go
+  internal/tui/home.go
+  internal/tui/monitor/monitor_layout.go
+  internal/tui/monitor/monitor_mouse.go
+  internal/tui/monitor/monitor_mouse_test.go
+  internal/tui/monitor/monitor_transcript_test.go
+  internal/tui/monitor/monitor_update.go
+  internal/tui/mouse_documentation_contract_test.go
+  internal/tui/root_test.go
+  internal/tui/root_update.go
+  internal/tui/runs/model.go
+  internal/tui/runs/runs_test.go
+  internal/tui/selector/hit.go
+  internal/tui/selector/hit_test.go
+  docs/specs/25-spec-optional-mouse-navigation/**
+
+Scope conclusions
+  FR-01–FR-04: Task 1 automated tests and synthetic Home capture.
+  FR-05–FR-10: Task 2 automated tests and synthetic Monitor capture.
+  FR-11–FR-14: Task 3 automated tests and Detail/isolation capture.
+  FR-15: documentation contract test and docs/TUI.md mouse-navigation section.
+  No dependency, schema, engine, backend, transcript-format, mouse preference, flag, activation, hover, drag, or double-click implementation was introduced.
+  docs/plans/open-goals.md is unchanged pending Phase 4 validation.
+
+Sanitization review
+  Captures use synthetic workflow/run/step identifiers only.
+  No .jig content, local workspace path, environment value, credential, token, password, authorization header, or private identifier is present.
+  Credential-pattern scan of proof and artifact files: PASS; no seeded sensitive values found.

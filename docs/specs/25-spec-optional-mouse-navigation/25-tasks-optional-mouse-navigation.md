@@ -102,7 +102,7 @@ non-targets. Covers FR-05 through FR-10.
 - [x] 2.9 Complete the Monitor routing matrix for Steps/Transcript focus crossed with pointer location, 120x35 wide and 60x24 narrow layouts, focused Gate behavior, hidden panels, blank content, security/status/input/gate/footer strips, panel borders/titles, and resize-before-next-event coordinates (FR-06, FR-07, FR-08, FR-10, FR-12, and FR-13).
 - [x] 2.10 Run the focused Monitor tests and record `artifacts/25-2-monitor-mouse-navigation.txt` from a long fabricated transcript and expanded Steps tree at both required sizes, including pointer movement followed by unchanged keyboard controls and no lifecycle actions (FR-05 through FR-10).
 
-### [~] 3.0 Enable Detail wheel scrolling and enforce mouse input isolation
+### [x] 3.0 Enable Detail wheel scrolling and enforce mouse input isolation
 
 Allow only plain vertical wheel movement inside the rendered Detail content
 viewport, in list and chart modes, with a clamped three-line increment and no
@@ -132,7 +132,7 @@ through FR-14.
 - [x] 3.8 Run focused Detail/root/Monitor exclusion tests plus the existing keyboard focus-cycle, filtering, help/palette, review-anchor/draft, Gate-input, and engine-event tests to prove mouse routing has not become a second scheduler or input owner (FR-14).
 - [x] 3.9 Record `artifacts/25-3-detail-input-isolation.txt` with sanitized Detail list/chart wheel evidence, keyboard close, and unchanged underlying Home state, plus an overlay/text-capture pass-through rejection example (FR-11 through FR-14).
 
-### [ ] 4.0 Document and prove the complete keyboard-primary mouse contract
+### [~] 4.0 Document and prove the complete keyboard-primary mouse contract
 
 Document the supported click and wheel surfaces, the distinction between
 selection and activation, list-selection versus content-scrolling behavior,
@@ -151,10 +151,10 @@ requirements in FR-01 and FR-14.
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Add a failing documentation contract test in `internal/tui/mouse_documentation_contract_test.go` that reads `docs/TUI.md` and requires discoverable guidance for Workflows, Runs, Steps, Transcript, and Detail; primary-click selection without activation; three-row list and three-line content wheels; pointer-targeted focus preservation; excluded modal/text-input surfaces; and keyboard-primary/no-configuration wording (FR-15).
-- [ ] 4.2 Update `docs/TUI.md` with a concise mouse-navigation section satisfying the contract test while preserving contextual keyboard help as the primary in-app guidance and avoiding claims of mouse configuration, activation, or unsupported surfaces (FR-01 and FR-15).
-- [ ] 4.3 Review all changed production and test files against the spec's non-goals: remove any mouse preference/flag/schema field, dependency upgrade, hover/drag/double-click/activation behavior, engine/backend/transcript-format change, or duplicate selection/scroll model introduced by the implementation (FR-01 and FR-14).
-- [ ] 4.4 Format only changed Go files with `gofmt -w <changed-go-files>`, run `go test ./internal/tui/...`, and save exact passing/failing output with toolchain details to `artifacts/25-4-focused-tests.txt`; do not include local paths, raw runs, credentials, or private identifiers in the committed artifact (FR-14 and FR-15).
-- [ ] 4.5 Run `go test -race ./internal/tui/...`, `go build ./cmd/jig`, `go test ./...`, and `go vet ./...`; save exact outcomes to `artifacts/25-4-regression-checks.txt`, distinguishing an assertion failure, environment/toolchain blocker, and intentional skip rather than describing an unrun check as passing (FR-14).
-- [ ] 4.6 Verify the three terminal-capture artifacts are reproducible from synthetic state, include 120x35 and 60x24 evidence where required, show mouse interaction followed by keyboard continuation, and contain no `.jig/` content, secrets, credential-shaped values, or private identifiers (FR-01, FR-05 through FR-11, FR-14, and FR-15).
-- [ ] 4.7 Review the final diff for scope and ownership, confirm every FR-01 through FR-15 has its mapped automated/manual evidence, run `git diff --check`, inventory the changed paths, scan the committed proof artifacts for seeded sensitive values, and record those results in `artifacts/25-4-scope-review.txt`; leave `docs/plans/open-goals.md` unchanged until validation proves implementation completion.
+- [x] 4.1 Add a failing documentation contract test in `internal/tui/mouse_documentation_contract_test.go` that reads `docs/TUI.md` and requires discoverable guidance for Workflows, Runs, Steps, Transcript, and Detail; primary-click selection without activation; three-row list and three-line content wheels; pointer-targeted focus preservation; excluded modal/text-input surfaces; and keyboard-primary/no-configuration wording (FR-15).
+- [x] 4.2 Update `docs/TUI.md` with a concise mouse-navigation section satisfying the contract test while preserving contextual keyboard help as the primary in-app guidance and avoiding claims of mouse configuration, activation, or unsupported surfaces (FR-01 and FR-15).
+- [x] 4.3 Review all changed production and test files against the spec's non-goals: remove any mouse preference/flag/schema field, dependency upgrade, hover/drag/double-click/activation behavior, engine/backend/transcript-format change, or duplicate selection/scroll model introduced by the implementation (FR-01 and FR-14).
+- [x] 4.4 Format only changed Go files with `gofmt -w <changed-go-files>`, run `go test ./internal/tui/...`, and save exact passing/failing output with toolchain details to `artifacts/25-4-focused-tests.txt`; do not include local paths, raw runs, credentials, or private identifiers in the committed artifact (FR-14 and FR-15).
+- [x] 4.5 Run `go test -race ./internal/tui/...`, `go build ./cmd/jig`, `go test ./...`, and `go vet ./...`; save exact outcomes to `artifacts/25-4-regression-checks.txt`, distinguishing an assertion failure, environment/toolchain blocker, and intentional skip rather than describing an unrun check as passing (FR-14).
+- [x] 4.6 Verify the three terminal-capture artifacts are reproducible from synthetic state, include 120x35 and 60x24 evidence where required, show mouse interaction followed by keyboard continuation, and contain no `.jig/` content, secrets, credential-shaped values, or private identifiers (FR-01, FR-05 through FR-11, FR-14, and FR-15).
+- [x] 4.7 Review the final diff for scope and ownership, confirm every FR-01 through FR-15 has its mapped automated/manual evidence, run `git diff --check`, inventory the changed paths, scan the committed proof artifacts for seeded sensitive values, and record those results in `artifacts/25-4-scope-review.txt`; leave `docs/plans/open-goals.md` unchanged until validation proves implementation completion.

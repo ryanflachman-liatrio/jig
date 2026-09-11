@@ -1,0 +1,22 @@
+Spec 25 Task 4 — focused TUI verification
+
+Toolchain
+go version go1.25.12 darwin/arm64
+
+Command
+GOCACHE=<temporary-cache> go test ./internal/tui/...
+
+Outcome: PASS
+ok   jig/internal/tui          0.919s
+ok   jig/internal/tui/chart    (cached)
+ok   jig/internal/tui/chat     (cached)
+ok   jig/internal/tui/detail   (cached)
+ok   jig/internal/tui/diffview (cached)
+ok   jig/internal/tui/monitor  1.008s
+ok   jig/internal/tui/palette  (cached)
+ok   jig/internal/tui/prefs    (cached)
+ok   jig/internal/tui/question (cached)
+ok   jig/internal/tui/review   (cached)
+ok   jig/internal/tui/runs     0.718s
+ok   jig/internal/tui/selector (cached)
+ok   jig/internal/tui/shared   (cached)

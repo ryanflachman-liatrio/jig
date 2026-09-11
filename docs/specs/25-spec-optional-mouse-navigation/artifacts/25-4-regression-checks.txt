@@ -1,0 +1,45 @@
+Spec 25 Task 4 — regression checks
+
+Toolchain: go1.25.12 darwin/arm64
+
+1. GOCACHE=<temporary-cache> go test -race ./internal/tui/...
+Outcome: PASS
+All 13 TUI packages passed under the race detector; representative results:
+ok  jig/internal/tui          2.767s
+ok  jig/internal/tui/detail   1.988s
+ok  jig/internal/tui/monitor  4.452s
+ok  jig/internal/tui/runs     2.986s
+ok  jig/internal/tui/selector 3.408s
+
+2. GOCACHE=<temporary-cache> go build ./cmd/jig
+Outcome: PASS (exit 0, no output)
+
+3. GOCACHE=<temporary-cache> go test ./...
+Initial outcome: ENVIRONMENT BLOCKER — the restricted sandbox denied local ephemeral TCP listeners used by existing httptest suites. No assertion failure was reported.
+Authorized rerun outcome: PASS
+ok  jig/cmd/jig
+ok  jig/internal/datastore
+ok  jig/internal/engine
+ok  jig/internal/harness
+ok  jig/internal/headless
+ok  jig/internal/helpchat
+ok  jig/internal/interaction
+?   jig/internal/manifest [no test files]
+ok  jig/internal/notification
+ok  jig/internal/ops
+?   jig/internal/review [no test files]
+ok  jig/internal/runexport
+ok  jig/internal/runner
+ok  jig/internal/scaffold
+ok  jig/internal/sentinel
+ok  jig/internal/step
+ok  jig/internal/telemetry
+ok  jig/internal/toolcall
+ok  jig/internal/transcript
+ok  jig/internal/tui and all child packages
+ok  jig/internal/workflow
+
+4. GOCACHE=<temporary-cache> go vet ./...
+Outcome: PASS (exit 0, no output)
+
+Intentional skips: none.

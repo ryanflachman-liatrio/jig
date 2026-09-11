@@ -83,6 +83,30 @@ empty, loading, disabled, error, and unknown states. Keep actions discoverable
 through help and the palette, and avoid rendering backend-specific jargon
 unless the operator needs it to act.
 
+### Mouse navigation
+
+jig remains keyboard-primary: mouse navigation is optional, requires no configuration,
+and does not replace contextual keyboard help. A plain primary
+click selects and focuses a visible row in Home's Workflows or Runs list and
+Monitor's Steps list, but it does not activate, open, start, resume, delete, or
+otherwise execute that row. A primary click in Monitor's Transcript content
+focuses Transcript without changing its selection or scroll offset. Detail
+clicks remain inactive.
+
+A plain vertical wheel targets the eligible panel under the pointer and
+preserves keyboard focus. In Workflows, Runs, and Steps, one wheel event moves
+the existing selection by three rows and keeps it visible. In Transcript and
+Detail, one wheel event scrolls content by three rendered lines. All movement
+is clamped; horizontal or modified wheels are ignored.
+
+Mouse input is consumed without pass-through while modals, confirmations,
+help, the command palette, review workspaces, focused Gate controls, search, or
+text input are active. Borders, titles, footers, status and security strips,
+list headers, pagination, row gaps, hidden panels, and coordinates outside the
+current terminal are not targets. Every supported operation retains its
+existing keyboard path; the mouse never becomes an activation or workflow
+control surface.
+
 ## Transcript rendering
 
 Monitor reads finalized content through `internal/transcript`. Normalize
