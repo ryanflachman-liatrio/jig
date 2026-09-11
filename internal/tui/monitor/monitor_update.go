@@ -147,6 +147,18 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m = m.ToggleSimpleMode()
 			return m, nil
 		}
+		// The diagnostics overlay owns esc while open so it doesn't leak into
+		// whatever region was focused underneath it (spec 23 FR-17).
+		if m.showDiagnostics {
+			if msg.String() == "esc" || keybind.Matches(msg, m.keys.NotificationDiagnostics) {
+				m = m.toggleNotificationDiagnostics()
+			}
+			return m, nil
+		}
+		if !m.CapturesText() && keybind.Matches(msg, m.keys.NotificationDiagnostics) {
+			m = m.toggleNotificationDiagnostics()
+			return m, nil
+		}
 		// When the help modal is open and captures text, route all key input to it.
 		if m.helpOpen {
 			if keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("esc"))) &&

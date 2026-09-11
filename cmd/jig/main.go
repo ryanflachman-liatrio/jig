@@ -58,16 +58,30 @@ func main() {
 	tel := setupTelemetry(ctx, ".jig")
 	defer tel.shutdown(context.Background())
 
-	mgr, err := newManager(".jig", tel)
+	rt, err := newRuntime(".jig", tel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing jig: %v\n", err)
 		os.Exit(1)
 	}
-	tel.attach(ctx, mgr)
+	// Ordered shutdown: producers first (cancel context on receipt of a
+	// signal via NotifyContext), then dispatcher drain. The 5-second cap is
+	// enforced inside Runtime.Close.
+	defer rt.Close(context.Background())
+	tel.attach(ctx, rt.Manager)
 
+	diagnostics := tui.DiagnosticsRendererFunc(func() string {
+		if rt.Diagnostics == nil {
+			return ""
+		}
+		return rt.Diagnostics.Render("")
+	})
 	// Alt screen and the background canvas are declared on the View in v2 (see
 	// rootModel.View), not as program options here.
-	p := tea.NewProgram(tui.NewWithHook(ctx, mgr, tel.registerRun, tel.mode()))
+	p := tea.NewProgram(tui.New(ctx, rt.Manager,
+		tui.WithDiagnostics(diagnostics),
+		tui.WithStartHook(tel.registerRun),
+		tui.WithTelemetryMode(tel.mode()),
+	))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running program: %v\n", err)
 		os.Exit(1)

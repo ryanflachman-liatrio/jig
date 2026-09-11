@@ -43,6 +43,25 @@ func (wf *Workflow) NotificationPolicy() NotificationPolicy {
 	return p
 }
 
+// SetResolvedNotificationPolicy overwrites the workflow's resolved policy in
+// place. It is used by the snapshot restore path so a reopened run always
+// operates on the exact policy that was persisted at run start, never a
+// re-read of current profile files. Callers pass a cloned value so the
+// workflow retains its own copy.
+func (wf *Workflow) SetResolvedNotificationPolicy(p NotificationPolicy) {
+	clone := NotificationPolicy{
+		Events: slices.Clone(p.Events),
+		Routes: make([]NotificationRoute, len(p.Routes)),
+	}
+	for i, r := range p.Routes {
+		clone.Routes[i] = NotificationRoute{
+			Destination: r.Destination,
+			Events:      slices.Clone(r.Events),
+		}
+	}
+	wf.notificationPolicy = clone
+}
+
 func ValidNotificationAlias(s string) bool { return isIdent(s) }
 
 func validateNotificationEvents(events []NotificationEvent) error {

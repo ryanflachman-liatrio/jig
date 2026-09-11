@@ -110,29 +110,32 @@ func runRun(args []string) int {
 	tel := setupTelemetry(ctx, *root)
 	defer tel.shutdown(context.Background())
 
-	mgr, err := newManager(*root, tel)
+	rt, err := newRuntime(*root, tel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return headless.ExitFailed
 	}
-	tel.attach(ctx, mgr)
+	defer rt.Close(context.Background())
+	tel.attach(ctx, rt.Manager)
 
 	result := headless.Run(ctx, headless.Options{
-		WorkflowPath: rest[0],
-		Manager:      mgr,
-		Root:         *root,
-		Output:       mode,
-		Quiet:        *quiet,
-		Timeout:      *timeout,
-		ApproveMerge: *approveMerge,
-		DiscardMerge: *discardMerge,
-		OnRecovery:   *onRecovery,
-		OnConflict:   *onConflict,
-		CI:           *ci,
-		Stdout:       os.Stdout,
-		Stderr:       os.Stderr,
-		OnRunStart:   tel.registerRun,
+		WorkflowPath:  rest[0],
+		Manager:       rt.Manager,
+		Root:          *root,
+		Output:        mode,
+		Quiet:         *quiet,
+		Timeout:       *timeout,
+		ApproveMerge:  *approveMerge,
+		DiscardMerge:  *discardMerge,
+		OnRecovery:    *onRecovery,
+		OnConflict:    *onConflict,
+		CI:            *ci,
+		Stdout:        os.Stdout,
+		Stderr:        os.Stderr,
+		Notifications: rt,
+		OnRunStart:    tel.registerRun,
 	})
+	rt.DrainDiagnosticsTo(os.Stderr)
 
 	if result.ExitCode == headless.ExitInterrupted && gotSignal == syscall.SIGTERM {
 		return 143

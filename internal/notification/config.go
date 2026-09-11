@@ -117,3 +117,25 @@ type Binding struct {
 	url    string
 	bearer string
 }
+
+// URL returns the binding's resolved destination URL, or "" for desktop
+// bindings. The value is retained only inside this process; callers must not
+// persist it.
+func (b Binding) URL() string { return b.url }
+
+// Bearer returns the binding's resolved bearer token, or "" when none is
+// configured. Same in-process retention rules as URL.
+func (b Binding) Bearer() string { return b.bearer }
+
+// NewBinding constructs an in-memory binding directly (persistence-off
+// callers). The URL and bearer stay in the private fields so default JSON
+// serialization still cannot leak them.
+func NewBinding(alias string, typ DestinationType, events []workflow.NotificationEvent, url, bearer string) Binding {
+	return Binding{
+		Alias:  alias,
+		Type:   typ,
+		Events: append([]workflow.NotificationEvent(nil), events...),
+		url:    url,
+		bearer: bearer,
+	}
+}

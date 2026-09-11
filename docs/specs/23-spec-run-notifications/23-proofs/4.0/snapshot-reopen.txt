@@ -1,0 +1,14 @@
+=== RUN   TestResumeObserverReceivesReopenWithSeededWaits
+--- PASS: TestResumeObserverReceivesReopenWithSeededWaits (0.06s)
+=== RUN   TestWorkflowSnapshotPersistsResolvedNotificationPolicy
+--- PASS: TestWorkflowSnapshotPersistsResolvedNotificationPolicy (0.00s)
+=== RUN   TestWorkflowSnapshotDetectsPolicyTampering
+--- PASS: TestWorkflowSnapshotDetectsPolicyTampering (0.00s)
+=== RUN   TestWorkflowSnapshotRestoresPolicyOnReopen
+--- PASS: TestWorkflowSnapshotRestoresPolicyOnReopen (0.00s)
+=== RUN   TestWorkflowSnapshotOlderRecordTreatedAsDisabled
+--- PASS: TestWorkflowSnapshotOlderRecordTreatedAsDisabled (0.00s)
+=== RUN   TestWorkflowSnapshotLocksExpandedModuleSources
+--- PASS: TestWorkflowSnapshotLocksExpandedModuleSources (0.00s)
+PASS
+ok  	jig/internal/engine	0.068s

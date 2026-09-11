@@ -1,0 +1,14 @@
+=== RUN   TestDispatcherEnqueueTerminalDelivered
+--- PASS: TestDispatcherEnqueueTerminalDelivered (0.02s)
+=== RUN   TestDispatcherDeduplicatesTerminalPerEpoch
+--- PASS: TestDispatcherDeduplicatesTerminalPerEpoch (0.02s)
+=== RUN   TestDispatcherTerminalEvictsPending
+--- PASS: TestDispatcherTerminalEvictsPending (0.00s)
+=== RUN   TestDispatcherFiltersResolvedWaits
+--- PASS: TestDispatcherFiltersResolvedWaits (0.20s)
+=== RUN   TestDispatcherRetryUpToLimit
+--- PASS: TestDispatcherRetryUpToLimit (0.04s)
+=== RUN   TestDispatcherShutdownDrains
+--- PASS: TestDispatcherShutdownDrains (0.00s)
+PASS
+ok  	jig/internal/notification	0.288s

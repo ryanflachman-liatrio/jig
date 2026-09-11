@@ -71,10 +71,34 @@ discard-merge + abort policies but uses a 10m timeout.
 | Stream | Contents |
 |---|---|
 | **stdout** | `json` / `jsonl`: machine data only (including structured failures). `text`: single final summary line |
-| **stderr** | Progress (`step_id status`), start-time warnings, early `run_id`, errors, `--ci` expansion |
+| **stderr** | Progress (`step_id status`), start-time warnings, early `run_id`, errors, `--ci` expansion, notification diagnostics |
 
 `--quiet` / `-q` suppresses progress lines only. Early `run_id`, warnings/errors,
-and the final stdout payload still emit.
+notification diagnostics, and the final stdout payload still emit.
+
+### Notification diagnostics
+
+After run settlement the shared dispatcher's bounded diagnostic ring is
+drained to stderr (fixed-order lines, one per sanitized outcome, safe-field
+allowlist only — alias, optional run ID, event, outcome, reason code,
+attempt, aggregate count). This runs regardless of `--quiet` and never
+touches stdout, so JSON/JSONL envelopes and exit codes stay byte-compatible
+whether delivery is enabled, disabled, or failing. See
+[Notification readiness](operations.md#notification-readiness) for
+enablement, secrets, and troubleshooting.
+
+Cancellation cause classification affects notification event selection:
+
+- Ordinary engine/step failure and recovery-abort → `run_failed` fires.
+- `--timeout` wall-clock expiry → `run_failed` fires (typed as a timeout
+  cause in diagnostics).
+- Fail-closed policy rejection (unexpected human gate, merge-without-flags)
+  → `run_failed` fires (typed as a policy rejection cause).
+- SIGINT/SIGTERM operator interruption → treated as deliberate
+  cancellation and suppressed (no `run_failed` fires).
+
+Successful completion requires explicit `run_succeeded` selection in the
+workflow's notification policy.
 
 ### Flat JSON envelope (frozen)
 
