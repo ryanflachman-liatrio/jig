@@ -52,7 +52,7 @@ Deliver a bounded, deterministic layout policy for forward dependency edges that
 - [x] 1.2 Apply the helper after longest-path rank buckets are built, using only forward `depends_on` topology; retain conditional-edge decoration and exclude route back-edges from the ordering objective.
 - [x] 1.3 Add table-driven layout tests in `internal/tui/chart/layout_test.go` for a crossing-prone graph, a graph with no reducible crossing, and equal-score ties. Assert rank membership, edge endpoints, stable repeated order, and unchanged route-back-edge classification.
 
-### [~] 2.0 Render compact deterministic validation-gate labels
+### [x] 2.0 Render compact deterministic validation-gate labels
 
 Extend chart node geometry and rendering so every `[step.validate]` form displays its established compact gate-check description inside the node, without displacing existing markers or bypassing theme ownership.
 
