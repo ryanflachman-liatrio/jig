@@ -36,7 +36,7 @@
 
 ## Tasks
 
-### [~] 1.0 Implement deterministic within-rank crossing reduction
+### [x] 1.0 Implement deterministic within-rank crossing reduction
 
 Deliver a bounded, deterministic layout policy for forward dependency edges that reorders only nodes sharing a longest-path rank. Preserve ranks, step indices for tie-breaking, conditional-edge semantics, and separately routed bounded back-edges.
 
