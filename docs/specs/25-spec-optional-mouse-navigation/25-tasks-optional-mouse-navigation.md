@@ -41,7 +41,7 @@
 
 ## Tasks
 
-### [~] 1.0 Complete Home click and pointer-targeted list navigation
+### [x] 1.0 Complete Home click and pointer-targeted list navigation
 
 Implement the keyboard-primary mouse contract for the rendered Workflows and
 Runs panels: plain primary clicks focus and select real rows without activation,
@@ -71,7 +71,7 @@ through FR-04.
 - [x] 1.8 Expand the Home negative matrix for release, motion, secondary click, horizontal wheel, modifier-bearing click/wheel, row gaps, headers/filter/pagination, panel borders/titles, trailing coordinates outside content, and active workflow filtering; assert identical selection/focus/overlay state and nil action commands (FR-03, FR-04, FR-12, and FR-13).
 - [x] 1.9 Run the focused selector, Runs, and root Home mouse tests, then record a sanitized synthetic wide/narrow Home terminal capture at `artifacts/25-1-home-mouse-navigation.txt` showing pointer selection in both panels followed by existing keyboard opening (FR-01 through FR-04).
 
-### [ ] 2.0 Add Monitor row selection and pointer-targeted transcript scrolling
+### [~] 2.0 Add Monitor row selection and pointer-targeted transcript scrolling
 
 Route supported mouse input only to the visible Monitor panel under the
 pointer. Steps clicks select ordinary steps, fan-out children, and output-file
@@ -91,16 +91,16 @@ non-targets. Covers FR-05 through FR-10.
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Add failing `internal/tui/monitor/monitor_mouse_test.go` cases for primary clicks on ordinary steps, expanded fan-out children, and output-file rows at nonzero viewport offsets, with mixed one-line/two-line row heights; assert the cursor resolves to the rendered row, focus becomes Steps, and the existing transcript/file preview changes once without expansion or action commands (FR-05).
-- [ ] 2.2 Introduce a Monitor panel-geometry result derived from `verticalLayout`, `panelSplit`, current narrow mode, and `shared.PanelFrame`/`PanelContentOrigin`, and use it from both rendering/resize assumptions and pointer hit testing so only the panel actually rendered exposes a content rectangle (FR-06, FR-08, and FR-10).
-- [ ] 2.3 Extract one owner-local mapping from flattened `visibleRows` to physical line ranges in the Steps viewport, accounting for ordinary/child row height and file-row height, and reuse it in both `ensureCursorVisible` and click hit testing to prevent the two geometry calculations from drifting (FR-05 and FR-07).
-- [ ] 2.4 Add a Monitor mouse-routing branch before generic textarea, review-workspace, and focused-viewport dispatch. Accept only unmodified primary clicks and unmodified vertical wheels inside an eligible visible content rectangle, and consume every other mouse message without forwarding it to Bubbles children (FR-06, FR-10, FR-12, and FR-13).
-- [ ] 2.5 Route a valid Steps click through a single selection helper that clamps/sets the flattened cursor, ensures it is visible, and invokes the same `reloadTranscript`/panel refresh behavior as keyboard selection; clicks on blank Steps content must not change focus or state (FR-05 and FR-06).
-- [ ] 2.6 Route a Steps wheel to a final cursor delta of exactly three flattened selectable rows in its direction, clamp at the ends, preserve keyboard focus, ensure visibility, and refresh the selected transcript/file preview once after the final cursor is known (FR-07).
-- [ ] 2.7 Route a Transcript-content click to `focusTranscript` without changing step/item/file selection, expansion, or offsets; route a Transcript wheel through `scrollTranscript(3)`/`scrollTranscript(-3)` so transcript and literal file preview viewports move by three rendered lines and update follow state without disclosure, copy, edit, or navigation actions (FR-06, FR-08, and FR-09).
-- [ ] 2.8 Extend `internal/tui/monitor/monitor_transcript_test.go` with a bounded streaming fixture: wheel above bottom, append synthetic finalized content and assert the offset is retained; wheel to bottom, append again and assert the current follow contract resumes. Repeat the scroll assertions for literal file preview and verify no selected item/file changes (FR-08 and FR-09).
-- [ ] 2.9 Complete the Monitor routing matrix for Steps/Transcript focus crossed with pointer location, 120x35 wide and 60x24 narrow layouts, focused Gate behavior, hidden panels, blank content, security/status/input/gate/footer strips, panel borders/titles, and resize-before-next-event coordinates (FR-06, FR-07, FR-08, FR-10, FR-12, and FR-13).
-- [ ] 2.10 Run the focused Monitor tests and record `artifacts/25-2-monitor-mouse-navigation.txt` from a long fabricated transcript and expanded Steps tree at both required sizes, including pointer movement followed by unchanged keyboard controls and no lifecycle actions (FR-05 through FR-10).
+- [x] 2.1 Add failing `internal/tui/monitor/monitor_mouse_test.go` cases for primary clicks on ordinary steps, expanded fan-out children, and output-file rows at nonzero viewport offsets, with mixed one-line/two-line row heights; assert the cursor resolves to the rendered row, focus becomes Steps, and the existing transcript/file preview changes once without expansion or action commands (FR-05).
+- [x] 2.2 Introduce a Monitor panel-geometry result derived from `verticalLayout`, `panelSplit`, current narrow mode, and `shared.PanelFrame`/`PanelContentOrigin`, and use it from both rendering/resize assumptions and pointer hit testing so only the panel actually rendered exposes a content rectangle (FR-06, FR-08, and FR-10).
+- [x] 2.3 Extract one owner-local mapping from flattened `visibleRows` to physical line ranges in the Steps viewport, accounting for ordinary/child row height and file-row height, and reuse it in both `ensureCursorVisible` and click hit testing to prevent the two geometry calculations from drifting (FR-05 and FR-07).
+- [x] 2.4 Add a Monitor mouse-routing branch before generic textarea, review-workspace, and focused-viewport dispatch. Accept only unmodified primary clicks and unmodified vertical wheels inside an eligible visible content rectangle, and consume every other mouse message without forwarding it to Bubbles children (FR-06, FR-10, FR-12, and FR-13).
+- [x] 2.5 Route a valid Steps click through a single selection helper that clamps/sets the flattened cursor, ensures it is visible, and invokes the same `reloadTranscript`/panel refresh behavior as keyboard selection; clicks on blank Steps content must not change focus or state (FR-05 and FR-06).
+- [x] 2.6 Route a Steps wheel to a final cursor delta of exactly three flattened selectable rows in its direction, clamp at the ends, preserve keyboard focus, ensure visibility, and refresh the selected transcript/file preview once after the final cursor is known (FR-07).
+- [x] 2.7 Route a Transcript-content click to `focusTranscript` without changing step/item/file selection, expansion, or offsets; route a Transcript wheel through `scrollTranscript(3)`/`scrollTranscript(-3)` so transcript and literal file preview viewports move by three rendered lines and update follow state without disclosure, copy, edit, or navigation actions (FR-06, FR-08, and FR-09).
+- [x] 2.8 Extend `internal/tui/monitor/monitor_transcript_test.go` with a bounded streaming fixture: wheel above bottom, append synthetic finalized content and assert the offset is retained; wheel to bottom, append again and assert the current follow contract resumes. Repeat the scroll assertions for literal file preview and verify no selected item/file changes (FR-08 and FR-09).
+- [x] 2.9 Complete the Monitor routing matrix for Steps/Transcript focus crossed with pointer location, 120x35 wide and 60x24 narrow layouts, focused Gate behavior, hidden panels, blank content, security/status/input/gate/footer strips, panel borders/titles, and resize-before-next-event coordinates (FR-06, FR-07, FR-08, FR-10, FR-12, and FR-13).
+- [x] 2.10 Run the focused Monitor tests and record `artifacts/25-2-monitor-mouse-navigation.txt` from a long fabricated transcript and expanded Steps tree at both required sizes, including pointer movement followed by unchanged keyboard controls and no lifecycle actions (FR-05 through FR-10).
 
 ### [ ] 3.0 Enable Detail wheel scrolling and enforce mouse input isolation
 

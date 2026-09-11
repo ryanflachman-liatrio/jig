@@ -1,0 +1,24 @@
+Spec 25 Task 2 — synthetic Monitor mouse-navigation capture
+
+Fixture: in-memory step events, expanded synthetic fan-out children, a synthetic output-file descriptor, and fabricated finalized transcript lines.
+
+120x35 wide layout
+  click ordinary/child/file physical row -> matching flattened row selected, focus=Steps
+  wheel Steps down -> cursor delta=3, prior keyboard focus preserved
+  click Transcript content -> focus=Transcript, selection and offset unchanged
+  wheel Transcript down -> rendered-line offset delta=3, selection unchanged
+  keyboard j/k and tab remain available after pointer movement
+  lifecycle actions emitted=none
+
+60x24 narrow layout
+  focus=Steps -> only Steps content rectangle exposed
+  wheel former Transcript coordinates -> routed to rendered Steps panel only
+  hidden Transcript mutation=none
+  keyboard focus cycle reveals Transcript through the existing path
+
+Streaming follow
+  wheel above bottom -> follow=false; finalized append retains offset
+  return to bottom -> follow=true; finalized append remains at bottom
+
+Focused verification
+  ok  jig/internal/tui/monitor

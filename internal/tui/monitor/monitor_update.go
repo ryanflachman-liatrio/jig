@@ -37,6 +37,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case helpchat.DispatchedMsg:
 		return m, m.dispatchHelpAction(msg)
 
+	case tea.MouseMsg:
+		return m.updateMouse(msg)
+
 	case helpchat.FinalMergeGateMsg:
 		// The tool handler is blocked waiting for gateAns. Show a gate entry so the
 		// operator can confirm. Re-arm the gate listener for subsequent gate calls.

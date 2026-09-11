@@ -296,17 +296,11 @@ func (m *Model) ensureCursorVisible() {
 	if !m.ready {
 		return
 	}
-	row := listBodyHeaderLines
-	for i, r := range m.visibleRows() {
-		if i == m.cursor {
-			break
-		}
-		if r.isFileRow() {
-			row++
-		} else {
-			row += stepRowLines
-		}
+	ranges := m.stepRowRanges()
+	if m.cursor < 0 || m.cursor >= len(ranges) {
+		return
 	}
+	row := ranges[m.cursor].start
 	const margin = 2
 	top := m.vp.YOffset()
 	bottom := top + m.vp.Height() - 1
@@ -316,6 +310,25 @@ func (m *Model) ensureCursorVisible() {
 	case row+margin > bottom:
 		m.vp.SetYOffset(row + margin - m.vp.Height() + 1)
 	}
+}
+
+type stepLineRange struct{ start, end int }
+
+// stepRowRanges is the single mapping between flattened selectable rows and
+// their rendered physical lines in the Steps viewport.
+func (m Model) stepRowRanges() []stepLineRange {
+	rows := m.visibleRows()
+	ranges := make([]stepLineRange, len(rows))
+	line := listBodyHeaderLines
+	for i, row := range rows {
+		height := stepRowLines
+		if row.isFileRow() {
+			height = 1
+		}
+		ranges[i] = stepLineRange{start: line, end: line + height}
+		line += height
+	}
+	return ranges
 }
 
 func (m *Model) ensureChatCursorVisible() {

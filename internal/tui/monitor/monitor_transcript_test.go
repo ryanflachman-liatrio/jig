@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
 	"jig/internal/transcript"
 )
 
@@ -139,6 +141,56 @@ func TestTranscriptScrollHotkeysUseConfiguredRowCounts(t *testing.T) {
 		if got := m.chatVP.YOffset(); got != tc.want {
 			t.Fatalf("after %q offset = %d, want %d", tc.key, got, tc.want)
 		}
+	}
+}
+
+func TestTranscriptMouseWheelPreservesAndRestoresFollowOnAppend(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 18})
+	m.focus = focusTranscript
+	panels := m.mousePanels()
+	base := strings.Repeat("finalized line\n", 40)
+	m.chatVP.SetContent(base)
+	m.chatVP.GotoBottom()
+	m.chatAutoScroll = true
+
+	m, _ = m.Update(tea.MouseWheelMsg{X: panels.transcript.x, Y: panels.transcript.y, Button: tea.MouseWheelUp})
+	away := m.chatVP.YOffset()
+	if m.chatAutoScroll || m.chatVP.AtBottom() {
+		t.Fatal("wheel above bottom did not disable transcript follow")
+	}
+	m.chatVP.SetContent(base + strings.Repeat("new finalized line\n", 5))
+	if m.chatVP.YOffset() != away {
+		t.Fatalf("append moved reader from %d to %d while follow was disabled", away, m.chatVP.YOffset())
+	}
+
+	m.chatVP.GotoBottom()
+	m.updateTranscriptFollow(m.chatVP.AtBottom())
+	if !m.chatAutoScroll {
+		t.Fatal("reaching bottom did not restore transcript follow")
+	}
+	m.chatVP.SetContent(base + strings.Repeat("new finalized line\n", 10))
+	if m.chatAutoScroll {
+		m.chatVP.GotoBottom()
+	}
+	if !m.chatVP.AtBottom() {
+		t.Fatal("followed transcript did not remain at bottom after append")
+	}
+}
+
+func TestFilePreviewMouseWheelPreservesSelection(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 18})
+	m.focus = focusTranscript
+	m.selKind = "file"
+	m.selFile = "/synthetic/output.txt"
+	m.cursor = 1
+	m.chatVP.SetContent(strings.Repeat("file line\n", 50))
+	m.chatVP.GotoTop()
+	panels := m.mousePanels()
+	m, _ = m.Update(tea.MouseWheelMsg{X: panels.transcript.x, Y: panels.transcript.y, Button: tea.MouseWheelDown})
+	if m.chatVP.YOffset() != 3 || m.selKind != "file" || m.selFile != "/synthetic/output.txt" || m.cursor != 1 {
+		t.Fatalf("file wheel offset/kind/file/cursor = %d/%q/%q/%d", m.chatVP.YOffset(), m.selKind, m.selFile, m.cursor)
 	}
 }
 
