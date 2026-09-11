@@ -719,7 +719,7 @@ func (m *Model) footer() string {
 			pan += " · [/] hunk · z fold"
 		}
 	}
-	return "S finish review · j/k move · {/} document · c new comment · enter open comment · r reviewed" + view + pan + " · esc close"
+	return "S finish review · j/k move · {/} document · c new comment · enter open comment · r reviewed" + view + pan + " · y copy · Y copy all · esc close"
 }
 func listWidth(width int) int {
 	if width > 0 && width < 90 {

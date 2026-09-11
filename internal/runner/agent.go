@@ -90,6 +90,10 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 	}
 	if req.ExecutionDir != "" {
 		spec.Cwd = req.ExecutionDir
+	} else if req.RepoRoot != "" {
+		// Persistence-off execution has no run-owned snapshot, but the worker
+		// still needs the configured repository as its process/session CWD.
+		spec.Cwd = req.RepoRoot
 	}
 	if containsStr(req.Step.AllowedTools, "AskUserQuestion") {
 		if !caps.Has(harness.CapUserQuestion) {
@@ -290,10 +294,11 @@ func captureStream(
 		}
 		blocks = redactTranscriptBlocks(req, blocks)
 		seq, err := w.Append(transcript.Entry{
-			Iteration: req.Iteration,
-			Attempt:   req.Attempt,
-			Role:      role,
-			Blocks:    blocks,
+			Generation: req.Generation,
+			Iteration:  req.Iteration,
+			Attempt:    req.Attempt,
+			Role:       role,
+			Blocks:     blocks,
 		})
 		if err == nil {
 			rep.Message(seq, req.Iteration)

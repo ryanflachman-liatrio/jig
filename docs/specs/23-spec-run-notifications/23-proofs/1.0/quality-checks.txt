@@ -1,0 +1,44 @@
+$ go test ./... -count=1
+ok  	jig/cmd/jig	1.587s
+ok  	jig/internal/datastore	0.868s
+ok  	jig/internal/engine	12.710s
+ok  	jig/internal/harness	17.662s
+ok  	jig/internal/headless	1.548s
+ok  	jig/internal/helpchat	0.392s
+ok  	jig/internal/interaction	0.171s
+?   	jig/internal/manifest	[no test files]
+ok  	jig/internal/notification	0.696s
+ok  	jig/internal/ops	1.356s
+?   	jig/internal/review	[no test files]
+ok  	jig/internal/runner	1.329s
+ok  	jig/internal/sentinel	1.852s
+ok  	jig/internal/step	2.211s
+ok  	jig/internal/toolcall	2.056s
+ok  	jig/internal/transcript	1.752s
+ok  	jig/internal/tui	2.637s
+ok  	jig/internal/tui/chart	2.749s
+ok  	jig/internal/tui/chat	2.857s
+ok  	jig/internal/tui/detail	3.033s
+ok  	jig/internal/tui/diffview	3.087s
+ok  	jig/internal/tui/monitor	3.390s
+ok  	jig/internal/tui/palette	2.982s
+ok  	jig/internal/tui/prefs	3.020s
+ok  	jig/internal/tui/question	2.701s
+ok  	jig/internal/tui/review	2.851s
+ok  	jig/internal/tui/runs	2.873s
+ok  	jig/internal/tui/selector	2.989s
+ok  	jig/internal/tui/shared	3.027s
+ok  	jig/internal/workflow	3.147s
+exit: 0
+
+$ go test ./internal/workflow ./internal/notification ./cmd/jig -race -run Test(Notification|LoadNotificationProfiles|LocalConfig|ResolveBindings|Readiness) -count=1
+ok  	jig/internal/workflow	1.244s
+ok  	jig/internal/notification	1.399s
+ok  	jig/cmd/jig	1.398s
+exit: 0
+
+$ go vet ./...
+exit: 0
+
+$ go build ./cmd/jig
+exit: 0

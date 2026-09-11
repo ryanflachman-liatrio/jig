@@ -27,11 +27,11 @@ type metrics struct {
 	meter metric.Meter
 
 	// Run-scoped
-	runStarted   metric.Int64Counter
-	runFinished  metric.Int64Counter
-	runCost      metric.Float64Histogram
-	runTokens    metric.Int64Histogram
-	runDuration  metric.Float64Histogram
+	runStarted  metric.Int64Counter
+	runFinished metric.Int64Counter
+	runCost     metric.Float64Histogram
+	runTokens   metric.Int64Histogram
+	runDuration metric.Float64Histogram
 
 	// Step-scoped
 	stepStarted     metric.Int64Counter
@@ -285,4 +285,3 @@ func buildMetrics(meter metric.Meter, prefix string) (*metrics, error) {
 func wrap(err error) error {
 	return fmt.Errorf("create instrument: %w", err)
 }
-

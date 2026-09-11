@@ -35,10 +35,10 @@ type TelemetryReporter struct {
 	tracer  trace.Tracer
 	// stepSpan is the parent span opened by metricMux for this step. Every
 	// per-tool span is a child of stepSpan when tracing is enabled.
-	stepSpan   trace.Span
-	stepAttrs  []attribute.KeyValue
-	toolAttrs  attributeCache
-	networkFn  func() // optional wrap over StepRequest.NetworkRequest
+	stepSpan  trace.Span
+	stepAttrs []attribute.KeyValue
+	toolAttrs attributeCache
+	networkFn func() // optional wrap over StepRequest.NetworkRequest
 	// dropCounter is called with a "kind" label when a downstream drop is
 	// observed. Populated by the EventExporter that owns this wrapper.
 	dropCounter func(ctx context.Context, kind string)

@@ -94,9 +94,12 @@ func parseControlRecoveryAction(s string) error {
 	}
 }
 
-func headlessOptions(ctx context.Context, f controlFlags, mode headless.OutputMode, mgrRoot string) (headless.Options, *telemetryHandle) {
+func headlessOptions(ctx context.Context, f controlFlags, mode headless.OutputMode, mgrRoot string) (headless.Options, *telemetryHandle, error) {
 	tel := setupTelemetry(ctx, mgrRoot)
-	mgr := newManager(mgrRoot, tel)
+	mgr, err := newManager(mgrRoot, tel)
+	if err != nil {
+		return headless.Options{}, tel, err
+	}
 	tel.attach(ctx, mgr)
 	return headless.Options{
 		Manager: mgr, Root: mgrRoot, Output: mode, Quiet: *f.quiet,
@@ -104,7 +107,7 @@ func headlessOptions(ctx context.Context, f controlFlags, mode headless.OutputMo
 		OnRecovery: *f.onRecovery, OnConflict: *f.onConflict, CI: *f.ci,
 		Stdout: os.Stdout, Stderr: os.Stderr,
 		OnRunStart: tel.registerRun,
-	}, tel
+	}, tel, nil
 }
 
 func runResume(args []string) int {
@@ -130,8 +133,12 @@ func runResume(args []string) int {
 	}
 	ctx, signalCode, stop := controlSignalContext()
 	defer stop()
-	opts, tel := headlessOptions(ctx, f, mode, *f.root)
+	opts, tel, err := headlessOptions(ctx, f, mode, *f.root)
 	defer tel.shutdown(context.Background())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return headless.ExitFailed
+	}
 	result := ops.ResumeRun(ctx, opts, fs.Args()[0])
 	if result.Err != nil && result.Envelope.RunID == "" {
 		fmt.Fprintf(os.Stderr, "error: %v\n", result.Err)
@@ -207,8 +214,12 @@ func runReset(args []string) int {
 
 	ctx, signalCode, stop := controlSignalContext()
 	defer stop()
-	opts, tel := headlessOptions(ctx, f, mode, *f.root)
+	opts, tel, err := headlessOptions(ctx, f, mode, *f.root)
 	defer tel.shutdown(context.Background())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return headless.ExitFailed
+	}
 	_, result := ops.ApplyReset(ctx, opts, fs.Args()[0], *target)
 	if result.Err != nil && result.Envelope.RunID == "" {
 		fmt.Fprintf(os.Stderr, "error: %v\n", result.Err)

@@ -110,7 +110,11 @@ func runRun(args []string) int {
 	tel := setupTelemetry(ctx, *root)
 	defer tel.shutdown(context.Background())
 
-	mgr := newManager(*root, tel)
+	mgr, err := newManager(*root, tel)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return headless.ExitFailed
+	}
 	tel.attach(ctx, mgr)
 
 	result := headless.Run(ctx, headless.Options{

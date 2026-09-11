@@ -1,0 +1,12 @@
+[workflow]
+name = "notifications-profiled"
+version = "1"
+description = "Share project-local notification policy; inspect with jig notifications check."
+
+[notification]
+profile = "@operator"
+
+[[step]]
+id = "work"
+type = "command"
+run = "printf 'notification policy example\\n'"

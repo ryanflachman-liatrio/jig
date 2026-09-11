@@ -70,7 +70,7 @@ func TestInitPromWithoutBindDowngradesToNoop(t *testing.T) {
 	// never returns nil for an unimplemented exporter.
 	var warned error
 	p, err := Init(context.Background(), Config{
-		Mode: ModeProm,
+		Mode:   ModeProm,
 		OnWarn: func(e error) { warned = e },
 	})
 	if err != nil {

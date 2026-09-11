@@ -43,28 +43,64 @@ func checkSecretInWrite(toolName string, input map[string]any) Decision {
 		return Decision{Allow: true}
 	}
 	payload := writePayload(toolName, input)
-	for _, pat := range secretPatterns {
-		if m := pat.re.FindString(payload); m != "" {
+	for _, m := range DetectSecrets(payload) {
+		if m.KnownPattern {
 			return Decision{
 				Allow:   false,
 				Action:  ActionBlocked,
 				Monitor: "secret-in-write",
-				Reason:  "tool input contains " + pat.name + " pattern: " + Redact(pat.name, m),
+				Reason:  "tool input contains " + m.Category + " pattern: " + Redact(m.Category, m.Text),
 			}
 		}
-	}
-	// High-entropy token scan: split on whitespace and quotes, test each token.
-	for _, tok := range strings.FieldsFunc(payload, isTokenSep) {
-		if len(tok) >= minSecretLen && shannonEntropy(tok) >= entropyThreshold {
-			return Decision{
-				Allow:   false,
-				Action:  ActionBlocked,
-				Monitor: "secret-in-write",
-				Reason:  "tool input contains high-entropy string (possible secret): " + Redact("high-entropy", tok),
-			}
+		return Decision{
+			Allow:   false,
+			Action:  ActionBlocked,
+			Monitor: "secret-in-write",
+			Reason:  "tool input contains high-entropy string (possible secret): " + Redact(m.Category, m.Text),
 		}
 	}
 	return Decision{Allow: true}
+}
+
+// Match is one detected secret span: a known-pattern hit (AWS key, GitHub
+// token, ...) or a high-entropy token treated as a likely secret. Text is the
+// exact matched substring — callers that need a byte range can recover it
+// with strings.Index(source, Text) starting at Start.
+type Match struct {
+	Category     string // pattern name, or "high-entropy"
+	Text         string
+	Start        int
+	End          int
+	KnownPattern bool
+}
+
+// DetectSecrets is the single pure detector shared by the guard's inline
+// write check, the transcript-redaction filter, and the export sanitizer.
+// It reports every known-pattern and high-entropy match in s, in the order
+// known patterns are checked first (longest/most-specific categories tend to
+// win overlapping spans because export sanitization consumes matches in
+// this order), followed by entropy-token matches in scan order. It never
+// mutates or redacts — callers decide what replacement to apply.
+func DetectSecrets(s string) []Match {
+	var matches []Match
+	for _, pat := range secretPatterns {
+		for _, loc := range pat.re.FindAllStringIndex(s, -1) {
+			matches = append(matches, Match{Category: pat.name, Text: s[loc[0]:loc[1]], Start: loc[0], End: loc[1], KnownPattern: true})
+		}
+	}
+	offset := 0
+	for _, tok := range strings.FieldsFunc(s, isTokenSep) {
+		idx := strings.Index(s[offset:], tok)
+		if idx < 0 {
+			continue
+		}
+		start := offset + idx
+		offset = start + len(tok)
+		if len(tok) >= minSecretLen && shannonEntropy(tok) >= entropyThreshold {
+			matches = append(matches, Match{Category: "high-entropy", Text: tok, Start: start, End: start + len(tok)})
+		}
+	}
+	return matches
 }
 
 func isTokenSep(r rune) bool {
@@ -255,16 +291,18 @@ func RedactJSON(toolName string, raw []byte) []byte {
 	}
 	payload := writePayload(toolName, input)
 	result := string(raw)
-
-	for _, pat := range secretPatterns {
-		for _, m := range pat.re.FindAllString(payload, -1) {
-			result = strings.ReplaceAll(result, m, Redact(pat.name, m))
-		}
-	}
-	for _, tok := range strings.FieldsFunc(payload, isTokenSep) {
-		if len(tok) >= minSecretLen && shannonEntropy(tok) >= entropyThreshold {
-			result = strings.ReplaceAll(result, tok, Redact("high-entropy", tok))
-		}
+	for _, m := range DetectSecrets(payload) {
+		result = strings.ReplaceAll(result, m.Text, Redact(m.Category, m.Text))
 	}
 	return []byte(result)
+}
+
+// RedactText removes known and entropy-shaped secrets from arbitrary monitor
+// boundary text while retaining a labeled marker useful to the classifier.
+func RedactText(text string) string {
+	result := text
+	for _, m := range DetectSecrets(text) {
+		result = strings.ReplaceAll(result, m.Text, Redact(m.Category, m.Text))
+	}
+	return result
 }

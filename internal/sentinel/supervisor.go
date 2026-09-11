@@ -2,125 +2,143 @@ package sentinel
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"os"
+	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"jig/internal/transcript"
 )
 
-// BatchSize is the number of StepSignals that trigger an immediate flush for a
-// step without waiting for the debounce timer. Exported so tests can size their
-// signal bursts exactly.
-const BatchSize = 5
+const (
+	BatchSize              = 5
+	DebounceInterval       = 500 * time.Millisecond
+	entryCountCap          = 20
+	renderByteCap          = 32_000
+	tokenCeiling           = renderByteCap
+	defaultDispatchTimeout = 30 * time.Second
+)
 
-// DebounceInterval is the maximum time a step's pending signals may wait before
-// a time-based flush fires.
-const DebounceInterval = 500 * time.Millisecond
+type ExecutionCoordinates struct {
+	Generation int
+	Iteration  int
+	Attempt    int
+}
 
-// entryCountCap is the maximum number of transcript entries in one bounded window.
-const entryCountCap = 20
-
-// tokenCeiling is the estimated maximum bytes per window (8 000 tokens × 4 B).
-const tokenCeiling = 8000 * 4
-
-// StepSignal carries the minimal liveness data the supervisor needs from the
-// engine bus. Callers bridge engine.StepMessage → StepSignal before forwarding.
-// Defining this type in sentinel (not engine) keeps sentinel free of engine imports,
-// avoiding an import cycle (engine already imports sentinel for StepRequest.Guard).
 type StepSignal struct {
-	RunID     string
-	StepID    string
-	Seq       int
-	Iteration int
+	RunID  string
+	StepID string
+	Seq    int
+	ExecutionCoordinates
+	OutboundAllowlist []string
 }
 
-// MonitorResult is the structured output from one monitor agent invocation.
+type MonitorSpec struct {
+	Model  string
+	Prompt string
+}
+
 type MonitorResult struct {
-	Flagged  bool
-	Severity string  // "low" | "medium" | "high" | "critical"
-	Detail   string  // human-readable finding description
-	CostUSD  float64 // actual cost of this invocation (may be 0 if unreported)
+	Flagged   bool
+	Severity  string
+	Detail    string
+	CostUSD   float64
+	CostKnown bool
+	Launched  bool
 }
 
-// MonitorDispatcher runs one monitor invocation against a transcript window.
-// runner.AgentExecutor (wrapped in a thin adapter) implements this interface;
-// tests use a stub. Defining the interface here keeps the supervisor decoupled
-// from the runner package.
 type MonitorDispatcher interface {
-	Dispatch(ctx context.Context, monitorFile, windowText string) (MonitorResult, error)
+	Dispatch(context.Context, MonitorSpec, string) (MonitorResult, error)
 }
 
-// MonitorDef pairs a monitor agent file path with its dispatcher and a stable
-// name for finding records.
+// MonitorCircuit is shared by copied monitor definitions so a broken external
+// classifier is not retried by every subsequent run in the same process.
+type MonitorCircuit struct{ disabled atomic.Bool }
+
+func (c *MonitorCircuit) disable()         { c.disabled.Store(true) }
+func (c *MonitorCircuit) isDisabled() bool { return c != nil && c.disabled.Load() }
+
 type MonitorDef struct {
-	File       string // path to the monitor agent .md file
-	Monitor    string // finding monitor name (e.g. "prompt-injection")
+	Spec       MonitorSpec
+	Monitor    string
 	Dispatcher MonitorDispatcher
+	Circuit    *MonitorCircuit
 }
 
-// Supervisor subscribes to liveness signals (StepSignal) from the engine bus and
-// dispatches Tier-2 monitor agents out-of-band without blocking the observed run.
-// It batches signals per step, reads transcript windows, deduplicates findings by
-// fingerprint, and enforces a per-run USD budget.
+type SupervisorOptions struct {
+	BatchSize       int
+	Debounce        time.Duration
+	BudgetUSD       float64
+	ConcurrencyCap  int
+	DispatchTimeout time.Duration
+	StatePath       string
+	FindingsPath    string
+	Resume          bool
+}
+
+func (o SupervisorOptions) normalized() SupervisorOptions {
+	if o.BatchSize <= 0 {
+		o.BatchSize = BatchSize
+	}
+	if o.Debounce <= 0 {
+		o.Debounce = DebounceInterval
+	}
+	if o.DispatchTimeout <= 0 {
+		o.DispatchTimeout = defaultDispatchTimeout
+	}
+	// A6 deliberately dispatches serially; ConcurrencyCap remains an upper
+	// bound for a future worker pool and every valid value is therefore honored.
+	return o
+}
+
+type executionKey struct {
+	stepID string
+	ExecutionCoordinates
+}
+
+type pendingWindow struct {
+	count  int
+	signal StepSignal
+}
+
 type Supervisor struct {
 	runID          string
 	signals        <-chan StepSignal
-	sink           *Writer // nil = findings persistence off
+	sink           *Writer
 	monitors       []MonitorDef
-	budget         float64                    // per-run USD ceiling; ≤0 = unlimited
-	transcriptPath func(stepID string) string // "" → persistence off for that step
+	transcriptPath func(string) string
+	notify         func(Finding)
+	options        SupervisorOptions
 
-	notify func(Finding) // optional; called for each new finding after sink append
-
-	mu        sync.Mutex
-	spentUSD  float64
-	degraded  bool
-	cursors   map[string]int             // stepID → entries consumed (0-based offset for next Window call)
-	seenFPs   map[string]map[string]bool // stepID → fingerprint → reported
-	pending   map[string]int             // stepID → buffered signal count
-	lastFlush map[string]time.Time
+	mu              sync.Mutex
+	state           monitorState
+	pending         map[executionKey]pendingWindow
+	lastFlush       map[executionKey]time.Time
+	lastObserved    map[executionKey]int
+	latestExecution map[string]ExecutionCoordinates
+	seenFPs         map[string]bool
+	disabled        map[string]bool
+	health          map[string]bool
 }
 
-// NewSupervisor creates a Supervisor ready to Run. Pass a nil sink to disable
-// findings persistence. The supervisor does not start automatically; call Run.
-// It returns immediately from Run when no monitors are configured.
-//
-// notify, when non-nil, is called for each new Finding after it is appended to
-// the sink. The engine uses this to fan the finding out to bus subscribers (TUI
-// Security pane) and to the scheduler inbox (critical-finding escalation).
-// notify must be goroutine-safe; it is called while the supervisor's mu is not held.
-func NewSupervisor(
-	runID string,
-	signals <-chan StepSignal,
-	sink *Writer,
-	monitors []MonitorDef,
-	budgetUSD float64,
-	transcriptPath func(stepID string) string,
-	notify func(Finding),
-) *Supervisor {
+func NewSupervisor(runID string, signals <-chan StepSignal, sink *Writer, monitors []MonitorDef,
+	transcriptPath func(string) string, notify func(Finding), options SupervisorOptions) *Supervisor {
 	return &Supervisor{
-		runID:          runID,
-		signals:        signals,
-		sink:           sink,
-		monitors:       monitors,
-		budget:         budgetUSD,
-		transcriptPath: transcriptPath,
-		notify:         notify,
-		cursors:        make(map[string]int),
-		seenFPs:        make(map[string]map[string]bool),
-		pending:        make(map[string]int),
-		lastFlush:      make(map[string]time.Time),
+		runID: runID, signals: signals, sink: sink, monitors: monitors,
+		transcriptPath: transcriptPath, notify: notify, options: options.normalized(),
+		state: newMonitorState(), pending: make(map[executionKey]pendingWindow),
+		lastFlush: make(map[executionKey]time.Time), lastObserved: make(map[executionKey]int),
+		latestExecution: make(map[string]ExecutionCoordinates),
+		seenFPs:         make(map[string]bool), disabled: make(map[string]bool), health: make(map[string]bool),
 	}
 }
 
-// Run starts the supervisor's event loop. It blocks until ctx is cancelled or
-// the signals channel is closed. Run is typically called in a goroutine.
 func (s *Supervisor) Run(ctx context.Context) {
-	// The supervisor owns its findings sink for the run's lifetime. Close it on
-	// exit — via any return path — so the final buffer is flushed and the file
-	// descriptor released instead of leaked. Close is idempotent, so a caller
-	// that also holds the writer can close it too without harm.
 	defer func() {
 		if s.sink != nil {
 			_ = s.sink.Close()
@@ -129,7 +147,9 @@ func (s *Supervisor) Run(ctx context.Context) {
 	if len(s.monitors) == 0 {
 		return
 	}
-	ticker := time.NewTicker(DebounceInterval)
+	s.seedFingerprints()
+	s.restoreAccounting()
+	ticker := time.NewTicker(s.options.Debounce)
 	defer ticker.Stop()
 	for {
 		select {
@@ -139,169 +159,416 @@ func (s *Supervisor) Run(ctx context.Context) {
 			if !ok {
 				return
 			}
-			s.mu.Lock()
-			s.pending[sig.StepID]++
-			count := s.pending[sig.StepID]
-			s.mu.Unlock()
-			if count >= BatchSize {
-				s.flushStep(ctx, sig.StepID)
+			if sig.RunID != s.runID || sig.StepID == "" {
+				continue
 			}
-		case <-ticker.C:
+			key := executionKey{stepID: sig.StepID, ExecutionCoordinates: sig.ExecutionCoordinates}
 			s.mu.Lock()
-			var due []string
-			for stepID, n := range s.pending {
-				if n > 0 && time.Since(s.lastFlush[stepID]) >= DebounceInterval {
-					due = append(due, stepID)
+			if latest, exists := s.latestExecution[sig.StepID]; exists {
+				order := compareExecution(sig.ExecutionCoordinates, latest)
+				if order < 0 {
+					s.mu.Unlock()
+					continue
+				}
+				if order > 0 {
+					for pendingKey := range s.pending {
+						if pendingKey.stepID == sig.StepID {
+							delete(s.pending, pendingKey)
+						}
+					}
+				}
+			}
+			s.latestExecution[sig.StepID] = sig.ExecutionCoordinates
+			p := s.pending[key]
+			p.count++
+			p.signal = sig
+			s.pending[key] = p
+			count := p.count
+			s.mu.Unlock()
+			if count >= s.options.BatchSize {
+				s.flush(ctx, key)
+			}
+		case now := <-ticker.C:
+			s.mu.Lock()
+			var due []executionKey
+			for key, p := range s.pending {
+				if p.count > 0 && now.Sub(s.lastFlush[key]) >= s.options.Debounce {
+					due = append(due, key)
 				}
 			}
 			s.mu.Unlock()
-			for _, stepID := range due {
-				s.flushStep(ctx, stepID)
+			for _, key := range due {
+				s.flush(ctx, key)
 			}
 		}
 	}
 }
 
-// flushStep reads new transcript entries for stepID since the last cursor,
-// assembles the dual-bounded window, deduplicates, and dispatches monitors.
-func (s *Supervisor) flushStep(ctx context.Context, stepID string) {
+func compareExecution(left, right ExecutionCoordinates) int {
+	if left.Generation != right.Generation {
+		if left.Generation < right.Generation {
+			return -1
+		}
+		return 1
+	}
+	if left.Iteration != right.Iteration {
+		if left.Iteration < right.Iteration {
+			return -1
+		}
+		return 1
+	}
+	if left.Attempt != right.Attempt {
+		if left.Attempt < right.Attempt {
+			return -1
+		}
+		return 1
+	}
+	return 0
+}
+
+func (s *Supervisor) flush(ctx context.Context, key executionKey) {
 	s.mu.Lock()
-	s.pending[stepID] = 0
-	s.lastFlush[stepID] = time.Now()
-	cursor := s.cursors[stepID]
-	degraded := s.degraded
+	p := s.pending[key]
+	delete(s.pending, key)
+	s.lastFlush[key] = time.Now()
+	degraded := s.state.Degraded
+	lastObserved := s.lastObserved[key]
 	s.mu.Unlock()
-
-	if degraded {
+	if p.count == 0 || degraded {
 		return
 	}
-
-	tPath := s.transcriptPath(stepID)
-	if tPath == "" {
+	path := s.transcriptPath(key.stepID)
+	if path == "" {
 		return
 	}
-	r, err := transcript.Open(tPath)
+	r, err := transcript.Open(path)
 	if err != nil {
+		s.healthFinding(key.stepID, "transcript-unavailable", "Tier-2 could not open the transcript")
 		return
 	}
-
-	entries, err := r.Window(cursor, 0) // 0 = no cap: all entries from cursor onward
-	if err != nil || len(entries) == 0 {
+	page, err := r.TailPage(entryCountCap)
+	if err != nil {
+		s.healthFinding(key.stepID, "transcript-unavailable", "Tier-2 could not read the transcript")
 		return
 	}
-
+	entries := entriesForExecution(page.Entries, key.ExecutionCoordinates)
+	if len(entries) == 0 {
+		return
+	}
+	maxSeq := entries[len(entries)-1].Seq
+	if p.signal.Seq <= lastObserved || maxSeq <= lastObserved {
+		return
+	}
 	s.mu.Lock()
-	s.cursors[stepID] = cursor + len(entries)
-	if s.seenFPs[stepID] == nil {
-		s.seenFPs[stepID] = make(map[string]bool)
-	}
+	s.lastObserved[key] = maxSeq
 	s.mu.Unlock()
-
-	window := boundWindow(entries)
-	if len(window) == 0 {
+	base := renderWindow(entries)
+	if base == "" {
 		return
 	}
-	windowText := renderWindow(window)
-
-	for _, mon := range s.monitors {
+	for i := range s.monitors {
+		mon := &s.monitors[i]
 		if ctx.Err() != nil {
 			return
 		}
-		s.mu.Lock()
-		if s.degraded {
-			s.mu.Unlock()
-			return
-		}
-		s.mu.Unlock()
-
-		result, err := mon.Dispatcher.Dispatch(ctx, mon.File, windowText)
-		if err != nil {
+		if s.monitorDisabled(mon) {
+			s.healthFinding(key.stepID, "monitor-unavailable/"+mon.Monitor, "Tier-2 classifier is unavailable for this process")
 			continue
 		}
-
-		s.mu.Lock()
-		if result.CostUSD > 0 {
-			s.spentUSD += result.CostUSD
+		if mon.Monitor == "stuck-loop" && !StuckLoopPrefilter(entries) {
+			continue
 		}
-		overBudget := s.budget > 0 && s.spentUSD >= s.budget
-		s.mu.Unlock()
-
+		if !s.withinBudget() {
+			s.degradeBudget()
+			return
+		}
+		input := combineRendered(trustedContext(mon.Monitor, p.signal.OutboundAllowlist), base)
+		if !s.beginInvocation() {
+			return
+		}
+		dispatchCtx, cancel := context.WithTimeout(ctx, s.options.DispatchTimeout)
+		result, dispatchErr := mon.Dispatcher.Dispatch(dispatchCtx, mon.Spec, input)
+		cancel()
+		result.Detail = RedactText(result.Detail)
+		continueFleet := s.finishInvocation(result)
+		if dispatchErr != nil {
+			if ctx.Err() != nil || errors.Is(dispatchErr, context.Canceled) && ctx.Err() != nil {
+				return
+			}
+			s.disableMonitor(mon)
+			s.healthFinding(key.stepID, "monitor-unavailable/"+mon.Monitor, monitorFailureDetail(dispatchErr))
+			if !continueFleet {
+				return
+			}
+			continue
+		}
+		if !continueFleet {
+			return
+		}
 		if result.Flagged {
-			sev := Severity(result.Severity)
-			if sev == "" {
-				sev = SeverityMedium
-			}
-			fp := NewFingerprint(stepID, mon.Monitor, result.Detail)
-
-			s.mu.Lock()
-			alreadySeen := s.seenFPs[stepID][fp]
-			s.mu.Unlock()
-
-			if !alreadySeen {
-				f := Finding{
-					Ts:          time.Now().UTC(),
-					RunID:       s.runID,
-					StepID:      stepID,
-					Tier:        TierMonitor,
-					Monitor:     mon.Monitor,
-					Severity:    sev,
-					Action:      ActionObserved,
-					Detail:      result.Detail,
-					Evidence:    "transcript-window",
-					Fingerprint: fp,
-				}
-				if s.sink != nil {
-					_ = s.sink.Append(f)
-				}
-				s.mu.Lock()
-				s.seenFPs[stepID][fp] = true
-				s.mu.Unlock()
-				if s.notify != nil {
-					s.notify(f)
-				}
-			}
+			s.recordFinding(Finding{
+				Ts: time.Now().UTC(), RunID: s.runID, StepID: key.stepID,
+				Generation: key.Generation, Iteration: key.Iteration, Attempt: key.Attempt,
+				Tier: TierMonitor, Monitor: mon.Monitor,
+				Severity: Severity(result.Severity), Action: ActionObserved, Detail: result.Detail,
+				Evidence:    fmt.Sprintf("transcript seq %d-%d", entries[0].Seq, maxSeq),
+				Fingerprint: NewFingerprint(key.stepID, mon.Monitor, result.Detail),
+			})
 		}
-
-		if overBudget {
-			s.egressDegrade()
+		if !s.withinBudget() {
+			s.degradeBudget()
 			return
 		}
 	}
 }
 
-// egressDegrade marks the supervisor as budget-exhausted and appends exactly
-// one degraded-to-tier1 finding. Subsequent calls are no-ops.
-func (s *Supervisor) egressDegrade() {
+func entriesForExecution(entries []transcript.Entry, coords ExecutionCoordinates) []transcript.Entry {
+	out := make([]transcript.Entry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Generation == coords.Generation && entry.Iteration == coords.Iteration && entry.Attempt == coords.Attempt {
+			out = append(out, entry)
+		}
+	}
+	return out
+}
+
+func trustedContext(monitor string, allowlist []string) string {
+	var b strings.Builder
+	b.WriteString("[trusted-monitor-context]\n")
+	if monitor == "stuck-loop" {
+		b.WriteString("stuck_loop_prefilter=true\n")
+	}
+	if len(allowlist) == 0 {
+		b.WriteString("effective_outbound_allowlist=(none)\n")
+	} else {
+		copy := append([]string(nil), allowlist...)
+		sort.Strings(copy)
+		b.WriteString("effective_outbound_allowlist=")
+		b.WriteString(RedactText(strings.Join(copy, ",")))
+		b.WriteByte('\n')
+	}
+	b.WriteString("[/trusted-monitor-context]\n[untrusted-transcript-data]\n")
+	return b.String()
+}
+
+func (s *Supervisor) monitorDisabled(mon *MonitorDef) bool {
 	s.mu.Lock()
-	if s.degraded {
+	defer s.mu.Unlock()
+	return s.disabled[mon.Monitor] || mon.Circuit.isDisabled()
+}
+
+func (s *Supervisor) disableMonitor(mon *MonitorDef) {
+	s.mu.Lock()
+	s.disabled[mon.Monitor] = true
+	s.mu.Unlock()
+	if mon.Circuit != nil {
+		mon.Circuit.disable()
+	}
+}
+
+func (s *Supervisor) withinBudget() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.state.Degraded && (s.options.BudgetUSD <= 0 || s.state.SpentUSD < s.options.BudgetUSD)
+}
+
+func (s *Supervisor) beginInvocation() bool {
+	s.mu.Lock()
+	if s.state.Degraded {
+		s.mu.Unlock()
+		return false
+	}
+	s.state.InFlight = true
+	state := s.state
+	s.mu.Unlock()
+	if err := writeMonitorState(s.options.StatePath, state); err != nil {
+		s.accountingFailure("Tier-2 accounting state could not be persisted before dispatch")
+		return s.options.BudgetUSD <= 0
+	}
+	return true
+}
+
+func (s *Supervisor) finishInvocation(result MonitorResult) bool {
+	s.mu.Lock()
+	if result.CostKnown {
+		s.state.SpentUSD += result.CostUSD
+	}
+	s.state.InFlight = false
+	if result.Launched && !result.CostKnown && s.options.BudgetUSD > 0 {
+		s.state.Degraded = true
+	}
+	state := s.state
+	s.mu.Unlock()
+	if err := writeMonitorState(s.options.StatePath, state); err != nil {
+		s.accountingFailure("Tier-2 accounting state could not be updated after dispatch")
+		return s.options.BudgetUSD <= 0
+	}
+	if result.Launched && !result.CostKnown {
+		s.healthFinding("", "monitor-accounting-unknown", "A classifier call returned no cost; finite-budget Tier-2 is disabled")
+		return s.options.BudgetUSD <= 0
+	}
+	return true
+}
+
+func (s *Supervisor) accountingFailure(detail string) {
+	if s.options.BudgetUSD > 0 {
+		s.mu.Lock()
+		s.state.Degraded = true
+		s.mu.Unlock()
+	}
+	s.healthFinding("", "monitor-state-unavailable", detail)
+}
+
+func (s *Supervisor) degradeBudget() {
+	s.mu.Lock()
+	if s.state.Degraded {
 		s.mu.Unlock()
 		return
 	}
-	s.degraded = true
+	s.state.Degraded = true
+	state := s.state
 	s.mu.Unlock()
-
-	f := Finding{
-		Ts:          time.Now().UTC(),
-		RunID:       s.runID,
-		Tier:        TierMonitor,
-		Monitor:     "budget-exhausted",
-		Severity:    SeverityLow,
-		Action:      ActionObserved,
-		Detail:      "Tier-2 fleet budget exhausted; degraded to Tier-1 only",
-		Fingerprint: NewFingerprint(s.runID, "budget-exhausted", "singleton"),
+	if err := writeMonitorState(s.options.StatePath, state); err != nil {
+		s.healthFinding("", "monitor-state-unavailable", "Tier-2 budget exhaustion could not be persisted")
 	}
+	s.healthFinding("", "budget-exhausted", "Tier-2 fleet budget exhausted; degraded to Tier-1 only")
+}
+
+func (s *Supervisor) recordFinding(f Finding) {
+	if f.Severity != SeverityLow && f.Severity != SeverityMedium && f.Severity != SeverityHigh && f.Severity != SeverityCritical {
+		f.Severity = SeverityMedium
+	}
+	f.Detail = RedactText(f.Detail)
+	s.mu.Lock()
+	if s.seenFPs[f.Fingerprint] {
+		s.mu.Unlock()
+		return
+	}
+	s.seenFPs[f.Fingerprint] = true
+	s.mu.Unlock()
 	if s.sink != nil {
-		_ = s.sink.Append(f)
+		if err := s.sink.Append(f); err != nil {
+			s.notifyPersistenceFailure()
+			return
+		}
 	}
 	if s.notify != nil {
 		s.notify(f)
 	}
 }
 
-// boundWindow truncates entries to the dual bound: at most entryCountCap entries
-// and total estimated text ≤ tokenCeiling bytes. Returns the most-recent entries
-// that fit, oldest-first, without splitting any single entry. At least one entry
-// is always returned when the input is non-empty.
+func (s *Supervisor) healthFinding(stepID, monitor, detail string) {
+	key := monitor + "\x00" + stepID
+	s.mu.Lock()
+	if s.health[key] {
+		s.mu.Unlock()
+		return
+	}
+	s.health[key] = true
+	s.mu.Unlock()
+	s.recordFinding(Finding{Ts: time.Now().UTC(), RunID: s.runID, StepID: stepID, Tier: TierMonitor,
+		Monitor: monitor, Severity: SeverityLow, Action: ActionObserved, Detail: detail,
+		Fingerprint: NewFingerprint(s.runID, monitor, stepID)})
+}
+
+func (s *Supervisor) notifyPersistenceFailure() {
+	s.mu.Lock()
+	if s.health["finding-persistence-failed"] {
+		s.mu.Unlock()
+		return
+	}
+	s.health["finding-persistence-failed"] = true
+	s.mu.Unlock()
+	if s.notify != nil {
+		s.notify(Finding{Ts: time.Now().UTC(), RunID: s.runID, Tier: TierMonitor,
+			Monitor: "finding-persistence-failed", Severity: SeverityLow, Action: ActionObserved,
+			Detail: "Tier-2 finding persistence failed", Fingerprint: NewFingerprint(s.runID, "finding-persistence-failed", "singleton")})
+	}
+}
+
+func (s *Supervisor) seedFingerprints() {
+	findings, err := ReadAll(s.options.FindingsPath)
+	if err != nil {
+		s.healthFinding("", "findings-unavailable", "Existing security findings could not be read")
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, f := range findings {
+		s.seenFPs[f.Fingerprint] = true
+	}
+}
+
+func (s *Supervisor) restoreAccounting() {
+	if !s.options.Resume {
+		if err := writeMonitorState(s.options.StatePath, s.state); err != nil {
+			s.accountingFailure("Tier-2 accounting state could not be initialized")
+		}
+		return
+	}
+	state, err := readMonitorState(s.options.StatePath)
+	if err == nil && !state.InFlight {
+		s.mu.Lock()
+		s.state = state
+		s.mu.Unlock()
+		return
+	}
+	reason := "Stored Tier-2 cost is uncertain after reopen"
+	if errors.Is(err, os.ErrNotExist) {
+		reason = "Tier-2 accounting is missing for this reopened run"
+	}
+	if s.options.BudgetUSD > 0 {
+		s.mu.Lock()
+		s.state.Degraded = true
+		state = s.state
+		s.mu.Unlock()
+		_ = writeMonitorState(s.options.StatePath, state)
+		s.healthFinding("", "monitor-accounting-unknown", reason+"; finite-budget Tier-2 is disabled")
+		return
+	}
+	s.healthFinding("", "monitor-accounting-unknown", reason+"; unlimited-budget Tier-2 will continue")
+	s.mu.Lock()
+	s.state = newMonitorState()
+	state = s.state
+	s.mu.Unlock()
+	_ = writeMonitorState(s.options.StatePath, state)
+}
+
+func monitorFailureDetail(err error) string {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "Tier-2 classifier timed out"
+	}
+	return "Tier-2 classifier failed to connect or return a valid verdict"
+}
+
+func renderWindow(entries []transcript.Entry) string {
+	var b strings.Builder
+	for _, entry := range entries {
+		fmt.Fprintf(&b, "[%s]\n", entry.Role)
+		fmt.Fprintf(&b, "[entry seq=%d role=%s gen=%d iter=%d attempt=%d]\n", entry.Seq, entry.Role, entry.Generation, entry.Iteration, entry.Attempt)
+		for i, block := range entry.Blocks {
+			fmt.Fprintf(&b, "[block=%d type=%s]\n", i, block.Type)
+			switch block.Type {
+			case transcript.BlockText, transcript.BlockThinking:
+				b.WriteString(RedactText(block.Text))
+			case transcript.BlockToolUse:
+				if activity := block.Activity(); activity != nil {
+					fmt.Fprintf(&b, "<tool_use name=%q>\nstatus=%q\n%s\n</tool_use>", RedactText(activity.Title), RedactText(activity.Status), RedactText(string(activity.Input)))
+				}
+			case transcript.BlockToolResult:
+				if activity := block.Activity(); activity != nil {
+					fmt.Fprintf(&b, "<tool_result>\nname=%q status=%q\n%s\n</tool_result>", RedactText(activity.Title), RedactText(activity.Status), RedactText(toolText(activity)))
+				}
+			}
+			b.WriteByte('\n')
+		}
+	}
+	b.WriteString("[/untrusted-transcript-data]\n")
+	return clipRendered(b.String())
+}
+
+// boundWindow remains the entry-level half of the dual bound; renderWindow
+// applies the exact final byte cap, including labels and truncation markers.
 func boundWindow(entries []transcript.Entry) []transcript.Entry {
 	if len(entries) == 0 {
 		return nil
@@ -309,12 +576,9 @@ func boundWindow(entries []transcript.Entry) []transcript.Entry {
 	if len(entries) > entryCountCap {
 		entries = entries[len(entries)-entryCountCap:]
 	}
-	// Walk from the most-recent entry backward, accumulating size. Always include
-	// at least the last entry even if it exceeds the ceiling on its own.
-	var total int
-	start := len(entries) - 1
+	total, start := 0, len(entries)-1
 	for i := len(entries) - 1; i >= 0; i-- {
-		size := entryByteSize(entries[i])
+		size := len(renderWindow([]transcript.Entry{entries[i]}))
 		if total > 0 && total+size > tokenCeiling {
 			break
 		}
@@ -324,47 +588,30 @@ func boundWindow(entries []transcript.Entry) []transcript.Entry {
 	return entries[start:]
 }
 
-// entryByteSize estimates the text payload of an entry in bytes (used as a
-// token-count proxy at 4 bytes/token).
-func entryByteSize(e transcript.Entry) int {
-	n := 0
-	for _, b := range e.Blocks {
-		n += len(b.Text)
-		if activity := b.Activity(); activity != nil {
-			n += len(activity.Title) + len(activity.Input) + len(activity.Output) + len(toolText(activity))
-		}
+func clipRendered(s string) string {
+	if len(s) <= renderByteCap {
+		return s
 	}
-	return n
+	const marker = "[earlier content truncated]\n"
+	start := len(s) - (renderByteCap - len(marker))
+	for start < len(s) && !utf8.RuneStart(s[start]) {
+		start++
+	}
+	return marker + s[start:]
 }
 
-// renderWindow serializes a transcript window to plain text for a monitor prompt.
-func renderWindow(entries []transcript.Entry) string {
-	var sb strings.Builder
-	for _, e := range entries {
-		sb.WriteString("[")
-		sb.WriteString(string(e.Role))
-		sb.WriteString("]\n")
-		for _, b := range e.Blocks {
-			switch b.Type {
-			case transcript.BlockText, transcript.BlockThinking:
-				sb.WriteString(b.Text)
-			case transcript.BlockToolUse:
-				sb.WriteString("<tool_use name=\"")
-				if activity := b.Activity(); activity != nil {
-					sb.WriteString(activity.Title)
-				}
-				sb.WriteString("\">\n")
-				if activity := b.Activity(); activity != nil {
-					sb.Write(activity.Input)
-				}
-				sb.WriteString("\n</tool_use>")
-			case transcript.BlockToolResult:
-				sb.WriteString("<tool_result>\n")
-				sb.WriteString(toolText(b.Activity()))
-				sb.WriteString("\n</tool_result>")
-			}
-			sb.WriteString("\n")
-		}
+func combineRendered(prefix, body string) string {
+	if len(prefix)+len(body) <= renderByteCap {
+		return prefix + body
 	}
-	return sb.String()
+	const marker = "[earlier transcript content truncated]\n"
+	available := renderByteCap - len(prefix) - len(marker)
+	if available <= 0 {
+		return clipRendered(prefix)
+	}
+	start := len(body) - available
+	for start < len(body) && !utf8.RuneStart(body[start]) {
+		start++
+	}
+	return prefix + marker + body[start:]
 }

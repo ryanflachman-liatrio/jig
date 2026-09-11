@@ -20,6 +20,10 @@ func main() {
 	// Subcommands run and exit before the TUI takes over the terminal.
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
+		case "init":
+			os.Exit(runInit(os.Args[2:]))
+		case "notifications":
+			os.Exit(runNotifications(os.Args[2:]))
 		case "validate":
 			os.Exit(runValidate(os.Args[2:]))
 		case "prune":
@@ -36,12 +40,14 @@ func main() {
 			os.Exit(runResume(os.Args[2:]))
 		case "reset":
 			os.Exit(runReset(os.Args[2:]))
+		case "export":
+			os.Exit(runExport(os.Args[2:]))
 		case "help", "-h", "--help":
 			printHelp()
 			return
 		default:
 			fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
-			fmt.Fprintln(os.Stderr, "usage: jig <validate|run|status|logs|doctor|resume|reset|prune>")
+			fmt.Fprintln(os.Stderr, "usage: jig <init|validate|run|status|logs|doctor|resume|reset|prune|export|notifications>")
 			os.Exit(2)
 		}
 	}
@@ -52,7 +58,11 @@ func main() {
 	tel := setupTelemetry(ctx, ".jig")
 	defer tel.shutdown(context.Background())
 
-	mgr := newManager(".jig", tel)
+	mgr, err := newManager(".jig", tel)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error initializing jig: %v\n", err)
+		os.Exit(1)
+	}
 	tel.attach(ctx, mgr)
 
 	// Alt screen and the background canvas are declared on the View in v2 (see

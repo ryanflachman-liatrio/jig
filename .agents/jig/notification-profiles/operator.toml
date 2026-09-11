@@ -1,0 +1,8 @@
+# Shared author policy. Operators bind these aliases in .jig/notifications.toml.
+[[notification]]
+id = "@operator"
+events = ["attention_required", "run_failed"]
+routes = [
+  { destination = "desktop", events = ["attention_required"] },
+  { destination = "team-alerts", events = ["run_failed"] },
+]

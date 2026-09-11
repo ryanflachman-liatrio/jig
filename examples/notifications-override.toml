@@ -1,0 +1,14 @@
+[workflow]
+name = "notifications-override"
+version = "1"
+description = "Replace the complete shared routing list with one operator-bound alias."
+
+[notification]
+profile = "@operator"
+# Replaces both inherited routes; this does not add an ops route to them.
+routes = [{ destination = "ops", events = ["run_failed"] }]
+
+[[step]]
+id = "work"
+type = "command"
+run = "printf 'notification override example\\n'"

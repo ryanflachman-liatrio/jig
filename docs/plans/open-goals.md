@@ -30,9 +30,9 @@ and comparison to high-rated TUIs (lazygit, k9s, yazi, btop) plus agent peers
 | A1 | **Headless `jig run`** — non-interactive / CI runner for a workflow TOML | S | **Done** (Spec 19). `jig run` + `internal/headless`; contract in [`docs/headless.md`](../headless.md). Plan: [`docs/specs/19-spec-headless-run/19-implementation-plan.md`](../specs/19-spec-headless-run/19-implementation-plan.md). |
 | A2 | **Thin ops CLI** — `status`, `logs`, `doctor`, `resume`, `reset` | C+S | **Done.** Contract: [`docs/operations.md`](../operations.md). Plan: [`a2-thin-ops-cli.md`](a2-thin-ops-cli.md). Historical `diff` remains explicitly deferred until immutable provenance exists. |
 | A3 | **Mid-execution crash recovery** — restart workers interrupted mid-agent | S | **Done** (Specs 20 and 21). Worker crash reopen, durable `session.json`, and all unfinished gate/stop/integration parks restore through `Manager.Resume`. Plans: [`20`](../specs/20-spec-mid-crash-recovery/20-implementation-plan.md), [`21`](../specs/21-spec-unfinished-park-reopen/21-implementation-plan.md). |
-| A4 | **Cursor harness parity** — `CapSessionResume`, `CapUserQuestion`, `CapPartialStreaming` | S | Today fail-closed on resume / block_on (`internal/harness/cursor.go`). |
+| A4 | **Cursor harness parity** — `CapSessionResume`, `CapUserQuestion`, `CapPartialStreaming` | S | Plan: [`a4-cursor-harness-parity.md`](a4-cursor-harness-parity.md). Today fail-closed on resume / block_on (`internal/harness/cursor.go`); plan covers native question extensions, replay-safe loading, and streaming previews. |
 | A5 | **Claude ACP session resume** — advertise + honor `CapSessionResume` | S | ACP→Claude cannot Stop/Resume or resume `block_on` today. |
-| A6 | **Restore Tier-2 security monitors** — ship `examples/agents/monitors/*.md` (or change discovery) | R | `discoverMonitors` still points at a deleted directory → silent no-op. |
+| A6 | **Restore Tier-2 security monitors** — ship `examples/agents/monitors/*.md` (or change discovery) | R | **Done.** Fixed embedded roster, run-owned Start/Resume signaling, isolated direct-SDK classifiers, durable budget state, and offline Claude/Cursor/Codex ACP lifecycle coverage. Plan and evidence: [`a6-restore-tier2-security-monitors.md`](a6-restore-tier2-security-monitors.md). Live vendor smoke remains opt-in and was not run. |
 | A7 | **Codex parallel ACP reliability** — durable diagnosis + operator-facing fix path | S | Known flakiness under `max_parallel`; diagnostics plan still open. |
 | A8 | **Map / foreach fan-out** — N parallel steps from dynamic list data | S | Plan: [`a8-dynamic-foreach-fan-out.md`](a8-dynamic-foreach-fan-out.md). Explicitly deferred in `docs/workflow-schema.md` until this plan is implemented. |
 
@@ -56,9 +56,9 @@ and comparison to high-rated TUIs (lazygit, k9s, yazi, btop) plus agent peers
 | A17 | Forge / PR automation (open PR, push, checks) | C | Local merge gate only. |
 | A18 | OTel / Prometheus / OTLP export | C | **Implemented.** Optional opt-in exporter for run/step lifecycle, cost, tokens, duration, gate/review/security signals. Metrics + spans; OTLP push, Prometheus scrape, and stdout — off by default, in-machine by default, redacted always. Plan: [`a18-otel-prometheus-export.md`](a18-otel-prometheus-export.md). Docs: [`docs/observability.md`](../observability.md). Posture: [ADR 0012](../adr/0012-observability-export.md). |
 | A19 | Remote / distributed workers | S | Single-machine only. |
-| A20 | `jig init` / workflow scaffold | C | Hand-authored TOML. |
+| A20 | `jig init` / workflow scaffold | C | **Done** (Spec 22). [`jig init` scaffold specification](../specs/22-spec-jig-init-scaffold/22-spec-jig-init-scaffold.md). |
 | A21 | Graph export (Mermaid / DOT / SVG) | C | In-TUI chart only. |
-| A22 | Run share / anonymized export bundle | C | Local `.jig/runs` only. |
+| A22 | Run share / anonymized export bundle | C | **Done** (Spec 23). `jig export RUN_ID --destination PATH [--include-text]` produces a local, offline, alias-only ZIP archive. Spec: [`23-spec-run-share-export.md`](../specs/23-spec-run-share-export/23-spec-run-share-export.md); tasks/proofs: [`23-tasks-run-share-export.md`](../specs/23-spec-run-share-export/23-tasks-run-share-export.md), [`23-proofs/`](../specs/23-spec-run-share-export/23-proofs/); contract: [`docs/operations.md#export-a-run`](../operations.md#export-a-run). Validation: `go test ./internal/runexport ./cmd/jig -race -count=1`, `go test ./... -count=1`, `go vet ./...`, `gofmt -l .`, and every `.agents/jig/*.toml` re-validated. |
 | A23 | Multi-operator shared run store | C | Single local operator. |
 | A24 | Notifications (desktop / Slack / webhook on gate or failure) | C | Visual gate chrome only. |
 | A25 | Chart crossing-min + gate labels | S | Schema MVP exclusions. |
@@ -77,7 +77,7 @@ palette, status line, simple mode, Esc). Remaining distance is operator amenitie
 
 | ID | Goal | Who has it | jig today |
 |----|------|------------|-----------|
-| B1 | **Clipboard yank / OSC52** — copy run id, step output, selection | lazygit, Crush, nvim | Missing |
+| B1 | **Clipboard yank / OSC52** — copy run id, step output, selection | lazygit, Crush, nvim | Implemented via [spec 23](../specs/23-spec-clipboard-yank/23-spec-clipboard-yank.md); see [`docs/clipboard.md`](../clipboard.md). Monitor file-line selection is a follow-up. |
 | B2 | **Attention signal on gate wait** — terminal bell / optional notify | Claude Code, ops TUIs | Visual only |
 | B3 | **Fuzzy command palette** + richer named actions | fzf, k9s, gum, Crush | Substring + key-redispatch |
 | B4 | **Which-key / next-keys overlay** after prefixes | Helix, nvim | Silent `gg` only |
@@ -133,7 +133,7 @@ Ranked. Status: **have** / **partial** / **missing**.
 | ID | Goal | Status | Why it changes the feel |
 |----|------|--------|-------------------------|
 | T1 | **Token-stream polish in the monitor** — show in-progress assistant text with a live cursor; finalize to markdown only when the block completes (same strategy as `internal/tui/chat`) | partial | Peers feel “alive”; jig monitor mostly reloads pages + a typing tail. Flicker-free streaming is the #1 readability difference. |
-| T2 | **Copy / yank selected transcript item** — collapsed summary *or* expanded detail via OSC52 / system clipboard | missing | Operators cannot paste evidence into PRs/issues without leaving the TUI. Highest daily friction. |
+| T2 | **Copy / yank selected transcript item** — collapsed summary *or* expanded detail via OSC52 / system clipboard | implemented | Spec 23: `y` copies the current item (collapse-independent), `Y` copies the whole recorded step transcript. See [`docs/clipboard.md`](../clipboard.md). |
 | T3 | **Open location** — from tool locations / edit paths, open `path:line` in `$EDITOR` or configured opener | missing | Zed/IDE agents make locations actionable; jig renders paths as inert text. |
 | T4 | **In-transcript edit cards with optional unified diff** — keep “New code” default; toggle before/after hunks without leaving Transcript | partial | New-code Glamour cards exist; peers show patch impact inline. Full diff today lives mainly in review/diffview. |
 | T5 | **Smart burst folding** — presentation-only collapse of consecutive successful tool rows between prose (Claude-style tool storms) | missing | Spec 15 removed heavy Spec 11 group chrome; without *light* burst folding, parallel tool spam still overwhelms. |
@@ -190,7 +190,7 @@ If only twenty goals get attention:
 
 1. ~~A1 Headless `jig run`~~ **done** — see [`docs/headless.md`](../headless.md)
 2. **T1 Transcript streaming polish**
-3. **T2 Clipboard yank**
+3. ~~T2 Clipboard yank~~ **done** — see [`docs/clipboard.md`](../clipboard.md) (Monitor file-line selection deferred)
 4. A6 Restore Tier-2 monitors
 5. A4 / A5 Cursor + Claude ACP resume parity
 6. B2 Gate attention bell/notify
@@ -202,7 +202,7 @@ If only twenty goals get attention:
 12. **T4 Inline edit/diff cards**
 13. A8 Map/foreach fan-out
 14. A7 Codex parallel reliability
-15. B1 (covered by T2) / B4 Which-key
+15. ~~B1 (covered by T2)~~ **done** / B4 Which-key
 16. **T6 Noise & secrets policy**
 17. B5 Theme skins + light mode
 18. **T7 Per-turn tokens/timing**

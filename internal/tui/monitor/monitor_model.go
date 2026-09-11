@@ -840,8 +840,10 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 	case m.focus == focusTranscript:
 		var bindings []keybind.Binding
 		if m.selKind == "file" {
+			copyAll := m.keys.CopyAll
+			copyAll.SetHelp("Y", "copy file")
 			bindings = []keybind.Binding{
-				m.keys.Scroll, m.keys.GotoTop, m.keys.ScrollFast, m.keys.TransToSteps, m.keys.TransLeave,
+				m.keys.Scroll, m.keys.GotoTop, m.keys.ScrollFast, copyAll, m.keys.TransToSteps, m.keys.TransLeave,
 			}
 		} else {
 			blockNav := m.keys.BlockNav
@@ -854,12 +856,17 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 			pageNewer.SetEnabled(m.chatPage.HasLater)
 			clearView := m.keys.ClearView
 			clearView.SetEnabled(m.searchQuery != "" || m.filters.active())
+			copyItem := m.keys.CopyItem
+			copyItem.SetHelp("y", contextualItemCopyLabel(m))
+			copyItem.SetEnabled(len(m.chatVisibleItems) > 0)
+			copyAll := m.keys.CopyAll
+			copyAll.SetHelp("Y", "copy transcript")
 			if simple {
 				// Keep scroll / follow / expand / leave; hide paging, filters,
 				// search, expand-all, and block-nav from footer/help.
 				bindings = []keybind.Binding{
 					m.keys.Scroll, m.keys.Follow, m.keys.Toggle, m.keys.ScrollFast,
-					m.keys.GotoTop,
+					m.keys.GotoTop, copyItem, copyAll,
 					m.keys.TransToSteps, m.keys.TransLeave,
 				}
 			} else {
@@ -867,6 +874,7 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 					m.keys.Scroll, m.keys.Follow, blockNav, m.keys.Toggle, m.keys.ScrollFast,
 					m.keys.GotoTop, pageOlder, pageNewer,
 					m.keys.Search, m.keys.Filters, clearView, m.keys.ExpandAll,
+					copyItem, copyAll,
 					m.keys.TransToSteps, m.keys.TransLeave,
 				}
 			}
@@ -890,9 +898,15 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 		resumeKey.SetEnabled(actions.canResume)
 		treeKey := m.keys.ToggleTree
 		treeKey.SetEnabled(!m.cursorIsFileRow())
+		copyAll := m.keys.CopyAll
+		if m.cursorIsFileRow() {
+			copyAll.SetHelp("Y", "copy file")
+		} else {
+			copyAll.SetHelp("Y", "copy transcript")
+		}
 		bindings := []keybind.Binding{
 			m.keys.OpenTranscript, stopKey, resetKey, resumeKey,
-			m.keys.StepsNav, treeKey, m.keys.StepsLeave,
+			m.keys.StepsNav, treeKey, copyAll, m.keys.StepsLeave,
 		}
 		if m.gateContext != nil {
 			contextKey := m.keys.GateContext
@@ -928,6 +942,23 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 		Bindings: shared.GlobalHelpBindings(m.CapturesText(), m.keys.ToggleHelp),
 	})
 	return sections
+}
+
+// contextualItemCopyLabel names what y will copy given the current selection.
+// The label mirrors what shared.FormatClipboardNotice will emit.
+func contextualItemCopyLabel(m Model) string {
+	if n := len(m.chatVisibleItems); n == 0 || m.chatItemCursor < 0 || m.chatItemCursor >= n {
+		return "copy"
+	}
+	item := m.chatVisibleItems[m.chatItemCursor]
+	switch item.kind {
+	case transcriptItemToolExchange, transcriptItemToolResult:
+		return "copy exchange"
+	case transcriptItemThinking:
+		return "copy thinking"
+	default:
+		return "copy message"
+	}
 }
 
 func (m Model) compactHelpBindings() []keybind.Binding {

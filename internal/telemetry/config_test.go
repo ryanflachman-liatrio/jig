@@ -71,17 +71,17 @@ func TestResolveConfigPrecedence(t *testing.T) {
 	// Env > prefs > workflow. Confirm each layer overrides the one below.
 	tel := TelemetryFields{Enabled: true, MetricPrefix: "wf", ResourceAttributes: map[string]string{"a": "1"}}
 	prefs := Prefs{
-		Mode:           string(ModeProm),
-		PrometheusAddr: "127.0.0.1:9464",
-		MetricPrefix:   "prefs",
+		Mode:               string(ModeProm),
+		PrometheusAddr:     "127.0.0.1:9464",
+		MetricPrefix:       "prefs",
 		ResourceAttributes: map[string]string{"a": "prefs", "b": "2"},
 	}
 	env := MapEnv(map[string]string{
-		"OTEL_SERVICE_NAME":            "envsvc",
-		"OTEL_RESOURCE_ATTRIBUTES":     "a=env,c=3",
-		"JIG_TELEMETRY_MODE":           "both",
+		"OTEL_SERVICE_NAME":             "envsvc",
+		"OTEL_RESOURCE_ATTRIBUTES":      "a=env,c=3",
+		"JIG_TELEMETRY_MODE":            "both",
 		"JIG_TELEMETRY_PROMETHEUS_ADDR": "127.0.0.1:9500",
-		"OTEL_EXPORTER_OTLP_ENDPOINT":  "https://collector:4317",
+		"OTEL_EXPORTER_OTLP_ENDPOINT":   "https://collector:4317",
 	})
 
 	cfg, err := ResolveConfig(env, prefs, tel)

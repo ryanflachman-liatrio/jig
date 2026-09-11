@@ -19,6 +19,90 @@ func TestParseHunkOnlySnippetUsesNeutralFilename(t *testing.T) {
 	}
 }
 
+func TestParseTracksFileSpansAndOwnsMetadata(t *testing.T) {
+	content := strings.Join([]string{
+		"diff --git a/first.txt b/first.txt",
+		"--- a/first.txt",
+		"+++ b/first.txt",
+		"@@ -1 +1 @@",
+		"-old",
+		"+new",
+		"diff --git a/second.txt b/second.txt",
+		"new file mode 100644",
+		"--- /dev/null",
+		"+++ b/second.txt",
+		"@@ -0,0 +1 @@",
+		"+added",
+	}, "\n")
+	p := Parse(content)
+	if p.ParseErr != nil {
+		t.Fatal(p.ParseErr)
+	}
+	if len(p.Files) != 2 {
+		t.Fatalf("files = %d, want 2", len(p.Files))
+	}
+	want := []File{
+		{FileIndex: 0, Name: "first.txt", StartPatchLine: 1, EndPatchLine: 6},
+		{FileIndex: 1, Name: "second.txt", StartPatchLine: 7, EndPatchLine: 12},
+	}
+	for i, got := range p.Files {
+		if got != want[i] {
+			t.Errorf("file %d = %#v, want %#v", i, got, want[i])
+		}
+	}
+	for _, row := range p.Rows {
+		if row.FileIndex < 0 {
+			t.Errorf("row %d still unassigned: %#v", row.PatchLine, row)
+		}
+	}
+}
+
+func TestParseTracksFileSpansForPlainUnifiedPatch(t *testing.T) {
+	content := strings.Join([]string{
+		"--- a/first.txt",
+		"+++ b/first.txt",
+		"@@ -1 +1 @@",
+		"-old",
+		"+new",
+		"--- a/second.txt",
+		"+++ b/second.txt",
+		"@@ -1 +1 @@",
+		"-two",
+		"+TWO",
+	}, "\n")
+	p := Parse(content)
+	if p.ParseErr != nil {
+		t.Fatal(p.ParseErr)
+	}
+	if len(p.Files) != 2 {
+		t.Fatalf("files = %d, want 2", len(p.Files))
+	}
+	want := []File{
+		{FileIndex: 0, Name: "first.txt", StartPatchLine: 1, EndPatchLine: 5},
+		{FileIndex: 1, Name: "second.txt", StartPatchLine: 6, EndPatchLine: 10},
+	}
+	for i, got := range p.Files {
+		if got != want[i] {
+			t.Errorf("file %d = %#v, want %#v", i, got, want[i])
+		}
+	}
+}
+
+func TestParseTracksFileSpansForCRLFHeaders(t *testing.T) {
+	content := "diff --git a/one.txt b/one.txt\r\n--- a/one.txt\r\n+++ b/one.txt\r\n@@ -1 +1 @@\r\n-old\r\n+new\r\n"
+	p := Parse(content)
+	if p.ParseErr != nil {
+		t.Fatal(p.ParseErr)
+	}
+	if len(p.Files) != 1 {
+		t.Fatalf("files = %d, want 1", len(p.Files))
+	}
+	f := p.Files[0]
+	if f.StartPatchLine != 1 || f.EndPatchLine < 6 || f.Name != "one.txt" {
+		t.Fatalf("file = %#v", f)
+	}
+}
+
 func TestReviewUIDemoFixtureParses(t *testing.T) {
 	content, err := os.ReadFile("../../../.agents/jig/fixtures/review-ui-demo.diff")
 	if err != nil {

@@ -401,6 +401,22 @@ func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			return m, func() tea.Msg { return ResumeStepMsg{RunID: runID, StepID: stepID} }
 		}
 		return m, nil
+
+	case keybind.Matches(msg, m.keys.CopyAll):
+		// Y on the Steps panel copies whatever the Transcript panel is
+		// showing for the cursor's step: a selected file or the recorded
+		// transcript for the step's messages. y is not offered on the Steps
+		// panel — file rows have no line cursor and step rows have no item.
+		rows := m.visibleRows()
+		if m.cursor >= 0 && m.cursor < len(rows) && rows[m.cursor].isFileRow() {
+			f := rows[m.cursor].file
+			if f == nil {
+				return m, nil
+			}
+			return m, copyOutputFileCmd(f.path, f.kind)
+		}
+		stepID := m.cursorStepID()
+		return m, copyTranscriptCmd(m.RunDir, stepID)
 	}
 	var cmd tea.Cmd
 	m.vp, cmd = m.vp.Update(msg)
@@ -512,6 +528,30 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m, nil
 	case keybind.Matches(msg, m.keys.TransLeave):
 		return m.leaveMonitor()
+	case keybind.Matches(msg, m.keys.CopyAll):
+		// Y in the Transcript panel copies the whole current source: the
+		// selected output file if any is focused, or the recorded transcript
+		// for the current step's messages otherwise. File view has no y.
+		if m.selKind == "file" && m.selFile != "" {
+			kind := kindOther
+			for _, files := range m.stepFiles {
+				for _, f := range files {
+					if f.path == m.selFile {
+						kind = f.kind
+						break
+					}
+				}
+			}
+			return m, copyOutputFileCmd(m.selFile, kind)
+		}
+		return m, copyTranscriptCmd(m.RunDir, m.chatStep)
+	case keybind.Matches(msg, m.keys.CopyItem):
+		// y in the Transcript panel copies the selected transcript item. It is
+		// intentionally unavailable in file view (files have no line cursor).
+		if m.selKind == "file" {
+			return m, nil
+		}
+		return m, m.copyTranscriptItemCmd()
 	case keybind.Matches(msg, m.keys.BlockNav):
 		if m.searchQuery != "" {
 			if msg.String() == "n" {

@@ -61,11 +61,36 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				id := rows[m.cursor].id
 				return m, func() tea.Msg { return RequestDeleteMsg{RunID: id} }
 			}
+		case keybind.Matches(msg, m.keys.CopyID):
+			if len(rows) == 0 || m.cursor < 0 || m.cursor >= len(rows) {
+				return m, nil
+			}
+			id := rows[m.cursor].id
+			return m, m.copyRunIDCmd(id)
 		case keybind.Matches(msg, m.keys.Back):
 			return m, func() tea.Msg { return BackMsg{} }
 		}
 	}
 	return m, nil
+}
+
+// copyRunIDCmd produces a shared.ClipboardRequest for the given run ID. The
+// payload is the full run ID without a trailing newline; the target label is
+// the same run ID so operator feedback names exactly what was captured.
+func (m Model) copyRunIDCmd(id string) tea.Cmd {
+	req := shared.ClipboardRequest{
+		Target: shared.ClipboardTarget{
+			Surface: shared.ClipboardSurfaceRunID,
+			Label:   id,
+		},
+		Loader: func() shared.ClipboardPayload {
+			if id == "" {
+				return shared.ClipboardPayload{Err: shared.ErrClipboardUnavailable}
+			}
+			return shared.ClipboardPayload{Payload: id}
+		},
+	}
+	return func() tea.Msg { return req }
 }
 
 // DeleteRun removes the row for runID from the list, rebuilds the index, and

@@ -1,185 +1,149 @@
-# Agent Security Monitoring
+# Agent security monitoring
 
-jig wraps every agent step in a two-tier security layer that runs
-**out-of-band** — it observes the agent's tool calls and transcript without
-blocking the observed run, then raises findings through the normal event bus
-and recovery gate.
+jig applies two independent security layers to agent steps. Tier 1 is a
+synchronous deterministic guard. Tier 2 is a retrospective classifier fleet:
+it observes durable transcript activity without putting classifier latency on
+the worker's execution path.
 
----
+## Tier 1: deterministic guard
 
-## Two tiers
+`sentinel.Guard` runs before supported tool calls. It detects secret-shaped
+values in write-tool inputs, denies outbound calls to hosts outside an effective
+allowlist, and escalates selected dangerous shell patterns. A denied call is
+returned to the worker as a structured denial; a critical escalation also uses
+the existing recovery gate.
 
-### Tier 1 — Deterministic guard (`sentinel.Guard`)
+The guard redacts the supported tool inputs it inspects. This is pattern-based
+protection, not a claim that every secret, PII value, assistant block, or tool
+result is recognized.
 
-A synchronous, LLM-free gate that runs **before** each tool call executes.
-Implemented as a `claudecode.WithCanUseTool` callback; the agent never sees
-the raw result of a blocked call — it receives a structured deny reason
-instead.
+## Tier 2: embedded classifier fleet
 
-| Rule | Action |
-|------|--------|
-| Secret-pattern write (`AKIA…`, `BEGIN PRIVATE KEY`, high-entropy ≥ 4.5 bits/char over ≥ 16 chars) to `Write`/`Edit`/`Bash` | `deny` |
-| Outbound `WebFetch` or curl/wget to a host not in `outbound_allowlist` | `deny` |
-| Dangerous shell pattern (`rm -rf` outside worktree, `chmod 777`, raw curl/wget) | `escalate` |
+The binary embeds a fixed roster from `internal/runner/monitors/`:
 
-`deny` blocks the call and returns a reason string to the agent.
-`escalate` blocks the call and also routes a critical `SecurityFinding` to
-the recovery gate so a human can decide.
+| Monitor | Contract | Dispatch policy |
+|---|---|---|
+| `prompt-injection` | Tool-result instruction redirection followed by a consistent assistant action | Every eligible nonempty window |
+| `stuck-loop` | Repeated calls/errors without corrective progress | Only after `StuckLoopPrefilter` fires |
+| `exfil-pattern` | Sensitive read followed by an outbound action that indicates unauthorized disclosure | Every eligible nonempty window |
 
-**Transcript redaction.** When the guard is active, any secret-shaped string
-in the transcript (including denied-call inputs) is replaced with a redacted
-preview (`<pattern>:…last4`) before the entry is written to
-`transcript.jsonl`. The raw value is never stored on disk.
+The roster does not depend on the process working directory and cannot be
+overridden by a same-named local file. Malformed built-ins fail manager
+construction visibly.
 
-### Tier 2 — LLM monitor fleet (`sentinel.Supervisor`)
+Each run owns a private buffered signal channel. After a worker reports that its
+transcript append completed, the scheduler offers the signal non-blockingly to
+that run's supervisor. Signals carry generation, iteration, and attempt, so a
+window never combines separate executions. The same setup is used for a new run
+and `Manager.Resume`; manager-wide UI subscribers are not used for monitoring.
 
-An **out-of-band bus subscriber** that reads transcript windows as steps run
-and dispatches tools-off Haiku classifier agents to detect patterns that
-require semantic judgment.
+`batch_size` is the number of transcript-advance signals that forces a flush;
+`debounce_ms` is the maximum wait for a smaller batch. They do not control the
+classifier window size. Each dispatch reads a bounded recent tail and sends at
+most 20 entries and 32,000 bytes of final rendered input, including evidence
+labels and truncation markers. A later window retains bounded prior context, so
+an event immediately before one flush can be paired with a later action. Evidence
+outside the tail can be missed, and a run may finish before a retrospective
+verdict arrives.
 
-The supervisor:
+Before transmission, jig pattern-redacts text, thinking, tool names/status,
+tool inputs, result content, and trusted allowlist context. Returned finding
+detail is redacted again before persistence. Markers remain visible to the
+exfiltration classifier. This reduces exposure but is not comprehensive secret
+or PII detection.
 
-1. Subscribes to `StepMessage` liveness events from the engine bus.
-2. On each signal, reads newly-appended transcript entries for that step via
-   a per-step cursor (advancing, not re-scanning from the start).
-3. Assembles a dual-bounded window: at most `batch_size` entries, estimated
-   at most `token_ceiling` tokens.
-4. Batches/debounces signals (default: 5 entries or 500 ms, whichever comes
-   first), then deduplicates by `Fingerprint` before dispatching.
-5. Calls a monitor agent with `persistence_off` (no transcript written for
-   the monitor run itself) and structured output (`flagged bool`, `severity
-   string`, `detail string`).
-6. Accumulates each monitor call's `TotalCostUSD` against the
-   `fleet_budget_usd` ceiling. When exhausted, Tier-2 dispatch stops and
-   exactly one `degraded-to-tier1` finding is recorded.
+## Classifier isolation and prerequisites
 
-The observed run is **never blocked or slowed**: monitor dispatch is
-asynchronous and its budget exhaustion degrades gracefully.
+Tier-2 classifiers use the direct Claude Agent SDK even when the observed worker
+uses Claude ACP, Cursor ACP, or Codex ACP. The operator therefore needs a working
+Claude CLI/SDK login in addition to any worker-backend login, and classifier
+calls incur separate Claude billing.
 
----
+Every invocation uses the embedded prompt as the SDK system prompt and the
+bounded transcript as untrusted user data. It has an explicitly empty tool list,
+allowed-tool list, settings-source list, and skills list; a deny callback is
+also installed. The result schema permits exactly the required `flagged`,
+`severity`, and `detail` fields, the turn limit is one, and dispatch has a
+30-second upper bound. jig creates no transcript or artifact files for the
+classifier session. That is a jig persistence-off guarantee, not a promise about
+vendor CLI session storage.
 
-## Monitor roster
+Classifier dispatch is serial today. `concurrency_cap` remains an upper bound;
+valid values do not promise parallel classifier calls.
 
-The monitor behavior is implemented by the sentinel package under
-`internal/sentinel/`; it is configured and exercised through the executable
-workflows under `.agents/jig/`:
+## Findings, degradation, and recovery
 
-| Monitor | What it watches | Prefilter |
-|---------|-----------------|-----------|
-| Prompt-injection rules | `tool_result` blocks for injected commands | none (always dispatched) |
-| Stuck-loop prefilter | Repeated identical tool calls or error streaks | `StuckLoopPrefilter`: ≥ 3 repeated calls or ≥ 3 consecutive errors |
-| Exfiltration prefilter | Secret-read entry followed by an outbound `WebFetch`/curl | `ExfilPrefilter`: reuses guard entropy/pattern detector |
+Findings are appended to `.jig/runs/<run-id>/findings.jsonl`. Tier-2 findings use
+`tier = "monitor"`, `action = "observed"`, and evidence such as a transcript
+sequence range. Fingerprints suppress duplicate findings, including after a
+persisted run is reopened.
 
-Each monitor emits structured output (`flagged`, `severity`, `detail`). The
-supervisor converts a `flagged = true` response into a `Finding` and appends
-it to `findings.jsonl`.
+A classifier connection, timeout, or verdict failure produces one low-severity
+`monitor-unavailable/<id>` health finding for that run and disables that
+classifier for the remaining process lifetime. Other classifiers and Tier 1
+continue. Transcript, accounting-state, and finding-persistence failures use the
+same security event surface and name the degraded subsystem. Raw SDK errors are
+not persisted.
 
----
+A critical finding parks only the still-current, nonterminal execution at the
+existing recovery gate. A duplicate verdict, a verdict for an older
+generation/iteration/attempt, or a verdict arriving after the step became
+terminal is recorded without parking replacement work.
 
-## Findings format
+## Budget and reopen behavior
 
-All findings are written to `.jig/runs/<run-id>/findings.jsonl` as
-newline-delimited JSON, one finding per line:
+Known classifier cost is accumulated per run. A versioned
+`security-monitor-state.json` stores cumulative spend, degradation, and whether
+a paid invocation may be in flight. The in-flight marker is atomically persisted
+before dispatch and cleared with updated spend afterward. Known costs returned
+with failed or invalid verdicts still count.
 
-```json
-{
-  "ts":          "2026-08-07T12:34:56.789Z",
-  "run_id":      "run-abc123",
-  "step_id":     "implement",
-  "iteration":   1,
-  "tier":        "guard",
-  "monitor":     "secret-in-write",
-  "severity":    "high",
-  "action":      "blocked",
-  "detail":      "Edit contained a secret matching pattern aws-access-key",
-  "evidence":    "aws-access-key:…XYZW",
-  "fingerprint": "sha256:3d4f…"
-}
-```
+`fleet_budget_usd = 0` means unlimited Tier-2 spend; it does not disable Tier 2.
+A positive ceiling is checked before each serial call and after reported cost,
+so it may be exceeded by one completed invocation. If a finite-budget run is
+reopened with missing, corrupt, or in-flight accounting—or a launched call
+returns no cost—remaining budget is unknown and Tier 2 stays disabled for that
+run with a health finding. Unlimited runs may continue with an explicit
+unknown-cost note. Resetting a step does not reset fleet spend.
 
-**Fields:**
+On ordinary reopen, prior transcript content alone triggers no classifier call.
+The first new activity may use a bounded historical tail as context, while saved
+spend, degradation, and finding fingerprints remain in effect.
 
-| Field | Values | Notes |
-|-------|--------|-------|
-| `tier` | `"guard"` / `"monitor"` | Which tier produced the finding |
-| `severity` | `"low"` / `"medium"` / `"high"` / `"critical"` | Guards typically emit `"high"`; monitors vary |
-| `action` | `"observed"` / `"blocked"` / `"escalated"` | What the tier did with the finding |
-| `evidence` | redacted preview | Raw secrets are **never** stored; only `<pattern>:…last4` |
-| `fingerprint` | `sha256:…` | SHA-256 of `(stepID, monitor, evidenceKey)`; used for deduplication |
-
----
-
-## Redaction guarantee
-
-jig guarantees that neither `findings.jsonl` nor `transcript.jsonl` ever
-stores a raw secret:
-
-1. **Guard-level redaction.** Before any transcript entry containing a
-   tool-use input is written, secret-shaped strings are replaced with
-   `<pattern>:…last4` by `sentinel.Redact`.
-2. **Finding-level redaction.** `Finding.Evidence` is always the redacted
-   preview, never the raw match. The `Redact` helper that produces it never
-   accepts a raw string in a return position — only in a discard position.
-3. **Monitor input.** Monitor agents receive the already-redacted transcript
-   window. The Tier-2 fleet never sees raw secrets.
-
----
-
-## Escalation policy — raise, don't kill
-
-Critical findings route through the **existing recovery gate** rather than
-aborting the run:
-
-- A `SecurityFinding` with `severity = "critical"` calls `enterRecovery` on
-  the step's current state if it is still running or blockable.
-- If the step is already terminal, the finding is recorded only — a completed
-  step cannot be parked retroactively.
-- Duplicate fingerprints never trigger a second recovery for the same step
-  (`seenEscalations` map keyed by fingerprint).
-- The human sees the finding in the Security pane and gets the same recovery
-  actions as any other failure: retry, retry with guidance, or abort.
-
-**Why raise instead of kill?** A false positive from the monitor fleet must
-not abort a correct run. The human is in the loop and can dismiss a spurious
-finding via "retry". See ADR `0010-agent-security-monitoring.md` for the
-rationale.
-
----
-
-## Cost accounting
-
-Security monitoring adds two cost tracks:
-
-| Track | Where recorded |
-|-------|---------------|
-| Per-step agent cost (`TotalCostUSD`) | `step.Result.TotalCostUSD` → `result.json` → `RunSnapshot.TotalCostUSD` |
-| Tier-2 fleet monitor cost | Accumulated inside `Supervisor`; charged against `fleet_budget_usd` |
-
-The TUI shows per-step cost in the step-detail pane and per-run total cost in
-the run header.
-
----
-
-## Configuration reference
-
-Security config lives in `[defaults.security]` (workflow-wide) and
-`[step.security]` (per-step override). See
-[`docs/workflow-schema.md`](workflow-schema.md) for the full field reference.
+## Configuration
 
 ```toml
 [defaults.security]
-enabled            = true          # set false to opt out entirely
-tier1_enabled      = true          # Tier-1 guard (default on)
-tier2_enabled      = true          # Tier-2 monitor fleet (default on)
+enabled            = true
+tier1_enabled      = true
+tier2_enabled      = true
 outbound_allowlist = ["api.github.com"]
-fleet_budget_usd   = 0.10          # per-run Tier-2 cost ceiling (0 = no limit)
-concurrency_cap    = 4             # max simultaneous monitor dispatches
-batch_size         = 5             # entries before forcing a flush
-debounce_ms        = 500           # debounce window in ms
+fleet_budget_usd   = 0.10
+concurrency_cap    = 4
+batch_size         = 5
+debounce_ms        = 500
 
-# Per-step override (subset of the above):
-[step.security]
-tier2_enabled = false              # disable Tier-2 on this step only
+[[step]]
+id   = "untrusted-research"
+type = "agent"
+
+  [step.security]
+  tier2_enabled = false
 ```
 
-Security is **on by default** — no `[defaults.security]` block is needed.
+An explicit step value wins over `[defaults.security]`, including an explicit
+`tier2_enabled = true` when the default is false. Security-off, Tier-2-off,
+command/check/review-only, and persistence-off execution makes no classifier
+calls.
+
+## Optional live smoke procedure
+
+Deterministic tests replace external ACP processes and classifier service calls;
+they do not establish real-model judgment. Before a release, use synthetic local
+fixtures and a small positive `fleet_budget_usd` to run each worker selection
+(`claude/acp`, `cursor/acp`, and `codex/acp`) with a working worker login and
+Claude classifier login. Record CLI/adapter versions, elapsed time, classifier
+cost, captured tool evidence, resulting finding, cancellation behavior, and the
+backend's supported reopen result. Also submit an adversarial transcript that
+asks the classifier to invoke a tool and confirm no tool executes. A row not run
+must be reported as not run rather than inferred from offline coverage.

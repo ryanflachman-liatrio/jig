@@ -132,6 +132,9 @@ var mutatingTools = map[string]bool{
 
 // Workflow is a parsed workflow file.
 type Workflow struct {
+	Notification       *NotificationConfig `toml:"notification"`
+	notificationPolicy NotificationPolicy
+
 	Meta      Meta      `toml:"workflow"`
 	Defaults  Defaults  `toml:"defaults"`
 	Telemetry Telemetry `toml:"telemetry"`
@@ -319,8 +322,8 @@ type SecurityConfig struct {
 	// the engine default. Must be >= 1 when explicitly set.
 	ConcurrencyCap int `toml:"concurrency_cap"`
 
-	// BatchSize and DebounceMs control how Tier-2 batches incoming transcript
-	// entries before dispatching a monitor agent. 0 = use engine defaults.
+	// BatchSize and DebounceMs control how Tier-2 batches transcript-advance
+	// signals before dispatching a monitor agent. 0 = use engine defaults.
 	BatchSize  int `toml:"batch_size"`
 	DebounceMs int `toml:"debounce_ms"`
 }

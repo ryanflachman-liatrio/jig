@@ -173,7 +173,23 @@ func TestMonitorRoster(t *testing.T) {
 			tPath := dir + "/" + tc.monitorName + "_transcript.jsonl"
 			fPath := dir + "/" + tc.monitorName + "_findings.jsonl"
 
-			seedTranscript(t, tPath, 3, 2, tc.marker)
+			if tc.monitorName == "stuck-loop" {
+				w, err := transcript.Create(tPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for i := 0; i < 3; i++ {
+					_, err = w.Append(transcript.Entry{Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Name: "Bash", Input: []byte(`{"command":"echo STUCK:repeated_tool_call"}`)}}})
+					if err != nil {
+						t.Fatal(err)
+					}
+				}
+				if err := w.Close(); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				seedTranscript(t, tPath, 3, 2, tc.marker)
+			}
 
 			stub := newStub(tc.marker, "high", 0.001)
 			sig := make(chan StepSignal, 10)
@@ -187,15 +203,15 @@ func TestMonitorRoster(t *testing.T) {
 				"roster-run",
 				sig,
 				fw,
-				[]MonitorDef{{File: tc.monitorName + ".md", Monitor: tc.monitorName, Dispatcher: stub}},
-				10.0,
+				[]MonitorDef{{Monitor: tc.monitorName, Dispatcher: stub}},
 				func(stepID string) string {
 					if stepID == "step" {
 						return tPath
 					}
 					return ""
 				},
-				nil, // no notify in tests
+				nil,
+				SupervisorOptions{BudgetUSD: 10.0},
 			)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

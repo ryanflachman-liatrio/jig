@@ -30,9 +30,11 @@ done
 | Package | State | Notes |
 |---------|-------|-------|
 | `internal/workflow` | **Tested** | `workflow_test.go` — the real coverage lives here: parsing, defaulting, and the full validation surface. |
-| `internal/tui` | No tests | Bubble Tea UI; exercised manually via `go run ./cmd/jig`. |
-| `cmd/jig` | No tests | Thin entry point; covered indirectly by `validate` against the examples. |
-| `internal/engine`, `runner`, `step`, `manifest`, `datastore` | Not implemented | Empty placeholders — no code, no tests yet. |
+| `internal/engine` | **Tested** | Scheduler/executor behavior, journal replay, resume/reset, and lock lifetime (`runlock_test.go`), all against fakes — no live model or backend calls. |
+| `internal/runner`, `step`, `manifest`, `datastore`, `transcript`, `toolcall`, `sentinel` | **Tested** | Focused unit tests per package; `sentinel` also covers the shared pure secret-detector seam (`DetectSecrets`) used by both the live guard and export. |
+| `internal/runexport` | **Tested** | `export_test.go`, `archive_test.go`, `journal_test.go`, `transcript_test.go`, `sanitize_test.go`, `damaged_test.go`, `bounds_test.go` — see "Testing `jig export`" below. |
+| `internal/tui` and sub-packages | **Tested** | Bubble Tea models are driven directly (`tea.Msg` in, `View()`/model out); no real terminal in tests. |
+| `cmd/jig` | **Tested** | `ops_test.go`, `run_test.go`, `init_test.go`, and `export_test.go` cover operations, headless execution, scaffolding, and the export CLI. |
 
 ## Conventions (follow the existing style)
 
@@ -98,14 +100,43 @@ the tests prove both directions:
   system prompt, mutating tools flip worktree isolation on, and explicit step
   fields outrank both the file and `[defaults]`.
 
-## Testing the TUI and (future) engine
+## Testing `jig export`
 
-- **TUI:** no automated tests today. Verify manually with `go run ./cmd/jig`;
-  when adding regression tests, drive the model directly — feed `tea.Msg` values
-  through `Update` and assert on the returned model/`View()` string rather than
-  spinning up a real terminal. Run UI/concurrency work under `-race`.
-- **Engine (planned):** when `internal/engine` lands, keep agent invocation and
-  shell execution behind interfaces so the DAG traversal, gate evaluation, and
-  loop-termination logic can be tested with fakes — no live model calls in unit
-  tests. The determinism guarantees (topological order, `when` skipping, bounded
-  loops, gate pass/fail) are exactly the properties worth asserting.
+`internal/runexport` and `cmd/jig/export_test.go` establish a distinct,
+stricter testing contract for anything that leaves the local run store as a
+shareable artifact:
+
+- **Synthetic-only fixtures.** Every test fixture uses fabricated run/
+  workflow/step ids and clearly-fake credential shapes (see
+  `syntheticSecrets` in `internal/runexport/testutil_test.go`), never a real
+  secret or a copy of production data. No proof artifact under
+  `docs/specs/*/*-proofs/` may contain a raw run archive or a seeded fixture
+  value either.
+- **Archive parsing, not snapshotting.** Tests open the real published ZIP
+  with `archive/zip` and decode each member's JSON/JSONL rather than
+  comparing opaque bytes, so a test failure points at the exact field that
+  regressed.
+- **Disclosure scans.** At least one test per content mode scans every
+  member's bytes *and* the raw archive bytes (headers/comments included) for
+  every seeded private value, so a leak in an unexpected surface (a ZIP
+  comment, an unasserted field) still fails the suite.
+- **Helper-process lock contention.** Lease/ownership tests
+  (`TestExportRejectsSeparateProcessLease` and the `internal/engine`
+  `runlock_test.go` equivalents) spawn the test binary itself as a child
+  process holding the real advisory lock, proving refusal against another
+  process rather than another goroutine in the same process.
+- **Race and offline-only.** `go test ./internal/runexport ./cmd/jig -race
+  -count=1` must pass on every change to lock, lease, or shared-budget code.
+  No export test invokes a model, backend, credential, or network call.
+
+## Testing the TUI and engine
+
+- **TUI:** drive the model directly — feed `tea.Msg` values through `Update`
+  and assert on the returned model/`View()` string rather than spinning up a
+  real terminal or verifying manually. Run UI/concurrency work under `-race`.
+- **Engine:** agent invocation and shell execution stay behind the
+  `Executor`/`Reporter` interfaces (`internal/harness`, `internal/runner`) so
+  DAG traversal, gate evaluation, and loop-termination logic are tested with
+  fakes — no live model calls in unit tests. The determinism guarantees
+  (topological order, `when` skipping, bounded loops, gate pass/fail) are
+  exactly the properties asserted.

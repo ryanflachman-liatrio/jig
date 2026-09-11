@@ -76,6 +76,13 @@ type monitorKeys struct {
 
 	ToggleHelp   keybind.Binding // matched (ctrl+\: open/close the help agent modal)
 	ToggleSimple keybind.Binding // matched (ctrl+shift+a: simple/advanced chrome)
+
+	// Copy actions (spec 23-spec-clipboard-yank).
+	// CopyItem (y) copies the current transcript item / tool exchange.
+	// CopyAll (Y) copies the current source in full: the file for a file view,
+	// the full recorded transcript for a step's messages.
+	CopyItem keybind.Binding
+	CopyAll  keybind.Binding
 }
 
 func defaultMonitorKeys() monitorKeys {
@@ -136,5 +143,8 @@ func defaultMonitorKeys() monitorKeys {
 
 		ToggleHelp:   keybind.NewBinding(keybind.WithKeys("ctrl+\\"), keybind.WithHelp("ctrl+\\", "help agent")),
 		ToggleSimple: keybind.NewBinding(keybind.WithKeys("ctrl+shift+a"), keybind.WithHelp("ctrl+shift+a", "simple/advanced")),
+
+		CopyItem: keybind.NewBinding(keybind.WithKeys("y"), keybind.WithHelp("y", "copy")),
+		CopyAll:  keybind.NewBinding(keybind.WithKeys("Y"), keybind.WithHelp("Y", "copy all")),
 	}
 }

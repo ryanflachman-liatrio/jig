@@ -1202,7 +1202,7 @@ tier2_enabled      = true          # Tier-2: out-of-band LLM monitor fleet
 outbound_allowlist = ["api.github.com", "storage.googleapis.com"]
 fleet_budget_usd   = 0.10          # per-run Tier-2 cost ceiling; 0 = no limit
 concurrency_cap    = 4             # max simultaneous Tier-2 dispatches; 0 = engine default
-batch_size         = 5             # transcript entries before forcing a monitor flush
+batch_size         = 5             # transcript-advance signals before forcing a monitor flush
 debounce_ms        = 500           # debounce window before flushing
 ```
 
@@ -1213,9 +1213,9 @@ debounce_ms        = 500           # debounce window before flushing
 | `tier2_enabled` | bool | Toggle Tier-2 LLM monitor fleet. Default: `true`. |
 | `outbound_allowlist` | [string] | Hosts permitted for `WebFetch` and curl/wget. Validated as hostnames at load time. |
 | `fleet_budget_usd` | float | Per-run Tier-2 spend ceiling. When exceeded, Tier-2 degrades to Tier-1-only without blocking the run. `0` means no ceiling. Must be `>= 0`. |
-| `concurrency_cap` | int | Max simultaneous Tier-2 monitor dispatches. Must be `>= 1` when set; `0` uses the engine default. |
-| `batch_size` | int | Flush window size (entry count). `0` uses the engine default. |
-| `debounce_ms` | int | Flush debounce in milliseconds. `0` uses the engine default. |
+| `concurrency_cap` | int | Upper bound on simultaneous Tier-2 dispatches. A6 dispatch is serial, so values above one do not promise parallel calls. Must be `>= 1` when set; `0` uses the engine default. |
+| `batch_size` | int | Transcript-advance signal count that forces a flush; the classifier tail is independently capped at 20 entries / 32,000 rendered bytes. `0` uses the engine default (5). |
+| `debounce_ms` | int | Maximum wait before flushing a nonempty signal batch. `0` uses the engine default (500 ms). |
 
 ### `[step.security]`
 
@@ -1242,6 +1242,11 @@ agent_file = "agents/security-reviewer.md"
 **Inheritance** follows the same zero-value precedence as `model`/`effort`: an
 explicit per-step value wins, else `[defaults.security]`, else the engine's
 built-in default (on).
+
+Tier 1 and Tier 2 are independently resolved after inheritance. A step may
+explicitly enable Tier 2 when the default disables it, and disabling Tier 1 does
+not disable Tier 2. `fleet_budget_usd = 0` means no Tier-2 ceiling, not zero
+available budget.
 
 For the full two-tier architecture, findings format, redaction guarantee, and
 escalation policy, see [`docs/security-monitoring.md`](security-monitoring.md).
@@ -1312,3 +1317,46 @@ kinds reopen together. Durable agent SessionID lives in
 `.jig/runs/<id>/steps/<step-id>/session.json`; an input park that lacks its
 request payload or resumable session degrades to recovery. An integration park
 fails reopening when its registered run worktree or conflict markers are gone.
+
+## Notification policy
+
+`[notification]` is optional and root-workflow-only. It covers the expanded
+workflow; steps, defaults, and imported modules cannot declare notification
+policy. Omitting the table disables policy. Policy validation and local readiness
+checks are available; live delivery is being implemented in Spec 23.
+
+```toml
+[notification]
+profile = "@operator"
+# events = ["attention_required", "run_failed", "run_succeeded"]
+# routes = [{ destination = "ops", events = ["run_failed"] }]
+```
+
+Profiles live in `<project-root>/.agents/jig/notification-profiles/*.toml`.
+The project root is found with `workflow.RepoRoot` starting from the root
+workflow's directory; outside Git that directory is the fallback. Each file
+contains `[[notification]]` entries with unique `id = "@name"`, `events`, and
+`routes`. Profile composition and unknown keys are rejected. IDs use letters,
+digits, underscores, and hyphens after `@`; destination aliases use the same
+characters without `@`.
+
+Explicit workflow fields override profile fields, then defaults apply:
+`events = ["attention_required", "run_failed"]` and `routes = []`. Each explicit
+list replaces the complete inherited list; `[]` clears it. Successful completion
+requires explicit `run_succeeded` selection. Route events inherit the resolved
+policy events when omitted; an explicit empty route list of events disables
+that route. Explicit route events must be a subset of policy events. Repeated
+routes for one alias merge their selected events without multiplying delivery.
+
+See [shared policy](../.agents/jig/notification-profiles/operator.toml),
+[profiled workflow](../examples/notifications-profiled.toml), and
+[replacement workflow](../examples/notifications-override.toml).
+
+Workflow and profile files contain no destination URLs, tokens, enablement, or
+message templates. `jig validate` does not read operator bindings or secrets.
+Run `jig notifications check WORKFLOW.toml [--root PATH]` to inspect local
+readiness without sending anything; see [operator setup](operations.md#notification-readiness).
+The planned outbound metadata includes workflow name, run ID, event/time, and
+bounded step identifiers with fixed attention descriptions; those identifiers
+may disclose project information. Prompts, transcripts, paths, and outputs are
+not notification content.

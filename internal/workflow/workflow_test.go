@@ -2245,6 +2245,34 @@ run = "true"`,
 			want: "concurrency_cap must be >= 1",
 		},
 		{
+			name: "negative batch_size",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[defaults.security]
+batch_size = -1
+[[step]]
+id = "a"
+type = "command"
+run = "true"`,
+			want: "batch_size must be >= 1",
+		},
+		{
+			name: "negative debounce_ms",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+[defaults.security]
+debounce_ms = -1
+[[step]]
+id = "a"
+type = "command"
+run = "true"`,
+			want: "debounce_ms must be >= 1",
+		},
+		{
 			name: "invalid hostname in outbound_allowlist",
 			toml: `
 [workflow]

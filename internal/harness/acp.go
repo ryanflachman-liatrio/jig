@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	acpsdk "github.com/coder/acp-go-sdk"
@@ -343,16 +344,17 @@ func encodeACPQuestionResponse(
 // ID and emitted once via EventToolUse (which carries the final title),
 // eliminating duplicate entries from the ACP adapter's streaming title updates.
 //
-// All fields written by onEvent and read by run() are safe from concurrent
-// access: the ACP SDK invokes onUpdate synchronously, and all callbacks
-// complete before Prompt returns — so run() reads these fields only after the
-// last callback has fired.
+// The ACP SDK delivers notifications on a goroutine separate from Prompt's
+// response path. mu makes state extraction and the event-channel close one
+// boundary so late notifications cannot race run or send after teardown.
 type acpSession struct {
 	conn      *acp.Conn
 	events    chan Event
 	hasSchema bool
 	schema    map[string]any
 	partial   bool
+	mu        sync.Mutex
+	closed    bool
 
 	// lastText accumulates EventMessage chunks for structured-output extraction.
 	// Reset when the first new tool call ID is seen so only the final text
@@ -388,17 +390,20 @@ func (s *acpSession) Close() error {
 const acpMaxStructuredAttempts = 3
 
 func (s *acpSession) run(ctx context.Context, sessionID, prompt string) {
-	defer close(s.events)
+	defer s.closeEvents()
 
 	if s.schema == nil {
 		// No structured output required: single turn, no extraction.
 		stopReason, err := s.conn.Prompt(ctx, sessionID, prompt)
-		s.flushText()
+		s.mu.Lock()
+		s.flushTextLocked()
 		if err != nil {
-			s.events <- Event{Type: EventResult, IsError: true, ErrText: err.Error(), SessionID: sessionID}
+			s.emitLocked(Event{Type: EventResult, IsError: true, ErrText: err.Error(), SessionID: sessionID})
+			s.mu.Unlock()
 			return
 		}
-		s.events <- Event{Type: EventResult, SessionID: sessionID, Subtype: string(stopReason)}
+		s.emitLocked(Event{Type: EventResult, SessionID: sessionID, Subtype: string(stopReason)})
+		s.mu.Unlock()
 		return
 	}
 
@@ -418,27 +423,34 @@ func (s *acpSession) run(ctx context.Context, sessionID, prompt string) {
 	)
 
 	for attempt := 0; attempt < acpMaxStructuredAttempts; attempt++ {
+		s.mu.Lock()
 		s.lastText = ""
+		s.mu.Unlock()
 		stopReason, err := s.conn.Prompt(ctx, sessionID, currentPrompt)
 		// Capture accumulated text before flushing so extractJSONFromText sees
 		// the final assistant response.
+		s.mu.Lock()
 		text := s.lastText
-		s.flushText()
+		s.flushTextLocked()
 
 		if err != nil {
-			s.events <- Event{Type: EventResult, IsError: true, ErrText: err.Error(), SessionID: sessionID}
+			s.emitLocked(Event{Type: EventResult, IsError: true, ErrText: err.Error(), SessionID: sessionID})
+			s.mu.Unlock()
 			return
 		}
+		s.mu.Unlock()
 		subtype = string(stopReason)
 
 		parsed, parseErr := extractJSONFromText(text)
 		if parseErr == nil {
-			s.events <- Event{
+			s.mu.Lock()
+			s.emitLocked(Event{
 				Type:       EventResult,
 				SessionID:  sessionID,
 				Subtype:    subtype,
 				Structured: parsed,
-			}
+			})
+			s.mu.Unlock()
 			return
 		}
 		lastParseErr = parseErr.Error()
@@ -447,18 +459,22 @@ func (s *acpSession) run(ctx context.Context, sessionID, prompt string) {
 			// Emit the retry message as a user turn so the transcript shows
 			// what jig sent back to the model.
 			retryMsg := buildStructuredRetryPrompt(attempt+1, lastParseErr)
-			s.events <- Event{Type: EventText, Text: retryMsg}
-			s.events <- Event{Type: EventUserEnd}
+			s.mu.Lock()
+			s.emitLocked(Event{Type: EventText, Text: retryMsg})
+			s.emitLocked(Event{Type: EventUserEnd})
+			s.mu.Unlock()
 			currentPrompt = retryMsg
 		}
 	}
 
-	s.events <- Event{
+	s.mu.Lock()
+	s.emitLocked(Event{
 		Type:      EventResult,
 		IsError:   true,
 		ErrText:   fmt.Sprintf("acp: structured output: no valid JSON after %d attempts: %s", acpMaxStructuredAttempts, lastParseErr),
 		SessionID: sessionID,
-	}
+	})
+	s.mu.Unlock()
 }
 
 // appendSchemaPrompt returns prompt with a structured-output requirement section
@@ -534,11 +550,35 @@ func extractJSONFromText(text string) (json.RawMessage, error) {
 
 // flushText emits EventAssistantEnd if any text or thinking has been emitted
 // since the last flush, grouping all preceding chunks into one transcript entry.
-func (s *acpSession) flushText() {
+func (s *acpSession) flushTextLocked() {
 	if s.hasTextSinceFlush {
-		s.events <- Event{Type: EventAssistantEnd}
+		s.emitLocked(Event{Type: EventAssistantEnd})
 		s.hasTextSinceFlush = false
 	}
+}
+
+func (s *acpSession) flushText() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.closed {
+		s.flushTextLocked()
+	}
+}
+
+func (s *acpSession) emitLocked(event Event) {
+	if !s.closed {
+		s.events <- event
+	}
+}
+
+func (s *acpSession) closeEvents() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	s.closed = true
+	close(s.events)
 }
 
 // onEvent translates one ACP event into harness events with stateful grouping:
@@ -555,19 +595,24 @@ func (s *acpSession) flushText() {
 // This mirrors ClaudeHarness.pump, which groups all blocks within one SDK
 // AssistantMessage into a single transcript entry via a single AssistantEnd.
 func (s *acpSession) onEvent(ev acp.Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
 	switch ev.Kind {
 	case acp.EventMessage:
 		if s.hasSchema {
 			s.lastText += ev.Text
 		}
-		s.events <- Event{Type: EventText, Text: ev.Text}
+		s.emitLocked(Event{Type: EventText, Text: ev.Text})
 		if s.partial {
-			s.events <- Event{Type: EventTextDelta, Text: ev.Text}
+			s.emitLocked(Event{Type: EventTextDelta, Text: ev.Text})
 		}
 		s.hasTextSinceFlush = true
 
 	case acp.EventThought:
-		s.events <- Event{Type: EventThinking, Text: ev.Text}
+		s.emitLocked(Event{Type: EventThinking, Text: ev.Text})
 		s.hasTextSinceFlush = true
 
 	case acp.EventToolCall:
@@ -576,7 +621,7 @@ func (s *acpSession) onEvent(ev acp.Event) {
 		}
 		tool, existed := s.pendingTools[ev.ToolID]
 		if !existed {
-			s.flushText()
+			s.flushTextLocked()
 			if s.hasSchema {
 				s.lastText = ""
 			}
@@ -585,8 +630,8 @@ func (s *acpSession) onEvent(ev acp.Event) {
 		}
 		applyACPEvent(tool, ev)
 		if !existed {
-			s.events <- Event{Type: EventToolUse, Tool: tool.Clone()}
-			s.events <- Event{Type: EventAssistantEnd}
+			s.emitLocked(Event{Type: EventToolUse, Tool: tool.Clone()})
+			s.emitLocked(Event{Type: EventAssistantEnd})
 		}
 
 	case acp.EventToolCallUpdate:
@@ -603,8 +648,8 @@ func (s *acpSession) onEvent(ev acp.Event) {
 			return
 		}
 		delete(s.pendingTools, ev.ToolID)
-		s.events <- Event{Type: EventToolResult, Tool: tool.Clone(), IsError: tool.Status == "failed"}
-		s.events <- Event{Type: EventUserEnd}
+		s.emitLocked(Event{Type: EventToolResult, Tool: tool.Clone(), IsError: tool.Status == "failed"})
+		s.emitLocked(Event{Type: EventUserEnd})
 	}
 }
 

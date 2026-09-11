@@ -202,8 +202,8 @@ type TelemetryFields struct {
 // ResolveConfig folds env vars, .jig/telemetry.json prefs, and per-workflow
 // [telemetry] settings into one Config. Precedence (rightmost wins):
 //
-//	 [telemetry] workflow ← prefs (.jig/telemetry.json) ← env (OTEL_*, JIG_TELEMETRY_*)
-//	 with OTEL_SDK_DISABLED as an unconditional kill switch.
+//	[telemetry] workflow ← prefs (.jig/telemetry.json) ← env (OTEL_*, JIG_TELEMETRY_*)
+//	with OTEL_SDK_DISABLED as an unconditional kill switch.
 //
 // Callers pass an [EnvLookup] rather than reading os.Getenv directly so tests
 // stay hermetic.

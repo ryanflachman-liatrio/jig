@@ -164,7 +164,18 @@ func InputPath(runDir, stepID string) string {
 // The append-only findings file holds every security finding emitted by both
 // Tier-1 (guard) and Tier-2 (monitor fleet) for this run (see internal/sentinel).
 func FindingsPath(runDir string) string {
+	if runDir == "" {
+		return ""
+	}
 	return filepath.Join(runDir, "findings.jsonl")
+}
+
+// SecurityMonitorStatePath returns the run-owned Tier-2 cost-accounting state.
+func SecurityMonitorStatePath(runDir string) string {
+	if runDir == "" {
+		return ""
+	}
+	return filepath.Join(runDir, "security-monitor-state.json")
 }
 
 // WorkflowSnapshotPath returns the immutable workflow definition captured when

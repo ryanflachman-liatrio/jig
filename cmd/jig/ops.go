@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -270,9 +271,16 @@ func reorderArgs(args []string, takesValue map[string]bool, maxPositionals int) 
 }
 
 func printHelp() {
-	fmt.Fprintln(os.Stdout, `usage: jig <command> [arguments]
+	printHelpTo(os.Stdout)
+}
+
+func printHelpTo(w io.Writer) {
+	fmt.Fprintln(w, `usage: jig <command> [arguments]
 
 Commands:
+  init                      scaffold a valid workflow
+  notifications check WORKFLOW.toml [--root PATH]
+                            inspect notification readiness without sending
   validate WORKFLOW.toml    validate a workflow
   run WORKFLOW.toml         run a workflow headlessly
   status [RUN_ID]           list or inspect persisted runs
@@ -281,6 +289,8 @@ Commands:
   resume RUN_ID             reopen an unfinished run
   reset RUN_ID --to STEP    preview or apply reset-to-step
   prune                     remove old finished runs
+  export RUN_ID --destination PATH [--include-text]
+                            export a local, sanitized diagnostic ZIP
 
 Run jig with no arguments to open the TUI.`)
 }
