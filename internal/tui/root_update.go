@@ -100,7 +100,7 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.handles[msg.runID] = msg.run
 		m.runs = m.runs.MarkLive(msg.runID)
-		m.monitor = monitor.New(msg.runID).WithPrefs(m.manager.Root())
+		m.monitor = monitor.New(msg.runID).WithPrefs(m.manager.Root()).WithDiagnostics(m.diagnostics)
 		m.monitor.RunDir = m.manager.RunDir(msg.runID)
 		m.monitor = m.monitor.WithJournal(msg.events)
 		m.monitor.SetRun(msg.run)
@@ -295,15 +295,6 @@ func (m rootModel) handleGlobalKey(msg tea.KeyPressMsg) (rootModel, tea.Cmd, boo
 		}
 		return m, nil, true
 	}
-	// The notification-diagnostics overlay is root-owned so it can be opened
-	// from Home or Monitor with one chord. It swallows all keys while open
-	// so a burst of arriving events never scrolls a rendered snapshot off.
-	if m.showDiagnostics {
-		if msg.String() == "esc" || keybind.Matches(msg, shared.KeyNotificationDiagnostics) {
-			m.showDiagnostics = false
-		}
-		return m, nil, true
-	}
 	capturesText := m.activeProvider().capturesText()
 	if (!capturesText && keybind.Matches(msg, shared.KeyHelp)) ||
 		(capturesText && keybind.Matches(msg, shared.KeyHelpTyping)) {
@@ -313,10 +304,6 @@ func (m rootModel) handleGlobalKey(msg tea.KeyPressMsg) (rootModel, tea.Cmd, boo
 	}
 	if !capturesText && keybind.Matches(msg, shared.KeyPalette) {
 		m.palette = m.palette.Show(m.paletteCommands())
-		return m, nil, true
-	}
-	if !capturesText && keybind.Matches(msg, shared.KeyNotificationDiagnostics) {
-		m.showDiagnostics = true
 		return m, nil, true
 	}
 	return m, nil, false
@@ -402,7 +389,7 @@ func (m rootModel) updateEngineEvent(msg monitor.EngineEventMsg) (tea.Model, tea
 // already reflected.
 func (m rootModel) openMonitor(runID string) (tea.Model, tea.Cmd) {
 	if m.monitor.RunID != runID {
-		m.monitor = monitor.New(runID).WithPrefs(m.manager.Root())
+		m.monitor = monitor.New(runID).WithPrefs(m.manager.Root()).WithDiagnostics(m.diagnostics)
 		// RunDir lets the monitor read per-step transcripts from disk. Set it
 		// before WithSnapshot so it preserves it.
 		m.monitor.RunDir = m.manager.RunDir(runID)
@@ -456,7 +443,7 @@ func (m rootModel) startRun(wf *workflow.Workflow) (tea.Model, tea.Cmd) {
 	m.handles[run.ID] = run
 	m.runs = m.runs.WithWorkflow(wf)
 	// Navigate straight to the monitor so prompts and review gates are visible immediately.
-	m.monitor = monitor.New(run.ID).WithPrefs(m.manager.Root())
+	m.monitor = monitor.New(run.ID).WithPrefs(m.manager.Root()).WithDiagnostics(m.diagnostics)
 	m.monitor.RunDir = m.manager.RunDir(run.ID)
 	m.monitor.SetRun(run)
 	m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})

@@ -324,6 +324,15 @@ type Model struct {
 	simpleMode bool
 	jigRoot    string // .jig/ root for prefs persistence; "" = in-memory only
 
+	// diagnostics renders a sanitized text dump of the process-wide
+	// notification diagnostic ring (spec 23-spec-run-notifications FR-17).
+	// Nil when notifications are not wired (tests) — the overlay is inert.
+	diagnostics DiagnosticsRenderer
+	// showDiagnostics is true while the notification-diagnostics overlay is
+	// composited over the Monitor. Only a deliberate operator command opens
+	// it; an arriving diagnostic never does.
+	showDiagnostics bool
+
 	// Help agent modal (ctrl+h). helpOpen/helpReady are the open/connected flags;
 	// helpModel is preserved across open/close cycles for the run's lifetime.
 	// helpGateReq/helpGateAns are the rendezvous channels for the final-merge gate.
@@ -916,6 +925,13 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 	sections = append(sections, shared.HelpSection{
 		Title:    modeTitle,
 		Bindings: []keybind.Binding{toggleSimple},
+	})
+
+	notifDiag := m.keys.NotificationDiagnostics
+	notifDiag.SetEnabled(!m.CapturesText())
+	sections = append(sections, shared.HelpSection{
+		Title:    "Notifications",
+		Bindings: []keybind.Binding{notifDiag},
 	})
 
 	// Focus + Global sections are shown on every screen.
