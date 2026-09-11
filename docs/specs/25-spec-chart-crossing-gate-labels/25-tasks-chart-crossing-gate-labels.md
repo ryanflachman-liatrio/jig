@@ -52,7 +52,7 @@ Deliver a bounded, deterministic layout policy for forward dependency edges that
 - [x] 1.2 Apply the helper after longest-path rank buckets are built, using only forward `depends_on` topology; retain conditional-edge decoration and exclude route back-edges from the ordering objective.
 - [x] 1.3 Add table-driven layout tests in `internal/tui/chart/layout_test.go` for a crossing-prone graph, a graph with no reducible crossing, and equal-score ties. Assert rank membership, edge endpoints, stable repeated order, and unchanged route-back-edge classification.
 
-### [ ] 2.0 Render compact deterministic validation-gate labels
+### [~] 2.0 Render compact deterministic validation-gate labels
 
 Extend chart node geometry and rendering so every `[step.validate]` form displays its established compact gate-check description inside the node, without displacing existing markers or bypassing theme ownership.
 
@@ -64,9 +64,9 @@ Extend chart node geometry and rendering so every `[step.validate]` form display
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Adjust chart box geometry and connector-anchor calculations in `internal/tui/chart/render.go` to accommodate a bounded validation-label line while keeping all node boxes uniform and the chart vertically deterministic.
-- [ ] 2.2 Render a gated node's existing `gateLabel` inside the node using the shared chart/node theme styles and `shared.TruncateTitle`; preserve the ID, type/gate glyph, loop, retry, and foreach annotations without introducing hard-coded styling.
-- [ ] 2.3 Add focused renderer tests in `internal/tui/chart/render_test.go` for command, schema, contains, and exists validation forms, including a Unicode/long-label truncation case and combined gate-plus-loop/retry/foreach marker behavior.
+- [x] 2.1 Adjust chart box geometry and connector-anchor calculations in `internal/tui/chart/render.go` to accommodate a bounded validation-label line while keeping all node boxes uniform and the chart vertically deterministic.
+- [x] 2.2 Render a gated node's existing `gateLabel` inside the node using the shared chart/node theme styles and `shared.TruncateTitle`; preserve the ID, type/gate glyph, loop, retry, and foreach annotations without introducing hard-coded styling.
+- [x] 2.3 Add focused renderer tests in `internal/tui/chart/render_test.go` for command, schema, contains, and exists validation forms, including a Unicode/long-label truncation case and combined gate-plus-loop/retry/foreach marker behavior.
 
 ### [ ] 3.0 Verify Detail-chart behavior and chart regressions
 
