@@ -141,12 +141,33 @@ existing lease/confinement/consistency-recheck guarantees from task 1.0), and
 tests a representative subset of the state matrix end-to-end rather than
 every named scenario individually. In particular:
 
-- The 256 MiB total-input and archive-content limits and the 10,000-step
-  inventory limit are enforced in code (`maxTotalInput`, `maxArchiveBytes`,
-  `maxStepInventory` in `internal/runexport/bounds.go`) but are not exercised
-  by a multi-hundred-megabyte end-to-end test, which would be slow and
-  environment-dependent; the underlying `budget`/`boundedReader` primitives
-  that enforce them are unit-tested directly instead.
+- The 256 MiB total-input and archive-content limits are enforced in code
+  (`maxTotalInput`, `maxArchiveBytes` in `internal/runexport/bounds.go`) but
+  are not exercised by a multi-hundred-megabyte end-to-end test, which would
+  be slow and environment-dependent; the underlying `budget`/`boundedReader`
+  primitives that enforce them are unit-tested directly instead. The
+  10,000-step inventory limit (`maxStepInventory`) is enforced in
+  `collectInventory` (`internal/runexport/source.go`) directly against the
+  discovered step-directory count and is exercised end-to-end at the exact
+  boundary by `TestConfinedInventoryEnforcesStepInventoryLimit`
+  (`internal/runexport/export_test.go`), which builds 10,000 and 10,001
+  synthetic step directories and asserts success at the boundary and an
+  `ErrOperational` refusal one over it:
+
+  ```
+  === RUN   TestConfinedInventoryEnforcesStepInventoryLimit
+  === RUN   TestConfinedInventoryEnforcesStepInventoryLimit/at_limit
+  === RUN   TestConfinedInventoryEnforcesStepInventoryLimit/above_limit
+  --- PASS: TestConfinedInventoryEnforcesStepInventoryLimit (7.52s)
+      --- PASS: TestConfinedInventoryEnforcesStepInventoryLimit/at_limit (4.59s)
+      --- PASS: TestConfinedInventoryEnforcesStepInventoryLimit/above_limit (2.93s)
+  PASS
+  ok  	jig/internal/runexport	7.922s
+  ```
+
+  (Correction: an earlier version of this proof claimed `maxStepInventory`
+  was already enforced in code; it was declared as a constant but never
+  checked anywhere until this fix.)
 - Separate-process source-change injection (append/replace/delete during
   collection, as opposed to before it) is not separately re-tested beyond the
   task 1.0 lease-contention helper-process tests; `Recheck` — proven correct

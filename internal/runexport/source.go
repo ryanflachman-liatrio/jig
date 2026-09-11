@@ -119,6 +119,9 @@ func collectInventory(runDir string) (inventory, error) {
 	if err != nil || closeErr != nil {
 		return inventory{}, fmt.Errorf("%w: read selected steps directory", ErrOperational)
 	}
+	if len(entries) > maxStepInventory {
+		return inventory{}, fmt.Errorf("%w: step inventory exceeds the size limit", ErrOperational)
+	}
 	for _, entry := range entries {
 		name := entry.Name()
 		if name == "." || name == ".." || strings.ContainsAny(name, `/\\`) {
