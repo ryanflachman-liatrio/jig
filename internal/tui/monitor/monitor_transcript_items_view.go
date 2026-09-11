@@ -16,95 +16,129 @@ import (
 
 // itemTranscriptBody is the conversation renderer. It consumes the bounded
 // item page directly: a matched tool result is therefore never a second row.
+//
+// Slice-04 discipline: each visible item renders into a per-iteration
+// scratch buffer and its bytes pass through trimStructuralBlankEdges before
+// they contribute to the transcript body. An item whose trimmed output is
+// empty contributes neither content nor a separator line, and receives no
+// chatItemLineRanges entry (the zero-height guard). itemSpacingBefore is
+// applied only between two items that both contributed content, so a
+// filtered or hidden item does not leave a ghost gap behind. A row whose
+// raw bytes contain any non-whitespace (including an SGR escape) survives
+// the trim, so a tinted card padding row is preserved as intentional
+// content while a plain blank line is not.
 func (m *Model) itemTranscriptBody() string {
 	var b strings.Builder
 	m.chatItemLineRanges = make(map[transcriptLineKey]lineRange)
 	line := 0
+	lastRenderedIdx := -1
 	for i, item := range m.chatVisibleItems {
-		if i > 0 {
-			for range itemSpacingBefore(m.chatVisibleItems[i-1], item) {
+		var scratch strings.Builder
+		m.writeTranscriptItem(&scratch, item, i == m.chatItemCursor)
+		body := trimStructuralBlankEdges(scratch.String())
+		if body == "" {
+			continue
+		}
+		if lastRenderedIdx >= 0 {
+			for range itemSpacingBefore(m.chatVisibleItems[lastRenderedIdx], item) {
 				b.WriteString("\n")
 				line++
 			}
 		}
 		start := line
-		itemStart := b.Len()
-		block := m.chatEntries[item.primary.entryIdx].Blocks[item.primary.blockIdx]
-		selected := i == m.chatItemCursor
-		prefix := "  "
-		if selected {
-			prefix = shared.Theme.SelectedBar.Render(shared.CursorBar) + " "
-		}
-		expanded := m.chatItemExpandAll || m.chatItemExpand[item.key]
-		marker := " "
-		if itemHasDetail(item) {
-			marker = shared.CollapsedMarker
-			if expanded {
-				marker = shared.ExpandedMarker
-			}
-		}
-		switch item.kind {
-		case transcriptItemText:
-			if item.role == transcript.RoleUser {
-				b.WriteString(prefix + shared.Theme.Chat.UserGuidance.Render("User") + "\n" + m.renderMarkdown(item.primary.key, block.Text))
-			} else {
-				b.WriteString(prefix + m.renderMarkdown(item.primary.key, block.Text))
-			}
-		case transcriptItemSystem:
-			b.WriteString(prefix)
-			writeVerbatim(&b, block.Text)
-		case transcriptItemToolExchange, transcriptItemToolResult:
-			use := block
-			if item.toolUse != nil {
-				use = m.chatEntries[item.toolUse.entryIdx].Blocks[item.toolUse.blockIdx]
-			}
-			activity := use.Activity()
-			detailActivity := activity
-			if item.toolResult != nil {
-				result := m.chatEntries[item.toolResult.entryIdx].Blocks[item.toolResult.blockIdx]
-				if result.Activity() != nil {
-					detailActivity = result.Activity().Clone()
-					if detailActivity.Title == "" && activity != nil {
-						detailActivity.Title, detailActivity.Kind = activity.Title, activity.Kind
-					}
-					if detailActivity.ID == "" && activity != nil {
-						detailActivity.ID = activity.ID
-					}
-					if detailActivity.Title != "" || detailActivity.Kind != "" || len(detailActivity.Locations) > 0 || len(detailActivity.Output) > 0 {
-						activity = detailActivity
-					}
-				}
-			}
-			s := summarizeActivity(activity)
-			header := composeToolHeader(m, item, s, selected)
-			row := marker + " " + header
-			if item.kind == transcriptItemToolExchange {
-				b.WriteString(m.renderToolExchangeCard(item, prefix, row, selected, expanded) + "\n")
-			} else {
-				b.WriteString(prefix + row + "\n")
-			}
-			if expanded {
-				m.writeToolActivityDetails(&b, detailActivity, item.displayState == toolDisplaySuccess)
-				if (item.toolUse != nil && use.Truncated) || (item.toolResult != nil && m.chatEntries[item.toolResult.entryIdx].Blocks[item.toolResult.blockIdx].Truncated) {
-					b.WriteString("      " + shared.Theme.Chat.Hint.Render("… capture truncated at write") + "\n")
-				}
-			}
-		case transcriptItemThinking:
-			b.WriteString(prefix + marker + " " + shared.Theme.Chat.Thinking.Render(shared.IconThinking+" reasoning") + "\n")
-			if expanded {
-				m.writeItemDetail(&b, "Reasoning", block.Text)
-			}
-		default:
-			label := "Unsupported " + string(block.Type)
-			b.WriteString(prefix + marker + " " + shared.Theme.Chat.Hint.Render(label) + "\n")
-			if expanded {
-				m.writeItemDetail(&b, "Content", unsupportedBlockContent(block))
-			}
-		}
-		line += strings.Count(b.String()[itemStart:], "\n")
-		m.chatItemLineRanges[transcriptLineKey{itemKey: item.key}] = lineRange{start: start, end: max(start, line-1)}
+		b.WriteString(body)
+		b.WriteString("\n")
+		line += strings.Count(body, "\n") + 1
+		m.chatItemLineRanges[transcriptLineKey{itemKey: item.key}] = lineRange{start: start, end: line - 1}
+		lastRenderedIdx = i
 	}
 	return b.String()
+}
+
+// writeTranscriptItem renders one transcript item into b. Each case arm is
+// unchanged from the pre-slice-04 loop; the extraction makes the per-item
+// scratch-buffer + edge-trim discipline in itemTranscriptBody readable.
+func (m *Model) writeTranscriptItem(b *strings.Builder, item transcriptItem, selected bool) {
+	block := m.chatEntries[item.primary.entryIdx].Blocks[item.primary.blockIdx]
+	prefix := "  "
+	if selected {
+		prefix = shared.Theme.SelectedBar.Render(shared.CursorBar) + " "
+	}
+	expanded := m.chatItemExpandAll || m.chatItemExpand[item.key]
+	marker := " "
+	if itemHasDetail(item) {
+		marker = shared.CollapsedMarker
+		if expanded {
+			marker = shared.ExpandedMarker
+		}
+	}
+	switch item.kind {
+	case transcriptItemText:
+		rendered := m.renderMarkdown(item.primary.key, block.Text)
+		if item.role == transcript.RoleUser {
+			b.WriteString(prefix + shared.Theme.Chat.UserGuidance.Render("User") + "\n" + rendered)
+		} else {
+			// Glamour prepends a top-margin blank line. Land the item
+			// prefix (bar+space when selected, two spaces when unselected)
+			// on the first content line instead of on a standalone blank
+			// row so the per-item edge trim in itemTranscriptBody behaves
+			// prefix-invariantly. A plain-whitespace prefix on its own
+			// line would otherwise get trimmed as structural blank while
+			// an SGR-styled prefix would survive, drifting the item's
+			// line count on selection.
+			b.WriteString(prefix + strings.TrimLeft(rendered, "\n"))
+		}
+	case transcriptItemSystem:
+		b.WriteString(prefix)
+		writeVerbatim(b, block.Text)
+	case transcriptItemToolExchange, transcriptItemToolResult:
+		use := block
+		if item.toolUse != nil {
+			use = m.chatEntries[item.toolUse.entryIdx].Blocks[item.toolUse.blockIdx]
+		}
+		activity := use.Activity()
+		detailActivity := activity
+		if item.toolResult != nil {
+			result := m.chatEntries[item.toolResult.entryIdx].Blocks[item.toolResult.blockIdx]
+			if result.Activity() != nil {
+				detailActivity = result.Activity().Clone()
+				if detailActivity.Title == "" && activity != nil {
+					detailActivity.Title, detailActivity.Kind = activity.Title, activity.Kind
+				}
+				if detailActivity.ID == "" && activity != nil {
+					detailActivity.ID = activity.ID
+				}
+				if detailActivity.Title != "" || detailActivity.Kind != "" || len(detailActivity.Locations) > 0 || len(detailActivity.Output) > 0 {
+					activity = detailActivity
+				}
+			}
+		}
+		s := summarizeActivity(activity)
+		header := composeToolHeader(m, item, s, selected)
+		row := marker + " " + header
+		if item.kind == transcriptItemToolExchange {
+			b.WriteString(m.renderToolExchangeCard(item, prefix, row, selected, expanded) + "\n")
+		} else {
+			b.WriteString(prefix + row + "\n")
+		}
+		if expanded {
+			m.writeToolActivityDetails(b, detailActivity, item.displayState == toolDisplaySuccess)
+			if (item.toolUse != nil && use.Truncated) || (item.toolResult != nil && m.chatEntries[item.toolResult.entryIdx].Blocks[item.toolResult.blockIdx].Truncated) {
+				b.WriteString("      " + shared.Theme.Chat.Hint.Render("… capture truncated at write") + "\n")
+			}
+		}
+	case transcriptItemThinking:
+		b.WriteString(prefix + marker + " " + shared.Theme.Chat.Thinking.Render(shared.IconThinking+" reasoning") + "\n")
+		if expanded {
+			m.writeItemDetail(b, "Reasoning", block.Text)
+		}
+	default:
+		label := "Unsupported " + string(block.Type)
+		b.WriteString(prefix + marker + " " + shared.Theme.Chat.Hint.Render(label) + "\n")
+		if expanded {
+			m.writeItemDetail(b, "Content", unsupportedBlockContent(block))
+		}
+	}
 }
 
 func cardState(state toolDisplayState) shared.CardState {

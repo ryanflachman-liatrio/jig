@@ -150,6 +150,12 @@ func itemMembers(item transcriptItem) []transcriptBlockRef {
 // itemSpacingBefore describes only structural whitespace between neighboring
 // visible items. It deliberately has no theme dependency so filtered views and
 // the default view retain the same conversation rhythm.
+//
+// Slice-04 discipline: the caller (itemTranscriptBody) applies this rule
+// only between two items that both contributed content after edge trimming,
+// so a filtered or zero-height item does not leave a ghost gap behind. The
+// two-line execution-coordinate gap remains stronger than the ordinary
+// one-line gap because slice 12's boundary banner will render inside it.
 func itemSpacingBefore(previous, current transcriptItem) int {
 	if previous.coord.generation != current.coord.generation ||
 		previous.coord.iteration != current.coord.iteration ||
