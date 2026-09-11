@@ -33,7 +33,7 @@ func (m *Model) itemTranscriptBody() string {
 		selected := i == m.chatItemCursor
 		prefix := "  "
 		if selected {
-			prefix += shared.Theme.SelectedBar.Render("▌") + " "
+			prefix = shared.Theme.SelectedBar.Render(shared.CursorBar) + " "
 		}
 		expanded := m.chatItemExpandAll || m.chatItemExpand[item.key]
 		marker := " "

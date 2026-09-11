@@ -90,7 +90,7 @@ func TestToolExchangeHeaderCardStatesAndWidths(t *testing.T) {
 					}
 				}
 				plain := stripANSI(body)
-				if !strings.HasPrefix(plain, "  ▌ ╭") || !strings.Contains(plain, "\n  ▌ ╰") {
+				if !strings.HasPrefix(plain, "▌ ╭") || !strings.Contains(plain, "\n▌ ╰") {
 					t.Fatalf("selected prefix was not applied to both rows:\n%s", plain)
 				}
 				if !strings.Contains(plain, tt.wantIcon) {
@@ -251,7 +251,7 @@ func TestToolExchangeHeaderCardSelectedAndUnselectedPrefixes(t *testing.T) {
 	m.transcriptInnerW = 60
 	m.setChatPage(transcript.Page{Entries: entries})
 	plain := stripANSI(m.itemTranscriptBody())
-	if !strings.Contains(plain, "  ▌ ╭") || !strings.Contains(plain, "\n  ╭") {
+	if !strings.Contains(plain, "▌ ╭") || !strings.Contains(plain, "\n  ╭") {
 		t.Fatalf("selected/unselected card prefixes missing:\n%s", plain)
 	}
 	for _, row := range strings.Split(strings.TrimSuffix(m.itemTranscriptBody(), "\n"), "\n") {
