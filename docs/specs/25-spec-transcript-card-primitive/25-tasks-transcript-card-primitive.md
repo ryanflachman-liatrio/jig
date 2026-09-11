@@ -151,7 +151,7 @@ notice. Orphan results and every non-exchange item keep their existing form.
 - [x] 3.7 Add table-driven Monitor cases for paired success/failure, running use-only, terminal incomplete use-only, selected/unselected prefixes, narrow/wide widths, and no synthetic body row; use ANSI-aware assertions for border color and total row width.
 - [x] 3.8 Add explicit regressions proving orphan results and text/system/thinking/unsupported items retain their existing flat presentation, expanded details and structured edits remain visible, clipboard payloads remain undecorated, and persistence-off loading produces the existing empty state without entering card rendering.
 
-### [~] 4.0 Preserve navigation and bound cached card rendering
+### [x] 4.0 Preserve navigation and bound cached card rendering
 
 Use the existing item-render cache for header cards with complete render
 identity and explicit replacement/resize/step invalidation. Keep line ranges
@@ -171,11 +171,11 @@ page replacement, filtering, refresh, expansion, and resize.
 - [x] 4.2 Add a focused helper that retrieves or renders only the exchange header card; on a miss, remove any prior card variants for that item before storing the current one so cache size remains bounded by the loaded page.
 - [x] 4.3 Clear exchange-card output during every `setChatPage` replacement because a same-key activity/result may change, while retaining the selected item key and explicit expansion choice through the existing rebuild path.
 - [x] 4.4 Invalidate affected card entries when `transcriptInnerW` changes in `rebuildRenderer`, and retain the existing whole-map reset on step changes; do not couple card-cache storage to the Markdown block cache.
-- [ ] 4.5 Keep `chatItemLineRanges` outside cached output, recalculate each range from the actual bytes emitted on every render, include both header rows and expanded details, and exclude structural inter-item spacing.
-- [ ] 4.6 Extend navigation tests to walk successive two-row cards, jump across a tall expanded exchange, render from both cache states, resize, replace a page, and preserve a manually selected item during same-step refresh.
-- [ ] 4.7 Add cache lifecycle cases for same-key running-to-success and running-to-failure replacement, header-content change, selection and expansion toggles, repeated width changes, page pruning, and step changes; assert output freshness and a cache bound of at most one card entry per loaded exchange.
-- [ ] 4.8 Exercise a full 300-entry synthetic page through repeated render, paging, normalization, search/filter, expansion, and clipboard paths; assert existing page/detail bounds and absence of render-time filesystem/network/backend activity.
-- [ ] 4.9 Add `BenchmarkTranscriptCardPage` for cached repeated rendering of the 300-entry page with allocation reporting, then record command, Go version, OS/architecture, CPU, result, and comparison with the 100 ms repaint budget in `25-proofs/25-task-4-benchmark.txt` without adding a timing assertion to CI tests.
+- [x] 4.5 Keep `chatItemLineRanges` outside cached output, recalculate each range from the actual bytes emitted on every render, include both header rows and expanded details, and exclude structural inter-item spacing.
+- [x] 4.6 Extend navigation tests to walk successive two-row cards, jump across a tall expanded exchange, render from both cache states, resize, replace a page, and preserve a manually selected item during same-step refresh.
+- [x] 4.7 Add cache lifecycle cases for same-key running-to-success and running-to-failure replacement, header-content change, selection and expansion toggles, repeated width changes, page pruning, and step changes; assert output freshness and a cache bound of at most one card entry per loaded exchange.
+- [x] 4.8 Exercise a full 300-entry synthetic page through repeated render, paging, normalization, search/filter, expansion, and clipboard paths; assert existing page/detail bounds and absence of render-time filesystem/network/backend activity.
+- [x] 4.9 Add `BenchmarkTranscriptCardPage` for cached repeated rendering of the 300-entry page with allocation reporting, then record command, Go version, OS/architecture, CPU, result, and comparison with the 100 ms repaint budget in `25-proofs/25-task-4-benchmark.txt` without adding a timing assertion to CI tests.
 
 ### [~] 5.0 Demonstrate the integrated visual states and run acceptance checks
 

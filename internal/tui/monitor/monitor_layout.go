@@ -257,6 +257,7 @@ func (m *Model) rebuildRenderer() {
 
 	if m.lastTranscriptW != m.transcriptInnerW {
 		m.chatRendered = make(map[blockKey]string)
+		m.chatItemRendered = make(map[transcriptRenderKey]string)
 		m.lastTranscriptW = m.transcriptInnerW
 	}
 }

@@ -159,6 +159,9 @@ func (m *Model) loadChatTail() {
 }
 
 func (m *Model) setChatPage(page transcript.Page) {
+	// A replacement may retain item keys while changing the terminal activity or
+	// result. Header cards therefore cannot survive a page replacement.
+	m.chatItemRendered = make(map[transcriptRenderKey]string)
 	var savedItem transcriptItemKey
 	if len(m.chatVisibleItems) > 0 && m.chatItemCursor >= 0 && m.chatItemCursor < len(m.chatVisibleItems) {
 		savedItem = m.chatVisibleItems[m.chatItemCursor].key
