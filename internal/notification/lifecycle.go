@@ -140,9 +140,13 @@ func (l *Lifecycle) RunRegistered(reg engine.RunRegistration) {
 		delete(l.runs, reg.RunID)
 	}
 
-	policy, ok := workflowPolicy(reg)
-	if !ok {
-		return
+	policy := reg.Policy
+	if policy.Events == nil && policy.Routes == nil {
+		// Fall back to the package-scoped lookup (test seam / older
+		// registration paths) before treating the run as notification-off.
+		if fallback, ok := workflowPolicy(reg); ok {
+			policy = fallback
+		}
 	}
 	// A workflow with no events or no destinations is a no-op observer.
 	if len(policy.Events) == 0 || len(policy.Routes) == 0 {
@@ -370,9 +374,9 @@ func (l *Lifecycle) emitTerminalLocked(state *runLifecycle, event workflow.Notif
 	l.dispatch.Enqueue(n)
 }
 
-// FilterWaits implements WaitResolver over the same wait state, so the
+// Filter implements WaitResolver over the same wait state, so the
 // dispatcher can re-check before every send/retry.
-func (l *Lifecycle) FilterWaits(runID string, waits []WaitIdentity) []WaitIdentity {
+func (l *Lifecycle) Filter(runID string, waits []WaitIdentity) []WaitIdentity {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	state, ok := l.runs[runID]

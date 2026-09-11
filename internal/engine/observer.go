@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"sync"
+
+	"jig/internal/workflow"
 )
 
 // Observer is the non-blocking lifecycle contract for consumers that live at
@@ -61,6 +63,12 @@ type RunRegistration struct {
 	// run's step states. The scheduler owns the underlying state so this
 	// closure routes through the scheduler goroutine.
 	Snapshot func() RunSnapshot
+	// Policy is the run's frozen resolved notification policy. It is
+	// captured at registration time (from the workflow snapshot on reopen,
+	// from the live workflow on fresh start) so an observer never has to
+	// re-read profile files or peek at operator configuration to
+	// classify the run.
+	Policy workflow.NotificationPolicy
 	// UnresolvedWaits describes each human wait that was already parked
 	// when the run was reopened. For a fresh Start it is nil.
 	UnresolvedWaits []UnresolvedWait

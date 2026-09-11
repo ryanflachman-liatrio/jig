@@ -116,6 +116,13 @@ func WithWaitResolver(r WaitResolver) DispatcherOption {
 	return func(d *Dispatcher) { d.waitResolver = r }
 }
 
+// WithResolver installs a resolver after construction. Wire code uses this
+// because the resolver (Lifecycle) is constructed with a reference to the
+// Dispatcher, creating a circular dependency at construction time.
+func (d *Dispatcher) WithResolver(r WaitResolver) {
+	d.waitResolver = r
+}
+
 // NewDispatcher builds a dispatcher tied to the given sender and diagnostic
 // store. Callers may Enqueue immediately; the dispatcher spins up worker
 // goroutines lazily.

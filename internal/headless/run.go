@@ -32,6 +32,12 @@ func Run(ctx context.Context, opts Options) Result {
 	w.emitGateWarnings(wf, opts.Manager.Root(), hasMerge)
 
 	live, ctrl := opts.Manager.Subscribe()
+	// Notifications must know the run before its first live event so the
+	// lifecycle observer picks up the correct policy/bindings. Manager.Start
+	// assigns the runID, so we cannot register before that call; instead we
+	// use a two-step scheme: create the run, immediately register its
+	// notification state, then keep supervising. Any events emitted between
+	// Start returning and the registrar getting called are ctrl-buffered.
 	run, err := opts.Manager.Start(wf)
 	if err != nil {
 		w.errf("%v", err)
@@ -39,6 +45,9 @@ func Run(ctx context.Context, opts Options) Result {
 			OK: false, Workflow: wf.Meta.Name,
 			Error: &ErrorInfo{Code: "start_error", Message: err.Error()},
 		}}
+	}
+	if opts.Notifications != nil {
+		opts.Notifications.PrepareRun(run.ID, wf.NotificationPolicy())
 	}
 	return supervise(ctx, opts, wf, run, live, ctrl, w)
 }
@@ -73,7 +82,7 @@ func supervise(ctx context.Context, opts Options, wf *workflow.Workflow, run *en
 
 	var terminal error
 	cancelled := false
-	cancelOnce := func(reason error) {
+	cancelOnce := func(reason error, cause engine.CompletionCause) {
 		if cancelled {
 			return
 		}
@@ -81,16 +90,16 @@ func supervise(ctx context.Context, opts Options, wf *workflow.Workflow, run *en
 		if terminal == nil {
 			terminal = reason
 		}
-		run.Cancel()
+		run.CancelWithCause(cause)
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				cancelOnce(&TimeoutError{Timeout: opts.Timeout})
+				cancelOnce(&TimeoutError{Timeout: opts.Timeout}, engine.CauseTimeout)
 			} else {
-				cancelOnce(&InterruptedError{})
+				cancelOnce(&InterruptedError{}, engine.CauseCancelled)
 			}
 			// Fall through: wait for RunFinished via ctrl (or Wait below).
 			snap := waitFinished(ctrl, run)
@@ -103,7 +112,7 @@ func supervise(ctx context.Context, opts Options, wf *workflow.Workflow, run *en
 			w.event(ev)
 
 			if err := policy.Handle(run, ev); err != nil {
-				cancelOnce(err)
+				cancelOnce(err, engine.CausePolicyRejection)
 				// Do not return yet — wait for RunFinished (D15).
 				continue
 			}

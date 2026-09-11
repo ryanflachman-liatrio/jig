@@ -55,6 +55,21 @@ type Options struct {
 
 	Stdout io.Writer
 	Stderr io.Writer
+
+	// Notifications, when non-nil, receives per-run notification policy/
+	// binding registrations before Start emits its first live event. The
+	// concrete type is opaque here so cmd/jig owns the composition boundary.
+	Notifications NotificationRegistrar
+}
+
+// NotificationRegistrar is the seam headless uses to install workflow policy
+// and prepare operator bindings for a specific run without depending on the
+// notification package. cmd/jig's Runtime implements this interface.
+type NotificationRegistrar interface {
+	// PrepareRun binds the run's resolved workflow notification policy and
+	// resolves current operator bindings for this run. It must return
+	// before Manager.Start is called.
+	PrepareRun(runID string, policy workflow.NotificationPolicy)
 }
 
 // Recovery / conflict policy values (CLI + Policy).

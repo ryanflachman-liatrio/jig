@@ -228,6 +228,7 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 		Epoch:           m.nextEpoch(),
 		Reopen:          true,
 		Snapshot:        run.Snapshot,
+		Policy:          wf.NotificationPolicy(),
 		UnresolvedWaits: unresolvedWaitsFromCheckpoint(checkpoint),
 	})
 

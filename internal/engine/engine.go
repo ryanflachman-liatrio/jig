@@ -217,15 +217,16 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	s.observers = &m.observers
 
 	// Register the run before any live event is emitted. Observers that
-	// depend on immutable per-run metadata (workflow name, resolved policy
-	// via wf.NotificationPolicy()) install their per-run state here, so
-	// they never see a Publish for an unregistered run.
+	// depend on immutable per-run metadata (workflow name, resolved policy)
+	// install their per-run state here, so they never see a Publish for an
+	// unregistered run.
 	m.observers.dispatchRegistered(RunRegistration{
 		RunID:    runID,
 		Workflow: wf.Meta.Name,
 		Epoch:    m.nextEpoch(),
 		Reopen:   false,
 		Snapshot: run.Snapshot,
+		Policy:   wf.NotificationPolicy(),
 	})
 
 	go func() {

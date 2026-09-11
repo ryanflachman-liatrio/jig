@@ -53,15 +53,19 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	mgr, err := newManager(".jig")
+	rt, err := NewRuntime(".jig")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing jig: %v\n", err)
 		os.Exit(1)
 	}
+	// Ordered shutdown: producers first (cancel context on receipt of a
+	// signal via NotifyContext), then dispatcher drain. The 5-second cap is
+	// enforced inside Runtime.Close.
+	defer rt.Close(context.Background())
 
 	// Alt screen and the background canvas are declared on the View in v2 (see
 	// rootModel.View), not as program options here.
-	p := tea.NewProgram(tui.New(ctx, mgr))
+	p := tea.NewProgram(tui.New(ctx, rt.Manager))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running program: %v\n", err)
 		os.Exit(1)
