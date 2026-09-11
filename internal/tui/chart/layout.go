@@ -3,6 +3,7 @@
 package chart
 
 import (
+	"sort"
 	"strconv"
 	"strings"
 
@@ -17,7 +18,8 @@ import (
 // GRAPH MODEL (see internal/workflow/schema.go + validate.go):
 //   - Step.DependsOn is the only edge set laid out. validate.checkAcyclic proves
 //     it is a DAG, and Steps is in deterministic file order, so ranks are a
-//     longest-path computation and within-rank order is just the Steps index.
+//     longest-path computation; crossing reduction may reorder nodes only inside
+//     a rank, with the Steps index as the deterministic final tie-breaker.
 //   - Step.When is validated to reference a step already in depends_on, so it
 //     DECORATES that existing edge rather than adding one (chartEdge.conditional).
 //   - Step.Routes' Goto targets are bounded back-edges deliberately excluded from the
@@ -81,7 +83,7 @@ type chartBackEdge struct {
 // ranks bucketing node indices top-down, and the two edge classes.
 type chartLayout struct {
 	nodes     []chartNode
-	ranks     [][]int // ranks[r] = node indices in rank r, ordered by Steps index
+	ranks     [][]int // ranks[r] = node indices in rank r, in deterministic chart order
 	edges     []chartEdge
 	backEdges []chartBackEdge
 }
@@ -152,9 +154,8 @@ func layoutChart(wf *workflow.Workflow) chartLayout {
 		}
 	}
 
-	// Bucket into ranks. Iterating i ascending appends in Steps order, so each
-	// rank is deterministically ordered by original index (MVP order; no
-	// crossing-minimization).
+	// Bucket into ranks in original order. Crossing reduction starts from this
+	// stable baseline and never moves a node outside its longest-path rank.
 	ranks := make([][]int, maxRank+1)
 	for i := range steps {
 		ranks[rank[i]] = append(ranks[rank[i]], i)
@@ -186,6 +187,7 @@ func layoutChart(wf *workflow.Workflow) chartLayout {
 			edges = append(edges, e)
 		}
 	}
+	reduceCrossings(ranks, nodes, edges)
 
 	// Route back-edges: a distinct class routed upward by the renderer.
 	var back []chartBackEdge
@@ -200,6 +202,125 @@ func layoutChart(wf *workflow.Workflow) chartLayout {
 	}
 
 	return chartLayout{nodes: nodes, ranks: ranks, edges: edges, backEdges: back}
+}
+
+const crossingReductionSweeps = 4
+
+// reduceCrossings applies bounded barycentric sweeps to the forward DAG. A
+// proposed rank order is retained only when it strictly reduces crossings, so
+// stable inputs cannot be made worse merely because a heuristic score changed.
+// Route back-edges are intentionally absent from this seam.
+func reduceCrossings(ranks [][]int, nodes []chartNode, edges []chartEdge) {
+	if len(edges) < 2 {
+		return
+	}
+
+	for range crossingReductionSweeps {
+		changed := false
+		for rank := 1; rank < len(ranks); rank++ {
+			changed = reorderRank(ranks, rank, nodes, edges, true) || changed
+		}
+		for rank := len(ranks) - 2; rank >= 0; rank-- {
+			changed = reorderRank(ranks, rank, nodes, edges, false) || changed
+		}
+		if !changed {
+			return
+		}
+	}
+}
+
+type rankScore struct {
+	node  int
+	sum   int
+	count int
+}
+
+// reorderRank orders one rank by the average position of its incoming
+// (downward sweep) or outgoing (upward sweep) neighbors. Integer
+// cross-multiplication avoids floating-point ties; original step index resolves
+// every equal score deterministically.
+func reorderRank(ranks [][]int, rank int, nodes []chartNode, edges []chartEdge, incoming bool) bool {
+	if len(ranks[rank]) < 2 {
+		return false
+	}
+
+	positions := rankPositions(ranks)
+	scores := make([]rankScore, len(ranks[rank]))
+	for i, node := range ranks[rank] {
+		scores[i].node = node
+		for _, edge := range edges {
+			neighbor := -1
+			if incoming && edge.to == node {
+				neighbor = edge.from
+			} else if !incoming && edge.from == node {
+				neighbor = edge.to
+			}
+			if neighbor >= 0 {
+				scores[i].sum += positions[neighbor]
+				scores[i].count++
+			}
+		}
+	}
+
+	sort.Slice(scores, func(i, j int) bool {
+		a, b := scores[i], scores[j]
+		switch {
+		case a.count == 0 && b.count != 0:
+			return false
+		case a.count != 0 && b.count == 0:
+			return true
+		case a.count != 0 && b.count != 0:
+			left, right := a.sum*b.count, b.sum*a.count
+			if left != right {
+				return left < right
+			}
+		}
+		return nodes[a.node].index < nodes[b.node].index
+	})
+
+	before := countForwardCrossings(ranks, nodes, edges)
+	original := append([]int(nil), ranks[rank]...)
+	for i := range scores {
+		ranks[rank][i] = scores[i].node
+	}
+	if countForwardCrossings(ranks, nodes, edges) >= before {
+		copy(ranks[rank], original)
+		return false
+	}
+	return true
+}
+
+func rankPositions(ranks [][]int) map[int]int {
+	positions := make(map[int]int)
+	for _, rank := range ranks {
+		for position, node := range rank {
+			positions[node] = position
+		}
+	}
+	return positions
+}
+
+// countForwardCrossings counts inversions between edges spanning the same rank
+// pair. Edges sharing an endpoint meet rather than cross and are excluded.
+func countForwardCrossings(ranks [][]int, nodes []chartNode, edges []chartEdge) int {
+	positions := rankPositions(ranks)
+	crossings := 0
+	for i := 0; i < len(edges); i++ {
+		for j := i + 1; j < len(edges); j++ {
+			a, b := edges[i], edges[j]
+			if a.from == b.from || a.to == b.to ||
+				nodes[a.from].rank != nodes[b.from].rank ||
+				nodes[a.to].rank != nodes[b.to].rank {
+				continue
+			}
+			fromOrder := positions[a.from] - positions[b.from]
+			toOrder := positions[a.to] - positions[b.to]
+			if fromOrder*toOrder < 0 {
+				crossings++
+			}
+		}
+	}
+	return crossings
 }
 
 // condLabel renders a parsed guard back into a compact, readable form for the
