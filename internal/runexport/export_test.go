@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"jig/internal/engine"
@@ -58,6 +59,35 @@ func TestConfinedInventoryRejectsSelectedSymlink(t *testing.T) {
 	if _, err := collectInventory(runDir); !errors.Is(err, ErrOperational) {
 		t.Fatalf("collectInventory error = %v, want operational refusal", err)
 	}
+}
+
+func TestConfinedInventoryEnforcesStepInventoryLimit(t *testing.T) {
+	makeSteps := func(t *testing.T, count int) string {
+		t.Helper()
+		runDir := t.TempDir()
+		stepsDir := filepath.Join(runDir, "steps")
+		if err := os.MkdirAll(stepsDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < count; i++ {
+			if err := os.Mkdir(filepath.Join(stepsDir, "step-"+strconv.Itoa(i)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return runDir
+	}
+	t.Run("at limit", func(t *testing.T) {
+		runDir := makeSteps(t, maxStepInventory)
+		if _, err := collectInventory(runDir); err != nil {
+			t.Fatalf("collectInventory error = %v, want success at the boundary", err)
+		}
+	})
+	t.Run("above limit", func(t *testing.T) {
+		runDir := makeSteps(t, maxStepInventory+1)
+		if _, err := collectInventory(runDir); !errors.Is(err, ErrOperational) {
+			t.Fatalf("collectInventory error = %v, want operational refusal above the boundary", err)
+		}
+	})
 }
 
 func TestResolveRequestRejectsMissingFileAndSymlinkRuns(t *testing.T) {

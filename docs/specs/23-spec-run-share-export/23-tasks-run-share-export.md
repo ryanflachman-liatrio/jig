@@ -177,7 +177,7 @@ Covers spec FRs: FR-02, FR-12, and the acquisition/confinement portion of FR-15.
   and capture the sanitized result plus before/after payload hashes under the
   spec artifact directory as the task 1.0 proof.
 
-### [ ] 2.0 Deterministic structural archive for an intact inactive run
+### [x] 2.0 Deterministic structural archive for an intact inactive run
 
 Deliver the `jig export` CLI and default end-to-end export for a synthetic
 intact run. Stream a
@@ -226,88 +226,88 @@ Covers spec FRs: FR-01, FR-03, FR-04, FR-05, and FR-06.
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Write failing structural-export tests in
+- [x] 2.1 Write failing structural-export tests in
   `internal/runexport/{journal,archive}_test.go` from one intact synthetic run
   containing retry attempts, iterations, generations, a route, reset closure,
   gate/review activity, costs/tokens, and dynamic fan-out children. Parse ZIP
   members as JSON/JSONL instead of snapshotting opaque bytes.
-- [ ] 2.2 Define dedicated archive-v1 types in `internal/runexport/model.go` for
+- [x] 2.2 Define dedicated archive-v1 types in `internal/runexport/model.go` for
   manifest/member metadata, run/step summaries, event families, completeness
   gaps, and counters. Give every serialized field an explicit JSON tag and
   avoid embedding or marshaling `workflow.Workflow`, `step.Result`,
   `engine.Event`, `transcript.Entry`, or `toolcall.Activity` directly.
-- [ ] 2.3 Implement a streaming journal reader in
+- [x] 2.3 Implement a streaming journal reader in
   `internal/runexport/journal.go` over an already-confined file handle. Preserve
   envelope sequence/time and unknown kinds, accept only newline-complete JSON,
   stop at the first malformed complete record, distinguish a torn final record,
   and never use `ReplayJournal`'s hydrated or synthetic display events.
-- [ ] 2.4 Extract a pure `DecodeWorkflowSnapshot([]byte)` seam from
+- [x] 2.4 Extract a pure `DecodeWorkflowSnapshot([]byte)` seam from
   `internal/engine/resume.go`, make the existing path-based loader delegate to
   it, and preserve checksum/module validation tests. Feed it only bytes already
   read through the exporter's rooted source handle; never resolve current
   author files or hydrate review content.
-- [ ] 2.5 Implement alias allocation in `internal/runexport/aliases.go`: fixed
+- [x] 2.5 Implement alias allocation in `internal/runexport/aliases.go`: fixed
   `run-1`/`workflow-1`; step aliases from `RunStarted.Steps`, then first journal
   occurrence, then sorted direct-directory discovery; and consistent reference
   lookup for dependencies, route/reset closure, and fan-out parent/children.
   Keep original-to-alias maps in memory only.
-- [ ] 2.6 Compute the time anchor from the first valid accepted journal
+- [x] 2.6 Compute the time anchor from the first valid accepted journal
   timestamp, falling back to the earliest retained transcript timestamp when
   needed. Emit nullable signed integer milliseconds, preserve clock reversal,
   and add no current or original absolute date to member content or metadata.
-- [ ] 2.7 Implement named closed-projection functions for every event family in
+- [x] 2.7 Implement named closed-projection functions for every event family in
   the spec table. Validate statuses, step types, backends, transports, roles,
   tool states, counters, tokens, and costs against explicit known/finite/range
   rules; output fixed `unknown` or null plus a fixed gap/counter rather than
   copying an unsupported value or parser error.
-- [ ] 2.8 Fold the accepted journal prefix through `ops.FoldStatus` (or a pure
+- [x] 2.8 Fold the accepted journal prefix through `ops.FoldStatus` (or a pure
   equivalent proven against it) with the pre-export ownership fact, then build
   aliased ordered step/totals/state records. Do not probe the held export lease
   as scheduler activity, invent terminal events, or claim authority without
   sufficient `RunStarted` and intact journal evidence.
-- [ ] 2.9 Generate `README.md`, `run.json`, and `events.jsonl` from export-only
+- [x] 2.9 Generate `README.md`, `run.json`, and `events.jsonl` from export-only
   records. Keep README prose fully generated from fixed templates and validated
   enums/numbers/aliases; never interpolate workflow names, IDs, errors,
   conditions, source paths, or any other source text.
-- [ ] 2.10 Implement sanitized-member spooling and accounting in
+- [x] 2.10 Implement sanitized-member spooling and accounting in
   `internal/runexport/archive.go`: stream only already-projected bytes to
   owner-only temporary storage, calculate byte lengths/SHA-256 for exported
   members, construct `manifest.json` after those values are known, and remove
   every spool on success or failure. Never stage raw evidence or alias maps.
-- [ ] 2.11 Write the ZIP in the specified literal member order with regular-file
+- [x] 2.11 Write the ZIP in the specified literal member order with regular-file
   modes, a fixed format-neutral timestamp, empty comments, and no source-derived
   extra fields. Enforce literal member names and omit `transcript.jsonl` in
   structural mode; digests cover exported members other than the manifest.
-- [ ] 2.12 Publish from an owner-only temporary archive in the destination
+- [x] 2.12 Publish from an owner-only temporary archive in the destination
   directory using a no-replace operation that cannot overwrite a destination
   created after validation. Close all writers before publication, clean up the
   exporter's temporary files on every pre-publication failure, and preserve a
   competing file byte-for-byte.
-- [ ] 2.13 Complete `Export` orchestration so it holds the ownership lease from
+- [x] 2.13 Complete `Export` orchestration so it holds the ownership lease from
   before evidence reads through final inventory recheck and publication, checks
   context at streaming boundaries, returns complete/partial status without raw
   detail, and closes all resources on every exit.
-- [ ] 2.14 Add `cmd/jig/export.go` with an injected-writer `exportMain` and thin
+- [x] 2.14 Add `cmd/jig/export.go` with an injected-writer `exportMain` and thin
   `runExport`: parse exactly one `RUN_ID`, required `--destination`, optional
   `--root` (default `.jig`) and `--include-text`, using `reorderArgs` for flags
   after the identifier. Map usage/operational/signal results to 2/1/130/143;
   print only the supplied destination plus newline on success and fixed notices
   or errors to stderr.
-- [ ] 2.15 Register `export` in `cmd/jig/main.go` and top-level `printHelp`, and
+- [x] 2.15 Register `export` in `cmd/jig/main.go` and top-level `printHelp`, and
   add CLI tests for help, arity, flag ordering, empty root, target refusals,
   structural success, destination races, exact streams, and exit codes. Help
   must explain both modes, eligible states, local-only operation, and the
   absence of raw/upload/overwrite behavior.
-- [ ] 2.16 Add archive-wide disclosure tests that seed original run/workflow/
+- [x] 2.16 Add archive-wide disclosure tests that seed original run/workflow/
   step IDs, source/home paths, sessions, prose, code, tool payloads, Git SHAs,
   private digests, unknown fields, and hostile ZIP-looking strings, then scan
   member names/content and every ZIP header/comment/extra field for absence.
-- [ ] 2.17 Capture the task 2.0 CLI proof: build `jig`, export the intact
+- [x] 2.17 Capture the task 2.0 CLI proof: build `jig`, export the intact
   synthetic fixture, record exact stdout/stderr and exit code, run `unzip -l`,
   extract the generated README, and save parsed manifest/run/event assertions
   plus unchanged source hashes under the spec artifact directory.
 
-### [ ] 3.0 Explicit sanitized conversation-text export
+### [x] 3.0 Explicit sanitized conversation-text export
 
 Add the opt-in `sanitized_text` mode without weakening the structural default.
 Project supported transcript prose and normalized tool exchanges into ordered
@@ -353,67 +353,67 @@ Covers spec FRs: FR-07, FR-08, FR-09, FR-10, and FR-11.
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Write failing paired-mode and adversarial sanitizer tests before
+- [x] 3.1 Write failing paired-mode and adversarial sanitizer tests before
   implementation. Cover every spec-listed role/block/tool field, nested and
   escaped JSON object keys/values, overlapping identifiers and paths, all
   existing credential patterns, high-entropy tokens, suffix-bearing sentinel
   markers, control sequences, invalid UTF-8, malformed payloads, and credentials
   crossing the retained-text boundary.
-- [ ] 3.2 Refactor `internal/sentinel/rules.go` so its known-pattern and
+- [x] 3.2 Refactor `internal/sentinel/rules.go` so its known-pattern and
   high-entropy detection is available through a pure match API returning only
   category and byte/rune spans. Make guard checks, `RedactJSON`, and `RedactText`
   delegate to the same detector and prove their existing live-monitor behavior
   and four-character preview markers remain unchanged.
-- [ ] 3.3 Implement the export sanitizer in `internal/runexport/sanitize.go`
+- [x] 3.3 Implement the export sanitizer in `internal/runexport/sanitize.go`
   with full replacement of sentinel matches and prior sentinel markers, fixed
   replacement tokens, and aggregate counts by fixed category. Never call the
   partial `sentinel.Redact` preview at the export boundary or retain a matched
   suffix in output/counters.
-- [ ] 3.4 Add a deterministic replacement plan for original run/workflow/step/
+- [x] 3.4 Add a deterministic replacement plan for original run/workflow/step/
   tool IDs, captured source/base/run-root paths, and current home-directory
   prefixes. Sort longer overlaps first; apply token boundaries to identifier
   values and path boundaries to prefixes so common substrings are not globally
   rewritten. Keep replacement maps memory-only.
-- [ ] 3.5 Parse tool input/output JSON into ordinary values before sanitizing;
+- [x] 3.5 Parse tool input/output JSON into ordinary values before sanitizing;
   recursively sanitize string keys and values, render the result as stable
   plain text inside a JSON string field, and emit a fixed malformed-payload
   omission marker/counter on any invalid payload. Never insert raw JSON into an
   exported record or echo `json` parser errors.
-- [ ] 3.6 Remove C0/C1 controls and terminal escape sequences from every
+- [x] 3.6 Remove C0/C1 controls and terminal escape sequences from every
   retained text value except newline/tab, normalize invalid UTF-8 safely, then
   truncate to 64 KiB on a valid UTF-8 boundary with a fixed marker. Ensure
   secret/identifier/path sanitization always runs before truncation and count
   each truncated value without exposing its tail.
-- [ ] 3.7 Implement bounded streaming transcript projection in
+- [x] 3.7 Implement bounded streaming transcript projection in
   `internal/runexport/transcript.go`: deterministic step order then file order;
   preserve sequence, relative time, generation/iteration/attempt, validated
   role/block kind, and tool-use/result correlation; allocate tool aliases within
   the exact step/generation/iteration/attempt scope by first occurrence.
-- [ ] 3.8 Include sanitized text, tool title/input/output, text content, and
+- [x] 3.8 Include sanitized text, tool title/input/output, text content, and
   inline diff path/old/new text only. Convert thinking to a content-free marker;
   convert unknown/unsupported blocks and raw variants to fixed markers; never
   copy/dereference locations, attachments, images/binary data, reviews,
   `input.md`, `session.json`, artifacts, or embedded external paths.
-- [ ] 3.9 Extend manifest records with `content_mode`, redaction-policy version,
+- [x] 3.9 Extend manifest records with `content_mode`, redaction-policy version,
   fixed-category replacement totals, thinking/unsupported/malformed omission
   counts, and truncation counts. Keep expected policy omissions separate from
   completeness gaps and never include samples, mappings, matched text, suffixes,
   or hashes of private values.
-- [ ] 3.10 Add `transcript.jsonl` to the archive only for `--include-text`; emit
+- [x] 3.10 Add `transcript.jsonl` to the archive only for `--include-text`; emit
   the mandatory best-effort/review-before-sharing warning to stderr and both
   README modes, explicitly distinguishing retained inline tool code from
   excluded attachments. Structural-mode member bytes other than their declared
   mode/notice fields must remain independent of transcript prose.
-- [ ] 3.11 Add parsed paired-archive tests for useful prose, role/block
+- [x] 3.11 Add parsed paired-archive tests for useful prose, role/block
   coordinates, scoped tool correlation, deterministic ordering, and counters,
   plus an archive-wide negative scan proving thinking, attachments, private
   seeds, retained secret suffixes, controls, and original mappings are absent.
-- [ ] 3.12 Capture task 3.0 proof artifacts from structural and text exports of
+- [x] 3.12 Capture task 3.0 proof artifacts from structural and text exports of
   the same synthetic run: CLI notices, archive listings, representative
   sanitized transcript records, parsed counters, and automated disclosure-scan
   output. Do not save any raw pre-sanitization fixture payload in the captures.
 
-### [ ] 4.0 Partial and damaged-run export with bounded consistency
+### [x] 4.0 Partial and damaged-run export with bounded consistency
 
 Extend collection to settled failed/succeeded, interrupted, paused, orphaned,
 and corrupt histories without converting uncertainty into authoritative state.
@@ -459,80 +459,80 @@ of FR-06, FR-12, and FR-15.
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Add a table-driven damaged-run matrix before implementation covering
+- [x] 4.1 Add a table-driven damaged-run matrix before implementation covering
   settled success/failure, interrupted worker, stopped/paused and gate parks,
   orphaned history, missing/corrupt workflow snapshot, missing `RunStarted`,
   torn journal tail, complete malformed journal line, unknown event kind,
   malformed transcript lines, missing expected transcript, and zero usable
   journal/transcript records.
-- [ ] 4.2 Make journal corruption handling preserve only the accepted prefix:
+- [x] 4.2 Make journal corruption handling preserve only the accepted prefix:
   omit and report a torn final record, stop and report at the first malformed
   complete/oversized record, retain unknown kinds as fixed `unknown` events,
   and prevent any later record from affecting aliases, state, or totals.
-- [ ] 4.3 Make transcript corruption handling skip malformed complete and torn
+- [x] 4.3 Make transcript corruption handling skip malformed complete and torn
   lines independently and continue with later well-formed records, recording
   fixed step alias/line/count gaps. Structural mode may inspect record validity
   and counts but must never export transcript text or tool metadata.
-- [ ] 4.4 Derive expected transcript sources only from accepted `StepMessage`
+- [x] 4.4 Derive expected transcript sources only from accepted `StepMessage`
   events or accepted running/terminal transitions for captured agent/command
   steps, excluding pending/skipped/review/fan-out-family barriers. Inspect a
   discovered direct transcript even when its step lacks captured metadata;
   classify absence-before-collection as a gap and disappearance-after-inventory
   as fatal concurrent change.
-- [ ] 4.5 Implement explicit fixed completeness reason codes for missing/corrupt
+- [x] 4.5 Implement explicit fixed completeness reason codes for missing/corrupt
   expected sources, unsupported semantics, torn/oversized records, invalid
   structural fields, and export truncation. Include only source category,
   optional alias, and numeric line/count data; permission/read/confinement
   failures remain fatal rather than partial.
-- [ ] 4.6 Mark state/totals authoritative only when the accepted journal and
+- [x] 4.6 Mark state/totals authoritative only when the accepted journal and
   required semantics support the claim. A missing/corrupt workflow leaves
   backend/transport/dependencies unknown; transcript-only evidence has unknown
   state/totals; no usable evidence returns operational failure without an
   archive; no recovery/display-only synthetic event enters output.
-- [ ] 4.7 Render partial evidence prominently in generated README and
+- [x] 4.7 Render partial evidence prominently in generated README and
   `manifest.json`, qualifying any prefix-derived state/totals. Add exact parsed
   assertions that intentional privacy omissions do not create partial gaps and
   optional-by-contract missing files are not reported.
-- [ ] 4.8 Complete the final source consistency recheck while the lease remains
+- [x] 4.8 Complete the final source consistency recheck while the lease remains
   held: verify run-root and lock identity, selected-file presence/type/identity/
   size/mtime, direct-step inventory, and absence of newly selected evidence.
   Abort without publication on detectable append, replacement, deletion,
   new-step evidence, lock replacement, or root removal.
-- [ ] 4.9 Add helper-process and injected-hook tests that race export against a
+- [x] 4.9 Add helper-process and injected-hook tests that race export against a
   live scheduler, concurrent Resume, journal/transcript append, atomic file
   replacement, deletion, permission change, new step transcript, lock
   replacement, and run removal. Assert fixed diagnostics, cleanup, immediate
   lease reusability, and unchanged source payload bytes.
-- [ ] 4.10 Add confinement tests for symlinked selected files/directories,
+- [x] 4.10 Add confinement tests for symlinked selected files/directories,
   traversal-shaped direct entry names, FIFOs/devices/sockets where supported,
   paths embedded inside journal/transcript data, and unreadable selected files.
   Prove no recursive artifact/review/session/input/output/fan-out-manifest file
   is opened, including when it is a blocking FIFO or points outside the run.
-- [ ] 4.11 Enforce the 4 MiB input-record limit before allocating a full record,
+- [x] 4.11 Enforce the 4 MiB input-record limit before allocating a full record,
   256 MiB cumulative selected-input/metadata-read limit, 10,000-step inventory
   limit, 64 KiB retained text limit after sanitization, and 256 MiB total
   uncompressed archive-member limit. Use checked integer arithmetic and expose
   no flag or environment override.
-- [ ] 4.12 Add exact below/at/above-bound tests for each limit. Verify an
+- [x] 4.12 Add exact below/at/above-bound tests for each limit. Verify an
   oversized journal record ends the prefix as partial, an oversized transcript
   line is skipped as a gap, while total input/archive or inventory overflow is
   fatal and publishes nothing. Include multibyte UTF-8 boundaries and a secret
   spanning the text truncation point.
-- [ ] 4.13 Add a large streamed-transcript regression test and benchmark with an
+- [x] 4.13 Add a large streamed-transcript regression test and benchmark with an
   instrumented reader/spool that records maximum read request and retained
   in-memory bytes. Capture `go test`/`go test -bench ... -benchmem` evidence that
   increasing on-disk transcript size does not cause proportional retained
   memory growth or whole-archive buffering.
-- [ ] 4.14 Check `context.Context` before/after each selected record, member
+- [x] 4.14 Check `context.Context` before/after each selected record, member
   spool, ZIP copy, consistency recheck, and publication. Add SIGINT/SIGTERM
   helper-process CLI tests asserting exits 130/143, no success stdout, fixed
   stderr, no destination, private-temp cleanup, and source preservation.
-- [ ] 4.15 Run targeted package and CLI tests with `-race -count=1` and capture
+- [x] 4.15 Run targeted package and CLI tests with `-race -count=1` and capture
   the damaged-state matrix, parsed partial manifests/READMEs, contention/change
   refusals, confinement matrix, limit edges, cancellation cleanup, and streaming
   benchmark under the task 4.0 artifact directory.
 
-### [ ] 5.0 Publish the export contract and close offline acceptance
+### [x] 5.0 Publish the export contract and close offline acceptance
 
 Document the command and versioned archive as a stable recipient-facing
 contract, link it from the README, and verify every parent slice together with
@@ -570,38 +570,38 @@ FR-16.
 
 #### 5.0 Tasks
 
-- [ ] 5.1 Write the recipient/operator export contract in
+- [x] 5.1 Write the recipient/operator export contract in
   `docs/operations.md` or a linked dedicated document: exact command grammar,
   mode warnings, eligible/refused states, selected and excluded sources,
   archive/member/field versions, aliases/times, state authority, gap codes,
   all limits, publication/cancellation, streams/exits, and local-only/no-backend
   behavior. State explicitly that neither mode guarantees anonymity.
-- [ ] 5.2 Update `README.md` to make `jig export` discoverable and link the full
+- [x] 5.2 Update `README.md` to make `jig export` discoverable and link the full
   contract; update `docs/TESTING.md` to replace stale package coverage claims
   with the current offline, helper-process, archive-parsing, disclosure-scan,
   and race-test conventions.
-- [ ] 5.3 Add one deterministic end-to-end acceptance test that builds or drives
+- [x] 5.3 Add one deterministic end-to-end acceptance test that builds or drives
   the real CLI entry against temporary intact and damaged run stores, creates
   structural and text bundles, inspects them with standard ZIP/JSON readers,
   checks exact stdout/stderr/exits, and verifies before/after source hashes. It
   must use no live workflow validation, model, backend, credential, or network.
-- [ ] 5.4 Add a requirements assertion or compact test-data matrix mapping every
+- [x] 5.4 Add a requirements assertion or compact test-data matrix mapping every
   FR-01 through FR-17 to at least one executable test/proof name, so deleting a
   planned acceptance case cannot silently leave the documentation-only coverage
   table as the sole evidence.
-- [ ] 5.5 Run and save sanitized outputs for `go test ./internal/runexport ./cmd/jig -race -count=1`,
+- [x] 5.5 Run and save sanitized outputs for `go test ./internal/runexport ./cmd/jig -race -count=1`,
   `go test ./... -count=1`, `go vet ./...`, and `gofmt -l .` (which must print
   nothing). Fix only regressions caused by this feature; do not alter unrelated
   user work.
-- [ ] 5.6 Validate every `.agents/jig/*.toml` with `go run ./cmd/jig validate`
+- [x] 5.6 Validate every `.agents/jig/*.toml` with `go run ./cmd/jig validate`
   and save the successful output, confirming the CLI addition did not change
   workflow schema/defaulting or require example migrations.
-- [ ] 5.7 Re-run the three demo captures using only synthetic fixtures and save
+- [x] 5.7 Re-run the three demo captures using only synthetic fixtures and save
   an artifact index that points to help/structural/text/partial outputs,
   disclosure scans, lock/confinement/bounds/cancellation results, source hashes,
   and repository quality gates. Verify no artifact is a raw run archive or
   contains a private fixture seed.
-- [ ] 5.8 Only after 5.3–5.7 pass, update A22 in
+- [x] 5.8 Only after 5.3–5.7 pass, update A22 in
   `docs/plans/open-goals.md` to **Done** with links to this spec, task list,
   proofs, and validation path. Leave all hosted sharing, TUI/viewer/import,
   raw backup, live snapshots, custom redaction, persistence-schema, and backend
