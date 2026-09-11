@@ -12,13 +12,13 @@ import (
 
 const (
 	// Bounded dispatcher defaults enumerated in the specification.
-	QueueCapacity     = 256
-	MaxActiveSends    = 4
-	AttentionWindow   = 500 * time.Millisecond
-	MessageLifetime   = 30 * time.Second
-	SlackPacing       = 1 * time.Second
-	MaxRetryAttempts  = 3
-	ShutdownDrainCap  = 5 * time.Second
+	QueueCapacity    = 256
+	MaxActiveSends   = 4
+	AttentionWindow  = 500 * time.Millisecond
+	MessageLifetime  = 30 * time.Second
+	SlackPacing      = 1 * time.Second
+	MaxRetryAttempts = 3
+	ShutdownDrainCap = 5 * time.Second
 )
 
 // Clock is a minimal seam so deterministic tests can control time without
@@ -38,8 +38,8 @@ type Timer interface {
 // realClock adapts stdlib time.
 type realClock struct{}
 
-func (realClock) Now() time.Time                    { return time.Now() }
-func (realClock) NewTimer(d time.Duration) Timer    { return realTimer{time.NewTimer(d)} }
+func (realClock) Now() time.Time                 { return time.Now() }
+func (realClock) NewTimer(d time.Duration) Timer { return realTimer{time.NewTimer(d)} }
 
 type realTimer struct{ t *time.Timer }
 
@@ -74,14 +74,14 @@ type Dispatcher struct {
 	waitResolver WaitResolver
 
 	// active send slots keyed by destination alias.
-	mu           sync.Mutex
-	closed       bool
-	acceptors    bool
-	pending      []*pendingEntry
-	inFlight     int
-	lastStart    map[string]time.Time // per-destination pacing
-	terminals    map[terminalKey]bool // dedupe terminal events per (run, epoch, event)
-	drained      chan struct{}
+	mu        sync.Mutex
+	closed    bool
+	acceptors bool
+	pending   []*pendingEntry
+	inFlight  int
+	lastStart map[string]time.Time // per-destination pacing
+	terminals map[terminalKey]bool // dedupe terminal events per (run, epoch, event)
+	drained   chan struct{}
 }
 
 // pendingEntry carries one queued or in-flight notification plus its retry

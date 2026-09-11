@@ -19,15 +19,15 @@ import (
 )
 
 type workflowSnapshot struct {
-	SourcePath    string                       `json:"source_path,omitempty"`
-	BaseDir       string                       `json:"base_dir,omitempty"`
-	SHA256        string                       `json:"sha256"`
-	TOML          string                       `json:"toml"`
-	ModuleSources []workflow.ModuleSource      `json:"module_sources,omitempty"`
-	Meta          workflow.Meta                `json:"meta"`
-	Defaults      workflow.Defaults            `json:"defaults"`
-	PublicSteps   []workflow.Step              `json:"public_steps,omitempty"`
-	ExpandedSteps []workflow.Step              `json:"expanded_steps,omitempty"`
+	SourcePath    string                  `json:"source_path,omitempty"`
+	BaseDir       string                  `json:"base_dir,omitempty"`
+	SHA256        string                  `json:"sha256"`
+	TOML          string                  `json:"toml"`
+	ModuleSources []workflow.ModuleSource `json:"module_sources,omitempty"`
+	Meta          workflow.Meta           `json:"meta"`
+	Defaults      workflow.Defaults       `json:"defaults"`
+	PublicSteps   []workflow.Step         `json:"public_steps,omitempty"`
+	ExpandedSteps []workflow.Step         `json:"expanded_steps,omitempty"`
 	// Notification is the run's frozen resolved notification policy — the
 	// list of events and destination aliases that were in effect when the
 	// run started. It is secret-free: aliases only, no URL, bearer, or
@@ -351,19 +351,33 @@ func (c *unfinishedCheckpoint) hasParks() bool {
 // human waits into the wait-kind vocabulary observers consume. It is used only
 // by Manager.Resume to seed one filtered restored summary per (run, epoch)
 // through the notification lifecycle; the scheduler itself does not read it.
+//
+// Nonce is populated from the same identifier the live event will carry when
+// its durable record is replayed through the observer's Publish path — the
+// review round id, the AskUserQuestion request id, or the prompt alias — so
+// the seed and the replay collapse onto one wait identity and the observer
+// does not emit a second attention summary right after the restored one.
 func unresolvedWaitsFromCheckpoint(c *unfinishedCheckpoint) []UnresolvedWait {
 	if c == nil {
 		return nil
 	}
 	var out []UnresolvedWait
-	for stepID := range c.reviewSessions {
-		out = append(out, UnresolvedWait{StepID: stepID, Kind: WaitReview})
+	for stepID, session := range c.reviewSessions {
+		out = append(out, UnresolvedWait{StepID: stepID, Kind: WaitReview, Nonce: session.RoundID})
 	}
 	for stepID := range c.inputs {
 		out = append(out, UnresolvedWait{StepID: stepID, Kind: WaitInput})
 	}
-	for stepID := range c.questions {
-		out = append(out, UnresolvedWait{StepID: stepID, Kind: WaitQuestion})
+	for stepID, pending := range c.questions {
+		if len(pending) == 0 {
+			out = append(out, UnresolvedWait{StepID: stepID, Kind: WaitQuestion})
+			continue
+		}
+		// One seed per still-unresolved AskUserQuestion request so a
+		// replayed AgentQuestion Publish matches on the same request id.
+		for _, q := range pending {
+			out = append(out, UnresolvedWait{StepID: stepID, Kind: WaitQuestion, Nonce: q.Request.ID})
+		}
 	}
 	for stepID := range c.recoveries {
 		out = append(out, UnresolvedWait{StepID: stepID, Kind: WaitRecovery})

@@ -28,8 +28,8 @@ const desktopAttemptTimeout = 3 * time.Second
 // runtime-detected: macOS uses osascript, Linux uses notify-send, and other
 // platforms are diagnosed as unsupported.
 type DesktopSender struct {
-	Runner  CommandRunner
-	Environ func() []string
+	Runner   CommandRunner
+	Environ  func() []string
 	Platform string
 	LookPath func(string) (string, error)
 }

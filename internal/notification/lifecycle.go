@@ -22,13 +22,13 @@ import (
 // It does not perform network or desktop I/O itself; it hands prepared
 // Notifications to the injected Dispatcher.
 type Lifecycle struct {
-	dispatch    dispatchTarget
-	diag        *DiagnosticStore
-	bindings    func(policy workflow.NotificationPolicy) []Binding
-	idGen       IDGenerator
-	clock       func() time.Time
-	timer       func(d time.Duration, f func()) StoppableTimer
-	window      time.Duration
+	dispatch dispatchTarget
+	diag     *DiagnosticStore
+	bindings func(policy workflow.NotificationPolicy) []Binding
+	idGen    IDGenerator
+	clock    func() time.Time
+	timer    func(d time.Duration, f func()) StoppableTimer
+	window   time.Duration
 
 	mu   sync.Mutex
 	runs map[string]*runLifecycle
@@ -99,11 +99,11 @@ func NewLifecycle(
 // runLifecycle carries per-run/epoch state used to coalesce attention and
 // deduplicate terminal transitions. All fields are guarded by Lifecycle.mu.
 type runLifecycle struct {
-	runID      string
-	workflow   string
-	epoch      int
-	policy     workflow.NotificationPolicy
-	bindings   []Binding
+	runID    string
+	workflow string
+	epoch    int
+	policy   workflow.NotificationPolicy
+	bindings []Binding
 	// waits tracks currently-unresolved parked human waits keyed by wait
 	// identity. A wait's presence in the map means the notification
 	// consumer still considers it live.
@@ -166,8 +166,8 @@ func (l *Lifecycle) RunRegistered(reg engine.RunRegistration) {
 		waits:    make(map[waitKey]WaitIdentity),
 	}
 	for _, w := range reg.UnresolvedWaits {
-		id := WaitIdentity{StepID: w.StepID, Kind: waitKindToAttention(w.Kind)}
-		state.waits[waitKey{StepID: id.StepID, Kind: id.Kind}] = id
+		id := WaitIdentity{StepID: w.StepID, Kind: waitKindToAttention(w.Kind), Nonce: w.Nonce}
+		state.waits[waitKey{StepID: id.StepID, Kind: id.Kind, Nonce: id.Nonce}] = id
 	}
 	l.runs[reg.RunID] = state
 

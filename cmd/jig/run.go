@@ -114,20 +114,20 @@ func runRun(args []string) int {
 	}
 	defer rt.Close(context.Background())
 	result := headless.Run(ctx, headless.Options{
-		WorkflowPath:      rest[0],
-		Manager:           rt.Manager,
-		Root:              *root,
-		Output:            mode,
-		Quiet:             *quiet,
-		Timeout:           *timeout,
-		ApproveMerge:      *approveMerge,
-		DiscardMerge:      *discardMerge,
-		OnRecovery:        *onRecovery,
-		OnConflict:        *onConflict,
-		CI:                *ci,
-		Stdout:            os.Stdout,
-		Stderr:            os.Stderr,
-		Notifications:     rt,
+		WorkflowPath:  rest[0],
+		Manager:       rt.Manager,
+		Root:          *root,
+		Output:        mode,
+		Quiet:         *quiet,
+		Timeout:       *timeout,
+		ApproveMerge:  *approveMerge,
+		DiscardMerge:  *discardMerge,
+		OnRecovery:    *onRecovery,
+		OnConflict:    *onConflict,
+		CI:            *ci,
+		Stdout:        os.Stdout,
+		Stderr:        os.Stderr,
+		Notifications: rt,
 	})
 	rt.DrainDiagnosticsTo(os.Stderr)
 

@@ -17,15 +17,15 @@ const (
 // destination URLs, bearer tokens, response bodies, or error strings —
 // every source of external content is reduced to fixed reason codes.
 type Diagnostic struct {
-	Time        time.Time
-	Alias       string
-	RunID       string
-	Event       string
-	Outcome     string
-	Reason      string
-	Attempt     int
-	Aggregate   int
-	NotifID     string
+	Time      time.Time
+	Alias     string
+	RunID     string
+	Event     string
+	Outcome   string
+	Reason    string
+	Attempt   int
+	Aggregate int
+	NotifID   string
 }
 
 // DiagnosticSink is the non-blocking observer interface for diagnostic

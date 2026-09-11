@@ -87,7 +87,7 @@ func TestDispatcherTerminalEvictsPending(t *testing.T) {
 	// Fill the pending queue with non-failure notifications.
 	for i := 0; i < QueueCapacity; i++ {
 		d.Enqueue(Notification{ID: "a" + string(rune('a'+i%26)), Event: workflow.AttentionRequired, RunID: "r", Workflow: "wf",
-			Attention: []AttentionDescriptor{{StepID: "s", Kind: AttentionReview}},
+			Attention:    []AttentionDescriptor{{StepID: "s", Kind: AttentionReview}},
 			Destinations: []Binding{target}})
 	}
 

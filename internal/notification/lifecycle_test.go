@@ -200,10 +200,11 @@ func TestLifecycleReopenSeedsRestoredSummary(t *testing.T) {
 	}
 	lc, fake := setupLifecycle(t, policy)
 	lc.RunRegistered(engine.RunRegistration{
-		RunID:  "r",
+		RunID:    "r",
 		Workflow: "wf",
-		Epoch:  2,
-		Reopen: true,
+		Epoch:    2,
+		Reopen:   true,
+		Policy:   policy,
 		UnresolvedWaits: []engine.UnresolvedWait{
 			{StepID: "step-1", Kind: engine.WaitReview},
 			{StepID: "step-2", Kind: engine.WaitInput},
@@ -215,5 +216,80 @@ func TestLifecycleReopenSeedsRestoredSummary(t *testing.T) {
 	}
 	if !fake.sent[0].IsRestored {
 		t.Fatalf("restored flag missing")
+	}
+}
+
+// TestLifecycleReopenReplayNoDuplicate proves the reopen contract in the
+// spec: exactly one filtered restored summary per (run, epoch, destination),
+// even though the scheduler immediately re-publishes the parked ReviewRequest
+// and other durable park events via emitBatch(reopenEvents). The seeded
+// UnresolvedWait carries the same Nonce (review round id) as the replayed
+// live event, so addWait deduplicates and no second attention flushes.
+func TestLifecycleReopenReplayNoDuplicate(t *testing.T) {
+	policy := workflow.NotificationPolicy{
+		Events: []workflow.NotificationEvent{workflow.AttentionRequired},
+		Routes: []workflow.NotificationRoute{{Destination: "ops", Events: []workflow.NotificationEvent{workflow.AttentionRequired}}},
+	}
+	lc, fake := setupLifecycle(t, policy)
+	lc.RunRegistered(engine.RunRegistration{
+		RunID:    "r",
+		Workflow: "wf",
+		Epoch:    3,
+		Reopen:   true,
+		Policy:   policy,
+		UnresolvedWaits: []engine.UnresolvedWait{
+			{StepID: "gate", Kind: engine.WaitReview, Nonce: "round-1"},
+		},
+	})
+	waitUntil(t, func() bool { return fake.count() >= 1 }, time.Second)
+	if !fake.sent[0].IsRestored {
+		t.Fatalf("first send was not the restored summary: %+v", fake.sent[0])
+	}
+	if got := len(fake.sent[0].Attention); got != 1 {
+		t.Fatalf("restored summary had %d items", got)
+	}
+
+	lc.Publish(engine.ReviewRequest{RunID: "r", StepID: "gate", RoundID: "round-1"})
+	time.Sleep(80 * time.Millisecond)
+	if fake.count() != 1 {
+		t.Fatalf("replay of parked ReviewRequest emitted a second attention: sent=%d events=%v", fake.count(), fake.events())
+	}
+}
+
+// TestLifecycleReopenReplayMultipleDestinations proves the reopen contract
+// also holds when several destinations select AttentionRequired: each
+// destination receives one restored summary, and the subsequent replay does
+// not fan out a second notification to any of them.
+func TestLifecycleReopenReplayMultipleDestinations(t *testing.T) {
+	policy := workflow.NotificationPolicy{
+		Events: []workflow.NotificationEvent{workflow.AttentionRequired},
+		Routes: []workflow.NotificationRoute{
+			{Destination: "ops", Events: []workflow.NotificationEvent{workflow.AttentionRequired}},
+			{Destination: "leads", Events: []workflow.NotificationEvent{workflow.AttentionRequired}},
+		},
+	}
+	lc, fake := setupLifecycle(t, policy)
+	lc.RunRegistered(engine.RunRegistration{
+		RunID:    "r",
+		Workflow: "wf",
+		Epoch:    4,
+		Reopen:   true,
+		Policy:   policy,
+		UnresolvedWaits: []engine.UnresolvedWait{
+			{StepID: "gate", Kind: engine.WaitReview, Nonce: "round-1"},
+		},
+	})
+	waitUntil(t, func() bool { return fake.count() >= 1 }, time.Second)
+	if got := len(fake.sent[0].Destinations); got != 2 {
+		t.Fatalf("restored summary destinations = %d, want 2", got)
+	}
+	if !fake.sent[0].IsRestored {
+		t.Fatalf("restored flag missing")
+	}
+
+	lc.Publish(engine.ReviewRequest{RunID: "r", StepID: "gate", RoundID: "round-1"})
+	time.Sleep(80 * time.Millisecond)
+	if fake.count() != 1 {
+		t.Fatalf("replay produced a second notification: %d", fake.count())
 	}
 }

@@ -77,9 +77,17 @@ type RunRegistration struct {
 // UnresolvedWait is a compact descriptor of one parked human wait carried on
 // reopen. Kinds mirror the seven attention categories the notification spec
 // enumerates; consumers translate them to the notification vocabulary.
+//
+// Nonce carries the wait's live-event identifier (a review round id, an
+// AskUserQuestion request id, a prompt "as" alias, …) so a reopen seed keys
+// exactly the same wait identity the live event will use when its journal
+// record is replayed through Publish. Without a matching nonce the observer
+// would create a second wait entry and emit a duplicate attention summary
+// after the initial restored one.
 type UnresolvedWait struct {
 	StepID string
 	Kind   WaitKind
+	Nonce  string
 }
 
 // WaitKind classifies unresolved human waits at reopen. The values match the
