@@ -10,10 +10,17 @@ package monitor
 // from docs/specs/25-spec-vertical-rhythm-and-block-edges/.
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
+
+	"jig/internal/engine"
+	"jig/internal/step"
 	"jig/internal/toolcall"
 	"jig/internal/transcript"
 )
@@ -257,6 +264,116 @@ func TestTranscriptLineRangesMatchRenderedRows(t *testing.T) {
 			t.Fatalf("item %v range %+v contains no row with characteristic %q; rows:\n%s",
 				item.key, rng, want, strings.Join(rows[rng.start:rng.end+1], "\n"))
 		}
+	}
+}
+
+// verticalRhythmVisualPage is the proof-only fixture. It contains one
+// user text item, a running tool-exchange card, a zero-height empty
+// assistant text (the skipped item), a settled-success tool card, an
+// item across an execution-coordinate boundary (Iteration = 1), and a
+// system verbatim item whose block text intentionally carries trailing
+// blank lines the trimmer must absorb. Fabricated content only; no
+// real .jig/ data.
+func verticalRhythmVisualPage() transcript.Page {
+	return transcript.Page{Entries: []transcript.Entry{
+		{Seq: 1, Generation: 0, Iteration: 0, Attempt: 0, Role: transcript.RoleUser,
+			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "Let me check the synthetic entrypoint."}}},
+		{Seq: 2, Generation: 0, Iteration: 0, Attempt: 0, Role: transcript.RoleAssistant,
+			Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "read-live", Kind: "read", Title: "Read synthetic/config.toml"}}}},
+		// Zero-height guard fixture: an empty-text assistant block. Its
+		// rendered bytes are structurally blank; the loop must skip it
+		// entirely rather than leave a ghost gap between the running
+		// card above and the completed card below.
+		{Seq: 3, Generation: 0, Iteration: 0, Attempt: 0, Role: transcript.RoleAssistant,
+			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: ""}}},
+		{Seq: 4, Generation: 0, Iteration: 0, Attempt: 0, Role: transcript.RoleAssistant,
+			Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "read-ok", Kind: "read", Title: "Read synthetic/entrypoint.go"}}}},
+		{Seq: 5, Generation: 0, Iteration: 0, Attempt: 0, Role: transcript.RoleUser,
+			Blocks: []transcript.Block{{Type: transcript.BlockToolResult, Tool: &toolcall.Activity{ID: "read-ok", Kind: "read", Status: "completed"}}}},
+		// Coordinate change: Iteration bumps to 1. itemSpacingBefore
+		// returns 2 for this transition; the resulting two-line gap is
+		// where slice 12's boundary banner will render.
+		{Seq: 6, Generation: 0, Iteration: 1, Attempt: 0, Role: transcript.RoleSystem,
+			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "iteration 1 begin\n\n\n"}}},
+		{Seq: 7, Generation: 0, Iteration: 1, Attempt: 0, Role: transcript.RoleAssistant,
+			Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "grep-live", Kind: "grep", Title: "Search fabricated sources after coord change"}}}},
+	}}
+}
+
+// TestVerticalRhythmVisualProof captures a deterministic 80×30 Monitor
+// frame for the slice-04 proof directory. Opt-in via JIG_UI_SNAPSHOT_DIR
+// (headless-Chrome PNG conversion runs outside the test process; the
+// .ansi/.html captures are the deterministic ground truth).
+func TestVerticalRhythmVisualProof(t *testing.T) {
+	dir := os.Getenv("JIG_UI_SNAPSHOT_DIR")
+	if dir == "" {
+		t.Skip("set JIG_UI_SNAPSHOT_DIR to capture slice-04 Monitor frames")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := newMonitorWithSteps(t)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{RunID: "run-1", StepID: "a", To: step.StatusRunning}})
+	m.chatStep = "a"
+	m.focus = focusTranscript
+	m.setChatPage(verticalRhythmVisualPage())
+	m.chatItemCursor = 0
+	m.refreshPanels()
+
+	view := m.View()
+
+	name := "25-task-4-monitor-rhythm"
+	if err := os.WriteFile(filepath.Join(dir, name+".ansi"), []byte(view), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name+".html"), []byte(terminalHTML(view)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Independently count the blank-line gaps between each pair of visible
+	// items and record them in the notes so a reviewer can diff the
+	// baseline capture without re-deriving item boundaries.
+	body := m.itemTranscriptBody()
+	rows := strings.Split(strings.TrimRight(body, "\n"), "\n")
+	var notes strings.Builder
+	notes.WriteString("Task 04 (slice 04) vertical-rhythm visual fixture\n")
+	notes.WriteString("Fixture source: verticalRhythmVisualPage (slice-04 proof-only)\n")
+	notes.WriteString("All paths, commands, status text, and code are fabricated.\n\n")
+	fmt.Fprintf(&notes, "terminal=80x30 transcriptInnerW=%d chatItems=%d visibleItems=%d cursor=%d\n",
+		m.transcriptInnerW, len(m.chatItems), len(m.chatVisibleItems), m.chatItemCursor)
+	notes.WriteString("Rendering: production Model.View ANSI -> deterministic test HTML.\n")
+	notes.WriteString("PNG conversion (if performed) uses local headless Chrome — see the task-4 limitations note.\n\n")
+	notes.WriteString("Item ranges and inter-item gaps in the transcript body:\n")
+	visibleKeys := make([]transcriptItemKey, 0, len(m.chatVisibleItems))
+	for _, item := range m.chatVisibleItems {
+		if _, ok := m.chatItemLineRanges[transcriptLineKey{itemKey: item.key}]; ok {
+			visibleKeys = append(visibleKeys, item.key)
+		}
+	}
+	for i, key := range visibleKeys {
+		rng := m.chatItemLineRanges[transcriptLineKey{itemKey: key}]
+		summary := ""
+		if rng.start < len(rows) {
+			summary = stripANSI(rows[rng.start])
+			if len(summary) > 60 {
+				summary = summary[:60] + "…"
+			}
+		}
+		fmt.Fprintf(&notes, "  item[%d] key=%+v range=%+v first=%q\n", i, key, rng, summary)
+		if i > 0 {
+			prevKey := visibleKeys[i-1]
+			prev := m.chatItemLineRanges[transcriptLineKey{itemKey: prevKey}]
+			gap := rng.start - prev.end - 1
+			fmt.Fprintf(&notes, "    ^ %d blank line(s) since previous visible item\n", gap)
+		}
+	}
+	notes.WriteString("\nZero-height item: the empty assistant block at Seq=3 does not appear in the range list above; the guard skipped it and no ghost gap remains between the surrounding cards.\n")
+	notes.WriteString("Coord change: Seq=6 bumps Iteration to 1; itemSpacingBefore returns 2, so the gap between the second card (Seq=4-5) and the coord-change system item is 2 blank lines (slice 12's boundary banner will render inside that gap).\n")
+
+	if err := os.WriteFile(filepath.Join(dir, name+"-notes.txt"), []byte(notes.String()), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }
 
