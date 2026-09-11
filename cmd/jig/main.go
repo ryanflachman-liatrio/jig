@@ -63,9 +63,15 @@ func main() {
 	// enforced inside Runtime.Close.
 	defer rt.Close(context.Background())
 
+	diagnostics := tui.DiagnosticsRendererFunc(func() string {
+		if rt.Diagnostics == nil {
+			return ""
+		}
+		return rt.Diagnostics.Render("")
+	})
 	// Alt screen and the background canvas are declared on the View in v2 (see
 	// rootModel.View), not as program options here.
-	p := tea.NewProgram(tui.New(ctx, rt.Manager))
+	p := tea.NewProgram(tui.New(ctx, rt.Manager, tui.WithDiagnostics(diagnostics)))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running program: %v\n", err)
 		os.Exit(1)

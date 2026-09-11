@@ -39,6 +39,16 @@ var KeyPalette = keybind.NewBinding(
 	keybind.WithHelp("ctrl+k", "commands"),
 )
 
+// KeyNotificationDiagnostics opens the process-wide notification diagnostics
+// overlay. The chord is chosen to be discoverable but unusual (Ctrl+G is
+// unused elsewhere in the app) so it never clashes with a screen-owned key.
+// Disabled while CapturesText — a text editor keeps its chord — and while
+// the palette is open (the palette owns its keys). See Spec 23 FR-17.
+var KeyNotificationDiagnostics = keybind.NewBinding(
+	keybind.WithKeys("ctrl+g"),
+	keybind.WithHelp("ctrl+g", "notification diagnostics"),
+)
+
 func GlobalHelpBindings(capturesText bool, extra ...keybind.Binding) []keybind.Binding {
 	regular := KeyHelp
 	regular.SetEnabled(!capturesText)

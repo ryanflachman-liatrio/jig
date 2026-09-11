@@ -295,6 +295,15 @@ func (m rootModel) handleGlobalKey(msg tea.KeyPressMsg) (rootModel, tea.Cmd, boo
 		}
 		return m, nil, true
 	}
+	// The notification-diagnostics overlay is root-owned so it can be opened
+	// from Home or Monitor with one chord. It swallows all keys while open
+	// so a burst of arriving events never scrolls a rendered snapshot off.
+	if m.showDiagnostics {
+		if msg.String() == "esc" || keybind.Matches(msg, shared.KeyNotificationDiagnostics) {
+			m.showDiagnostics = false
+		}
+		return m, nil, true
+	}
 	capturesText := m.activeProvider().capturesText()
 	if (!capturesText && keybind.Matches(msg, shared.KeyHelp)) ||
 		(capturesText && keybind.Matches(msg, shared.KeyHelpTyping)) {
@@ -304,6 +313,10 @@ func (m rootModel) handleGlobalKey(msg tea.KeyPressMsg) (rootModel, tea.Cmd, boo
 	}
 	if !capturesText && keybind.Matches(msg, shared.KeyPalette) {
 		m.palette = m.palette.Show(m.paletteCommands())
+		return m, nil, true
+	}
+	if !capturesText && keybind.Matches(msg, shared.KeyNotificationDiagnostics) {
+		m.showDiagnostics = true
 		return m, nil, true
 	}
 	return m, nil, false

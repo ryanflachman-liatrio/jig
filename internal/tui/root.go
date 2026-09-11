@@ -92,8 +92,57 @@ type rootModel struct {
 	// finishing after navigation cannot overwrite a newer request.
 	clipboard clipboardState
 
+	// diagnostics renders a text dump of the process-wide notification
+	// diagnostic ring. It is nil when notifications are not wired (tests) —
+	// the overlay is inert in that case.
+	diagnostics DiagnosticsRenderer
+	// showDiagnostics is true while the notification-diagnostics overlay
+	// is composited over the active screen.
+	showDiagnostics bool
+
 	width  int
 	height int
+}
+
+// DiagnosticsRenderer produces a pre-formatted, secret-free dump of the
+// process-wide notification diagnostic ring. The TUI treats the returned
+// text as opaque and never parses it. Implementations should:
+//
+//   - never block (return the current snapshot synchronously),
+//   - render a fixed short summary (a single "no diagnostics yet" line is fine
+//     for the empty case), and
+//   - never carry raw response bodies, URLs, or secret values.
+//
+// The renderer is optional: passing nil to WithDiagnostics leaves the overlay
+// wired but reporting a static "not available" line. This matches the
+// persistence-off/tests case where no process runtime exists.
+type DiagnosticsRenderer interface {
+	RenderDiagnostics() string
+}
+
+// DiagnosticsRendererFunc adapts a bare function to DiagnosticsRenderer.
+type DiagnosticsRendererFunc func() string
+
+// RenderDiagnostics implements DiagnosticsRenderer.
+func (f DiagnosticsRendererFunc) RenderDiagnostics() string {
+	if f == nil {
+		return ""
+	}
+	return f()
+}
+
+// diagnosticsBody returns the current diagnostics snapshot, or a fixed
+// friendly message when the renderer is nil or empty. The overlay never
+// blocks the model — the renderer is expected to return synchronously.
+func (m rootModel) diagnosticsBody() string {
+	if m.diagnostics == nil {
+		return "Notification diagnostics are not wired for this process."
+	}
+	text := m.diagnostics.RenderDiagnostics()
+	if text == "" {
+		return "No notification diagnostics recorded in this session."
+	}
+	return text
 }
 
 // helpProvider is implemented by every screen model that contributes a help
@@ -129,11 +178,25 @@ func (m rootModel) activeProvider() helpProvider {
 	return homeHelpBridge{m}
 }
 
+// Option configures a rootModel at construction. Options exist so callers
+// can add process-wide bridges (notification diagnostics, in future the
+// clipboard / IPC hooks) without every test having to construct them.
+type Option func(*rootModel)
+
+// WithDiagnostics installs a process-wide notification diagnostics renderer
+// that surfaces through the root notification-diagnostics overlay. A nil
+// renderer is accepted and treated as "not wired" — the overlay renders a
+// fixed static line instead of stub-formatted text. This matches the tests
+// and headless entry paths, which construct the TUI without a shared runtime.
+func WithDiagnostics(r DiagnosticsRenderer) Option {
+	return func(m *rootModel) { m.diagnostics = r }
+}
+
 // New returns jig's root TUI model. mgr is the engine manager; it must be
 // non-nil. The theme is dark-only, so no terminal-background detection is needed.
-func New(ctx context.Context, mgr *engine.Manager) tea.Model {
+func New(ctx context.Context, mgr *engine.Manager, opts ...Option) tea.Model {
 	live, ctrl := mgr.Subscribe()
-	return rootModel{
+	m := rootModel{
 		active:           screenHome,
 		selector:         selector.New(),
 		runs:             runs.NewModel(),
@@ -145,6 +208,10 @@ func New(ctx context.Context, mgr *engine.Manager) tea.Model {
 		handles:          make(map[string]*engine.Run),
 		pendingDeletions: make(map[string]bool),
 	}
+	for _, opt := range opts {
+		opt(&m)
+	}
+	return m
 }
 
 func (m rootModel) Init() tea.Cmd {
@@ -185,6 +252,10 @@ func (m rootModel) View() tea.View {
 	if m.leaveConfirm {
 		content = shared.RenderConfirmOverlay(content, "Discard unsaved comment?",
 			"You have an unsaved review comment.\nLeave and discard it?", m.width, m.height)
+	}
+	if m.showDiagnostics {
+		content = shared.RenderConfirmOverlay(content, "Notification diagnostics",
+			m.diagnosticsBody()+"\n\nesc to close", m.width, m.height)
 	}
 	// v2 declares alt-screen and the full-screen background on the View itself
 	// (the compositor paints BackgroundColor edge-to-edge, so nested styled
