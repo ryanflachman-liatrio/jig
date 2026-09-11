@@ -1,142 +1,168 @@
 # Testing
 
-How jig is tested, the conventions to follow, and what to cover when you touch
-the code.
+Test the observable contract at the smallest useful seam. Default tests should
+run locally without authenticated agents or real external notification delivery.
+Use synthetic data and temporary repositories/directories. See
+[Architecture](ARCHITECTURE.md) for module boundaries and
+[Graph engineering](GRAPH_ENGINEERING.md) for lifecycle invariants.
 
-## Running tests
+## Commands
+
+Run from the repository root unless a subshell changes directory:
 
 ```bash
-go test ./...                                   # everything
-go test ./internal/workflow                     # just the workflow package
-go test ./internal/workflow -run TestDecodeInvalid -v   # one test, verbose
-go test ./internal/workflow -run TestDecodeInvalid/cycle    # one sub-case
-go test ./... -count=1                           # bypass the test cache
-go test ./... -race                              # race detector (use for TUI/engine work)
-go test ./internal/workflow -cover               # coverage
+go version                           # must satisfy both go.mod files
+go build ./cmd/jig
+go test ./...
+go vet ./...
+(cd harness/acp && go test ./... && go vet ./...)
 ```
 
-Before opening a change, also run the formatter, the vetter, and the example
-validator — the examples are executable documentation:
+Root `./...` does not include tests in the nested ACP module or the Rust crate.
+The root module tests do include `internal/harness`. For Go source changes,
+format the changed files with `gofmt -w <files>`; use `gofmt -l <files>` to check
+without rewriting unrelated files. Use `git diff --check` to catch whitespace
+errors in any change.
+
+Focused examples:
 
 ```bash
-gofmt -l -w . && go vet ./...
-for workflow in .agents/jig/*.toml; do
-  go run ./cmd/jig validate "$workflow" || exit 1
+go test ./internal/workflow -run TestDecodeInvalid -v
+go test ./internal/engine ./internal/runner -count=1
+go test -race ./internal/engine ./internal/runner ./internal/harness
+go test -race ./internal/tui/... ./internal/helpchat
+go test -race ./internal/runexport ./cmd/jig -count=1
+(cd harness/acp && go test -race ./...)
+go test ./internal/workflow -coverprofile=/tmp/jig-workflow-coverage.out
+go tool cover -func=/tmp/jig-workflow-coverage.out
+```
+
+Use `-count=1` when uncached execution matters. Race detection finds races only
+in executed paths; a clean run is not proof of freedom from races.
+[Go race detector](https://go.dev/doc/articles/race_detector)
+
+Validate runnable examples and project workflow roots, not module/profile TOMLs:
+
+```bash
+go build -o /tmp/jig-doc-check ./cmd/jig
+for workflow in examples/*.toml .agents/jig/*.toml; do
+  /tmp/jig-doc-check validate "$workflow" || exit 1
 done
 ```
 
-## Where the tests are
+For a local command-only end-to-end smoke, use a temporary project directory:
+`jig run <absolute-path-to-examples/headless-smoke.toml> --ci` with the built
+binary. Check [headless behavior](headless.md) and the fixture before execution.
+Validation does not run workflow agents, checks, or notification senders.
 
-| Package | State | Notes |
-|---------|-------|-------|
-| `internal/workflow` | **Tested** | `workflow_test.go` — the real coverage lives here: parsing, defaulting, and the full validation surface. |
-| `internal/engine` | **Tested** | Scheduler/executor behavior, journal replay, resume/reset, and lock lifetime (`runlock_test.go`), all against fakes — no live model or backend calls. |
-| `internal/runner`, `step`, `manifest`, `datastore`, `transcript`, `toolcall`, `sentinel` | **Tested** | Focused unit tests per package; `sentinel` also covers the shared pure secret-detector seam (`DetectSecrets`) used by both the live guard and export. |
-| `internal/runexport` | **Tested** | `export_test.go`, `archive_test.go`, `journal_test.go`, `transcript_test.go`, `sanitize_test.go`, `damaged_test.go`, `bounds_test.go` — see "Testing `jig export`" below. |
-| `internal/tui` and sub-packages | **Tested** | Bubble Tea models are driven directly (`tea.Msg` in, `View()`/model out); no real terminal in tests. |
-| `cmd/jig` | **Tested** | `ops_test.go`, `run_test.go`, `init_test.go`, and `export_test.go` cover operations, headless execution, scaffolding, and the export CLI. |
+## Select checks by change
 
-## Conventions (follow the existing style)
+| Change | Required evidence |
+|---|---|
+| Guidance/docs only | Review code claims and relative links, `git diff --check`; validate changed runnable examples. No new tests for prose. |
+| Go implementation | Focused behavioral tests, root build/tests/vet; nested module checks if affected. |
+| Schema/defaults/modules/conditions | Valid and invalid decode cases, precedence, filesystem-backed Load cases as needed; root workflow/example validation. |
+| Scheduler/runner/concurrency | Relevant lifecycle tests and targeted `-race`; use real temp Git repositories for integration/reset behavior. |
+| ACP lifecycle/protocol | Root harness tests plus nested ACP tests/vet; race and helper-process shutdown tests for lifecycle changes. |
+| TUI behavior | Model/update/render assertions, focus/text capture/resize cases; targeted race tests for async changes and a terminal smoke for visual behavior when feasible. |
+| Persistence/reopen/reset | Journal/snapshot/lease failure cases, interrupted-write recovery, persistence-off coverage; cross-process tests where process boundaries matter. |
+| Export/lease/shared budgets | `go test -race ./internal/runexport ./cmd/jig -count=1`, disclosure scans, damaged input and bounds cases. |
+| Notification/telemetry | Fake or local test receivers, sanitization, bounded queues and shutdown; verify delivery/exporter failure cannot alter run outcomes. |
+| Rust crate | Run its local fmt/clippy/tests; Go checks cannot establish Rust parity. |
 
-The workflow tests are the template. Match them:
+For SDD quality-check workflows, the declared
+[quality profiles](quality-profiles.md) add their own applicability and evidence
+contracts, including the coverage threshold. They do not replace behavioral
+tests or automatically apply to a prose-only task. No repository CI workflow is
+currently checked in under `.github/workflows`; do not report an assumed CI job
+as validation.
 
-- **Table-driven.** `TestDecodeInvalid` is a slice of `{name, toml, want}` cases
-  run under `t.Run(tc.name, ...)`. Add a row rather than a new function when the
-  shape fits.
-- **Workflows are inline TOML string constants.** Real, readable `.toml` (see
-  `validBugfix`, `validProducer`) rather than hand-built structs — the test
-  doubles as documentation of the syntax.
-- **`Decode(data, baseDir)` is the seam.** Pass `""` as `baseDir` to **skip**
-  file-existence checks (most invalid-case tests do this — they're testing the
-  parser/validator, not the filesystem). Pass a `t.TempDir()` when the case must
-  reference real skill dirs / schema files, and write them first with the
-  `mustWrite` helper.
-- **Assert on the aggregated error by substring.** Invalid cases check
-  `strings.Contains(err.Error(), tc.want)` against a distinctive fragment of the
-  validator's message (e.g. `"max_iterations must be >= 1"`, `"cycle"`,
-  `` "both `run` and `script`" ``). Keep those messages stable, or update the
-  matching case when you deliberately reword one.
-- **Look steps up via `wf.index`.** `wf.Steps[wf.index["fix"]]` — never assume a
-  positional order for lookups by id.
-- **`mustWrite(t, path, content)`** creates parent dirs and writes a file inside
-  the temp dir; use it for `SKILL.md` stubs, agent files, and JSON schemas.
+## Test design
 
-## What a schema change must cover
+Use table-driven subtests for repeated input/output shapes. Give failures
+behavioral names and useful diagnostics. Use `t.Helper`, `t.TempDir`, and
+`t.Cleanup` for fixture setup/lifetime. Prefer direct assertions on state,
+returned errors, parsed artifacts, and external effects. Do not recreate the
+implementation algorithm in the assertion or lock in incidental call order.
 
-The validator is the product here, so a change to the schema is not done until
-the tests prove both directions:
+Use `t.Parallel` only for isolated tests. Environment, current directory, global
+theme, shared registries, and fixed ports require special care; `t.Setenv` and
+`t.Chdir` are incompatible with parallel tests/parallel ancestors. Keep test
+failures on the test goroutine by returning worker errors through channels.
 
-1. **A valid case** — a workflow using the new field/construct decodes without
-   error and the parsed value lands where expected (add assertions like the
-   isolation-inference and input-parsing checks in `TestDecodeValid`).
-2. **Every new failure mode** — one `TestDecodeInvalid` row per rejection, each
-   asserting the specific error substring a user would see.
-3. **Defaulting & precedence**, if the field is inheritable from `[defaults]` or
-   foldable from an `agent_file` — prove `[defaults]` seeds it, the file folds in
-   only when the step leaves it unset, and an explicit step field outranks both
-   (see `TestDecodeAgentFile`).
-4. **Reference/type checks**, if the field participates in `@ref`s or guards —
-   prove a dangling ref, an unknown field, and an illegal enum value are all
-   caught at load time (see the field-ref cases and `TestDecodeProducerSchema`).
+Coordinate concurrency with channels, barriers, or explicit completion signals;
+avoid sleeps as proof that an action occurred. Use deadlines to bound hangs.
+Go 1.25's `testing/synctest` is useful for suitable in-process timer/goroutine
+logic; real I/O and subprocesses still need explicit synchronization. It is not
+a substitute for the race detector or process-level tests.
+[Testing time and asynchronicity](https://go.dev/blog/testing-time)
 
-## Current coverage map (what's already asserted)
+Add fuzz targets when a parser/decoder/path boundary has meaningful properties:
+no panic, bounded handling, valid round trips, or preservation of line identity.
+Seed ordinary and hostile cases and keep minimized regressions. Run a specific
+fuzz target in its package with `go test -fuzz=<target> -fuzztime=30s`; do not
+imply a target already exists. Keep fuzz cases deterministic and independent.
+[Go fuzzing](https://go.dev/doc/security/fuzz/)
 
-- **Valid decode** — step count, defaults applied, worktree isolation inferred
-  from mutating tools (on for `fix`, off for read-only `triage`), mixed inputs
-  parsed into ref vs. inline-path.
-- **Invalid decode** (20+ cases) — unknown keys, missing/dangling `depends_on`,
-  `@ref` not in `depends_on`, dependency cycles, illegal `when` values and
-  unknown/illegal field refs, unbounded loops, `run`+`script` conflicts, review
-  steps missing a verdict type, conflicting output shapes
-  (`output_type`+schema, schema+`schema_file`), schema on non-agent steps,
-  invalid effort, negative budget, `skill`+`agent_file` conflicts, and
-  agent-only fields on the wrong step type.
-- **Producer schemas** — name-sorted fields, nested list-of-object resolution,
-  downstream field-path inputs, and a compiled JSON Schema that is a *closed*
-  object with all fields required.
-- **`schema_file`** — a raw JSON Schema parses into the same `Field` model so
-  field-ref checks work against it identically.
-- **`agent_file`** — frontmatter `tools`/`model` fold in, the body becomes the
-  system prompt, mutating tools flip worktree isolation on, and explicit step
-  fields outrank both the file and `[defaults]`.
+Use benchmarks for measured performance work with representative graph,
+transcript, or document sizes. Track allocations when relevant. Coverage points
+to missing cases; a percentage alone says nothing about assertion quality.
 
-## Testing `jig export`
+## Workflow and engine cases
 
-`internal/runexport` and `cmd/jig/export_test.go` establish a distinct,
-stricter testing contract for anything that leaves the local run store as a
-shareable artifact:
+`workflow.Decode(data, "")` skips filesystem existence checks for structural
+cases. It is not a replacement for `Load`: modules and real authoring assets
+need temporary filesystem fixtures and a base directory. Add cases for each
+new rejection and each supported precedence path. Compare typed errors where
+available; aggregated validator text can use distinctive substrings.
 
-- **Synthetic-only fixtures.** Every test fixture uses fabricated run/
-  workflow/step ids and clearly-fake credential shapes (see
-  `syntheticSecrets` in `internal/runexport/testutil_test.go`), never a real
-  secret or a copy of production data. No proof artifact under
-  `docs/specs/*/*-proofs/` may contain a raw run archive or a seeded fixture
-  value either.
-- **Archive parsing, not snapshotting.** Tests open the real published ZIP
-  with `archive/zip` and decode each member's JSON/JSONL rather than
-  comparing opaque bytes, so a test failure points at the exact field that
-  regressed.
-- **Disclosure scans.** At least one test per content mode scans every
-  member's bytes *and* the raw archive bytes (headers/comments included) for
-  every seeded private value, so a leak in an unexpected surface (a ZIP
-  comment, an unasserted field) still fails the suite.
-- **Helper-process lock contention.** Lease/ownership tests
-  (`TestExportRejectsSeparateProcessLease` and the `internal/engine`
-  `runlock_test.go` equivalents) spawn the test binary itself as a child
-  process holding the real advisory lock, proving refusal against another
-  process rather than another goroutine in the same process.
-- **Race and offline-only.** `go test ./internal/runexport ./cmd/jig -race
-  -count=1` must pass on every change to lock, lease, or shared-budget code.
-  No export test invokes a model, backend, credential, or network call.
+Use fake executors for dependency ordering, condition skipping, bounded routes,
+retry classification/caps, budgets, gates, and fan-out aggregation. Vary worker
+completion order. Check dispatch counts and that dependents never run early.
+Cover empty fan-out, failed children, resource saturation, stop/cancel, and
+stale messages when the change touches those paths.
 
-## Testing the TUI and engine
+Persistence tests should exercise both empty-root behavior and real temporary
+storage. Reopen/reset tests verify durable counters, sessions, input/review
+snapshots, changed checkout contents, and survivor commits. Hold real advisory
+locks in a helper process to test lease exclusion; a second goroutine is not
+equivalent. Use the existing engine and harness crash fixtures.
 
-- **TUI:** drive the model directly — feed `tea.Msg` values through `Update`
-  and assert on the returned model/`View()` string rather than spinning up a
-  real terminal or verifying manually. Run UI/concurrency work under `-race`.
-- **Engine:** agent invocation and shell execution stay behind the
-  `Executor`/`Reporter` interfaces (`internal/harness`, `internal/runner`) so
-  DAG traversal, gate evaluation, and loop-termination logic are tested with
-  fakes — no live model calls in unit tests. The determinism guarantees
-  (topological order, `when` skipping, bounded loops, gate pass/fail) are
-  exactly the properties asserted.
+## TUI and review cases
+
+Drive `tea.Msg` through `Update` and inspect the returned model, commands, and
+`View` (`tea.View.Content` for full program models). Run returned commands
+selectively when they are the behavior under test; never start a real backend
+just to test a key binding. Verify stale async results and text-capture routing
+as well as happy-path navigation.
+
+For layout, assert terminal-cell widths/heights with ANSI-aware helpers and
+include Unicode, empty content, small dimensions, and narrow/wide layouts.
+Use existing `internal/tui/chart/testdata` goldens for stable graph projections;
+review every golden change instead of blindly accepting regenerated output.
+Review tests must prove that preview/folding/panning does not move source-line
+anchors or alter immutable text. Manual screenshots supplement these checks.
+
+## Export and external integrations
+
+Export fixtures must be fabricated. Open the real ZIP and decode its JSON/JSONL
+members; scan every member and raw ZIP bytes (including headers/comments) for
+seeded private values. Cover bounds, damaged storage, missing artifacts,
+sanitization, and separate-process leases. Never attach raw real run archives
+or seeded credential-shaped fixture values to proof documents.
+
+Authenticated probes are opt-in: `JIG_CODEX_ACP_INTEGRATION=1` enables nested
+Codex probes, and `JIG_ACP_QUESTION_INTEGRATION` enables the live question probe
+in `internal/harness`. Inspect their source and prerequisites before enabling;
+they may use accounts, network, and model budget. These flags control tests,
+not workflow backend selection. Most files named `integration_test.go` use
+local fixtures; inspect the actual guard rather than excluding by filename.
+
+## Report evidence accurately
+
+Record the commands run and their outcomes. Distinguish pass, assertion
+failure, setup/toolchain failure, and intentional skip. If blocked, name the
+missing prerequisite and run unaffected checks. Do not weaken assertions or
+change unrelated production code to make a documentation task look green.
+After applicable checks pass, review the final diff; broaden testing only for
+new changes, failures, or an unresolved risk.

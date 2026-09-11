@@ -1,5 +1,15 @@
 # Rust implementation guidance
 
+Shared project intent and pre-v1 policy live in [AGENTS.md](../AGENTS.md).
+Apply this file's Rust-specific conventions inside `workflow-rs`; Go coding
+and toolchain instructions apply to the Go modules, not this crate.
+
+This is a separate crate, not the parser used by `cmd/jig`. The Go loader has
+features beyond this crate's three step variants, including checks and module
+expansion. Do not claim full schema parity from Go tests or the schema document
+alone. Check Rust source/tests for each supported construct; record and test
+the intended parity scope when extending the port.
+
 This crate is a Rust interpretation of `internal/workflow`, not a line-for-line
 translation of the Go package. Preserve workflow behavior and the author-facing
 TOML contract while designing the in-memory model as idiomatic Rust.

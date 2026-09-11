@@ -1,108 +1,106 @@
-# AGENTS.md
+# Working on jig
 
-Cross-tool instructions for coding agents working in this repository
-(Cursor, Codex, Gemini CLI, Claude Code via `@AGENTS.md`, etc.).
+Cross-tool instructions for coding agents in this repository. jig is a Go
+CLI/TUI that coordinates agents, commands, deterministic checks, and human
+reviews through validated TOML workflow graphs.
 
-Deeper Claude-oriented notes (TUI styling, Charm v2 gotchas) live in
-[`CLAUDE.md`](CLAUDE.md). Domain vocabulary is in [`CONTEXT.md`](CONTEXT.md).
-Workflow schema source of truth: [`docs/workflow-schema.md`](docs/workflow-schema.md).
+## Start here
 
-## What jig is
+Read the relevant implementation and tests before changing behavior. The code
+and executable tests establish what ships; the schema documents the authoring
+contract. If they disagree, identify and reconcile the discrepancy within the
+task. Specs, plans, proofs, and ADRs explain intent and history; their presence
+does not prove that a feature exists or that an old design still applies.
 
-**jig** is a Go CLI/TUI that puts a **deterministic orchestration layer around
-non-deterministic agents.** Workflows are `.toml` graphs of steps; jig routes
-between agents, shell commands, and human review gates so local agent chains
-are repeatable and inspectable.
+| When working on | Read |
+|---|---|
+| Package boundaries or runtime wiring | [Architecture](docs/ARCHITECTURE.md) |
+| Go implementation or refactoring | [Go conventions](docs/CONVENTIONS.md) |
+| Workflow syntax, defaults, paths, or validation | [Workflow schema](docs/workflow-schema.md) and `internal/workflow` |
+| Scheduling, graph changes, retries, or recovery | [Graph and workflow engineering](docs/GRAPH_ENGINEERING.md) |
+| Terminal interaction, layout, or rendering | [TUI engineering](docs/TUI.md) |
+| Any behavior change or verification | [Testing](docs/TESTING.md) |
+| Domain naming | [Vocabulary](CONTEXT.md) |
+| CLI automation or operational controls | [Headless contract](docs/headless.md), [operations](docs/operations.md) |
+| Security, export, or telemetry | [Security](docs/security-monitoring.md), [observability](docs/observability.md), `internal/runexport` |
+| Rust workflow crate | [Rust guidance](workflow-rs/Claude.md); this crate is separate from the Go runtime |
 
-## Pre-v1: breaking changes are fine
+Use workflow skills when the task calls for them; changing code does not by
+itself require running the SDD pipeline. `.agents/jig` contains executable
+workflows; `.agents/skills` and `.claude/skills` contain agent instructions.
+Keep skill input/output contracts aligned with their invoking TOML when edited.
 
-jig is **not at v1**. Prefer the correct long-term design over compatibility
-shims. Do not preserve deprecated env vars, dual code paths, or migration
-wrappers “just in case.” When replacing a mechanism, delete the old one in
-the same change and update workflow/docs/tests to match.
+## Non-negotiable design constraints
 
-## Backend selection (TOML only — no env)
+- **Pre-v1:** prefer the correct design. When replacing a mechanism, remove the
+  obsolete path and update callers, tests, examples, and docs together. Do not
+  add compatibility wrappers or environment aliases speculatively.
+- **Explicit orchestration:** dependencies, typed outputs, conditions, bounded
+  routes, and retry policies belong in the schema and engine. Prompts and TUI
+  code must not become a second scheduler.
+- **Single owner of run state:** workers report through engine interfaces;
+  callers use `Run` commands and snapshots. Preserve journal-before-publication
+  and the distinction between reliable control and lossy live signals.
+- **File is truth, bus is liveness:** finalized step content is read from
+  `transcript.jsonl`. Live deltas are previews, never authoritative artifacts.
+- **Persistence-off is supported:** empty run/artifact/transcript paths disable
+  optional persistence. Do not join an empty root into an unintended relative
+  write. Required durable operations must fail explicitly when unavailable.
+- **Backend-agnostic Monitor:** normalize vendor events in harness/runner code.
+  Use `internal/tui/shared` for theme, panels, input, and help primitives.
+- **Bounded work:** preserve concurrency, retry, route, fan-out, and content
+  limits. Bounded graph loops do not guarantee wall-clock completion: human
+  gates and steps without deadlines can wait indefinitely.
+- **Sensitive local state:** `.jig/` can contain raw prompts, tool output,
+  reasoning, and credentials. Use synthetic fixtures; never copy real run data
+  or `.env` contents into tests, docs, logs, or proof artifacts.
 
-Agent backends are selected **in the workflow `.toml`**, never via
-environment variables.
+## Backend selection
 
-- **Do not use or reintroduce `JIG_HARNESS` / `harness.FromEnv`.** Selection is
-  `harness.For(backend, transport)` from each step's resolved fields.
-- Operators set `backend` / `transport` on `[defaults]` and/or each `[[step]]`.
-  Inheritance: step → `[defaults]` → `"claude"` / `"sdk"`.
-- `jig validate` rejects unknown backend/transport names at load time.
+Selection is TOML-only: resolved step fields go to
+`harness.For(backend, transport)`. Do not use or reintroduce `JIG_HARNESS` or
+`harness.FromEnv`.
 
-### Harness vs backend (do not conflate)
-
-| Term | Meaning | Examples |
+| Backend | Supported transport | Harness |
 |---|---|---|
-| **Backend** | Vendor / CLI the step talks to | `claude`, `cursor`, `codex`, `gemini` |
-| **Harness** | jig’s Go adapter that speaks a transport | `ClaudeHarness` (SDK), `AcpHarness` (ACP) |
-| **Transport** | Wire protocol used to reach a backend | Claude Agent SDK, ACP |
+| `claude` | `sdk` | `ClaudeHarness` |
+| `claude` | `acp` | `AcpHarness`, using Zed's Claude ACP adapter |
+| `cursor` | `acp` | `CursorHarness`, native `cursor-agent acp` |
+| `codex` | `acp` | `CodexHarness`, using `@agentclientprotocol/codex-acp` |
 
-Today’s code only implements **Claude**, two ways:
+`backend` resolves step → `[defaults]` → `claude`. `transport` resolves
+step → `[defaults]` → the backend default (`sdk` for Claude, `acp` for
+Cursor/Codex). An explicitly inherited incompatible pair is rejected at load
+time. Verify resolution in `internal/workflow/load.go` and supported pairs in
+`internal/harness/select.go` when changing this area.
 
-- `ClaudeHarness` — direct Claude Agent SDK
-- `AcpHarness` — ACP → Claude via Zed’s `npx @zed-industries/claude-code-acp`
-- `CursorHarness` — native Cursor ACP via `cursor-agent acp`
-- `CodexHarness` — Codex via `npx -y @agentclientprotocol/codex-acp@1.6.2`
+ACP is a transport, not a backend. Gemini is not implemented. The Codex ACP
+adapter drives the App Server using the operator's existing login; do not
+replace it with `codex exec`, an MCP server, or workflow API-key fields.
+Adapter pins belong in implementation/dependency sources, not copied into
+agent instructions. Required harness capabilities must fail closed.
 
-`acp` is a **transport**, not a backend. Cursor has a native ACP harness;
-Codex uses the `@agentclientprotocol/codex-acp` stdio adapter, which drives the
-Codex App Server. Codex CLI does not expose native ACP, so do not use `codex
-exec` or Codex's MCP server as a substitute. The adapter reuses the operator's
-existing Codex login; do not add API keys or auth fields to workflow TOML.
+## Commands and completion
 
-Planned author-facing fields (Spec 14):
-
-```toml
-[defaults]
-backend   = "claude"   # vendor; default "claude"
-transport = "sdk"      # "sdk" | "acp" for Claude; default "sdk"
-
-[[step]]
-id        = "spike"
-type      = "agent"
-backend   = "claude"
-transport = "acp"      # ACP→Claude for this step only
-```
-
-Cursor and Codex use `transport = "acp"`. Gemini becomes a backend value only
-after a real harness exists. Do **not** add a process-wide env override for any
-of them.
-
-Plan: [`docs/specs/14-spec-per-step-harness/14-implementation-plan.md`](docs/specs/14-spec-per-step-harness/14-implementation-plan.md).
-
-## Package map (short)
-
-- `internal/workflow` — schema, TOML load, validate
-- `internal/engine` — DAG scheduler (no SDK / harness imports)
-- `internal/runner` — `AgentExecutor` / `CommandExecutor`
-- `internal/harness` — `Harness` seam (`ClaudeHarness`, `AcpHarness`, `CursorHarness`, `CodexHarness`)
-- `internal/transcript` — per-step `transcript.jsonl` (file is truth)
-- `internal/tui` — Bubble Tea UI (transcript-only; backend-agnostic)
-- `cmd/jig` — `validate` + `run` (headless) + TUI entry
-
-## Commands
+Use the toolchain required by [go.mod](go.mod) and
+[harness/acp/go.mod](harness/acp/go.mod); [mise.toml](mise.toml) selects the
+Go 1.25 series. Charm imports use `charm.land/*/v2`.
 
 ```bash
 go build ./cmd/jig
-go run ./cmd/jig
-go run ./cmd/jig validate <workflow.toml>
-go run ./cmd/jig run examples/headless-smoke.toml --ci
+go run ./cmd/jig                             # Home → Monitor TUI
+go run ./cmd/jig validate .agents/jig/sdd.toml
 go test ./...
-gofmt -l -w .
 go vet ./...
+(cd harness/acp && go test ./... && go vet ./...)
 ```
 
-Go 1.25 (see `mise.toml`).
+The nested ACP module is not covered by root `go test ./...`. Format changed
+Go files with `gofmt -w <files>`, then use the change-specific checks in
+[Testing](docs/TESTING.md). Avoid formatting unrelated files.
 
-Headless / CI contract: [`docs/headless.md`](docs/headless.md).
-
-## Conventions that matter for every change
-
-- New schema fields: parse, default from `[defaults]`, validate, test valid + invalid.
-- Persistence-off is first-class: empty run dir → writers no-op.
-- Comments explain non-obvious **why**, not what.
-- TUI styles only via `internal/tui` theme singleton — no ad-hoc lipgloss colors.
-- Keep examples valid after schema changes.
+A change is complete when its intended behavior and failure paths are covered,
+applicable checks pass (or blockers are reported precisely), examples and
+guidance agree with the implementation, and the final diff contains only
+intended changes. Report what changed, verification actually run, and remaining
+limitations. Do not describe a skipped or blocked check as passing.

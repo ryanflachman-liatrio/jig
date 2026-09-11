@@ -12,15 +12,18 @@ agent is deterministic and inspectable:
   declare a single output file. Data flow is explicit and replayable.
 - **The gates** — deterministic checks between steps (command exit code, JSON
   schema, file existence) that decide whether dependents run.
-- **Termination** — loops are bounded, so a workflow is guaranteed to finish.
+- **Bounded automatic repetition** — routes and retries have explicit limits.
+  Human gates and steps without deadlines can still wait indefinitely; graph
+  bounds alone do not guarantee wall-clock completion.
 
-The only non-deterministic part is what happens *inside* one agent context, and
-that is bounded by the skill instructions, the input files, and the allowed
-tools handed to it.
+Agent responses, external effects, and concurrent completion order can vary.
+jig makes their dependencies, contracts, and recovery decisions explicit;
+skill instructions, inputs, and allowed tools constrain each agent context.
 
 The engine is a **DAG plus a small set of labeled, bounded back-edges** — not a
-free-form state machine. That preserves static validation, visualization, and a
-termination guarantee.
+free-form state machine. That preserves static validation, visualization, and
+bounds on automatic loop traversal. See [Graph engineering](GRAPH_ENGINEERING.md)
+for liveness, retry, and recovery constraints.
 
 **Running workflows:** interactive TUI is bare `jig`; unattended / CI is
 [`jig run`](headless.md) (`docs/headless.md`). Both share the same engine and
@@ -45,7 +48,7 @@ max_thinking_tokens = 8000
 max_budget_usd      = 5.0            # per-step cost ceiling
 cwd                 = "."
 permission_mode     = "acceptEdits"
-backend             = "claude"       # agent vendor (claude or cursor today)
+backend             = "claude"       # agent vendor: claude | cursor | codex
 transport           = "sdk"          # sdk | acp (how jig reaches the backend)
 max_parallel        = 4
 resource_limits     = { research = 4, mutation = 1, checks = 2 } # optional per-class caps
