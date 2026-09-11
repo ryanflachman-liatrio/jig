@@ -157,57 +157,46 @@ func PanelTitleBudget(width int) int {
 // joins seamlessly with the box body rendered by the same border style.
 func PanelTopEdge(title string, width int, border lipgloss.Style) string {
 	rb := lipgloss.RoundedBorder()
+	return composeBorderBar(width, rb.TopLeft, rb.TopRight, 1, Theme.Panel.Title.Render(title), border)
+}
+
+// composeBorderBar is the single manual title-border compositor required by
+// ADR 0001. label is already styled; only glyphs are colored by border.
+func composeBorderBar(width int, left, right string, capLength int, label string, border lipgloss.Style) string {
+	if width < 1 {
+		return ""
+	}
+	if width < 3 {
+		return strings.Repeat(" ", width)
+	}
 	edge := lipgloss.NewStyle().Foreground(border.GetBorderLeftForeground())
-
-	// Empty title: a plain dashed edge with the rounded corners.
-	if title == "" {
-		fill := width - lipgloss.Width(rb.TopLeft) - lipgloss.Width(rb.TopRight)
-		if fill < 0 {
-			fill = 0
+	capLength = min(max(capLength, 0), width-lipgloss.Width(left)-lipgloss.Width(right))
+	cap := strings.Repeat("─", capLength)
+	budget := max(width-lipgloss.Width(left)-lipgloss.Width(right)-capLength-2, 0)
+	label = TruncateTitle(label, budget)
+	plain := left + cap
+	if label != "" {
+		plain += " " + label + " "
+	}
+	fill := max(width-lipgloss.Width(plain)-lipgloss.Width(right), 0)
+	return edge.Render(left+cap) + func() string {
+		if label == "" {
+			return ""
 		}
-		return edge.Render(rb.TopLeft + strings.Repeat(rb.Top, fill) + rb.TopRight)
-	}
-
-	// Fixed decoration around the title: corner, one dash, a space either side of
-	// the text, and the closing corner (5 cells). Truncate the title to whatever
-	// width remains so the total never exceeds width.
-	maxTitle := panelTitleWidth(width)
-	if maxTitle < 1 {
-		// Too narrow for a title; fall back to a plain dashed edge.
-		return PanelTopEdge("", width, border)
-	}
-	t := TruncateTitle(title, maxTitle)
-
-	// left = ╭─ , then " Title ", then fill dashes, then ╮ — visible width = width.
-	left := rb.TopLeft + rb.Top
-	fill := width - lipgloss.Width(left) - 2 - lipgloss.Width(t) - lipgloss.Width(rb.TopRight)
-	if fill < 0 {
-		fill = 0
-	}
-	return edge.Render(left) + " " + Theme.Panel.Title.Render(t) + " " +
-		edge.Render(strings.Repeat(rb.Top, fill)+rb.TopRight)
+		return " " + label + " "
+	}() + edge.Render(strings.Repeat("─", fill)+right)
 }
 
 // TruncateTitle clips s to at most max visible cells, appending … when it must
 // cut. Width-aware so wide runes don't overflow the reserved space.
 func TruncateTitle(s string, max int) string {
+	if max < 1 {
+		return ""
+	}
 	if lipgloss.Width(s) <= max {
 		return s
 	}
-	if max <= 1 {
-		return "…"
-	}
-	var b strings.Builder
-	w := 0
-	for _, r := range s {
-		rw := lipgloss.Width(string(r))
-		if w+rw > max-1 { // reserve one cell for the …
-			break
-		}
-		b.WriteRune(r)
-		w += rw
-	}
-	return b.String() + "…"
+	return ansi.Truncate(s, max, "…")
 }
 
 // PanelFrame returns the horizontal and vertical cells a panel's border+title

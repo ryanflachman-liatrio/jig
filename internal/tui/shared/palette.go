@@ -33,4 +33,8 @@ const (
 	hexGuac     = "#12C78F" // success (subtle)
 	hexMalibu   = "#00A4FF" // info
 	hexCitron   = "#E8FF27" // busy
+
+	// jig-local recessed tool-card backgrounds; these are not Charmtone tokens.
+	hexToolNeutralBg = "#1A191F"
+	hexToolErrorBg   = "#2A1A1E"
 )

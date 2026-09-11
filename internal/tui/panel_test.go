@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"jig/internal/tui/shared"
 )
@@ -81,6 +82,19 @@ func TestPanelFrame(t *testing.T) {
 	out := shared.Panel("T", "", 10, v+1, true)
 	if got := lipgloss.Height(out); got != v+1 {
 		t.Errorf("height = %d, want %d", got, v+1)
+	}
+}
+
+func TestPanelTopEdgePreservesStyledTitleGeometry(t *testing.T) {
+	border := shared.Theme.Panel.FocusedBorder
+	styled := shared.Theme.Title.Render("界e\u0301🙂 styled title that is too long")
+	out := shared.PanelTopEdge(styled, 24, border)
+	if got := lipgloss.Width(out); got != 24 {
+		t.Fatalf("styled top edge width = %d, want 24: %q", got, out)
+	}
+	plain := ansi.Strip(out)
+	if !strings.HasPrefix(plain, "╭─ ") || !strings.HasSuffix(plain, "╮") || !strings.Contains(plain, "…") {
+		t.Fatalf("panel one-dash title grammar changed: %q", plain)
 	}
 }
 
