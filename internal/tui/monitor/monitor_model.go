@@ -940,8 +940,25 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 	sections = append(sections, shared.HelpSection{
 		Title:    "Global",
 		Bindings: shared.GlobalHelpBindings(m.CapturesText(), m.keys.ToggleHelp),
+		Extras:   m.goToHomeExtras(),
 	})
 	return sections
+}
+
+// goToHomeExtras returns the "Go to Home" palette command, reachable
+// regardless of the monitor's current focus or gate state (FR U2). Run
+// reuses leaveMonitor's existing dirty-compose-aware navigation.
+func (m Model) goToHomeExtras() []shared.PaletteExtra {
+	return []shared.PaletteExtra{
+		{
+			ID:    "monitor:go-to-home",
+			Title: "Go to Home",
+			Run: func() tea.Cmd {
+				_, cmd := m.leaveMonitor()
+				return cmd
+			},
+		},
+	}
 }
 
 // contextualItemCopyLabel names what y will copy given the current selection.

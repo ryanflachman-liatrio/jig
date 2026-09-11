@@ -44,7 +44,7 @@
 - [x] 1.6 Extend `internal/tui/palette/palette_test.go` with table-driven cases: (a) a query where the best fuzzy match is not the first catalog entry, asserting ranked order; (b) a query matching only a command's category/prefix text; (c) an empty filter falling back to original catalog order; (d) a disabled command remains excluded regardless of match score; (e) `highlightMatches` wraps exactly the given rune indexes for a sample title, asserting on the rendered output.
 - [x] 1.7 Run `go run ./cmd/jig`, open `ctrl+k`, type a partial query, and capture a screenshot showing ranked results with highlighted matched characters as the manual proof artifact. (No interactive terminal capture tool is available in this environment; captured an equivalent `View()` frame built from the real `palette.Model` production code — see `artifacts/palette-demo.txt`, following the same substitution precedent as `docs/specs/02-spec-tui-persistent-agent-input/artifacts/unit3-nav.txt`.)
 
-### [ ] 2.0 Direct-execution commands — "Go to Home" and "Go to Monitor"
+### [x] 2.0 Direct-execution commands — "Go to Home" and "Go to Monitor"
 
 #### 2.0 Proof Artifact(s)
 
@@ -54,17 +54,17 @@
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Add a `Run func() tea.Cmd` field to `palette.Command` in `internal/tui/palette/palette.go`.
-- [ ] 2.2 Update `Model.Update`'s `"enter"` case so that when the selected command's `Run` is non-nil, the palette hides and returns `Run()` directly; otherwise fall back to the existing `DispatchKey(cmd.Key)` path unchanged.
-- [ ] 2.3 Add `SelectedID() (string, bool)` to `internal/tui/runs/model.go`, mirroring the existing `Open`-key logic in `update.go` (`visibleRows()[cursor].id`), returning `("", false)` when there are no visible rows or the cursor is out of range.
-- [ ] 2.4 In `internal/tui/home.go`'s `homeHelpSections()`, append a "Go to Monitor" `palette.Command` (with `Run` returning `func() tea.Msg { return runs.ShowMonitorMsg{RunID: id} }`) to the Global/Runs section only when `m.runs.SelectedID()` returns a valid ID; omit it otherwise.
-- [ ] 2.5 In `internal/tui/monitor/monitor_model.go`'s `helpSections()`, add a "Go to Home" `palette.Command` (with `Run` reusing `m.leaveMonitor()`'s existing message, i.e. `RequestLeaveConfirmMsg` when a review compose buffer is dirty, otherwise `ShowHomeMsg`) to a section that is included regardless of the current `focus`/gate branch.
-- [ ] 2.6 Verify `palette.FromBindings`'s key-redispatch commands are unaffected (no `Run` set) and that `Command.ID` values for the two new commands don't collide with any existing ID in the same catalog.
-- [ ] 2.7 Add a test in `internal/tui/palette/palette_test.go` asserting `Model.Update`'s `"enter"` case invokes a command's `Run` when it is set (without emitting a `DispatchKey` message), and falls back to the existing `DispatchKey(cmd.Key)` behavior when `Run` is nil — covering the direct-execution/key-redispatch coexistence at the palette-package level.
-- [ ] 2.8 Add tests in `internal/tui/root_test.go` and/or `internal/tui/monitor/monitor_test.go` covering: "Go to Home" invoked while Monitor's focus is Transcript (and while a gate is open) transitions to Home, including the dirty-compose confirmation path when applicable; "Go to Monitor" invoked from Home opens the Monitor for the currently-selected run; "Go to Monitor" is absent from the catalog when Home has no runs or no run selected.
-- [ ] 2.9 Run `go run ./cmd/jig` with at least one existing run, open `ctrl+k` on Monitor to confirm "Go to Home" is listed and works from a non-Steps focus, then on Home to confirm "Go to Monitor" is listed for the selected run — capture the manual proof artifact.
+- [x] 2.1 Add a `Run func() tea.Cmd` field to `palette.Command` in `internal/tui/palette/palette.go`.
+- [x] 2.2 Update `Model.Update`'s `"enter"` case so that when the selected command's `Run` is non-nil, the palette hides and returns `Run()` directly; otherwise fall back to the existing `DispatchKey(cmd.Key)` path unchanged.
+- [x] 2.3 Add `SelectedID() (string, bool)` to `internal/tui/runs/model.go`, mirroring the existing `Open`-key logic in `update.go` (`visibleRows()[cursor].id`), returning `("", false)` when there are no visible rows or the cursor is out of range.
+- [x] 2.4 In `internal/tui/home.go`'s `homeHelpSections()`, append a "Go to Monitor" `palette.Command` (with `Run` returning `func() tea.Msg { return runs.ShowMonitorMsg{RunID: id} }`) to the Global/Runs section only when `m.runs.SelectedID()` returns a valid ID; omit it otherwise. (Implemented via a new `shared.PaletteExtra`/`HelpSection.Extras` field rather than a bare `palette.Command`, since `shared` cannot import `palette` — `palette` already imports `shared` for styling, and that would be an import cycle. `rootModel.paletteCommands()` in `root_update.go` converts `Extras` into real `palette.Command` values.)
+- [x] 2.5 In `internal/tui/monitor/monitor_model.go`'s `helpSections()`, add a "Go to Home" `palette.Command` (with `Run` reusing `m.leaveMonitor()`'s existing message, i.e. `RequestLeaveConfirmMsg` when a review compose buffer is dirty, otherwise `ShowHomeMsg`) to a section that is included regardless of the current `focus`/gate branch. (Same `shared.PaletteExtra` mechanism as 2.4; attached to the always-appended "Global" section.)
+- [x] 2.6 Verify `palette.FromBindings`'s key-redispatch commands are unaffected (no `Run` set) and that `Command.ID` values for the two new commands don't collide with any existing ID in the same catalog. (`TestPaletteCommandIDsAreUnique`.)
+- [x] 2.7 Add a test in `internal/tui/palette/palette_test.go` asserting `Model.Update`'s `"enter"` case invokes a command's `Run` when it is set (without emitting a `DispatchKey` message), and falls back to the existing `DispatchKey(cmd.Key)` behavior when `Run` is nil — covering the direct-execution/key-redispatch coexistence at the palette-package level.
+- [x] 2.8 Add tests in `internal/tui/root_test.go` and/or `internal/tui/monitor/monitor_test.go` covering: "Go to Home" invoked while Monitor's focus is Transcript (and while a gate is open) transitions to Home, including the dirty-compose confirmation path when applicable; "Go to Monitor" invoked from Home opens the Monitor for the currently-selected run; "Go to Monitor" is absent from the catalog when Home has no runs or no run selected.
+- [x] 2.9 Run `go run ./cmd/jig` with at least one existing run, open `ctrl+k` on Monitor to confirm "Go to Home" is listed and works from a non-Steps focus, then on Home to confirm "Go to Monitor" is listed for the selected run — capture the manual proof artifact. (Same `View()`-frame substitution as 1.7; see `artifacts/palette-demo.txt`.)
 
-### [ ] 3.0 Palette catalog parity regression tests
+### [x] 3.0 Palette catalog parity regression tests
 
 #### 3.0 Proof Artifact(s)
 
@@ -72,7 +72,7 @@
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Add a table-driven test in `internal/tui/root_test.go` asserting `homeHelpSections()` returns the expected section titles and binding help text for each reachable Home sub-state: Workflows focus, Runs focus, and the Detail overlay.
-- [ ] 3.2 Add a table-driven test in `internal/tui/monitor/monitor_test.go` asserting `PaletteSections()` (`helpSections(false)`) returns the expected section titles and binding help text for each reachable Monitor state: Steps focus, Transcript focus with chat selection, Transcript focus with file selection, and each gate `entry.kind` (request, question, review-not-open, review-open with an active workspace).
-- [ ] 3.3 In both parity tests, assert the new "Go to Monitor" (Home) and "Go to Home" (Monitor) commands from Task 2.0 appear in the expected catalog states and are correctly omitted where specified (e.g. "Go to Monitor" absent with no runs).
-- [ ] 3.4 Run `go test ./internal/tui/... -v` and capture the passing output for the new parity tests (and the full suite) as the proof artifact.
+- [x] 3.1 Add a table-driven test in `internal/tui/root_test.go` asserting `homeHelpSections()` returns the expected section titles and binding help text for each reachable Home sub-state: Workflows focus, Runs focus, and the Detail overlay.
+- [x] 3.2 Add a table-driven test in `internal/tui/monitor/monitor_test.go` asserting `PaletteSections()` (`helpSections(false)`) returns the expected section titles and binding help text for each reachable Monitor state: Steps focus, Transcript focus with chat selection, Transcript focus with file selection, and each gate `entry.kind` (request, question, review-not-open, review-open with an active workspace). (Landed in a new `internal/tui/monitor/palette_extra_test.go` rather than `monitor_test.go`, to keep the new palette-catalog test surface together.)
+- [x] 3.3 In both parity tests, assert the new "Go to Monitor" (Home) and "Go to Home" (Monitor) commands from Task 2.0 appear in the expected catalog states and are correctly omitted where specified (e.g. "Go to Monitor" absent with no runs).
+- [x] 3.4 Run `go test ./internal/tui/... -v` and capture the passing output for the new parity tests (and the full suite) as the proof artifact.

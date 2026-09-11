@@ -16,6 +16,7 @@ import (
 	"jig/internal/step"
 	"jig/internal/tui/detail"
 	"jig/internal/tui/monitor"
+	"jig/internal/tui/palette"
 	runspane "jig/internal/tui/runs"
 	"jig/internal/tui/selector"
 	"jig/internal/tui/shared"
@@ -352,5 +353,205 @@ func TestHelpOverlayCompositesOverBase(t *testing.T) {
 	}
 	if first := strings.SplitN(out, "\n", 2)[0]; !strings.HasPrefix(first, "X") {
 		t.Fatalf("expected base at top-left corner, got line: %q", first)
+	}
+}
+
+// TestPaletteGoToMonitorOpensSelectedRun proves the Home palette's
+// "Go to Monitor" command opens the currently-selected run, reusing the same
+// runs.ShowMonitorMsg navigation path as pressing Enter on that run.
+func TestPaletteGoToMonitorOpensSelectedRun(t *testing.T) {
+	root := makeRoot(t)
+	root, _ = updateRoot(root, monitor.EngineEventMsg{Event: engine.RunStarted{
+		RunID: "20260101-000000-goto", Workflow: "wf", Steps: []string{"s"},
+	}})
+
+	cmd := findPaletteCommand(t, root.paletteCommands(), "Go to Monitor")
+	if cmd.Run == nil {
+		t.Fatal("Go to Monitor should be a direct-execution command (Run set)")
+	}
+	msg := cmd.Run()()
+
+	root, _ = updateRoot(root, msg)
+	if root.active != screenMonitor || root.monitor.RunID != "20260101-000000-goto" {
+		t.Fatalf("Go to Monitor did not open the selected run: active=%v runID=%q", root.active, root.monitor.RunID)
+	}
+}
+
+// TestPaletteGoToMonitorAbsentWithoutSelection proves the command is omitted
+// entirely (not just disabled) when Home has no runs to select.
+func TestPaletteGoToMonitorAbsentWithoutSelection(t *testing.T) {
+	root := makeRoot(t)
+	for _, c := range root.paletteCommands() {
+		if c.Title == "Go to Monitor" {
+			t.Fatal("Go to Monitor should be omitted when no run is selected")
+		}
+	}
+}
+
+// TestPaletteCommandIDsAreUnique proves the new direct-execution commands'
+// IDs don't collide with any key-redispatch command's generated ID in the
+// same Home catalog (Task 2.6).
+func TestPaletteCommandIDsAreUnique(t *testing.T) {
+	root := makeRoot(t)
+	root, _ = updateRoot(root, monitor.EngineEventMsg{Event: engine.RunStarted{
+		RunID: "20260101-000000-ids", Workflow: "wf", Steps: []string{"s"},
+	}})
+	seen := map[string]bool{}
+	for _, c := range root.paletteCommands() {
+		if seen[c.ID] {
+			t.Fatalf("duplicate palette command ID %q", c.ID)
+		}
+		seen[c.ID] = true
+	}
+	if !seen["home:go-to-monitor"] {
+		t.Fatal("expected home:go-to-monitor in the catalog")
+	}
+}
+
+func findPaletteCommand(t *testing.T, cmds []palette.Command, title string) palette.Command {
+	t.Helper()
+	for _, c := range cmds {
+		if c.Title == title {
+			return c
+		}
+	}
+	t.Fatalf("palette command %q not found among %d commands", title, len(cmds))
+	return palette.Command{}
+}
+
+func sectionTitles(secs []shared.HelpSection) []string {
+	out := make([]string, len(secs))
+	for i, s := range secs {
+		out[i] = s.Title
+	}
+	return out
+}
+
+func hasGoToMonitorExtra(sections []shared.HelpSection) bool {
+	for _, sec := range sections {
+		for _, ex := range sec.Extras {
+			if ex.Title == "Go to Monitor" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// TestHomeHelpSectionsParityAcrossSubstates locks in the palette-catalog
+// coverage guarantee (Unit 3): homeHelpSections() must return the expected
+// section titles for every reachable Home sub-state, so a future refactor
+// can't silently drop one.
+func TestHomeHelpSectionsParityAcrossSubstates(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mini.toml")
+	os.WriteFile(path, []byte(`
+[workflow]
+name = "mini"
+version = "1"
+description = "a tiny workflow"
+[[step]]
+id = "hello"
+type = "command"
+run = "echo hi"
+`), 0o644)
+
+	exec := runner.NewFakeExecutor(nil, runner.FakeOutcome{})
+	mgr := engine.NewManager(exec, "")
+	m := New(context.Background(), mgr).(rootModel)
+	m, _ = updateRoot(m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m, cmd := updateRoot(m, selector.DiscoverCmd(dir)())
+	if cmd != nil {
+		m, _ = updateRoot(m, cmd())
+	}
+
+	for _, tc := range []struct {
+		name       string
+		setup      func(rootModel) rootModel
+		wantTitles []string
+	}{
+		{
+			name: "Workflows focus",
+			setup: func(r rootModel) rootModel {
+				r.homeFocus, r.showDetailOverlay = homeWorkflows, false
+				return r
+			},
+			wantTitles: []string{"Workflows", "Global"},
+		},
+		{
+			name: "Runs focus",
+			setup: func(r rootModel) rootModel {
+				r.homeFocus, r.showDetailOverlay = homeRuns, false
+				return r
+			},
+			wantTitles: []string{"Runs", "Global"},
+		},
+		{
+			name: "Detail overlay",
+			setup: func(r rootModel) rootModel {
+				next, _ := r.openDetailOverlay(path)
+				return next
+			},
+			wantTitles: []string{"Workflow", "Global"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sections := tc.setup(m).homeHelpSections()
+			got := sectionTitles(sections)
+			if len(got) != len(tc.wantTitles) {
+				t.Fatalf("sections = %v, want %v", got, tc.wantTitles)
+			}
+			for i, want := range tc.wantTitles {
+				if got[i] != want {
+					t.Fatalf("sections = %v, want %v", got, tc.wantTitles)
+				}
+			}
+		})
+	}
+}
+
+// TestHomePaletteGoToMonitorPresenceAcrossSubstates proves "Go to Monitor" is
+// reachable from the palette regardless of which Home pane has focus, and
+// omitted whenever no run is selected — the Unit 2/3 omission rule.
+func TestHomePaletteGoToMonitorPresenceAcrossSubstates(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "mini.toml"), []byte(`
+[workflow]
+name = "mini"
+version = "1"
+description = "a tiny workflow"
+[[step]]
+id = "hello"
+type = "command"
+run = "echo hi"
+`), 0o644)
+
+	exec := runner.NewFakeExecutor(nil, runner.FakeOutcome{})
+	mgr := engine.NewManager(exec, "")
+	m := New(context.Background(), mgr).(rootModel)
+	m, _ = updateRoot(m, tea.WindowSizeMsg{Width: 120, Height: 40})
+	m, cmd := updateRoot(m, selector.DiscoverCmd(dir)())
+	if cmd != nil {
+		m, _ = updateRoot(m, cmd())
+	}
+
+	for _, focus := range []homePane{homeWorkflows, homeRuns} {
+		state := m
+		state.homeFocus = focus
+		if hasGoToMonitorExtra(state.homeHelpSections()) {
+			t.Fatalf("Go to Monitor present with no runs, focus=%v", focus)
+		}
+	}
+
+	m, _ = updateRoot(m, monitor.EngineEventMsg{Event: engine.RunStarted{
+		RunID: "20260101-000000-sel", Workflow: "mini", Steps: []string{"hello"},
+	}})
+
+	for _, focus := range []homePane{homeWorkflows, homeRuns} {
+		state := m
+		state.homeFocus = focus
+		if !hasGoToMonitorExtra(state.homeHelpSections()) {
+			t.Fatalf("Go to Monitor missing with a selected run, focus=%v", focus)
+		}
 	}
 }

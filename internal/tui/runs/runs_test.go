@@ -58,6 +58,42 @@ func TestRuns(t *testing.T) {
 	}
 }
 
+// TestSelectedID covers the accessor the Home palette uses to build/omit its
+// "Go to Monitor" command: no rows, a valid cursor, and an out-of-range cursor.
+func TestSelectedID(t *testing.T) {
+	t.Run("empty list", func(t *testing.T) {
+		m := NewModel()
+		m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+		if id, ok := m.SelectedID(); ok || id != "" {
+			t.Fatalf("SelectedID on empty list = (%q, %v), want (\"\", false)", id, ok)
+		}
+	})
+
+	t.Run("valid cursor", func(t *testing.T) {
+		m := NewModel()
+		m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+		m, _ = m.Update(monitor.EngineEventMsg{Event: engine.RunStarted{
+			RunID: "run-selected", Workflow: "wf", Steps: []string{"a"},
+		}})
+		id, ok := m.SelectedID()
+		if !ok || id != "run-selected" {
+			t.Fatalf("SelectedID = (%q, %v), want (\"run-selected\", true)", id, ok)
+		}
+	})
+
+	t.Run("out of range cursor", func(t *testing.T) {
+		m := NewModel()
+		m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+		m, _ = m.Update(monitor.EngineEventMsg{Event: engine.RunStarted{
+			RunID: "run-only", Workflow: "wf", Steps: []string{"a"},
+		}})
+		m.cursor = 5 // beyond the single visible row
+		if id, ok := m.SelectedID(); ok || id != "" {
+			t.Fatalf("SelectedID with out-of-range cursor = (%q, %v), want (\"\", false)", id, ok)
+		}
+	})
+}
+
 // TestRunsNewestFirst verifies rows stay sorted newest-first as runs arrive out
 // of order, that the cursor sticks to the top so a user at the head follows the
 // newest run, and that once scrolled the selection follows its run rather than

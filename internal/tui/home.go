@@ -9,6 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"jig/internal/tui/detail"
+	"jig/internal/tui/runs"
 	"jig/internal/tui/shared"
 	"jig/internal/workflow"
 )
@@ -81,7 +82,7 @@ func (m rootModel) homeHelpSections() []shared.HelpSection {
 			{Title: "Runs", Bindings: []keybind.Binding{
 				open, newRun, resume, del, copyID, keys.Nav, keys.Pane,
 			}},
-			{Title: "Global", Bindings: shared.GlobalHelpBindings(false)},
+			{Title: "Global", Bindings: shared.GlobalHelpBindings(false), Extras: m.goToMonitorExtras()},
 		}
 	default:
 		filter := m.selector.Keys().Filter
@@ -92,8 +93,27 @@ func (m rootModel) homeHelpSections() []shared.HelpSection {
 			{Title: "Workflows", Bindings: []keybind.Binding{
 				keys.Nav, open, newRun, keys.Detail, filter, keys.Pane,
 			}},
-			{Title: "Global", Bindings: shared.GlobalHelpBindings(m.selector.CapturesText())},
+			{Title: "Global", Bindings: shared.GlobalHelpBindings(m.selector.CapturesText()), Extras: m.goToMonitorExtras()},
 		}
+	}
+}
+
+// goToMonitorExtras returns the "Go to Monitor" palette command for the
+// currently-selected run in the Runs pane, or nil when Home has no runs or no
+// run is currently selected (FR U2).
+func (m rootModel) goToMonitorExtras() []shared.PaletteExtra {
+	id, ok := m.runs.SelectedID()
+	if !ok {
+		return nil
+	}
+	return []shared.PaletteExtra{
+		{
+			ID:    "home:go-to-monitor",
+			Title: "Go to Monitor",
+			Run: func() tea.Cmd {
+				return func() tea.Msg { return runs.ShowMonitorMsg{RunID: id} }
+			},
+		},
 	}
 }
 

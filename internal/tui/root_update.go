@@ -316,6 +316,15 @@ func (m rootModel) paletteCommands() []palette.Command {
 	var out []palette.Command
 	for _, sec := range m.activeProvider().paletteSections() {
 		out = append(out, palette.FromBindings(sec.Title, sec.Bindings)...)
+		for _, ex := range sec.Extras {
+			out = append(out, palette.Command{
+				ID:       ex.ID,
+				Title:    ex.Title,
+				Category: sec.Title,
+				Enabled:  true,
+				Run:      ex.Run,
+			})
+		}
 	}
 	return out
 }

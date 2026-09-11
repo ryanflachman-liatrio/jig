@@ -4,14 +4,31 @@ import (
 	"strings"
 
 	keybind "charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
 // HelpSection is one titled group of bindings in the help overlay.
+// Extras carries direct-execution palette entries (no corresponding
+// keypress) that belong to this section; the help overlay and footer ignore
+// it, only the command palette catalog builder (package tui) consumes it —
+// this avoids shared importing the palette package (which itself imports
+// shared for styling), which would be a cycle.
 type HelpSection struct {
 	Title    string
 	Bindings []keybind.Binding
+	Extras   []PaletteExtra
+}
+
+// PaletteExtra is a named action for the command palette with no
+// corresponding single-key binding on the current screen, e.g. a cross-screen
+// jump. The owning screen builds Run with whatever context (selected id,
+// current focus) it alone has.
+type PaletteExtra struct {
+	ID    string
+	Title string
+	Run   func() tea.Cmd
 }
 
 // HelpProvider is implemented by every screen model that contributes a help

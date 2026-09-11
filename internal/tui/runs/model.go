@@ -62,6 +62,17 @@ func (m Model) WorkflowName() string { return m.workflowName }
 // Workflow is the loaded definition used to start a new run from Home.
 func (m Model) Workflow() *workflow.Workflow { return m.wf }
 
+// SelectedID returns the currently selected run's id, or false when there are
+// no visible rows or the cursor is out of range — mirroring the Open key's
+// row-selection logic (see update.go).
+func (m Model) SelectedID() (string, bool) {
+	rows := m.visibleRows()
+	if len(rows) == 0 || m.cursor < 0 || m.cursor >= len(rows) {
+		return "", false
+	}
+	return rows[m.cursor].id, true
+}
+
 // SetPaneSize fits the viewport to a titled panel outer size (Home owns the
 // shared footer, so no footer row is reserved here).
 func (m Model) SetPaneSize(width, height int) Model {
