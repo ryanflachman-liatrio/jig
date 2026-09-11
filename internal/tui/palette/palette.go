@@ -10,18 +10,24 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/sahilm/fuzzy"
 
 	"jig/internal/tui/shared"
 )
 
 // Command is one runnable palette entry. Key is the first chord of Binding and
-// is what Execute re-injects so the screen's normal handler runs.
+// is what Execute re-injects so the screen's normal handler runs. Run, when
+// set, is executed directly on enter instead of re-dispatching Key — the path
+// for named actions with no corresponding single keypress on the current
+// screen.
 type Command struct {
-	ID      string
-	Title   string
-	Binding string // display only ("ctrl+r", "r", …)
-	Key     string // first key chord to re-dispatch; empty = title-only / no-op
-	Enabled bool
+	ID       string
+	Title    string
+	Binding  string // display only ("ctrl+r", "r", …)
+	Key      string // first key chord to re-dispatch; empty = title-only / no-op
+	Category string // section/prefix label, included in fuzzy match text
+	Run      func() tea.Cmd
+	Enabled  bool
 }
 
 // Model is the centered filterable overlay.
@@ -31,6 +37,10 @@ type Model struct {
 	cursor   int
 	commands []Command
 	visible  []Command
+	// matches holds the fuzzy-matched rune indexes within each visible
+	// command's Title, keyed by Command.ID, for View's highlighting. Empty
+	// (nil) when the filter is empty — the catalog falls back to original order.
+	matches map[string][]int
 }
 
 func New() Model { return Model{} }
@@ -58,6 +68,7 @@ func (m Model) Hide() Model {
 	m.filter = ""
 	m.cursor = 0
 	m.visible = nil
+	m.matches = nil
 	return m
 }
 
@@ -82,7 +93,13 @@ func (m Model) Update(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	case "enter":
 		cmd, ok := m.Selected()
 		m = m.Hide()
-		if !ok || cmd.Key == "" {
+		if !ok {
+			return m, nil, true
+		}
+		if cmd.Run != nil {
+			return m, cmd.Run(), true
+		}
+		if cmd.Key == "" {
 			return m, nil, true
 		}
 		return m, DispatchKey(cmd.Key), true
@@ -115,23 +132,64 @@ func (m Model) Update(msg tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	return m, nil, true
 }
 
+// refilter ranks m.commands by fuzzy match score against m.filter (best match
+// first), matching against each command's title, key binding, and category.
+// An empty filter falls back to the full catalog in its original order.
 func (m *Model) refilter() {
-	q := strings.ToLower(strings.TrimSpace(m.filter))
+	q := strings.TrimSpace(m.filter)
 	if q == "" {
 		m.visible = append([]Command(nil), m.commands...)
-	} else {
-		next := make([]Command, 0, len(m.commands))
-		for _, c := range m.commands {
-			if strings.Contains(strings.ToLower(c.Title), q) ||
-				strings.Contains(strings.ToLower(c.Binding), q) {
-				next = append(next, c)
+		m.matches = nil
+		if m.cursor >= len(m.visible) {
+			m.cursor = max(len(m.visible)-1, 0)
+		}
+		return
+	}
+	sources := make([]string, len(m.commands))
+	for i, c := range m.commands {
+		sources[i] = c.Title + " " + c.Binding + " " + c.Category
+	}
+	found := fuzzy.Find(q, sources)
+	next := make([]Command, 0, len(found))
+	matches := make(map[string][]int, len(found))
+	for _, fm := range found {
+		c := m.commands[fm.Index]
+		next = append(next, c)
+		titleLen := len([]rune(c.Title))
+		idx := make([]int, 0, len(fm.MatchedIndexes))
+		for _, i := range fm.MatchedIndexes {
+			if i < titleLen {
+				idx = append(idx, i)
 			}
 		}
-		m.visible = next
+		matches[c.ID] = idx
 	}
+	m.visible = next
+	m.matches = matches
 	if m.cursor >= len(m.visible) {
 		m.cursor = max(len(m.visible)-1, 0)
 	}
+}
+
+// highlightMatches wraps the runes at indexes (rune positions into title) in
+// the match-highlight style, leaving the rest of the title unstyled.
+func highlightMatches(title string, indexes []int) string {
+	if len(indexes) == 0 {
+		return title
+	}
+	set := make(map[int]bool, len(indexes))
+	for _, i := range indexes {
+		set[i] = true
+	}
+	var b strings.Builder
+	for i, r := range []rune(title) {
+		if set[i] {
+			b.WriteString(shared.Theme.Help.Match.Render(string(r)))
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // View renders the centered Commands box over base.
@@ -164,7 +222,11 @@ func (m Model) View(base string, width, height int) string {
 		end := min(start+maxRows, len(m.visible))
 		for i := start; i < end; i++ {
 			c := m.visible[i]
-			title := shared.PadRight(c.Title, 28)
+			titleText := c.Title
+			if idx := m.matches[c.ID]; len(idx) > 0 {
+				titleText = highlightMatches(c.Title, idx)
+			}
+			title := shared.PadRight(titleText, len([]rune(c.Title)), 28)
 			key := shared.PadRight(c.Binding, keyW)
 			row := "  " + title + "  " + shared.Theme.Help.Key.Render(key)
 			if i == m.cursor {
@@ -210,11 +272,12 @@ func FromBindings(prefix string, bindings []keybind.Binding) []Command {
 			id = prefix + ":" + h.Key + ":" + string(rune('a'+i))
 		}
 		out = append(out, Command{
-			ID:      id,
-			Title:   h.Desc,
-			Binding: h.Key,
-			Key:     key,
-			Enabled: true,
+			ID:       id,
+			Title:    h.Desc,
+			Binding:  h.Key,
+			Key:      key,
+			Category: prefix,
+			Enabled:  true,
 		})
 	}
 	return out
