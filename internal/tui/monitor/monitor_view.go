@@ -261,6 +261,12 @@ func (m Model) statusLineView() string {
 			parts = append(parts, fmt.Sprintf("%d new", m.unseenChatEntries()))
 		}
 	}
+	// A18: badge the resolved exporter mode so the operator can see at a
+	// glance whether OTel is publishing. "off" and unset both hide the badge
+	// to match the off-by-default posture.
+	if mode := m.telemetryMode; mode != "" && mode != "off" {
+		parts = append(parts, "otel:"+mode)
+	}
 	line := " " + strings.Join(parts, " · ")
 	line = truncateStatusLine(line, m.width)
 	style := shared.Theme.StatusLine

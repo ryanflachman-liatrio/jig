@@ -15,6 +15,7 @@ import (
 	"jig/internal/tui/runs"
 	"jig/internal/tui/selector"
 	"jig/internal/tui/shared"
+	"jig/internal/workflow"
 )
 
 // screen identifies which top-level surface is currently driving the UI.
@@ -82,6 +83,16 @@ type rootModel struct {
 	// once the engine emits RunFinished (Cancel is async — we can't remove the
 	// directory until the scheduler goroutine has stopped writing to it).
 	pendingDeletions map[string]bool
+
+	// startHook is invoked (when non-nil) immediately after Manager.Start
+	// returns. cmd/jig uses it to notify the telemetry exporter of the run's
+	// workflow metadata; other callers pass nil.
+	startHook func(runID string, wf *workflow.Workflow)
+
+	// telemetryMode is the resolved telemetry exporter mode (off | prom |
+	// otlp | both) used to render an "otel:<mode>" badge in the monitor
+	// status line. Empty or "off" hides the badge.
+	telemetryMode string
 
 	// leaveConfirm asks before abandoning a dirty review compose buffer when
 	// the operator presses a leave-Monitor chord (0.4 / A6).
@@ -178,6 +189,21 @@ func WithDiagnostics(r DiagnosticsRenderer) Option {
 	return func(m *rootModel) { m.diagnostics = r }
 }
 
+// WithStartHook installs a hook invoked immediately after Manager.Start
+// returns successfully. cmd/jig uses it to register the run's workflow
+// metadata with the telemetry exporter so per-step metrics carry
+// step_type / backend / transport / model labels. A nil hook is a no-op.
+func WithStartHook(fn func(runID string, wf *workflow.Workflow)) Option {
+	return func(m *rootModel) { m.startHook = fn }
+}
+
+// WithTelemetryMode sets the resolved telemetry exporter mode (off | prom |
+// otlp | both) rendered as an "otel:<mode>" badge in the monitor status
+// line. Empty or "off" hides the badge.
+func WithTelemetryMode(mode string) Option {
+	return func(m *rootModel) { m.telemetryMode = mode }
+}
+
 // New returns jig's root TUI model. mgr is the engine manager; it must be
 // non-nil. The theme is dark-only, so no terminal-background detection is needed.
 func New(ctx context.Context, mgr *engine.Manager, opts ...Option) tea.Model {
@@ -198,6 +224,22 @@ func New(ctx context.Context, mgr *engine.Manager, opts ...Option) tea.Model {
 		opt(&m)
 	}
 	return m
+}
+
+// NewWithHook is [New] with an optional startHook invoked immediately after
+// Manager.Start returns successfully. cmd/jig uses it to register the run's
+// workflow metadata with the telemetry exporter so per-step metrics carry
+// step_type / backend / transport / model labels.
+//
+// telemetryMode, when non-empty and not "off", is rendered in the monitor
+// status line as an "otel:<mode>" badge so the operator can see at a glance
+// whether the exporter is publishing.
+func NewWithHook(ctx context.Context, mgr *engine.Manager, startHook func(runID string, wf *workflow.Workflow), telemetryMode ...string) tea.Model {
+	mode := ""
+	if len(telemetryMode) > 0 {
+		mode = telemetryMode[0]
+	}
+	return New(ctx, mgr, WithStartHook(startHook), WithTelemetryMode(mode))
 }
 
 func (m rootModel) Init() tea.Cmd {
@@ -246,5 +288,8 @@ func (m rootModel) View() tea.View {
 	v := tea.NewView(content)
 	v.AltScreen = true
 	v.BackgroundColor = shared.Theme.Canvas
+	// Cell-motion (not all-motion) is enough for click-to-open: this feature
+	// only needs button press events, not hover/drag motion tracking.
+	v.MouseMode = tea.MouseModeCellMotion
 	return v
 }

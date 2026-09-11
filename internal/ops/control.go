@@ -81,6 +81,9 @@ func ResumeRun(ctx context.Context, opts headless.Options, runID string) headles
 	if err != nil {
 		return headless.Result{ExitCode: headless.ExitFailed, Err: err}
 	}
+	if opts.OnRunStart != nil {
+		opts.OnRunStart(run.ID, preflight.Workflow)
+	}
 	opts.Workflow = preflight.Workflow
 	opts.WorkflowPath = ""
 	return headless.Supervise(ctx, opts, preflight.Workflow, run, live, bufferedCtrl)
@@ -248,6 +251,9 @@ func ApplyReset(ctx context.Context, opts headless.Options, runID, target string
 	run, err := opts.Manager.Resume(runID)
 	if err != nil {
 		return engine.ResetResult{}, headless.Result{ExitCode: headless.ExitFailed, Err: err}
+	}
+	if opts.OnRunStart != nil {
+		opts.OnRunStart(run.ID, preflight.Workflow)
 	}
 	reset, err := run.Reset(target)
 	if err != nil {

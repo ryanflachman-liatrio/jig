@@ -119,6 +119,9 @@ func collectInventory(runDir string) (inventory, error) {
 	if err != nil || closeErr != nil {
 		return inventory{}, fmt.Errorf("%w: read selected steps directory", ErrOperational)
 	}
+	if len(entries) > maxStepInventory {
+		return inventory{}, fmt.Errorf("%w: step inventory exceeds the size limit", ErrOperational)
+	}
 	for _, entry := range entries {
 		name := entry.Name()
 		if name == "." || name == ".." || strings.ContainsAny(name, `/\\`) {
@@ -187,6 +190,17 @@ func sourceInfo(name string, info os.FileInfo) (sourceRecord, error) {
 
 func sameRecord(a, b sourceRecord) bool {
 	return a.name == b.name && a.present == b.present && a.mode == b.mode && a.size == b.size && a.modified.Equal(b.modified) && a.dev == b.dev && a.ino == b.ino
+}
+
+// fileRecord looks up one selected source's consistency record by its
+// relative name (e.g. "journal.jsonl" or "steps/<id>/transcript.jsonl").
+func (inv inventory) fileRecord(name string) (sourceRecord, bool) {
+	for _, f := range inv.files {
+		if f.name == name {
+			return f, true
+		}
+	}
+	return sourceRecord{}, false
 }
 
 func sameStrings(a, b []string) bool {

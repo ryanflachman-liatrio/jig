@@ -289,6 +289,8 @@ Commands:
   resume RUN_ID             reopen an unfinished run
   reset RUN_ID --to STEP    preview or apply reset-to-step
   prune                     remove old finished runs
+  export RUN_ID --destination PATH [--include-text]
+                            export a local, sanitized diagnostic ZIP
 
 Run jig with no arguments to open the TUI.`)
 }

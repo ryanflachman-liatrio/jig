@@ -26,6 +26,7 @@ type workflowSnapshot struct {
 	ModuleSources []workflow.ModuleSource `json:"module_sources,omitempty"`
 	Meta          workflow.Meta           `json:"meta"`
 	Defaults      workflow.Defaults       `json:"defaults"`
+	Telemetry     workflow.Telemetry      `json:"telemetry,omitempty"`
 	PublicSteps   []workflow.Step         `json:"public_steps,omitempty"`
 	ExpandedSteps []workflow.Step         `json:"expanded_steps,omitempty"`
 	// Notification is the run's frozen resolved notification policy — the
@@ -55,6 +56,7 @@ func persistWorkflowSnapshot(runDir string, wf *workflow.Workflow) error {
 		ModuleSources: wf.ModuleSources(),
 		Meta:          wf.Meta,
 		Defaults:      wf.Defaults,
+		Telemetry:     wf.Telemetry,
 		PublicSteps:   wf.PublicSteps(),
 		ExpandedSteps: wf.Steps,
 	}
@@ -78,6 +80,20 @@ func loadWorkflowSnapshot(runDir string) (*workflow.Workflow, error) {
 	if err != nil {
 		return nil, err
 	}
+	return DecodeWorkflowSnapshot(data)
+}
+
+// LoadWorkflowSnapshot reads and verifies the immutable workflow captured at
+// run start. Historical commands must use this instead of current author TOML.
+func LoadWorkflowSnapshot(runDir string) (*workflow.Workflow, error) {
+	return loadWorkflowSnapshot(runDir)
+}
+
+// DecodeWorkflowSnapshot verifies and decodes an already-read workflow.json
+// payload. It performs no I/O itself, so callers with a confined or bounded
+// file handle (e.g. a traversal-resistant os.Root read) can validate a
+// snapshot's checksums without going through a path-based loader.
+func DecodeWorkflowSnapshot(data []byte) (*workflow.Workflow, error) {
 	var snap workflowSnapshot
 	if err := json.Unmarshal(data, &snap); err != nil {
 		return nil, fmt.Errorf("decode workflow snapshot: %w", err)
@@ -100,7 +116,7 @@ func loadWorkflowSnapshot(runDir string) (*workflow.Workflow, error) {
 	}
 	var wf *workflow.Workflow
 	if len(snap.ExpandedSteps) > 0 {
-		wf = workflow.RestoreExpanded(snap.Meta, snap.Defaults, snap.PublicSteps, snap.ExpandedSteps, snap.ModuleSources)
+		wf = workflow.RestoreExpandedWithTelemetry(snap.Meta, snap.Defaults, snap.Telemetry, snap.PublicSteps, snap.ExpandedSteps, snap.ModuleSources)
 	} else {
 		decoded, err := workflow.DecodeLocked(snap.TOML, snap.BaseDir, snap.SourcePath, snap.ModuleSources)
 		if err != nil {
@@ -128,12 +144,6 @@ func notificationPolicyDigest(policy workflow.NotificationPolicy) (string, error
 	}
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:]), nil
-}
-
-// LoadWorkflowSnapshot reads and verifies the immutable workflow captured at
-// run start. Historical commands must use this instead of current author TOML.
-func LoadWorkflowSnapshot(runDir string) (*workflow.Workflow, error) {
-	return loadWorkflowSnapshot(runDir)
 }
 
 // Resume restores every durable unfinished park under one scheduler. Workers

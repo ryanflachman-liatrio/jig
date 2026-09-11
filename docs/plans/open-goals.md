@@ -54,11 +54,11 @@ and comparison to high-rated TUIs (lazygit, k9s, yazi, btop) plus agent peers
 | ID | Goal | Kind | Notes |
 |----|------|------|-------|
 | A17 | Forge / PR automation (open PR, push, checks) | C | Local merge gate only. |
-| A18 | OTel / Prometheus / OTLP export | C | Tokens/cost stay in TUI + `result.json`. |
+| A18 | OTel / Prometheus / OTLP export | C | **Implemented.** Optional opt-in exporter for run/step lifecycle, cost, tokens, duration, gate/review/security signals. Metrics + spans; OTLP push, Prometheus scrape, and stdout — off by default, in-machine by default, redacted always. Plan: [`a18-otel-prometheus-export.md`](a18-otel-prometheus-export.md). Docs: [`docs/observability.md`](../observability.md). Posture: [ADR 0012](../adr/0012-observability-export.md). |
 | A19 | Remote / distributed workers | S | Single-machine only. |
 | A20 | `jig init` / workflow scaffold | C | **Done** (Spec 22). [`jig init` scaffold specification](../specs/22-spec-jig-init-scaffold/22-spec-jig-init-scaffold.md). |
 | A21 | Graph export (Mermaid / DOT / SVG) | C | In-TUI chart only. |
-| A22 | Run share / anonymized export bundle | C | Local `.jig/runs` only. |
+| A22 | Run share / anonymized export bundle | C | **Done** (Spec 23). `jig export RUN_ID --destination PATH [--include-text]` produces a local, offline, alias-only ZIP archive. Spec: [`23-spec-run-share-export.md`](../specs/23-spec-run-share-export/23-spec-run-share-export.md); tasks/proofs: [`23-tasks-run-share-export.md`](../specs/23-spec-run-share-export/23-tasks-run-share-export.md), [`23-proofs/`](../specs/23-spec-run-share-export/23-proofs/); contract: [`docs/operations.md#export-a-run`](../operations.md#export-a-run). Validation: `go test ./internal/runexport ./cmd/jig -race -count=1`, `go test ./... -count=1`, `go vet ./...`, `gofmt -l .`, and every `.agents/jig/*.toml` re-validated. |
 | A23 | Multi-operator shared run store | C | Single local operator. |
 | A24 | Notifications (desktop / Slack / webhook on gate or failure) | C | **Done** ([Spec 23 run notifications](../specs/23-spec-run-notifications/23-spec-run-notifications.md)). Bounded metadata-only delivery, coalesced attention, ordered shutdown, frozen policy on reopen. |
 | A25 | Chart crossing-min + gate labels | S | Schema MVP exclusions. |
@@ -234,6 +234,8 @@ If only twenty goals get attention:
 - `docs/specs/20-spec-mid-crash-recovery/` — mid-execution crash recovery / interrupted workers (A3)
 - `docs/specs/21-spec-unfinished-park-reopen/` — reopen needs_input / stopped / integration / pre-crash recovery parks after process death (A3 residual)
 - `docs/plans/tui-lazygit-polish/` — chrome polish (phases 0–2 landed)
+- `docs/plans/a18-otel-prometheus-export.md` — OTel / Prometheus / OTLP export (A18)
+- `docs/observability.md` — A18 operator contract (env vars, metric/span catalog, security stance)
 - `docs/plan-codex-acp-concurrency-diagnostics.md`
 - `docs/plan-acp-structured-edit-telemetry.md`
-- ADRs 0002, 0003, 0008
+- ADRs 0002, 0003, 0008, 0012

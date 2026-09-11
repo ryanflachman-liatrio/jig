@@ -60,6 +60,12 @@ type Options struct {
 	// binding registrations before Start emits its first live event. The
 	// concrete type is opaque here so cmd/jig owns the composition boundary.
 	Notifications NotificationRegistrar
+
+	// OnRunStart, when non-nil, is invoked immediately after Manager.Start
+	// returns successfully. cmd/jig uses it to notify the telemetry exporter
+	// of the run's workflow metadata (backend / transport / model per step)
+	// so subsequent StepStatus events carry those labels. Optional.
+	OnRunStart func(runID string, wf *workflow.Workflow)
 }
 
 // NotificationRegistrar is the seam headless uses to install workflow policy

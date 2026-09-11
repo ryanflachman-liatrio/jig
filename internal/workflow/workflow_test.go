@@ -2837,3 +2837,153 @@ with = { targets = "@collect.targets" }
 		t.Fatalf("error = %v, want collection-valued module input rejection", err)
 	}
 }
+
+// TestDecodeTelemetryValid confirms that a well-formed [telemetry] block
+// loads and populates the Workflow.Telemetry field. (A18 Phase 2.)
+func TestDecodeTelemetryValid(t *testing.T) {
+	const src = `
+[workflow]
+name = "with-telemetry"
+version = "1"
+
+[telemetry]
+enabled = true
+metric_prefix = "acme"
+export_thinking_counts = true
+
+  [telemetry.resource_attributes]
+  "service.namespace" = "platform"
+  "deployment.environment" = "ci"
+
+[[step]]
+id = "run"
+type = "command"
+run = "true"
+`
+	wf, err := Decode(src, "")
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if !wf.Telemetry.Enabled {
+		t.Errorf("Enabled = false, want true")
+	}
+	if wf.Telemetry.MetricPrefix != "acme" {
+		t.Errorf("MetricPrefix = %q, want acme", wf.Telemetry.MetricPrefix)
+	}
+	if !wf.Telemetry.ExportThinkingCounts {
+		t.Errorf("ExportThinkingCounts = false, want true")
+	}
+	if got := wf.Telemetry.ResourceAttributes["service.namespace"]; got != "platform" {
+		t.Errorf("resource[service.namespace] = %q, want platform", got)
+	}
+}
+
+// TestDecodeTelemetryInvalid asserts the load-time validation rules for
+// [telemetry]: metric_prefix regex and resource_attributes keys.
+func TestDecodeTelemetryInvalid(t *testing.T) {
+	cases := []struct {
+		name string
+		toml string
+		want string
+	}{
+		{
+			name: "bad prefix leading digit",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+
+[telemetry]
+metric_prefix = "1bad"
+
+[[step]]
+id = "s"
+type = "command"
+run = "true"
+`,
+			want: "metric_prefix",
+		},
+		{
+			name: "bad prefix punctuation",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+
+[telemetry]
+metric_prefix = "no.dots"
+
+[[step]]
+id = "s"
+type = "command"
+run = "true"
+`,
+			want: "metric_prefix",
+		},
+		{
+			name: "bad attribute key uppercase",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+
+[telemetry]
+[telemetry.resource_attributes]
+"Service.Name" = "foo"
+
+[[step]]
+id = "s"
+type = "command"
+run = "true"
+`,
+			want: "resource_attributes",
+		},
+		{
+			name: "bad attribute key spaces",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+
+[telemetry]
+[telemetry.resource_attributes]
+"has space" = "foo"
+
+[[step]]
+id = "s"
+type = "command"
+run = "true"
+`,
+			want: "resource_attributes",
+		},
+		{
+			name: "unknown telemetry field",
+			toml: `
+[workflow]
+name = "x"
+version = "1"
+
+[telemetry]
+enabled = true
+mystery = "?"
+
+[[step]]
+id = "s"
+type = "command"
+run = "true"
+`,
+			want: "unknown key",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Decode(tc.toml, "")
+			if err == nil {
+				t.Fatalf("want error containing %q, got nil", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %v, want substring %q", err, tc.want)
+			}
+		})
+	}
+}

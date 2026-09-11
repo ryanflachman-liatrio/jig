@@ -82,10 +82,20 @@ deterministic gates, and bounded loops. See
 [`.agents/jig/feature.toml`](.agents/jig/feature.toml) for a kitchen-sink workflow
 that exercises every construct.
 
+## Sharing a run
+
+`jig export RUN_ID --destination ./run-report.zip` packages one inactive run
+into a self-contained, offline ZIP — structural diagnostics by default,
+sanitized conversation text with explicit `--include-text` opt-in. See
+[`docs/operations.md`](docs/operations.md#export-a-run) for the full archive
+contract, limits, and privacy notes; sanitization is best-effort and never a
+guarantee of anonymity.
+
 ## Documentation
 
 - [`docs/workflow-schema.md`](docs/workflow-schema.md) — the full workflow spec (source of truth).
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how the code is laid out and why.
+- [`docs/operations.md`](docs/operations.md) — the non-TUI CLI: status, logs, resume, reset, export.
 - [`docs/TESTING.md`](docs/TESTING.md) — testing strategy and conventions.
 - [`docs/clipboard.md`](docs/clipboard.md) — TUI clipboard (`y` / `Y`) mapping, byte limits, and terminal prerequisites.
 - [`AGENTS.md`](AGENTS.md) — cross-tool orientation for AI coding assistants

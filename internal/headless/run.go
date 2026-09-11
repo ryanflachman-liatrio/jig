@@ -49,6 +49,9 @@ func Run(ctx context.Context, opts Options) Result {
 	if opts.Notifications != nil {
 		opts.Notifications.PrepareRun(run.ID, wf.NotificationPolicy())
 	}
+	if opts.OnRunStart != nil {
+		opts.OnRunStart(run.ID, wf)
+	}
 	return supervise(ctx, opts, wf, run, live, ctrl, w)
 }
 

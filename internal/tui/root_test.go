@@ -354,3 +354,211 @@ func TestHelpOverlayCompositesOverBase(t *testing.T) {
 		t.Fatalf("expected base at top-left corner, got line: %q", first)
 	}
 }
+
+// homeWithWorkflows builds a root model on Home with two discovered
+// workflows ("alpha", "beta") sized wide enough (>=homeNarrowBreak) that the
+// workflow pane sits at root-view origin (0,0), matching the coordinates
+// used by the mouse tests below.
+func homeWithWorkflows(t *testing.T) (tea.Model, string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	alphaPath := filepath.Join(dir, "alpha.toml")
+	betaPath := filepath.Join(dir, "beta.toml")
+	os.WriteFile(alphaPath, []byte(`
+[workflow]
+name = "alpha"
+version = "1"
+description = "first"
+[[step]]
+id = "hello"
+type = "command"
+run = "echo hi"
+`), 0o644)
+	os.WriteFile(betaPath, []byte(`
+[workflow]
+name = "beta"
+version = "1"
+description = "second"
+[[step]]
+id = "hello"
+type = "command"
+run = "echo hi"
+`), 0o644)
+
+	exec := runner.NewFakeExecutor(nil, runner.FakeOutcome{})
+	mgr := engine.NewManager(exec, "")
+	var m tea.Model = New(context.Background(), mgr)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+	m, cmd := m.Update(selector.DiscoverCmd(dir)())
+	if cmd != nil {
+		m, _ = m.Update(cmd())
+	}
+	return m, alphaPath, betaPath
+}
+
+func primaryClick(x, y int) tea.MouseClickMsg {
+	return tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft}
+}
+
+// TestRootViewMouseModeCellMotion asserts the root view always requests
+// cell-motion mouse delivery, alongside the existing AltScreen/BackgroundColor
+// configuration, regardless of which screen/overlay is active.
+func TestRootViewMouseModeCellMotion(t *testing.T) {
+	m, _, _ := homeWithWorkflows(t)
+	if got := m.View().MouseMode; got != tea.MouseModeCellMotion {
+		t.Fatalf("Home: MouseMode = %v, want MouseModeCellMotion", got)
+	}
+
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
+	if got := m.View().MouseMode; got != tea.MouseModeCellMotion {
+		t.Fatalf("Detail overlay: MouseMode = %v, want MouseModeCellMotion", got)
+	}
+}
+
+// TestHomeMouseClickSelectsRowWithoutOpeningDetail covers the click-to-select
+// happy path: a primary click on a visible workflow row moves the keyboard
+// selection to that row (the same as j/k would), independent of which row
+// was previously selected, but does not open the Detail overlay — only the
+// 'd' key does that.
+func TestHomeMouseClickSelectsRowWithoutOpeningDetail(t *testing.T) {
+	m, alphaPath, _ := homeWithWorkflows(t)
+
+	// alpha is row 0 (rendered at pane-local/root y=2-3, see selector's
+	// hit_test.go geometry fixtures); click it directly without first
+	// moving the keyboard cursor there.
+	m, cmd := m.Update(primaryClick(3, 2))
+	if cmd != nil {
+		if msg := cmd(); msg != nil {
+			m, _ = m.Update(msg)
+		}
+	}
+	root := m.(rootModel)
+	if root.showDetailOverlay {
+		t.Fatal("expected click on a workflow row to select it, not open the Detail overlay")
+	}
+	if path, ok := root.selector.SelectedPath(); !ok || path != alphaPath {
+		t.Fatalf("expected click to select alpha, got %q", path)
+	}
+}
+
+// TestHomeMouseClickSelectsRowNotKeyboardSelection asserts a click moves the
+// selection to the row actually under the pointer, even though the keyboard
+// cursor still sits on the first item (cold-start auto-selects the first
+// workflow).
+func TestHomeMouseClickSelectsRowNotKeyboardSelection(t *testing.T) {
+	m, _, betaPath := homeWithWorkflows(t)
+	root := m.(rootModel)
+	if path, ok := root.selector.SelectedPath(); !ok || !strings.Contains(path, "alpha") {
+		t.Fatalf("expected keyboard selection to still be alpha, got %q", path)
+	}
+
+	// beta is row 1 (rendered at pane-local/root y=5-6).
+	m, cmd := m.Update(primaryClick(3, 5))
+	if cmd != nil {
+		if msg := cmd(); msg != nil {
+			m, _ = m.Update(msg)
+		}
+	}
+	root = m.(rootModel)
+	if root.showDetailOverlay {
+		t.Fatal("expected click on beta's row to select it, not open the Detail overlay")
+	}
+	if path, ok := root.selector.SelectedPath(); !ok || path != betaPath {
+		t.Fatalf("expected click to select beta, got %q", path)
+	}
+}
+
+// TestHomeMouseClickNoOpCases is the negative-case table for click handling:
+// everything here must leave Home exactly as it was.
+func TestHomeMouseClickNoOpCases(t *testing.T) {
+	unchanged := func(t *testing.T, before, after tea.Model) {
+		t.Helper()
+		b, a := before.(rootModel), after.(rootModel)
+		if a.showDetailOverlay {
+			t.Fatal("expected no Detail overlay to open")
+		}
+		if b.homeSelectedPath != a.homeSelectedPath {
+			t.Fatalf("expected selection to stay %q, got %q", b.homeSelectedPath, a.homeSelectedPath)
+		}
+	}
+
+	t.Run("non-primary button", func(t *testing.T) {
+		m, _, _ := homeWithWorkflows(t)
+		after, _ := m.Update(tea.MouseClickMsg{X: 3, Y: 2, Button: tea.MouseRight})
+		unchanged(t, m, after)
+	})
+
+	t.Run("release, wheel, and motion are not click actions", func(t *testing.T) {
+		m, _, _ := homeWithWorkflows(t)
+		for _, msg := range []tea.MouseMsg{
+			tea.MouseReleaseMsg{X: 3, Y: 2, Button: tea.MouseLeft},
+			tea.MouseWheelMsg{X: 3, Y: 2, Button: tea.MouseWheelDown},
+			tea.MouseMotionMsg{X: 3, Y: 2},
+		} {
+			after, _ := m.Update(msg)
+			unchanged(t, m, after)
+		}
+	})
+
+	t.Run("out of bounds and on the Runs pane", func(t *testing.T) {
+		m, _, _ := homeWithWorkflows(t)
+		for _, pt := range [][2]int{{-1, 2}, {3, -1}, {1000, 2}, {90, 2}} {
+			after, _ := m.Update(primaryClick(pt[0], pt[1]))
+			unchanged(t, m, after)
+		}
+	})
+
+	t.Run("panel border, footer, and blank rows", func(t *testing.T) {
+		m, _, _ := homeWithWorkflows(t)
+		for _, y := range []int{0, 1, 23} {
+			after, _ := m.Update(primaryClick(3, y))
+			unchanged(t, m, after)
+		}
+	})
+
+	t.Run("empty selector", func(t *testing.T) {
+		exec := runner.NewFakeExecutor(nil, runner.FakeOutcome{})
+		mgr := engine.NewManager(exec, "")
+		var m tea.Model = New(context.Background(), mgr)
+		m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 24})
+		m, cmd := m.Update(selector.DiscoverCmd(t.TempDir())())
+		if cmd != nil {
+			m, _ = m.Update(cmd())
+		}
+		after, _ := m.Update(primaryClick(3, 2))
+		unchanged(t, m, after)
+	})
+
+	t.Run("while filtering", func(t *testing.T) {
+		m, _, _ := homeWithWorkflows(t)
+		m, _ = m.Update(tea.KeyPressMsg{Code: '/', Text: "/"})
+		root := m.(rootModel)
+		if !root.selector.CapturesText() {
+			t.Fatal("expected the selector to be filtering")
+		}
+		after, _ := m.Update(primaryClick(3, 2))
+		unchanged(t, m, after)
+	})
+
+	t.Run("while Detail overlay is already open", func(t *testing.T) {
+		m, _, _ := homeWithWorkflows(t)
+		m, _ = m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
+		if root := m.(rootModel); !root.showDetailOverlay {
+			t.Fatal("setup: expected 'd' to open the Detail overlay")
+		}
+		after, _ := m.Update(primaryClick(3, 2))
+		if after.(rootModel).active != screenHome {
+			t.Fatal("click while Detail overlay is open must not change the active screen")
+		}
+	})
+
+	t.Run("while Monitor is active", func(t *testing.T) {
+		m, _, _ := homeWithWorkflows(t)
+		root := m.(rootModel)
+		root.active = screenMonitor
+		after, _ := root.Update(primaryClick(3, 2))
+		if after.(rootModel).showDetailOverlay {
+			t.Fatal("click while Monitor is active must not open Detail")
+		}
+	})
+}

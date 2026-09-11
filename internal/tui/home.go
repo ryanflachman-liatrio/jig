@@ -115,18 +115,23 @@ func (m rootModel) homeFooter() string {
 	return f.Render("  " + hint)
 }
 
-func (m rootModel) homeView() string {
-	if m.showDetailOverlay {
-		return m.detail.View()
-	}
-	footer := m.homeFooter()
-	footerH := lipgloss.Height(footer)
+// homeLayout is the on-screen rectangle of each Home pane, in root-view
+// coordinates (0,0 is the terminal's top-left). It is the single source of
+// truth for Home's narrow/wide split so rendering (homeView), sizing
+// (sizeHomeChildren), and mouse hit-testing (updateHomeMouse) can never drift
+// out of sync with each other.
+type homeLayout struct {
+	workflowX, workflowY, workflowW, workflowH int
+	runsX, runsY, runsW, runsH                 int
+}
+
+func (m rootModel) homeLayout() homeLayout {
+	footerH := lipgloss.Height(m.homeFooter())
 	bodyH := m.height - footerH
 	if bodyH < 1 {
 		bodyH = 1
 	}
 
-	var body string
 	if m.width < homeNarrowBreak {
 		topH := bodyH / 2
 		if topH < 3 {
@@ -139,21 +144,40 @@ func (m rootModel) homeView() string {
 				topH = bodyH - botH
 			}
 		}
-		wfPane := m.homeWorkflowPane(m.width, topH)
-		runsPane := m.homeRunsPane(m.width, botH)
+		return homeLayout{
+			workflowX: 0, workflowY: 0, workflowW: m.width, workflowH: topH,
+			runsX: 0, runsY: topH, runsW: m.width, runsH: botH,
+		}
+	}
+
+	leftW := m.width * 2 / 5
+	if leftW < 24 {
+		leftW = 24
+	}
+	rightW := m.width - leftW
+	if rightW < 24 {
+		rightW = m.width / 2
+		leftW = m.width - rightW
+	}
+	return homeLayout{
+		workflowX: 0, workflowY: 0, workflowW: leftW, workflowH: bodyH,
+		runsX: leftW, runsY: 0, runsW: rightW, runsH: bodyH,
+	}
+}
+
+func (m rootModel) homeView() string {
+	if m.showDetailOverlay {
+		return m.detail.View()
+	}
+	footer := m.homeFooter()
+	l := m.homeLayout()
+	wfPane := m.homeWorkflowPane(l.workflowW, l.workflowH)
+	runsPane := m.homeRunsPane(l.runsW, l.runsH)
+
+	var body string
+	if m.width < homeNarrowBreak {
 		body = lipgloss.JoinVertical(lipgloss.Left, wfPane, runsPane)
 	} else {
-		leftW := m.width * 2 / 5
-		if leftW < 24 {
-			leftW = 24
-		}
-		rightW := m.width - leftW
-		if rightW < 24 {
-			rightW = m.width / 2
-			leftW = m.width - rightW
-		}
-		wfPane := m.homeWorkflowPane(leftW, bodyH)
-		runsPane := m.homeRunsPane(rightW, bodyH)
 		body = lipgloss.JoinHorizontal(lipgloss.Top, wfPane, runsPane)
 	}
 	return body + "\n" + footer
@@ -190,6 +214,12 @@ func (m rootModel) updateHome(msg tea.Msg) (rootModel, tea.Cmd) {
 	case detail.StartRunMsg:
 		next, cmd := m.startRun(msg.Wf)
 		return next.(rootModel), cmd
+
+	case tea.MouseMsg:
+		if m.showDetailOverlay {
+			return m, nil
+		}
+		return m.updateHomeMouse(msg)
 
 	case tea.KeyPressMsg:
 		if m.showDetailOverlay {
@@ -290,34 +320,40 @@ func (m rootModel) openDetailOverlay(path string) (rootModel, tea.Cmd) {
 
 // sizeHomeChildren sizes embedded panes so list/viewport math matches the View.
 func (m rootModel) sizeHomeChildren() rootModel {
-	footerH := lipgloss.Height(m.homeFooter())
-	bodyH := m.height - footerH
-	if bodyH < 1 {
-		bodyH = 1
-	}
-	if m.width < homeNarrowBreak {
-		topH := bodyH / 2
-		if topH < 3 {
-			topH = 3
-		}
-		botH := bodyH - topH
-		if botH < 3 {
-			botH = 3
-		}
-		m.selector = m.selector.SetPaneSize(m.width, topH)
-		m.runs = m.runs.SetPaneSize(m.width, botH)
-		return m
-	}
-	leftW := m.width * 2 / 5
-	if leftW < 24 {
-		leftW = 24
-	}
-	rightW := m.width - leftW
-	if rightW < 24 {
-		rightW = m.width / 2
-		leftW = m.width - rightW
-	}
-	m.selector = m.selector.SetPaneSize(leftW, bodyH)
-	m.runs = m.runs.SetPaneSize(rightW, bodyH)
+	l := m.homeLayout()
+	m.selector = m.selector.SetPaneSize(l.workflowW, l.workflowH)
+	m.runs = m.runs.SetPaneSize(l.runsW, l.runsH)
 	return m
+}
+
+// updateHomeMouse handles a root-level mouse message while Home is active. A
+// primary click that lands inside the workflow pane and resolves to a
+// visible row selects that row — the same as moving the keyboard cursor to
+// it with j/k — regardless of which pane has focus. It does not open the
+// Detail overlay; only the 'd' key does that. Everything else (release/wheel/
+// motion, other buttons, out-of-bounds points, clicks on the Runs pane, or
+// clicks while the filter is capturing text) is a no-op.
+func (m rootModel) updateHomeMouse(msg tea.MouseMsg) (rootModel, tea.Cmd) {
+	click, ok := msg.(tea.MouseClickMsg)
+	if !ok {
+		return m, nil
+	}
+	mouse := click.Mouse()
+	if mouse.Button != tea.MouseLeft {
+		return m, nil
+	}
+	if m.selector.CapturesText() {
+		return m, nil
+	}
+	l := m.homeLayout()
+	x, y := mouse.X-l.workflowX, mouse.Y-l.workflowY
+	if x < 0 || y < 0 || x >= l.workflowW || y >= l.workflowH {
+		return m, nil
+	}
+	selector, ok := m.selector.SelectItemAt(x, y)
+	if !ok {
+		return m, nil
+	}
+	m.selector = selector
+	return m, m.maybeSyncHomeSelection()
 }

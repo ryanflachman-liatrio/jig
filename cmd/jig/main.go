@@ -40,12 +40,14 @@ func main() {
 			os.Exit(runResume(os.Args[2:]))
 		case "reset":
 			os.Exit(runReset(os.Args[2:]))
+		case "export":
+			os.Exit(runExport(os.Args[2:]))
 		case "help", "-h", "--help":
 			printHelp()
 			return
 		default:
 			fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
-			fmt.Fprintln(os.Stderr, "usage: jig <init|validate|run|status|logs|doctor|resume|reset|prune|notifications>")
+			fmt.Fprintln(os.Stderr, "usage: jig <init|validate|run|status|logs|doctor|resume|reset|prune|export|notifications>")
 			os.Exit(2)
 		}
 	}
@@ -53,7 +55,10 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	rt, err := NewRuntime(".jig")
+	tel := setupTelemetry(ctx, ".jig")
+	defer tel.shutdown(context.Background())
+
+	rt, err := newRuntime(".jig", tel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing jig: %v\n", err)
 		os.Exit(1)
@@ -62,6 +67,7 @@ func main() {
 	// signal via NotifyContext), then dispatcher drain. The 5-second cap is
 	// enforced inside Runtime.Close.
 	defer rt.Close(context.Background())
+	tel.attach(ctx, rt.Manager)
 
 	diagnostics := tui.DiagnosticsRendererFunc(func() string {
 		if rt.Diagnostics == nil {
@@ -71,7 +77,11 @@ func main() {
 	})
 	// Alt screen and the background canvas are declared on the View in v2 (see
 	// rootModel.View), not as program options here.
-	p := tea.NewProgram(tui.New(ctx, rt.Manager, tui.WithDiagnostics(diagnostics)))
+	p := tea.NewProgram(tui.New(ctx, rt.Manager,
+		tui.WithDiagnostics(diagnostics),
+		tui.WithStartHook(tel.registerRun),
+		tui.WithTelemetryMode(tel.mode()),
+	))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running program: %v\n", err)
 		os.Exit(1)

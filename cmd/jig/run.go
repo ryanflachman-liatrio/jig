@@ -107,12 +107,17 @@ func runRun(args []string) int {
 		}
 	}()
 
-	rt, err := NewRuntime(*root)
+	tel := setupTelemetry(ctx, *root)
+	defer tel.shutdown(context.Background())
+
+	rt, err := newRuntime(*root, tel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return headless.ExitFailed
 	}
 	defer rt.Close(context.Background())
+	tel.attach(ctx, rt.Manager)
+
 	result := headless.Run(ctx, headless.Options{
 		WorkflowPath:  rest[0],
 		Manager:       rt.Manager,
@@ -128,6 +133,7 @@ func runRun(args []string) int {
 		Stdout:        os.Stdout,
 		Stderr:        os.Stderr,
 		Notifications: rt,
+		OnRunStart:    tel.registerRun,
 	})
 	rt.DrainDiagnosticsTo(os.Stderr)
 

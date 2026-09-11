@@ -333,6 +333,12 @@ type Model struct {
 	// it; an arriving diagnostic never does.
 	showDiagnostics bool
 
+	// telemetryMode is the resolved A18 telemetry exporter mode (off | prom |
+	// otlp | both). Populated via WithTelemetryMode; empty and "off" both
+	// hide the status-line badge so the indicator matches the "off by
+	// default" observability posture.
+	telemetryMode string
+
 	// Help agent modal (ctrl+h). helpOpen/helpReady are the open/connected flags;
 	// helpModel is preserved across open/close cycles for the run's lifetime.
 	// helpGateReq/helpGateAns are the rendezvous channels for the final-merge gate.
@@ -625,6 +631,14 @@ func New(runID string) Model {
 func (m Model) WithPrefs(jigRoot string) Model {
 	m.jigRoot = jigRoot
 	m.simpleMode = prefs.Load(jigRoot).SimpleMode
+	return m
+}
+
+// WithTelemetryMode sets the exporter mode (off | prom | otlp | both) so the
+// status line can render an "otel:<mode>" badge. Empty and "off" both hide
+// the badge (A18).
+func (m Model) WithTelemetryMode(mode string) Model {
+	m.telemetryMode = mode
 	return m
 }
 
