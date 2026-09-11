@@ -1,255 +1,123 @@
-# Code Conventions
-
-Design and structural conventions used in this codebase. Each entry names a
-principle, shows what to look for, and gives the rule. These were distilled
-from real decisions made during development — not aspirational guidelines.
-
----
-
-## File organisation
-
-### One concern per file
-
-A file earns its name from its single theme. When a file mixes concerns —
-rendering and event handling, layout math and keyboard dispatch — it becomes
-the right place for nothing and a hard place to navigate.
-
-**Signal:** a file over ~400 lines that doesn't have a single clear theme is
-carrying too much. File size is a symptom, not the disease; the disease is
-mixed concerns.
-
-**Rule:** name each file after what it does (`monitor_gate.go`,
-`monitor_transcript.go`), not after what it contains (`monitor_helpers.go`).
-If you can't name the file without using "and" or "util", split it.
-
-### Same-package file splitting over subpackages
-
-Go's unit of encapsulation is the package, but packages can span many files.
-When a model or system grows large, split into multiple files within the same
-package rather than forcing a subpackage boundary.
-
-A subpackage is only worth the disruption when:
-- the API surface is stable and consumed by multiple other packages, or
-- you want to enforce that callers cannot reach unexported internals.
-
-When tests already have package-level access to unexported types, a subpackage
-boundary forces you to export those types (or move the tests), adding churn
-with no architectural benefit.
-
-**Rule:** prefer `monitor_*.go` (same package, many files) over
-`internal/tui/monitor/` (new package) when the model is only consumed by one
-caller and the tests rely on unexported access.
-
-### The root model is the permanent exception
-
-The compositor model (`rootModel` in `internal/tui/`) holds every screen
-subpackage and is the package's public entry point (`tui.New`). It can never
-be extracted into its own subpackage — doing so would require every screen
-subpackage to import `tui/root`, which in turn imports them, creating a cycle.
-
-The root model therefore stays in `internal/tui/` indefinitely. It is split
-across same-package files by concern (`root.go`, `root_update.go`,
-`root_cmds.go`), but it has no subpackage directory of its own.
-
-**Rule:** every screen model eventually gets its own subpackage. The root
-compositor stays in the parent package permanently — it is the only file in
-`internal/tui/` that is not a candidate for subpackage extraction.
-
-### Subpackages require a shared foundation package first
-
-A subpackage creates a package boundary. If the code being extracted depends
-on presentation primitives (`theme`, `panel()`, icon constants, `hintString()`)
-that also live in the parent package, extracting it naively produces a circular
-import: the parent imports the subpackage for its model; the subpackage imports
-the parent for its primitives.
-
-The solution is a foundation package — `internal/tui/shared/` — that contains
-only shared presentation primitives and depends on nothing in `internal/tui/`.
-Both the parent and each subpackage import `shared`; neither imports the other.
-
-```
-internal/tui/shared/   ← styles, panel, input, keys, help overlay
-       ↑                  no imports from tui/
-internal/tui/          ← root, selector, detail, runs, chat
-       ↑                  imports shared
-internal/tui/monitor/  ← monitor model, msgs, keys
-                          imports shared, not tui
-```
-
-**Rule:** before extracting a subpackage, check whether it references any
-primitives from the parent. If it does, those primitives belong in `shared`,
-not the parent. Extract `shared` first, then extract the subpackage.
-
-### Migration: thin aliases let existing files migrate gradually
-
-Moving everything to `shared` at once would require updating hundreds of
-`theme.X`, `panel(...)`, `IconSuccess` references across all existing files in
-one commit. Instead, keep the existing files working via thin local aliases
-in the parent package:
-
-```go
-// internal/tui/styles.go — bridge during migration
-package tui
-import "jig/internal/tui/shared"
-const IconSuccess = shared.IconSuccess  // const alias
-var theme = shared.Theme               // var alias for the singleton
-```
-
-```go
-// internal/tui/panel.go — bridge during migration
-package tui
-import "jig/internal/tui/shared"
-func panel(title, body string, width, height int, focused bool) string {
-    return shared.Panel(title, body, width, height, focused)
-}
-func panelFrame() (int, int) { return shared.PanelFrame() }
-```
-
-Each screen (`selector`, `detail`, `runs`, `chat`) can then be moved to its
-own subpackage independently, switching to `shared.X` directly when it does.
-The aliases are removed when the last file in the parent that uses them moves.
-
-**Rule:** during a multi-step migration, use const/var/func aliases to keep
-the parent compiling. Remove each alias when no remaining file in the parent
-needs it.
-
-### Constants live with their concern
-
-Don't collect unrelated constants into a single block at the top of the file
-or in a shared `constants.go`. A constant belongs in the file that defines the
-concern it governs.
-
-```go
-// monitor_layout.go — layout constants live here because resize() uses them
-const (
-    stepsMinWidth           = 32
-    transcriptMinInnerWidth = 40
-)
-
-// monitor_steps.go — step-list constants live here
-const (
-    listBodyHeaderLines = 0
-    stepRowLines        = 2
-)
-```
-
-**Rule:** ask "which file's functions read this constant most?" — put it there.
-
-### Pure helpers stay near their primary caller
-
-Stateless utility functions (`humanTokens`, `fenceJSON`, `collapseLine`,
-`clipReason`, `withBar`) are not general enough to share. A grab-bag
-`util.go` or `helpers.go` is a convenience today and a navigation tax forever.
-
-**Rule:** put a helper in the file that contains its primary caller. If two
-files share a helper, the helper belongs in whichever file it shapes more.
-
----
-
-## Dispatch patterns
-
-### Parallel switch statements are a design smell
-
-When three or more functions all contain a `switch x { case A: ... case B:
-... }` over the same discriminant, adding a new case means editing three
-places. The cases are coupled by the discriminant but the code is scattered.
-
-In this codebase the gate input kinds (`inputKindRequest`, `inputKindReview`,
-`inputKindRecovery`, ...) appeared as parallel switch arms in `updateGate`,
-`gateStrip`, and `footerView`. Adding a ninth kind would have required three
-separate edits, with no compiler help to catch a missed arm.
-
-**Fix:** extract each arm into a named method, reduce each switch to a
-one-line dispatch:
-
-```go
-// Before: 300-line switch with inline logic per arm
-switch entry.kind {
-case inputKindRequest:
-    // 20 lines inline
-case inputKindQuestion:
-    // 60 lines inline
-// ...
-}
-
-// After: dispatch to named methods, logic lives in one place per kind
-switch entry.kind {
-case inputKindRequest:  return m.updateGateRequest(msg, entry)
-case inputKindQuestion: return m.updateGateQuestion(msg, entry)
-// ...
-}
-```
-
-**Rule:** if the same discriminant drives three or more switch statements
-across the codebase, name each arm as a method. Adding a new case then
-means writing one function per concern, not editing N switch blocks.
-
-### Named dispatch, not inline arms
-
-A switch arm that contains substantial logic should be a named function. The
-switch statement itself then reads as a table of contents — you can scan it
-to understand the shape of the system, then dive into the specific method you
-care about.
-
-**Rule:** if a switch arm is longer than ~5 lines, name it.
-
----
-
-## Bubble Tea model structure
-
-### The model struct stays unified
-
-Bubble Tea requires one model that implements `Update`/`View`. Splitting the
-struct into embedded sub-structs to "reduce size" produces indirection chains
-(`m.gate.inputQueue`, `m.transcript.chatBlocks`) that add cognitive load
-without reducing coupling — the methods still need access to the whole model.
-
-**Rule:** keep the `monitorModel` struct as one flat declaration. Distribute
-*methods* across files by concern; the struct stays in `monitor_model.go`.
-
-### Value receivers with shared maps
-
-Go's value receiver copies the struct, but maps are reference types — a map
-write inside a value-receiver method persists across copies. This codebase
-uses value receivers on `monitorModel` throughout and relies on this property
-for the render cache (`chatRendered`) and expand state (`chatExpand`).
-
-The maps are invalidated wholesale (reassigned) on width change, not
-mutated field-by-field, so the pattern is safe. But it is non-obvious.
-
-**Rule:** if a value-receiver method writes to a map field, that's intentional
-and correct. When replacing a map, use a pointer receiver (or return a new
-model) so the reassignment is visible at the call site.
-
----
-
-## Refactoring discipline
-
-### Mechanical split before behavioural cleanup
-
-When splitting a large file, do it in two passes:
-
-1. **Move** — copy functions verbatim into their new files, delete the
-   originals, fix imports, verify build and tests pass. No logic changes.
-2. **Clean** — improve naming, extract helpers, simplify dispatch, now that
-   each file is small enough to reason about in isolation.
-
-Mixing both passes in one commit makes the diff unreadable and makes it hard
-to bisect a regression.
-
-**Rule:** split first (green tests), clean second (green tests again). Commit
-each pass separately.
-
-### Tests don't need to change when splitting files within a package
-
-If the new files are in the same package as the old file, every test that
-compiled before will compile after — package-level visibility is unchanged.
-If you find yourself exporting symbols or moving tests to make a same-package
-file split work, that's a signal the refactor is adding a package boundary
-that doesn't belong yet.
-
-When moving code to a true subpackage, tests must move with it. White-box
-tests (those that access unexported fields) belong in the subpackage itself
-(`package monitor`), not in `package monitor_test`. This preserves the same
-access they had before, and avoids the need to export internal state just to
-satisfy a test.
+# Go engineering conventions
+
+Apply these rules to Go implementation and review. Package ownership is in
+[Architecture](ARCHITECTURE.md); graph and terminal rules live in
+[Graph engineering](GRAPH_ENGINEERING.md) and [TUI engineering](TUI.md).
+
+## Design around ownership
+
+Keep packages cohesive and APIs small. Define interfaces at the consuming
+boundary when substitution is useful; `engine.Executor` and `engine.Reporter`
+are the local examples. Prefer concrete types internally. Do not add an
+interface for every struct, a generic service layer, or a package merely to
+reduce a file's line count.
+
+Name files after the concern they own. Split methods within a package when
+that improves navigation; extract a package when it establishes a useful
+boundary and an acyclic dependency direction. The TUI already has screen
+packages and a shared foundation. There is no requirement to flatten all models
+or to extract every model into a package. Extract substantial switch arms when
+it clarifies behavior; fixed line-count rules are not a design test.
+
+Place constants and helpers near their owning behavior. Export only what other
+packages need. Comments document contracts and explain non-obvious reasoning,
+especially lifecycle, ownership, and recovery assumptions. Avoid comments that
+repeat the next statement. These choices follow Go's guidance on small
+consumer-owned interfaces, naming, and useful documentation.
+[Go Code Review Comments](https://go.dev/wiki/CodeReviewComments)
+
+## Represent domain state explicitly
+
+Use the existing typed constants and structures for step status, failure
+classification, events, and workflow fields. Avoid stringly typed maps for
+known contracts. Validate external data at the boundary that owns the rule;
+keep runtime checks for facts only known during execution, such as producer
+output, file contents, transport capabilities, and budgets.
+
+Distinguish absent values from explicit `false`, zero, empty collections, and
+null when the schema needs that distinction. Use pointers or presence metadata
+at decoding boundaries rather than silently changing precedence. Resolve
+inheritable values once. Backend/transport defaults differ from agent-profile
+precedence; consult `internal/workflow/load.go` for each field.
+
+Do not import Rust representation conventions wholesale into Go. Useful zero
+values, focused structs, and explicit validation are appropriate Go designs.
+Introduce generics only when a real repeated algorithm benefits from them.
+
+## Errors and resource lifetime
+
+- Return errors from library code; keep process exit decisions in `cmd/jig`.
+  Invalid workflows, backend failures, and malformed persisted data are errors,
+  not reasons to panic.
+- Wrap with `%w` when callers need the underlying error; add operation and
+  safe identifiers. Use `errors.Is`/`errors.As` for programmatic decisions.
+  Human-facing validator tests may assert distinctive message fragments.
+- Handle an error at a clear boundary. Avoid logging and returning the same
+  error at every layer. Keep secrets, prompt text, and raw tool data out of
+  generic error and telemetry fields.
+- Acquire a resource before registering its cleanup. Check write/flush/close
+  errors when they determine whether required output was persisted. A
+  best-effort cleanup error must not hide the primary failure.
+- Use `filepath` and existing datastore/path helpers for filesystem paths.
+  Preserve the distinction between workflow-relative assets, repo-root scripts,
+  execution directories, and run-owned output. Check containment at trust
+  boundaries, including symlink behavior where the contract requires it.
+
+Use the standard library's [error contracts](https://pkg.go.dev/errors) and
+[Effective Go](https://go.dev/doc/effective_go) for language fundamentals;
+Effective Go alone does not cover modern modules or generics.
+
+## Concurrency and cancellation
+
+Every goroutine needs an owner, a stop condition, and a way for its owner to
+observe completion. Pass `context.Context` as the first parameter for work
+that can block; propagate cancellation to subprocesses, reads, sends, and
+waits. Existing long-lived owner structs may retain their lifecycle context;
+avoid hiding request contexts in unrelated data or replacing them with
+`context.Background()` inside a request.
+
+Preserve scheduler ownership rather than adding locks around arbitrary run
+state access. Snapshot maps, slices, pointers, and event payloads before
+crossing ownership boundaries when they can still be mutated. Value receivers
+copy a struct, not its map/slice storage; a shared cache is safe only with an
+explicit single-owner or synchronization contract. Do not copy structs
+containing mutexes or other synchronization primitives after use.
+
+Keep channels bounded and define their delivery policy. A full live-preview
+queue may drop updates; a human answer, security finding, or terminal result
+must use the reliable path. Make blocked operations cancellation-aware and
+avoid closing channels owned by another producer. Do not hold a mutex while
+calling external code or performing potentially unbounded I/O.
+
+When subprocess trees are involved, cancellation must release children and
+pipes, not just the immediate parent. Reuse the platform-specific ACP process
+helpers. Test shutdown under blocked output, pending questions, and process
+exit. For new designs, use [context](https://pkg.go.dev/context) and
+[sync](https://pkg.go.dev/sync) contracts rather than timing assumptions.
+
+## Performance and dependencies
+
+Bound inputs before allocating or expanding them: transcript blocks/windows,
+JSON and findings files, fan-out items, archives, and queues. Avoid rereading
+whole transcripts or rerendering unchanged documents for every message. Use
+indexes and caches with explicit invalidation; measure representative input
+sizes with benchmarks/profiles before adding complexity.
+
+Use the versions selected in `go.mod` and inspect their actual APIs. Prefer
+standard-library features when adequate. A dependency addition must justify
+its maintenance and runtime cost; a documentation refresh is not a dependency
+upgrade. The root module's local ACP replacement does not remove the nested
+module's independent dependency and test boundary.
+
+## Refactoring and completion
+
+Preserve the pre-v1 policy in [AGENTS.md](../AGENTS.md): remove replaced paths
+and update consumers in the same change. Separate mechanical movement from
+behavior edits when practical so reviewers can see each clearly; this does
+not require extra commits or user approval. Move white-box tests with the
+package that owns their internals instead of exporting implementation details
+for tests. Use external-package tests when exercising the public contract.
+
+Finish with formatting of changed files, applicable tests/vet from
+[Testing](TESTING.md), a diff review, and updated contracts/examples. Do not
+rewrite unrelated code to make a style preference look universal.

@@ -1,279 +1,196 @@
-# jig
+# jig vocabulary
 
-jig's domain vocabulary — a glossary, not a spec. Two clusters: the TUI
-presentation language, and the execution & code-integration model.
+Use these terms consistently in code, workflow skills, and user-facing text.
+This is a glossary; [Architecture](docs/ARCHITECTURE.md) describes ownership,
+and [Workflow schema](docs/workflow-schema.md) defines the authoring contract.
+
+## Workflow and graph
+
+**Workflow:** a validated TOML definition of explicit dependencies, inputs,
+outputs, conditions, checks, human reviews, and bounded routes. A workflow is a
+definition; a **run** is one execution with its own identity and state.
+
+**Step:** a declared unit of workflow behavior. Author-facing kinds are
+`agent`, `command`, `check`, `review`, and `subworkflow`. A step definition is
+not the same as its mutable runtime `step.State` or its execution result.
+
+**Dependency:** a forward `depends_on` relationship. “Upstream” means producers
+and prerequisites; “downstream” means consumers and dependents. Specify which
+direction is meant by a “closure”; reset uses the target plus downstream
+transitive dependents, not the target's prerequisites.
+
+**Condition:** a parsed, typed expression used by a guard such as `when`.
+Conditions inspect declared facts; they do not execute code or query an agent.
+
+**Route:** an ordered, bounded back-edge that selects another graph iteration
+and carries feedback. Distinct from a dependency edge or automatic retry.
+
+**Module / subworkflow:** a reusable TOML interface with inputs and exports,
+invoked by a subworkflow step and expanded into namespaced steps at load time.
+The engine runs one expanded graph. A module is not an independent child run.
+
+**Producer / artifact:** a producer declares output that consumers reference.
+An artifact is captured output/evidence; a path in a mutable worktree is not
+necessarily an immutable artifact. Structured conclusions are schema-checked
+values, not decisions inferred from prose.
+
+**Check:** deterministic execution with applicability and a typed findings
+protocol. Check outcomes distinguish pass, fail, error, and engine-determined
+non-applicability; these are not interchangeable with ordinary step status.
+
+**Agent profile:** reusable agent settings folded into unresolved step fields.
+**Quality profile:** a repository-specific deterministic check contract used by
+SDD workflows. **Notification profile:** reusable run notification policy.
+Qualify “profile” when the meaning is ambiguous.
+
+## Runtime and recovery
+
+**Scheduler:** the single owner of a run's mutable execution state. Workers
+perform execution and report messages; callers use the `Run` command/snapshot
+seam rather than changing state directly.
+
+**Park:** unfinished state waiting for input, review, recovery, integration, or
+resume. A parked step is not automatically failed or terminal.
+
+**Quiescent:** no worker is in flight while the run remains unfinished.
+Quiescence is a reset prerequisite; it does not mean the run succeeded.
+
+**Attempt:** execution count associated with automatic failure retry.
+**Iteration:** execution pass associated with a route loop.
+**Generation:** provenance counter advanced by manual reset. Keep all three
+axes distinct in transcripts, snapshots, and tool matching.
+
+**Retry:** another attempt under a declared failure policy. New retry contracts
+use `[step.retry]`; `max_attempts` includes the initial attempt, whereas legacy
+`max_retries` counts additional retries. Idempotency is a promise about repeated
+external effects, not a property conferred by the retry mechanism.
+
+**Stop / resume a step:** interrupt one worker while preserving the run; resume
+opens a session using its durable backend conversation ID and new input.
+Resume continues a conversation, not an exact interrupted machine instruction.
+**Cancel a run:** end the whole run through its cancellation lifecycle.
+
+**Crash reopen:** acquire ownership and rebuild a live scheduler from the
+locked workflow, journal, and required artifacts. Interrupted running work
+moves into recovery; existing parks restore in place. Display replay may show
+an orphaned history that is not safe to reopen.
+
+**Journal:** ordered orchestration history in `journal.jsonl`, persisted before
+event publication. **Live signal:** lightweight, potentially lossy observation
+such as transcript progress or a text delta. Live signals are not durable truth.
+
+**Snapshot:** a captured representation for a particular purpose. Qualify as
+workflow snapshot, execution view, input snapshot, or `RunSnapshot`; an
+in-memory status snapshot is not itself a durable execution checkpoint.
+
+**Lease:** exclusive process ownership of a persisted run's scheduler. A UI
+opening the run for inspection does not acquire authority to mutate it.
+
+## Repository integration
+
+**Run branch:** the per-run Git branch accumulating integrated step changes,
+starting from the user's working-branch HEAD. Final landing back onto the
+user's branch is human-gated. “Integration branch” is an acceptable synonym.
+
+**Step worktree:** the private mutation workspace based on integrated run
+state. **Execution view:** a separate repository snapshot selected for a
+read-only dispatch. Reader views do not participate in mutation integration.
+Neither implies an OS sandbox or a security boundary.
+
+**Integration:** squash a step's changed contribution into the run branch,
+recording a step-addressable commit. An unchanged step need not produce a
+commit. Reserve “final merge” for run-branch landing onto the user's branch.
+
+**Integration conflict:** a Git conflict during integration or survivor replay.
+The run parks for operator action; an optional agent resolver is explicitly
+operator-invoked, not an automatic conflict policy.
+
+**Reset:** rewind an unfinished, quiescent run to invalidate a target and its
+downstream dependents, replay independent survivor commits, and return the
+invalidated work to pending in a new generation. Distinct from retry or resume.
+
+## Dynamic fan-out
+
+**Family:** the single static node with `[step.foreach]`. It supplies a template
+and acts as a fan-in barrier; it does not itself dispatch a normal worker.
+Workflow references address the family, never a runtime child.
+
+**Child / runtime instance:** one scheduler-owned clone bound to one source
+list item. Its deterministic identity includes the family and expansion
+coordinates. It is absent from author-declared `wf.Steps`, but visible in
+operator/provenance surfaces and subject to the ordinary execution lifecycle.
+
+**Expansion:** resolving a bounded list into ordered children, canonicalizing
+items, and recording durable identity for one generation/iteration. Reopen
+restores this expansion; reset/route invalidation can require a new one.
+
+**Barrier / fan-in:** the family's join point. Dependents wait for the current
+children to settle according to engine policy. An empty expansion succeeds.
+
+**Aggregate:** the family's author-addressable result, including counts and
+`results[]` ordered by source index rather than completion time.
+
+**Event fan-out:** publishing the same event to multiple subscribers. This is
+separate from dynamic fan-out, which multiplies runtime step instances.
+
+## Harness and backend
+
+**Backend:** the vendor/CLI being driven: Claude, Cursor, or Codex today.
+**Transport:** the protocol used to reach it: SDK or ACP as supported.
+**Harness:** jig's Go implementation of the transport/lifecycle seam:
+`ClaudeHarness`, `AcpHarness`, `CursorHarness`, or `CodexHarness`.
+Supported pairs and defaulting are in [AGENTS.md](AGENTS.md).
+
+**Session:** the live value returned by `Harness.Open` for one executor call.
+Mid-turn answers use that same session. A later resume opens a new session
+with the previous backend conversation ID; it does not reuse a closed object.
+
+**Capability:** a feature advertised by the harness before opening a session.
+Required support is checked explicitly and fails closed when absent. Do not
+infer capabilities from a concrete type assertion or vendor name.
+
+**PermissionFn:** jig's synchronous pre-tool callback at the harness boundary.
+The runner binds it to the security guard; the harness does not own sentinel
+policy. A worktree and an allowed-tools list are different controls.
 
 ## TUI presentation
 
-The presentation vocabulary of jig's Bubble Tea interface — the terms that name
-what the user sees and where their keys act.
+**Screen:** one of the root surfaces, Home or Monitor. Home contains workflow
+and run lists; Detail/chart is an overlay. Standalone chat is a separate model,
+not the default CLI entry point. Avoid calling every child model a screen.
 
-**Screen**:
-One top-level view in the workflow flow: Selector, Detail, Runs, or Monitor.
-Exactly one is active at a time. The standalone streaming Chat client is a separate
-root model reached via `go run ./cmd/jig` — not part of the four-screen flow, but it
-is paneled with the same helper and focus convention.
-_Avoid_: Page, view, tab.
+**Panel:** shared border/title presentation around a caller-sized body. It
+owns neither viewport state nor content wrapping. **Footer:** the unboxed
+contextual key-hint line below the main content. **Status line:** run state and
+progress; distinct from key hints.
 
-**Panel**:
-A rounded border with a title composited into its top edge, wrapping a body of
-content. A pure-presentation primitive: it frames and titles a pre-rendered body
-and paints the focus color; it never owns viewports, wrapping, or content sizing —
-the caller fits the body to the panel's inner area using lipgloss frame helpers.
-_Avoid_: Box, frame, pane, window.
+**Focus:** the region receiving keyboard input. **Selection:** the current
+list row, transcript item, or document. Focus and selection can differ.
 
-**Focus** (of a region):
-The property of holding keyboard input. The focused region's border is drawn in the
-primary color (Charple); every blurred region's border is dim (Iron). On a
-single-panel screen the whole screen is the focused region. In the Monitor, focus
-moves between the Steps panel, the Transcript panel, and the Gate — the Gate only
-while the input queue is non-empty (the empty input bar is inert and skipped by
-the `tab` cycle).
-_Avoid_: Active, selected (reserve "selected" for the list cursor row).
+**Gate:** Monitor's human-input surface. Its bar reports pending entries;
+focusing pending work opens the relevant controls or review workspace without
+preventing navigation elsewhere. An empty bar is skipped by the focus cycle.
 
-**Gate**:
-The Monitor surface through which human input is collected. An always-present,
-one-line action bar reports pending entries; focusing a pending Gate opens its
-controls as an overlay without resizing the Steps or Transcript panels. A pending
-Gate does NOT freeze navigation — the user can still move focus between the panels
-to read context while the Gate waits.
-_Avoid_: Modal, dialog, prompt (reserve "prompt" for the from="user" entry).
+**Input queue / entry:** the ordered pending interactions and one interaction
+within them. The queue preserves simultaneous arrivals. Entries include review,
+user input, questions, recovery, stopped-step, and integration interactions.
+A Gate is the surface, not the engine's deterministic validation check.
 
-**Input queue**:
-The ordered set of all steps currently blocked on a human, surfaced through the
-Gate. Arrivals append; nothing is dropped when several steps block at once. A
-`[N / M]` indicator names the active position and the total. While the Gate holds
-focus, `[` selects the previous entry and `]` selects the next entry; both wrap so
-the user can answer entries in any order. `tab`/`shift+tab` always move focus
-between regions.
-_Avoid_: Stack, list (reserve "list" for the Steps list), backlog.
+**Review round / document / anchor:** an immutable review set, one source
+within it, and a location tied to document identity and logical source lines.
+Preview rows, folded hunks, and old/new diff coordinates are presentation, not
+anchor identity. A draft holds pending comments/verdicts; submission uses the
+review contract atomically.
 
-**Input entry** (or **entry**):
-One item in the input queue: a review workspace, a `block_on` agent-input box, an
-AskUserQuestion option list, or a `from="user"` text prompt. A review entry owns
-its immutable round descriptors, source/preview cursor, comments, and draft; it
-is submitted as one atomic verdict batch. Other entries carry the step ID (and
-tool-use ID for a question) that routes their response.
-_Avoid_: Request, item, gate (a gate is the strip; an entry is what it displays).
+**Transcript item:** Monitor's normalized unit for rendering, navigation,
+search, expansion, and restored position, derived from durable transcript
+blocks. Do not confuse a displayed item with a raw JSONL entry or screen row.
 
-**Footer**:
-The single unboxed dim hint line rendered directly below a screen's panel(s),
-listing the keybindings available in the current state. Never enclosed in a panel.
-_Avoid_: Help line, status bar, keybind bar.
+**Tool exchange:** a use/result pair within the same generation, iteration,
+and attempt. **Use-only** or **result-only tool item:** one counterpart is
+absent from the loaded page or durable record; its outcome is not invented.
+A use-only item is pending only while its step is running.
 
-**Transcript item**:
-One normalized, page-local unit of Monitor presentation derived from one or more
-durable transcript blocks. It is the unit of transcript rendering, search,
-navigation, expansion, and restored monitor state.
-_Avoid_: Entry, block, group, row.
-
-**Tool exchange**:
-A Transcript item representing one tool use and its matching tool result within
-the same generation, iteration, and attempt; it exposes both input and output
-through one disclosure.
-_Avoid_: Tool group, tool call group, result row.
-
-**Result-only tool item**:
-A Transcript item for a tool result whose matching use is not in the loaded
-page or is absent from the durable transcript. Its origin is unknown and it is
-not presented as user guidance.
-_Avoid_: Orphan result, successful tool exchange.
-
-**Use-only tool item**:
-A Transcript item for a tool use whose matching result is not in the loaded
-page or is absent from the durable transcript. It is pending only while its
-step is running; otherwise its outcome is unknown.
-_Avoid_: Completed tool, failed tool.
-
-**User guidance**:
-Human-authored transcript text represented by a `RoleUser` text block, including
-an initial instruction and later resume input. It is prose, distinct from a
-role-user tool result, and receives the user-message presentation.
-_Avoid_: Tool result, user entry.
-
-**Unsupported transcript item**:
-A quiet, inspectable Transcript item for durable transcript content whose role
-or block type the Monitor does not recognize. It preserves evidence and order
-without assigning an unsupported semantic meaning.
-_Avoid_: Dropped content, error.
-
-## Execution & code integration
-
-The vocabulary of how jig carries code between steps and lets an operator rewind a
-run. Introduced by the run-integration/reset work (spec 05).
-
-**Run branch**:
-The single per-run git branch into which every step's code changes are integrated,
-one commit per step. It starts at the user's working-branch HEAD and accumulates the
-run's work; at run end a single human-gated merge lands it back on the user's branch.
-_Avoid_: Integration branch (acceptable synonym), main, trunk.
-
-**Step worktree**:
-The isolated git worktree in which one mutating step's agent runs, branched off the
-**run branch's current HEAD** — so a step sees the code its upstream steps produced.
-Each mutating step gets its own; read-only steps get none.
-_Avoid_: Sandbox, checkout.
-
-**Integration**:
-Squash-merging a completed step's worktree branch back into the run branch as
-**exactly one commit, tagged with the step id**. The per-step commit is what makes a
-step addressable by a later reset.
-_Avoid_: Merge (reserve "merge" for the final run-branch → user-branch landing).
-
-**Integration conflict**:
-A git conflict encountered while integrating a step, or while replaying a survivor
-during a reset, when two changes touch the same lines. Surfaced through the Gate as a
-human-resolved entry — never auto-resolved.
-_Avoid_: Collision, clash.
-
-**Reset** (to a step):
-The operator action that rewinds a run to an earlier target step: `git reset` the run
-branch to before the target's dependency closure, replay the survivor commits outside
-that closure, and return the target and its downstream to `pending` to re-run. Only on
-an unfinished run.
-_Avoid_: Retry, rerun (reserve "retry" for the automatic `on_failure = "retry"`).
-
-**Stop / Resume** (a step):
-**Stop** interrupts a single running step (the run stays alive and becomes quiescent);
-**resume** continues that step's agent session with a new message. Stop is the way to
-reach quiescence mid-run so a reset can proceed; resume continues the conversation, not
-the exact interrupted turn. After process death, `Manager.Resume` restores the stopped
-park and its durable session before the same Resume-step action is used.
-_Avoid_: Pause; Cancel (reserve "cancel" for tearing down the whole run).
-
-**Crash reopen** (a run):
-Restoring a live scheduler for an unfinished run after its owning process dies
-(`Manager.Resume`, Specs 20 and 21). Durable `running` / `validating` steps move
-to recovery; review, recovery, stopped, input/question, and integration parks
-restore in place, including mixed runs. Mid-flight SessionID is read from
-`session.json`. Distinct from live Stop/Resume: interrupted workers never route
-through `StatusStopped`.
-_Avoid_: Recover (reserve for the gate action after reopen); Reset.
-
-**Quiescent**:
-A run with no worker in flight that has not yet settled — the only state in which a
-reset is safe. Reached at a gate or by stopping the running step.
-_Avoid_: Idle, paused, done.
-
-**Generation**:
-The per-step counter of manual re-runs, distinct from **`Attempt`** (automatic
-failure-retries under `on_failure = "retry"`) and **`Iteration`** (loop passes). Bumped
-when a step is manually reset so its transcript shows a legible boundary; unlike
-`Attempt`, it gates no budget.
-_Avoid_: Attempt, retry, version, epoch.
-
-## Dynamic fan-out (`[step.foreach]`)
-
-The vocabulary of the runtime-sized `[step.foreach]` fan-out feature (A8,
-`docs/plans/a8-dynamic-foreach-fan-out.md`). **Distinct from** the unrelated
-"fan-out" used elsewhere in this codebase's own docs for the engine's *event*
-distribution — `docs/engine-design.md` talks about the event bus "fan-out" to
-subscribers (journal write, then fan out to the TUI/manifest/ops) and a
-`chan<- Event` slice literally named `subs` for that purpose. That usage means
-"one writer, many readers of the same event stream" and has nothing to do with
-runtime step multiplication. When either sense is ambiguous from context,
-qualify it: "event fan-out" for the bus, "dynamic fan-out" or the terms below
-for this feature.
-
-**Family**:
-The single static DAG node declared with `[step.foreach]` — an ordinary
-`agent` or `command` step whose template runs once per element of a
-runtime-sized list instead of once. The family id is the only one that ever
-appears in `depends_on`/`@ref`/`when`; it is a fan-in barrier, not a step that
-itself executes.
-_Avoid_: Fan-out step (ambiguous with the event-bus sense above), parent step
-(reserve "parent" for `ParentID`, the child-side provenance pointer).
-
-**Child** (or **runtime instance**):
-One runtime clone of a family's template, bound to exactly one element of the
-resolved list, identified by a deterministic id
-(`<family>.__fanout__.g%03d.r%03d.i%04d`). A child is never declared in TOML
-and never appears in `wf.Steps`; it lives only in the scheduler's runtime
-registry for the run's lifetime, executes through the exact same lifecycle as
-an ordinary step (retry, gates, worktree, transcript), and is addressable only
-by an operator/provenance surface (Monitor, ops, logs) — never by another
-step's `@ref`.
-_Avoid_: Instance (acceptable synonym, used in code/journal field names),
-sub-step, task.
-
-**Expansion**:
-The one-time act of resolving a family's bounded producer list into its
-ordered set of children for one generation/iteration: canonicalizing each
-item, writing the durable manifest, and journaling `FanOutExpanded`.
-Re-expansion only happens after a reset or a route rewind that includes the
-family invalidates the current set.
-_Avoid_: Fan-out (the umbrella term for the whole feature, not this one step),
-spawn.
-
-**Barrier** (or **fan-in**):
-The family's role as the single join point its dependents wait on: no
-dependent may dispatch until every child of the current expansion is terminal
-(succeeded/failed/skipped) or operator-accepted. An empty list is a
-successful, immediately-settled barrier.
-_Avoid_: Join (acceptable synonym), gate (reserve "Gate" for the Monitor's
-human-input surface).
-
-**Aggregate**:
-The family's one author-addressable output — an ordered JSON object
-(`count`/`succeeded`/`failed`/`all_succeeded`/`results[]`) written once the
-barrier settles. `results` is ordered by source index, never completion
-order. No workflow reference ever addresses a single child's output directly;
-every `@ref`/`when` against the family resolves against the aggregate.
-_Avoid_: Result (reserve for a single child's own `step.Result`), summary.
-
-## Harness abstraction
-
-The vocabulary of `internal/harness`, the seam between `AgentExecutor` and the
-agent process it drives. Introduced by the ACP↔Claude harness work (spec 12).
-
-**Harness**:
-The jig-owned Go type implementing the `Harness` interface (`ClaudeHarness`,
-`AcpHarness`, `CursorHarness`) — the code that translates a `SessionSpec` into one specific
-transport's lifecycle and normalizes its output into jig's transcript model.
-_Avoid_: Backend (reserve for the vendor/model being driven), adapter, driver.
-
-**Backend**:
-The vendor, CLI, or model a Harness talks to (Claude, Cursor, and Codex today;
-Gemini later) — the *target*, not the jig code that talks to it. Selected in
-the workflow TOML (`backend` / `transport` on `[defaults]` / `[[step]]`), never
-via `JIG_HARNESS`. One Harness could in principle target more than one backend
-(an ACP Harness could drive Cursor as well as Claude via the same transport).
-Today `AcpHarness` reaches **Claude** only (Zed’s `claude-code-acp` adapter),
-while `CursorHarness` uses Cursor's native `cursor-agent acp` server. Codex is
-reached through `CodexHarness`, which starts the `@agentclientprotocol/codex-acp`
-stdio adapter. The adapter drives Codex's App Server and reuses the operator's
-existing Codex login; neither `codex exec` nor its MCP server is an ACP
-substitute. See [`docs/research/codex-acp.md`](docs/research/codex-acp.md).
-_Avoid_: Harness (a backend is who you're talking to; a Harness is the code
-that talks).
-
-**Session**:
-One jig-level value returned by `Harness.Open`, live for exactly one
-`AgentExecutor.Execute` call. Mid-turn interaction (an `AskUserQuestion`
-answer, a queued tool result) is sent to the *same* live Session via `Send`.
-Resuming a stopped step does not reach back into a prior Session object —
-`AgentExecutor` calls `Open` again with `SessionSpec.Resume` set to the prior
-conversation ID, and the Harness/backend continues that conversation under a
-new Session value, exactly as today's SDK path opens a new client with
-`WithResume`.
-_Avoid_: Conversation (reserve for the backend-side concept a Resume ID
-points at), connection.
-
-**Capability** / **`CapabilitySet`**:
-A named, boolean feature a Harness advertises **before** `Open` is called
-(`CapPermissionCallback`, `CapInProcessMCP`, `CapSessionResume`,
-`CapStructuredOutput`, `CapPartialStreaming`) — queried explicitly, never
-inferred by runtime type assertion after the fact. `AgentExecutor` fails
-closed (rejects the step) when a step needs a capability the active Harness
-does not advertise, rather than silently degrading.
-_Avoid_: Feature flag, trait.
-
-**`PermissionFn`**:
-The jig-owned callback type a Harness invokes synchronously before a tool
-executes, when `CapPermissionCallback` is advertised and `SessionSpec.Permission`
-is set. `AgentExecutor` constructs it by closing over the step's
-[[spec-10-agent-security-monitoring|`sentinel.Guard`]] — `internal/harness`
-itself never imports `sentinel`, mirroring how `engine` never imports
-`runner`.
-_Avoid_: Guard (reserve for the concrete `sentinel.Guard` firewall type),
-callback (too generic once `PermissionFn` is named).
+**User guidance:** human-authored text, including initial and resumed input.
+A user-role tool result is not user guidance. **Unsupported transcript item:**
+unknown content preserved in place for inspection rather than silently dropped.

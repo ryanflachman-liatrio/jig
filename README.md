@@ -7,10 +7,10 @@ and handles the routing between agents, shell commands, and human review gates.
 The result is a **repeatable, inspectable** way to run a chain of agents locally,
 with a terminal UI for driving the workflow and reviewing output.
 
-The bet: everything *around* an agent should be deterministic (the graph, the
-data flow, the gates, a guaranteed termination), so the only non-deterministic
-part left is what happens *inside* a single agent context — bounded by its skill
-instructions, its input files, and the tools you allow it.
+The graph, data flow, and gates are explicit; automatic repetition is bounded.
+Agent output and concurrent completion order can vary. Human gates and steps
+without deadlines can wait indefinitely, so graph bounds alone do not promise
+wall-clock completion.
 
 ## Status
 
@@ -21,16 +21,19 @@ Early, but the core loop runs end to end. What works today:
   mismatches in guards, unbounded loops, and missing files *before* anything
   runs.
 - **Execution engine** (`internal/engine` + `internal/runner`) — traverses the
-  DAG, dispatches agent and command steps, drives bounded loops and
+  DAG, dispatches agent, command, and check steps, drives bounded loops and
   human-in-the-loop review gates, and assembles a deterministic step-context
   preamble for each agent.
-- **Streaming chat + run-monitor TUI** (`internal/tui`) — a Bubble Tea interface
-  that streams responses from the Claude Agent SDK and renders a navigable
-  per-step transcript.
+- **Home + run-monitor TUI** (`internal/tui`) — a Bubble Tea interface for
+  workflows and runs, with a backend-agnostic transcript and document review.
+- **Workflow composition and recovery** — subworkflow modules, dynamic fan-out,
+  typed checks, retry/resource policies, run snapshots, and crash reopen.
+  Claude SDK/ACP, Cursor ACP, and Codex ACP are supported.
 
 ## Install & run
 
-Requires Go 1.25 (see [`mise.toml`](mise.toml)).
+Requires the Go patch version declared in [`go.mod`](go.mod);
+[`mise.toml`](mise.toml) selects the Go 1.25 series.
 
 ```bash
 go build ./cmd/jig            # build ./jig
@@ -54,8 +57,7 @@ permission_mode = "acceptEdits"
 [[step]]
 id            = "fix"
 type          = "agent"
-skill         = "../skills/fix"                    # relative to this workflow file
-inputs        = ["@triage"]
+skill         = "../skills/implement"              # relative to .agents/jig/
 allowed_tools = ["Read", "Edit", "Write", "Bash"]   # mutating -> runs in a git worktree
 
   [step.validate]
@@ -65,10 +67,10 @@ allowed_tools = ["Read", "Edit", "Write", "Bash"]   # mutating -> runs in a git 
 id          = "approve"
 type        = "review"                              # human-in-the-loop
 depends_on  = ["fix"]
+output_type = { enum = ["approve", "revise"] }
 [[step.review]]
 source      = "diff"
 label       = "Code changes"
-output_type = { enum = ["approve", "revise"] }
 
 [[step.route]]
 when           = "approve == 'revise'"            # bounded back-edge
@@ -76,11 +78,11 @@ goto           = "fix"
 max_iterations = 3
 ```
 
-Three step types — `agent`, `command`, `review` — wired into a DAG by
-`depends_on`, with typed guards (`when`), schema-enforced producer output,
+Five step types — `agent`, `command`, `check`, `review`, `subworkflow` — wired
+into a DAG by `depends_on`, with typed guards (`when`), schema-enforced producer output,
 deterministic gates, and bounded loops. See
-[`.agents/jig/feature.toml`](.agents/jig/feature.toml) for a kitchen-sink workflow
-that exercises every construct.
+[`.agents/jig/feature.toml`](.agents/jig/feature.toml) for a feature pipeline and
+[`.agents/jig/sdd.toml`](.agents/jig/sdd.toml) for module-based orchestration.
 
 ## Sharing a run
 
@@ -97,7 +99,10 @@ guarantee of anonymity.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how the code is laid out and why.
 - [`docs/operations.md`](docs/operations.md) — the non-TUI CLI: status, logs, resume, reset, export.
 - [`docs/TESTING.md`](docs/TESTING.md) — testing strategy and conventions.
+- [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md) — Go design and concurrency guidance.
+- [`docs/TUI.md`](docs/TUI.md) — Charm v2 interaction and rendering guidance.
+- [`docs/GRAPH_ENGINEERING.md`](docs/GRAPH_ENGINEERING.md) — graph, retry, and recovery invariants.
 - [`docs/clipboard.md`](docs/clipboard.md) — TUI clipboard (`y` / `Y`) mapping, byte limits, and terminal prerequisites.
 - [`AGENTS.md`](AGENTS.md) — cross-tool orientation for AI coding assistants
   (backend selection, pre-v1 policy).
-- [`CLAUDE.md`](CLAUDE.md) — Claude Code–oriented notes (imports / extends AGENTS.md).
+- [`CLAUDE.md`](CLAUDE.md) — Claude Code entry point to the shared guidance.

@@ -1,5 +1,11 @@
 # Engine Design — Event-Loop Scheduler + Event Journal
 
+> Historical design and implementation plan. For current ownership and
+> invariants, read [Architecture](ARCHITECTURE.md) and
+> [Graph engineering](GRAPH_ENGINEERING.md). API sketches and guarantees below
+> are not all current: the manifest writer is synchronous, Git operations do
+> use `os/exec` in engine, and recovery requires more than folding a journal.
+
 Implementation plan for the execution engine (`internal/engine`, `internal/runner`,
 `internal/step`, `internal/manifest`, `internal/datastore`) and the TUI run
 monitor. This document is self-contained: it captures the design decisions,
@@ -371,7 +377,7 @@ attaches to a scheduler already holding the lock.
 
 `Run.Reset(target)` synchronously rewinds the run branch and re-queues the target step and its
 dependency closure. It is only valid on an unfinished, quiescent run. See
-[ADR 0008](../adr/0008-manual-reset-rewind-and-replay.md) for the full algorithm
+[ADR 0008](adr/0008-manual-reset-rewind-and-replay.md) for the full algorithm
 rationale and rejected alternatives.
 
 **Algorithm:**
