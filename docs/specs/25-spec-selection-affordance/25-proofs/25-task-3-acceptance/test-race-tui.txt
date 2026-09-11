@@ -1,0 +1,14 @@
+ok  	jig/internal/tui	2.614s
+ok  	jig/internal/tui/chart	1.164s
+ok  	jig/internal/tui/chat	1.151s
+ok  	jig/internal/tui/detail	1.133s
+ok  	jig/internal/tui/diffview	1.100s
+ok  	jig/internal/tui/monitor	4.273s
+ok  	jig/internal/tui/palette	1.111s
+ok  	jig/internal/tui/prefs	1.010s
+ok  	jig/internal/tui/question	1.120s
+ok  	jig/internal/tui/review	1.664s
+ok  	jig/internal/tui/runs	1.174s
+ok  	jig/internal/tui/selector	1.157s
+ok  	jig/internal/tui/shared	1.253s
+EXIT=0
