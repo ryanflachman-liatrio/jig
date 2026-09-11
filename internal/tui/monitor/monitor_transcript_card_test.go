@@ -16,6 +16,7 @@ import (
 	"jig/internal/step"
 	"jig/internal/toolcall"
 	"jig/internal/transcript"
+	"jig/internal/tui/shared"
 )
 
 func syntheticExchangePage(count int, detailRows int) transcript.Page {
@@ -117,8 +118,13 @@ func TestTranscriptCardCacheLifecycleBounded(t *testing.T) {
 	replacement.Entries[1].Blocks[0].Tool.Status = "failed"
 	m.setChatPage(replacement)
 	failed := m.itemTranscriptBody()
-	if !strings.Contains(stripANSI(failed), "failed") || !strings.Contains(stripANSI(failed), "Changed synthetic header") {
+	// FR-02.12/02.15: the failed exchange no longer contains " failed" prose;
+	// state is carried by the error icon and the card border.
+	if !strings.Contains(stripANSI(failed), shared.IconStatusError) || !strings.Contains(stripANSI(failed), "Changed synthetic header") {
 		t.Fatalf("same-key failed/header replacement stayed stale:\n%s", stripANSI(failed))
+	}
+	if strings.Contains(stripANSI(failed), " failed") {
+		t.Fatalf("state prose reappeared in header after replacement:\n%s", stripANSI(failed))
 	}
 	if len(m.chatItemRendered) != 4 {
 		t.Fatalf("replacement cache = %d, want 4", len(m.chatItemRendered))
@@ -127,7 +133,7 @@ func TestTranscriptCardCacheLifecycleBounded(t *testing.T) {
 	replacement.Entries[1].Blocks[0].Tool.Status = "completed"
 	m.setChatPage(replacement)
 	completed := m.itemTranscriptBody()
-	if strings.Contains(stripANSI(completed), "failed") || completed == failed {
+	if strings.Contains(stripANSI(completed), shared.IconStatusError) || completed == failed {
 		t.Fatalf("same-key success replacement stayed stale:\n%s", stripANSI(completed))
 	}
 

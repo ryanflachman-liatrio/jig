@@ -55,12 +55,15 @@ func TestToolExchangeHeaderCardStatesAndWidths(t *testing.T) {
 		status    string
 		running   bool
 		wantState toolDisplayState
-		wantText  string
+		wantIcon  string
 	}{
-		{name: "success", status: "completed", wantState: toolDisplaySuccess},
-		{name: "failed", status: "failed", wantState: toolDisplayError, wantText: "failed"},
-		{name: "running use only", running: true, wantState: toolDisplayRunning, wantText: "running"},
-		{name: "terminal incomplete use only", wantState: toolDisplayUnknownUse, wantText: "incomplete"},
+		// FR-02.15: settled success on kind "read" gets the read signature glyph.
+		{name: "success", status: "completed", wantState: toolDisplaySuccess, wantIcon: shared.IconToolRead},
+		// FR-02.12: state prose ("failed", "running", "incomplete") is gone.
+		// FR-02.5/02.15: the icon slot carries the state.
+		{name: "failed", status: "failed", wantState: toolDisplayError, wantIcon: shared.IconStatusError},
+		{name: "running use only", running: true, wantState: toolDisplayRunning, wantIcon: shared.IconStatusRunning},
+		{name: "terminal incomplete use only", wantState: toolDisplayUnknownUse, wantIcon: shared.IconStatusWarning},
 	}
 	for _, width := range []int{40, 72} {
 		for _, tt := range tests {
@@ -90,10 +93,151 @@ func TestToolExchangeHeaderCardStatesAndWidths(t *testing.T) {
 				if !strings.HasPrefix(plain, "  ▌ ╭") || !strings.Contains(plain, "\n  ▌ ╰") {
 					t.Fatalf("selected prefix was not applied to both rows:\n%s", plain)
 				}
-				if tt.wantText != "" && !strings.Contains(plain, tt.wantText) {
-					t.Fatalf("header missing %q:\n%s", tt.wantText, plain)
+				if !strings.Contains(plain, tt.wantIcon) {
+					t.Fatalf("header missing state icon %q:\n%s", tt.wantIcon, plain)
+				}
+				for _, forbidden := range []string{" failed", " · running", " · incomplete"} {
+					if strings.Contains(plain, forbidden) {
+						t.Fatalf("header retained state prose %q:\n%s", forbidden, plain)
+					}
 				}
 			})
+		}
+	}
+}
+
+// FR-02.15 / CC-4: only settling to success may swap the icon glyph.
+// A running or pending row keeps the generic pending glyph even when the
+// tool kind is known, so a running "edit" shows the same glyph as a running
+// "read". Settled success is the only state that emits the tool's signature
+// glyph.
+func TestToolExchangeHeaderSignatureGlyphOnlyOnSettledSuccess(t *testing.T) {
+	tests := []struct {
+		name     string
+		kind     string
+		status   string
+		wantIcon string
+	}{
+		{name: "settled read shows read signature", kind: "read", status: "completed", wantIcon: shared.IconToolRead},
+		{name: "settled edit shows edit signature", kind: "edit", status: "completed", wantIcon: shared.IconToolEdit},
+		{name: "settled bash shows shell signature", kind: "bash", status: "completed", wantIcon: shared.IconToolShell},
+		{name: "running edit stays on generic pending", kind: "edit", status: "", wantIcon: shared.IconStatusRunning},
+		{name: "running read stays on generic pending", kind: "read", status: "", wantIcon: shared.IconStatusRunning},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newMonitorWithSteps(t)
+			m.transcriptInnerW = 60
+			if tt.status == "" {
+				m.steps[m.index["a"]].status = step.StatusRunning
+			}
+			m.chatStep = "a"
+			entries := []transcript.Entry{{
+				Seq: 1, Role: transcript.RoleAssistant,
+				Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "signature", Kind: tt.kind, Title: tt.kind + " synthetic"}}},
+			}}
+			if tt.status != "" {
+				entries = append(entries, transcript.Entry{
+					Seq: 2, Role: transcript.RoleUser,
+					Blocks: []transcript.Block{{Type: transcript.BlockToolResult, Tool: &toolcall.Activity{ID: "signature", Kind: tt.kind, Status: tt.status}}},
+				})
+			}
+			m.setChatPage(transcript.Page{Entries: entries})
+			plain := stripANSI(m.itemTranscriptBody())
+			if !strings.Contains(plain, tt.wantIcon) {
+				t.Fatalf("header missing signature glyph %q for kind %q status %q:\n%s", tt.wantIcon, tt.kind, tt.status, plain)
+			}
+		})
+	}
+}
+
+// FR-02.18: selection emphasizes only the title fragment. The card frame,
+// description, and meta are not re-wrapped in TranscriptSelected, so the
+// styled title fragment appears verbatim in the raw ANSI output while the
+// description text is not enclosed by that same style. State color still
+// comes from the border and the icon (both unaffected by selection).
+func TestToolExchangeHeaderSelectedTitleOnly(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	m.transcriptInnerW = 60
+	m.setChatPage(transcript.Page{Entries: syntheticExchange("selected", "completed")})
+	raw := m.itemTranscriptBody()
+
+	titleStyle := shared.Theme.Chat.TranscriptSelected.Inherit(shared.Theme.Chat.ToolTitle)
+	styledTitle := titleStyle.Render("Read")
+	if !strings.Contains(raw, styledTitle) {
+		t.Fatalf("selected title fragment missing from body:\nwant contained: %q\nbody:\n%s", styledTitle, raw)
+	}
+	selectedDescription := shared.Theme.Chat.TranscriptSelected.Render("")
+	if selectedDescription != "" && strings.Contains(raw, shared.Theme.Chat.TranscriptSelected.Render("synthetic")) {
+		t.Fatalf("TranscriptSelected style leaked outside the title slot:\n%s", raw)
+	}
+}
+
+// FR-02.17: `toolErrorHint` is written into the Meta slot so it stays
+// visible on collapsed error rows without occupying the title. The title
+// keeps only `action` (e.g. "Read") and the hint text is styled as meta —
+// distinct from the title style — regardless of whether a description is
+// present.
+func TestToolExchangeHeaderErrorHintInMeta(t *testing.T) {
+	entries := []transcript.Entry{
+		{Seq: 1, Role: transcript.RoleAssistant, Blocks: []transcript.Block{{
+			Type: transcript.BlockToolUse,
+			Tool: &toolcall.Activity{ID: "err", Kind: "read", Title: "Read", Input: []byte(`{"file_path":"/tmp/forbidden/config.toml"}`)},
+		}}},
+		{Seq: 2, Role: transcript.RoleUser, Blocks: []transcript.Block{{
+			Type: transcript.BlockToolResult,
+			Tool: &toolcall.Activity{ID: "err", Kind: "read", Status: "failed", Content: []toolcall.Content{{Type: "text", Text: "permission denied"}}},
+		}}},
+	}
+	m := newMonitorWithSteps(t)
+	m.transcriptInnerW = 96
+	m.setChatPage(transcript.Page{Entries: entries})
+	raw := m.itemTranscriptBody()
+	plain := stripANSI(raw)
+
+	if !strings.Contains(plain, "permission denied") {
+		t.Fatalf("error hint absent from header body:\n%s", plain)
+	}
+	// FR-02.17: the title stays exactly `Read`, so the styled title
+	// fragment must not include the hint text.
+	titleStyled := shared.Theme.Chat.ToolTitle.Render("Read permission denied")
+	if strings.Contains(raw, titleStyled) {
+		t.Fatalf("error hint entered the title slot:\n%s", raw)
+	}
+	// FR-02.17: the hint text is rendered as meta (distinct style from
+	// the title), so the meta-styled substring must be present.
+	metaStyled := shared.Theme.Chat.ToolMeta.Render("permission denied")
+	if !strings.Contains(raw, metaStyled) {
+		t.Fatalf("error hint not styled as meta:\n want contained: %q\nraw:\n%s", metaStyled, raw)
+	}
+	// The row must never end in a dangling meta separator.
+	if strings.HasSuffix(strings.TrimRight(plain, " │╮╯"), " · ") {
+		t.Fatalf("meta slot ended with dangling separator:\n%s", plain)
+	}
+}
+
+// FR-02.12: state prose has left every Monitor header code path. This is
+// a broad grep-based regression that covers success/error/running/incomplete
+// side-by-side. Any future accidental reintroduction (e.g. from a helper
+// concatenating `" failed"` back into a title) fails here.
+func TestMonitorHeaderNoStateProseRegression(t *testing.T) {
+	entries := []transcript.Entry{
+		{Seq: 1, Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "ok", Kind: "read", Title: "Reading a"}}}},
+		{Seq: 2, Role: transcript.RoleUser, Blocks: []transcript.Block{{Type: transcript.BlockToolResult, Tool: &toolcall.Activity{ID: "ok", Kind: "read", Status: "completed"}}}},
+		{Seq: 3, Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "bad", Kind: "read", Title: "Reading b"}}}},
+		{Seq: 4, Role: transcript.RoleUser, Blocks: []transcript.Block{{Type: transcript.BlockToolResult, Tool: &toolcall.Activity{ID: "bad", Kind: "read", Status: "failed"}}}},
+		{Seq: 5, Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "run", Kind: "read", Title: "Reading c"}}}},
+		{Seq: 6, Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "warn", Kind: "read", Title: "Reading d"}}}},
+	}
+	m := newMonitorWithSteps(t)
+	m.transcriptInnerW = 80
+	m.steps[m.index["a"]].status = step.StatusRunning
+	m.chatStep = "a"
+	m.setChatPage(transcript.Page{Entries: entries})
+	plain := stripANSI(m.itemTranscriptBody())
+	for _, forbidden := range []string{" failed", " · running", " · incomplete", "Read failed", "Read running", "Read incomplete"} {
+		if strings.Contains(plain, forbidden) {
+			t.Fatalf("state prose %q leaked into a header:\n%s", forbidden, plain)
 		}
 	}
 }
@@ -137,10 +281,15 @@ func TestOrphanAndNonExchangeItemsStayFlat(t *testing.T) {
 	if strings.ContainsAny(plain, "╭╰") {
 		t.Fatalf("non-exchange item acquired a card frame:\n%s", plain)
 	}
-	for _, want := range []string{"assistant prose", "system prose", "reasoning", "Unsupported future", "Result (unknown origin) failed"} {
+	for _, want := range []string{"assistant prose", "system prose", "reasoning", "Unsupported future", "Result (unknown origin)", shared.IconStatusError} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("flat output missing %q:\n%s", want, plain)
 		}
+	}
+	// FR-02.16 orphan path: uses RenderStatusLine, so it carries state via
+	// the icon; the old " failed" suffix must not reappear.
+	if strings.Contains(plain, "Result (unknown origin) failed") {
+		t.Fatalf("orphan flat row retained state prose:\n%s", plain)
 	}
 }
 
@@ -158,7 +307,7 @@ func TestToolExchangeRendersHeaderOnlyCardAndOrphanStaysFlat(t *testing.T) {
 	if strings.Count(plain, "╭") != 1 || strings.Count(plain, "╰") != 1 {
 		t.Fatalf("paired exchange should have exactly one framed header card:\n%s", plain)
 	}
-	if !strings.Contains(plain, "Result (unknown origin) failed") {
+	if !strings.Contains(plain, "Result (unknown origin)") || !strings.Contains(plain, shared.IconStatusError) {
 		t.Fatalf("orphan result presentation changed:\n%s", plain)
 	}
 	for _, row := range strings.Split(body, "\n") {
@@ -195,8 +344,11 @@ func TestToolExchangeCardCacheRefreshesOnPageReplacementAndWidthChange(t *testin
 		t.Fatalf("page replacement retained card cache: %d", len(m.chatItemRendered))
 	}
 	second := m.itemTranscriptBody()
-	if first == second || !strings.Contains(stripANSI(second), "failed") {
+	if first == second || !strings.Contains(stripANSI(second), shared.IconStatusError) {
 		t.Fatalf("replacement did not refresh card output:\n%s", stripANSI(second))
+	}
+	if strings.Contains(stripANSI(second), " failed") {
+		t.Fatalf("state prose reappeared in header after replacement:\n%s", stripANSI(second))
 	}
 
 	m.transcriptInnerW = 44
@@ -207,6 +359,67 @@ func TestToolExchangeCardCacheRefreshesOnPageReplacementAndWidthChange(t *testin
 	_ = m.itemTranscriptBody()
 	if len(m.chatItemRendered) != 1 {
 		t.Fatalf("width rebuild did not cache current variant: %d", len(m.chatItemRendered))
+	}
+}
+
+// FR-02.19 / task 2.8: transitioning a running exchange to settled success
+// changes the composed header — not merely the border color. The generic
+// pending glyph swaps to the kind's signature glyph, so the cache key's
+// `header` component differs and a stale render cannot be served.
+func TestToolExchangeHeaderRunningToSuccessTransitionSwapsSignatureGlyph(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	m.transcriptInnerW = 60
+	m.steps[m.index["a"]].status = step.StatusRunning
+	m.chatStep = "a"
+	m.setChatPage(transcript.Page{Entries: []transcript.Entry{{
+		Seq: 1, Role: transcript.RoleAssistant,
+		Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "e", Kind: "edit", Title: "Editing synthetic"}}},
+	}}})
+	running := stripANSI(m.itemTranscriptBody())
+	if !strings.Contains(running, shared.IconStatusRunning) || strings.Contains(running, shared.IconToolEdit) {
+		t.Fatalf("running row did not use the generic pending glyph:\n%s", running)
+	}
+
+	m.setChatPage(transcript.Page{Entries: []transcript.Entry{
+		{Seq: 1, Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "e", Kind: "edit", Title: "Editing synthetic"}}}},
+		{Seq: 2, Role: transcript.RoleUser, Blocks: []transcript.Block{{Type: transcript.BlockToolResult, Tool: &toolcall.Activity{ID: "e", Kind: "edit", Status: "completed"}}}},
+	}})
+	settled := stripANSI(m.itemTranscriptBody())
+	if !strings.Contains(settled, shared.IconToolEdit) {
+		t.Fatalf("settled success did not swap to the edit signature glyph:\n%s", settled)
+	}
+	if strings.Contains(settled, shared.IconStatusRunning) {
+		t.Fatalf("settled success kept the generic pending glyph:\n%s", settled)
+	}
+	if running == settled {
+		t.Fatalf("running→success transition produced identical body:\n%s", settled)
+	}
+}
+
+// FR-02.20 / task 2.9: with persistence off (`RunDir == ""`), the transcript
+// body renders the empty-state banner and never enters `itemTranscriptBody`,
+// so `RenderStatusLine` is not called and no card cache entries appear.
+func TestPersistenceOffKeepsEmptyStateOutOfStatusLineHeader(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	m.RunDir = ""
+	m.chatStep = "a"
+	m.reloadTranscript()
+
+	if len(m.chatEntries) != 0 || len(m.chatItems) != 0 {
+		t.Fatalf("persistence-off retained entries/items: entries=%d items=%d", len(m.chatEntries), len(m.chatItems))
+	}
+	body := stripANSI(m.chatBody())
+	if !strings.Contains(body, "Persistence is off") {
+		t.Fatalf("persistence-off did not render the empty-state banner:\n%s", body)
+	}
+	if strings.ContainsAny(body, "╭╰") {
+		t.Fatalf("persistence-off body acquired a card frame:\n%s", body)
+	}
+	if len(m.chatItemRendered) != 0 {
+		t.Fatalf("persistence-off populated card cache: %d entries", len(m.chatItemRendered))
+	}
+	if got := m.itemTranscriptBody(); got != "" {
+		t.Fatalf("persistence-off itemTranscriptBody() returned non-empty output:\n%s", got)
 	}
 }
 

@@ -76,32 +76,12 @@ func (m *Model) itemTranscriptBody() string {
 				}
 			}
 			s := summarizeActivity(activity)
-			label := s.label
-			if item.toolUse == nil {
-				label = shared.IconToolResult + " Result (unknown origin)"
-			}
-			if item.displayState == toolDisplayError {
-				label += " failed"
-			} else if item.displayState == toolDisplayRunning {
-				label += " · running"
-			} else if item.displayState == toolDisplayUnknownUse || item.displayState == toolDisplayUnknownResult {
-				label += " · incomplete"
-			}
-			row := marker + " " + label
-			if s.preview != "" {
-				row += " " + s.preview
-			}
-			if item.displayState == toolDisplayError {
-				row += " · " + toolErrorHint(m, item)
-			}
+			header := composeToolHeader(m, item, s, selected)
+			row := marker + " " + header
 			if item.kind == transcriptItemToolExchange {
 				b.WriteString(m.renderToolExchangeCard(item, prefix, row, selected, expanded) + "\n")
-			} else if item.displayState == toolDisplayError {
-				b.WriteString(prefix + shared.Theme.Chat.TranscriptError.Render(row) + "\n")
-			} else if selected {
-				b.WriteString(prefix + shared.Theme.Chat.TranscriptSelected.Render(row) + "\n")
 			} else {
-				b.WriteString(prefix + shared.Theme.Chat.TranscriptActivity.Render(row) + "\n")
+				b.WriteString(prefix + row + "\n")
 			}
 			if expanded {
 				m.writeToolActivityDetails(&b, detailActivity, item.displayState == toolDisplaySuccess)
@@ -142,15 +122,13 @@ func cardState(state toolDisplayState) shared.CardState {
 
 // renderToolExchangeCard owns the exchange-only render cache. Detail output is
 // intentionally rendered below the header card and never enters this cache.
+// The `header` argument is already per-slot styled by composeToolHeader;
+// this function does not re-wrap the row so state stays carried by the icon
+// and the card border (epic CC-2, FR-02.18).
 func (m *Model) renderToolExchangeCard(item transcriptItem, prefix, header string, selected, expanded bool) string {
 	available := m.transcriptInnerW - lipgloss.Width(prefix)
 	if available < 3 {
 		return ""
-	}
-	if selected {
-		header = shared.Theme.Chat.TranscriptSelected.Render(header)
-	} else {
-		header = shared.Theme.Chat.TranscriptActivity.Render(header)
 	}
 	key := transcriptRenderKey{itemKey: item.key, surface: transcriptRenderCard, width: available, expanded: expanded, selected: selected, state: item.displayState, header: header}
 	if cached, ok := m.chatItemRendered[key]; ok {
@@ -164,6 +142,48 @@ func (m *Model) renderToolExchangeCard(item transcriptItem, prefix, header strin
 	card := shared.RenderCard(shared.Card{Header: header, Width: available, State: cardState(item.displayState), Tint: true})
 	m.chatItemRendered[key] = card
 	return prefixCardRows(prefix, card)
+}
+
+// composeToolHeader builds the four-slot status-line header for a tool
+// exchange (paired or orphan). The icon and its style come from
+// shared.ToolStatusIcon so state is carried by the glyph + border, not by
+// appended prose (FR-02.5/02.12/02.15). Selection emphasizes only the title
+// slot (FR-02.18); the enclosing card frame or orphan row is not wrapped in
+// a further row-level style.
+//
+// The error hint moves from the appended-label position (previously
+// `label += " · " + toolErrorHint(...)`) into the Meta slot so it remains
+// visible on collapsed rows without occupying the title (FR-02.17).
+func composeToolHeader(m *Model, item transcriptItem, s toolCallSummary, selected bool) string {
+	title := s.action
+	kind := s.kind
+	if item.toolUse == nil {
+		title = "Result (unknown origin)"
+		kind = ""
+	}
+
+	glyph, iconStyle := shared.ToolStatusIcon(item.displayState, kind)
+
+	titleStyle := lipgloss.Style{}
+	if selected {
+		titleStyle = shared.Theme.Chat.TranscriptSelected
+	}
+
+	var meta []string
+	if item.displayState == toolDisplayError {
+		if hint := toolErrorHint(m, item); hint != "" {
+			meta = append(meta, hint)
+		}
+	}
+
+	return shared.RenderStatusLine(shared.StatusLine{
+		Icon:        glyph,
+		IconStyle:   iconStyle,
+		Title:       title,
+		TitleStyle:  titleStyle,
+		Description: s.detail,
+		Meta:        meta,
+	})
 }
 
 func prefixCardRows(prefix, card string) string {
