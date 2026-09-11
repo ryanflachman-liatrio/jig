@@ -1,0 +1,14 @@
+Task 03 (slice 02) deterministic Monitor visual fixture
+Fixture source: syntheticTranscriptCardVisualPage (shared between slice 01 and slice 02 proofs)
+All paths, commands, status text, and code are fabricated.
+
+Rendering: production Model.View ANSI -> deterministic test HTML -> local headless Chrome PNG.
+
+25-task-3-monitor-headers.ansi
+  terminal=100x30 transcriptInnerW=63 selectedIndex=1 selectedKey={anchor:{seq:3 block:0} kind:2} expandAll=false editExpanded=true viewportOffset=0
+25-task-3-monitor-narrow.ansi
+  terminal=58x30 transcriptInnerW=54 selectedIndex=1 selectedKey={anchor:{seq:3 block:0} kind:2} expandAll=false editExpanded=true viewportOffset=0
+25-task-3-monitor-wide.ansi
+  terminal=132x32 transcriptInnerW=84 selectedIndex=4 selectedKey={anchor:{seq:7 block:0} kind:2} expandAll=false editExpanded=true viewportOffset=0
+
+Observed semantic states: success uses the quiet dim border; failure uses danger; running uses primary; incomplete uses warning. Selection retains its outside rail and emphasized header without replacing those state borders. The wide frame shows structured-edit details below its header card.

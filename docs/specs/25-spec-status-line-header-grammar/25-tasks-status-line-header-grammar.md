@@ -90,7 +90,7 @@ enum with a translation, and reverting write→edit glyph if width fails).
 
 ## Tasks
 
-### [ ] 1.0 Establish the shared status-line grammar, icon resolver, and styles
+### [x] 1.0 Establish the shared status-line grammar, icon resolver, and styles
 
 Create the reusable `internal/tui/shared` status-line API, the tool
 status-icon resolver, the per-tool signature glyph vocabulary, and the
@@ -107,17 +107,17 @@ rule (CC-4) at the vocabulary layer by construction.
 
 #### 1.0 Tasks
 
-- [ ] 1.1 Add `internal/tui/shared/status_line.go` with the `StatusLine` struct (`Icon`, `IconStyle`, `Title`, `TitleStyle`, `Description`, `DescriptionStyle`, `Badge`, `BadgeStyle`, `Meta`, `MetaStyle`), documented Go doc comments including the "no truncation" boundary (FR-02.4), and a `RenderStatusLine` implementation that composes slots left-to-right using the spec's separator rules.
-- [ ] 1.2 Implement per-slot handling: default `TitleStyle` to `Theme.Chat.ToolTitle`, `DescriptionStyle` to `Theme.Chat.ToolDescription`, and `MetaStyle` to `Theme.Chat.ToolMeta` when the caller supplies a zero-value style; introduce description with `": "` and meta with a single leading space; join meta with `" · "` after filtering entries that are empty or whitespace-only.
-- [ ] 1.3 Add `internal/tui/shared/status_icon.go` with `ToolStatusIcon(state, kind string) (glyph string, style lipgloss.Style)`; make running and pending return the same glyph (CC-4), success-with-known-kind return the signature glyph, and every other case fall back to the generic pending/warning/error glyph. Choose one of the alternatives in the spec's Open Questions (moving `toolDisplayState` into shared vs. a parallel shared enum) and note the choice at the top of the file.
-- [ ] 1.4 Extend `internal/tui/shared/icons.go` with the `IconStatus*` and `IconTool*` constants documented in the spec; do not introduce a preset table (slice 14's scope). Add a package-level width-audit test (Task 1.6) proving every new glyph is single-width.
-- [ ] 1.5 Add table-driven `status_line_test.go` cases covering every FR from 02.1–02.4 and 02.10; include one case whose title contains a valid caller-applied SGR style and assert the styled substring is present in the rendered output; assert `lipgloss.Height` of every rendered row is exactly one line.
-- [ ] 1.6 Add `status_icon_test.go` cases for every documented `(state, kind)` combination in the spec, plus unknown state and unknown kind fallbacks; assert running and pending share their glyph; assert every signature glyph measures exactly one cell.
-- [ ] 1.7 Extend `internal/tui/shared/styles.go` with `Chat.ToolTitle` (from `fgBase`), `Chat.ToolDescription` (from `fgMuted`), `Chat.ToolMeta` (from `fgDim`), and `Chat.ToolBadge` (reusing `Badge.Neutral`). Ensure `DefaultTheme()` initializes them; do not remove existing chat styles.
-- [ ] 1.8 Add `styles_test.go` cases asserting each new `Chat.Tool*` foreground token matches the spec, and that per-state icon styles returned by `ToolStatusIcon` share their foreground with the corresponding `Card.Border*` style (so the header icon and card border read as one indicator).
-- [ ] 1.9 Add or extend a grep-based `internal/tui/shared` test that asserts renderer files contain no bare `lipgloss.NewStyle()` (outside `styles.go`) and no hex constants (outside `palette.go`) newly introduced by this slice; and that renderer references for status/tool glyphs go through `shared.Icon*` constants.
+- [x] 1.1 Add `internal/tui/shared/status_line.go` with the `StatusLine` struct (`Icon`, `IconStyle`, `Title`, `TitleStyle`, `Description`, `DescriptionStyle`, `Badge`, `BadgeStyle`, `Meta`, `MetaStyle`), documented Go doc comments including the "no truncation" boundary (FR-02.4), and a `RenderStatusLine` implementation that composes slots left-to-right using the spec's separator rules.
+- [x] 1.2 Implement per-slot handling: default `TitleStyle` to `Theme.Chat.ToolTitle`, `DescriptionStyle` to `Theme.Chat.ToolDescription`, and `MetaStyle` to `Theme.Chat.ToolMeta` when the caller supplies a zero-value style; introduce description with `": "` and meta with a single leading space; join meta with `" · "` after filtering entries that are empty or whitespace-only.
+- [x] 1.3 Add `internal/tui/shared/status_icon.go` with `ToolStatusIcon(state, kind string) (glyph string, style lipgloss.Style)`; make running and pending return the same glyph (CC-4), success-with-known-kind return the signature glyph, and every other case fall back to the generic pending/warning/error glyph. Choice: migrated `toolDisplayState` into shared as `ToolDisplayState` (Monitor keeps a type alias for backwards compat).
+- [x] 1.4 Extend `internal/tui/shared/icons.go` with the `IconStatus*` and `IconTool*` constants documented in the spec; do not introduce a preset table (slice 14's scope). Package-level width-audit test in `status_icon_test.go` proves every new glyph is single-width.
+- [x] 1.5 Add table-driven `status_line_test.go` cases covering every FR from 02.1–02.4 and 02.10; include one case whose title contains a valid caller-applied SGR style and assert the styled substring is present in the rendered output; assert `lipgloss.Height` of every rendered row is exactly one line.
+- [x] 1.6 Add `status_icon_test.go` cases for every documented `(state, kind)` combination in the spec, plus unknown state and unknown kind fallbacks; assert running and pending share their glyph; assert every signature glyph measures exactly one cell.
+- [x] 1.7 Extend `internal/tui/shared/styles.go` with `Chat.ToolTitle` (from `fgBase`), `Chat.ToolDescription` (from `fgMuted`), `Chat.ToolMeta` (from `fgDim`), and `Chat.ToolBadge` (bold on `onPrimary`/`bgLess`). `DefaultTheme()` initializes them; no existing chat styles were removed.
+- [x] 1.8 Add `styles_test.go` cases asserting each new `Chat.Tool*` foreground token matches the spec, and that per-state icon styles returned by `ToolStatusIcon` share their foreground with the corresponding `Card.Border*` style (so the header icon and card border read as one indicator).
+- [x] 1.9 Add or extend a grep-based `internal/tui/shared` test that asserts renderer files contain no bare `lipgloss.NewStyle()` (outside `styles.go`) and no hex constants (outside `palette.go`) newly introduced by this slice; and that renderer references for status/tool glyphs go through `shared.Icon*` constants.
 
-### [ ] 2.0 Compose Monitor tool-exchange headers through `RenderStatusLine`
+### [x] 2.0 Compose Monitor tool-exchange headers through `RenderStatusLine`
 
 Convert `itemTranscriptBody` to build the tool-exchange header entirely
 through `RenderStatusLine`, remove the appended state prose, apply per-slot
@@ -134,24 +134,17 @@ frame, cache identity, line-range accounting, and persistence-off path.
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Refactor `itemTranscriptBody` at `internal/tui/monitor/monitor_transcript_items_view.go:76-96` so tool-exchange rows are composed via `RenderStatusLine` with `Title = summary.action`, `Description = summary.detail`, `Icon`/`IconStyle` from `ToolStatusIcon(displayState, kind)`, and `Meta = nil` (populated below). Delete the `label += " failed" / " · running" / " · incomplete"` branches and the `preview` concatenation.
-- [ ] 2.2 When `displayState == toolDisplayError`, append `toolErrorHint(m, item)` to `Meta` after sanitizing; when the hint is empty, do not append. Ensure the hint no longer participates in the title. Keep `toolErrorHint` unchanged in signature/return value.
-- [ ] 2.3 Apply `Theme.Chat.TranscriptSelected` to `Title` (via `TitleStyle`) only when the row is selected. Do not wrap the full row in `TranscriptError` or `TranscriptSelected`; the border color and icon carry state, and the selection cue remains slice-01's outside `▌` rail plus the emphasized title.
-- [ ] 2.4 Ensure the settled-success glyph is the tool's signature glyph via `ToolStatusIcon` and that running/pending settle to the same generic glyph so no state change produces a per-frame glyph change until success. Adjust the summary source (`monitor_tool_summary.go`) so the summary's own `icon` is not fed into the composed header — the shared resolver is the sole source for the header icon slot.
-- [ ] 2.5 Choose one option for the orphan `Result (unknown origin)` row and record the choice in the task file's Standards Evidence Table:
-  - **Migrate:** replace the `label = shared.IconToolResult + " Result (unknown origin)"` at `items_view.go:81` with a `RenderStatusLine` call using the warning icon and warning meta styles; the row remains outside the card.
-  - **Defer:** keep the current flat rendering and add a locked-behavior test that asserts the current output. Record the deferral in `25-proofs/25-task-2-limitations.md` with the rationale.
-- [ ] 2.6 Add table-driven Monitor cases covering (state × kind × selection × prefix):
-  - Prose-free rows for success/error/running/incomplete (grep against `stripANSI(body)`).
-  - Icon mapping per state via `ToolStatusIcon`.
-  - Settled `edit` renders the edit signature glyph; a pending/running `read` renders the generic pending glyph.
-  - Selected row emphasizes only the title fragment (assert the styled substring boundary via a substring test on the raw ANSI output).
-  - Error hint appears in the meta segment of the header and not inside the title.
-- [ ] 2.7 Prune `toolCallSummary.label` and `toolCallSummary.preview` (or, if kept for external callers, mark them deprecated with a Go doc note and update every caller inside `internal/tui/monitor` to use `icon`/`action`/`detail`). Update `monitor_tool_summary_test.go` to reflect the new contract; add a regression that `action` and `detail` remain distinct after `summarizeActivity`.
-- [ ] 2.8 Extend `monitor_transcript_card_test.go` cache lifecycle cases so a running → success transition (via `setChatPage`) produces a differing composed `header` string and a fresh cache entry; the running → success transition changes the icon, not the border alone.
-- [ ] 2.9 Add a persistence-off regression demonstrating that `RunDir == ""` retains the existing empty-state path and does not invoke `RenderStatusLine` — reuse slice-01's persistence-off fixture and assert the header-card code path is not entered.
+- [x] 2.1 Refactor `itemTranscriptBody` so tool-exchange rows are composed via `RenderStatusLine` with `Title = summary.action`, `Description = summary.detail`, `Icon`/`IconStyle` from `ToolStatusIcon(displayState, kind)`, and `Meta = nil` (populated below). Deleted the `label += " failed" / " · running" / " · incomplete"` branches and the `preview` concatenation.
+- [x] 2.2 When `displayState == toolDisplayError`, append `toolErrorHint(m, item)` to `Meta` after sanitizing; when the hint is empty, do not append. The hint no longer participates in the title. `toolErrorHint` signature/return value unchanged.
+- [x] 2.3 Apply `Theme.Chat.TranscriptSelected` to `Title` (via `TitleStyle`) only when the row is selected. The full row is not wrapped; the border color and icon carry state, and the selection cue remains slice-01's outside `▌` rail plus the emphasized title.
+- [x] 2.4 Settled-success glyph is the tool's signature glyph via `ToolStatusIcon`; running/pending settle to the same generic glyph so no state change produces a per-frame glyph change until success. The summary's own `icon` field is no longer fed into the composed header — the shared resolver is the sole source for the header icon slot.
+- [x] 2.5 Chose **Migrate**: the orphan `Result (unknown origin)` row now uses `RenderStatusLine` with the error/warning icon from `ToolStatusIcon`. Rendered flat (not inside a card), matching slice-01's orphan rule.
+- [x] 2.6 Added table-driven Monitor cases (`TestToolExchangeHeaderCardStatesAndWidths`, `TestToolExchangeHeaderSignatureGlyphOnlyOnSettledSuccess`, `TestToolExchangeHeaderSelectedTitleOnly`, `TestToolExchangeHeaderErrorHintInMeta`, `TestMonitorHeaderNoStateProseRegression`) covering the state × kind × selection matrix plus the grep-based no-prose regression.
+- [x] 2.7 Pruned `toolCallSummary.label` and `toolCallSummary.preview`. Added `kind` alongside `icon`/`action`/`detail` so the header can look up the signature glyph without re-canonicalizing. `TestSummarizeActivityKeepsSlotsDistinct` locks the four-field contract.
+- [x] 2.8 `TestToolExchangeHeaderRunningToSuccessTransitionSwapsSignatureGlyph` proves a running → success transition produces a differing composed `header` string and swaps the icon (not the border alone), invalidating the slice-01 cache correctly.
+- [x] 2.9 `TestPersistenceOffKeepsEmptyStateOutOfStatusLineHeader` demonstrates that `RunDir == ""` retains the empty-state banner, `itemTranscriptBody()` returns empty, and the card cache stays empty; `RenderStatusLine` is never invoked.
 
-### [ ] 3.0 Demonstrate integrated presentation and record acceptance checks
+### [x] 3.0 Demonstrate integrated presentation and record acceptance checks
 
 Produce reviewer-safe evidence at realistic dimensions and run the
 repository's applicable checks. Compare the resulting frames to slice
@@ -165,8 +158,8 @@ repository's applicable checks. Compare the resulting frames to slice
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Extend the slice-01 synthetic visual fixture (`syntheticTranscriptCardVisualPage` in `monitor_transcript_card_test.go`) with cases that exercise every state × kind combination this slice ships, without regressing slice-01 captures. Reuse the existing fabricated fixture source.
-- [ ] 3.2 Capture the integrated Monitor at the primary review size and record `.ansi`, `.html`, and `.png` proofs plus companion notes. Confirm slice-01's captures still render (they are proofs that live in their own directory; do not overwrite them).
-- [ ] 3.3 Capture narrow and wide Monitor views from the same fixture and verify one-row headers, title-first truncation, and preserved state colors. Store both captures under `25-proofs/`.
-- [ ] 3.4 Run and record the focused shared and Monitor tests from Tasks 1–2, plus `go test -race ./internal/tui/...`, `go build ./cmd/jig`, `go test ./...`, `go vet ./...`, `gofmt -l <changed-go-files>`, and `git diff --check`. Distinguish ordinary pass, intentional skip, assertion failure, and environment/toolchain failure.
-- [ ] 3.5 Review the final diff against every FR and non-goal: confirm no detail-section conversion (slice 05), no diff-badge population (slice 07), no grouped-read work (slice 08), no spinner ticker (slice 13), no inline-arg formatting (slice 15), no truncation-vocabulary change (slice 06), no glyph-preset table (slice 14), and no wire/format/harness change. Record any unavailable proof as a precise limitation in `25-proofs/25-task-3-limitations.md`.
+- [x] 3.1 Extended `syntheticTranscriptCardVisualPage` with a `websearch` exchange so the settled-success signature glyph coverage now spans read/edit/websearch. Slice-01 chatItems[3]/chatItems[4] positions were preserved by appending to the fixture; slice-01 tests still pass.
+- [x] 3.2 Captured the integrated Monitor at 100×30 via `TestStatusLineHeaderVisualProof`. Artifacts: `25-task-3-monitor-headers.{ansi,html,png}` plus `25-task-3-monitor-headers-notes.txt`. Slice-01's captures are untouched and live in their own directory.
+- [x] 3.3 Captured 58×30 and 132×32 views from the same fixture (`25-task-3-monitor-narrow.{ansi,html,png}`, `25-task-3-monitor-wide.{ansi,html,png}`). Headers stay one-row; narrow view truncates the title first while meta and error hint remain visible; wide view keeps expanded structured-edit detail below the header card.
+- [x] 3.4 Ran and recorded the focused shared and Monitor tests, `go test -race ./internal/tui/...`, `go build ./cmd/jig`, `go test ./...`, `go vet ./...`, `gofmt -l <changed-go-files>` (empty), and `git diff --check`. `go test ./...` fails one pre-existing harness scenario documented in `25-task-3-limitations.md`; every other applicable check passes.
+- [x] 3.5 Final-diff review: no detail-section conversion (slice 05), no diff-badge population (slice 07), no grouped-read summarization (slice 08), no spinner ticker (slice 13), no inline-arg formatting (slice 15), no truncation-vocabulary change (slice 06), no glyph-preset table (slice 14), and no wire/format/harness change. Unavailable-proof note recorded in `25-proofs/25-task-3-limitations.md`.
