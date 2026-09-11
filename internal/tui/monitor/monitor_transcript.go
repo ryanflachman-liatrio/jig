@@ -4,16 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 	"unicode/utf8"
-
-	"charm.land/lipgloss/v2"
 
 	"jig/internal/datastore"
 	"jig/internal/engine"
 	"jig/internal/step"
 	"jig/internal/transcript"
-	"jig/internal/tui/diffview"
 	"jig/internal/tui/shared"
 )
 
@@ -173,7 +169,6 @@ func (m *Model) setChatPage(page transcript.Page) {
 	m.defaultExpandEditCodeItems()
 	m.chatVisibleItems = nil
 	m.prunePageState()
-	m.rebuildLoadedChat(chatItem{})
 	m.rebuildTranscriptItemState(savedItem)
 	m.rerunSearch()
 }
@@ -248,43 +243,6 @@ func (m Model) filteredTranscriptItems() []transcriptItem {
 func (m Model) currentChatStepRunning() bool {
 	i, ok := m.index[m.chatStep]
 	return ok && m.steps[i].status == step.StatusRunning
-}
-
-// rebuildLoadedChat is temporary compatibility for focused regression fixtures;
-// the live monitor renders the normalized transcript-item path.
-func (m *Model) rebuildLoadedChat(saved chatItem) {
-	m.chatGroupHeaders = nil
-	var pending []blockKey
-	uses, results := 0, 0
-	flush := func() {
-		if len(pending) == 0 {
-			return
-		}
-		m.chatGroupHeaders = append(m.chatGroupHeaders, chatItem{isGroup: true, key: pending[0], group: &toolGroup{blocks: pending, count: uses, results: results}})
-		pending = nil
-		uses, results = 0, 0
-	}
-	for _, entry := range m.filteredEntries() {
-		for blockIndex, block := range entry.Blocks {
-			key := blockKey{seq: entry.Seq, block: blockIndex}
-			switch block.Type {
-			case transcript.BlockToolUse:
-				pending = append(pending, key)
-				uses++
-			case transcript.BlockToolResult:
-				pending = append(pending, key)
-				results++
-			case transcript.BlockThinking:
-				flush()
-				m.chatGroupHeaders = append(m.chatGroupHeaders, chatItem{key: key})
-			default:
-				flush()
-			}
-		}
-	}
-	flush()
-	m.rebuildActiveState(saved)
-	m.rebuildTranscriptItemState(m.selectedTranscriptItemKey())
 }
 
 func (m *Model) loadOlderChat() {
@@ -384,27 +342,6 @@ func toolOnlyEntry(entry transcript.Entry) bool {
 }
 
 func (m *Model) prunePageState() {
-	loaded := make(map[blockKey]struct{})
-	for _, e := range m.chatEntries {
-		for bi := range e.Blocks {
-			loaded[blockKey{seq: e.Seq, block: bi}] = struct{}{}
-		}
-	}
-	for key := range m.chatRendered {
-		if _, ok := loaded[key]; !ok {
-			delete(m.chatRendered, key)
-		}
-	}
-	for key := range m.chatExpand {
-		if _, ok := loaded[key]; !ok {
-			delete(m.chatExpand, key)
-		}
-	}
-	for key := range m.chatGroupExpand {
-		if _, ok := loaded[key]; !ok {
-			delete(m.chatGroupExpand, key)
-		}
-	}
 	loadedItems := make(map[transcriptItemKey]struct{}, len(m.chatItems))
 	for _, item := range m.chatItems {
 		loadedItems[item.key] = struct{}{}
@@ -426,234 +363,9 @@ func (m *Model) prunePageState() {
 	}
 }
 
-// rebuildActiveState builds chatBlocks (the active navigation list) and
-// chatRenderPlan (the pre-computed render sequence) from chatGroupHeaders and
-// the current expansion state (chatGroupExpand, chatExpand, chatExpandAll).
-// saved is the chatItem the cursor was on before the rebuild; the cursor is
-// restored to its new index after the rebuild (or 0 if not found).
-// Must be called whenever expansion state changes.
-func (m *Model) rebuildActiveState(saved chatItem) {
-	entries := m.filteredEntries()
-	// ── Build block → entry lookup (for cross-entry group member rendering) ──
-	type entryRef struct {
-		entry *transcript.Entry
-	}
-	entryBySeq := make(map[int]entryRef, len(entries))
-	for i := range entries {
-		entryBySeq[entries[i].Seq] = entryRef{entry: &entries[i]}
-	}
-
-	// ── Build set of all blockKeys that belong to any group ──────────────────
-	// groupByFirst maps a group's first blockKey to its chatItem.
-	// inGroup is the full membership set (used to suppress absorbed blocks).
-	groupByFirst := make(map[blockKey]chatItem, len(m.chatGroupHeaders))
-	inGroup := make(map[blockKey]struct{})
-	m.chatGroupForBlock = make(map[blockKey]blockKey)
-	for _, item := range m.chatGroupHeaders {
-		if item.isGroup {
-			groupByFirst[item.key] = item
-			for _, bk := range item.group.blocks {
-				inGroup[bk] = struct{}{}
-				m.chatGroupForBlock[bk] = item.key
-			}
-		}
-	}
-
-	// ── Build chatBlocks (active navigation list) ─────────────────────────────
-	m.chatBlocks = m.chatBlocks[:0]
-	for _, item := range m.chatGroupHeaders {
-		m.chatBlocks = append(m.chatBlocks, item)
-		if item.isGroup && (m.chatGroupExpand[item.key] || m.chatExpandAll) {
-			for _, bk := range item.group.blocks {
-				m.chatBlocks = append(m.chatBlocks, chatItem{key: bk})
-			}
-		}
-	}
-
-	// ── Restore cursor ────────────────────────────────────────────────────────
-	if len(m.chatBlocks) == 0 {
-		m.chatBlockCursor = 0
-	} else {
-		found := 0
-		for i, item := range m.chatBlocks {
-			if item.isGroup == saved.isGroup && item.key == saved.key {
-				found = i
-				break
-			}
-		}
-		m.chatBlockCursor = found
-		if m.chatBlockCursor >= len(m.chatBlocks) {
-			m.chatBlockCursor = 0
-		}
-	}
-
-	// ── Build chatRenderPlan ──────────────────────────────────────────────────
-	m.chatRenderPlan = m.chatRenderPlan[:0]
-
-	lastIter, lastAttempt, lastGen := -1, -1, -1
-	for _, e := range entries {
-		visibleBlocks := 0
-		for _, blk := range e.Blocks {
-			if blk.Type != "" {
-				visibleBlocks++
-			}
-		}
-		if visibleBlocks == 0 {
-			continue
-		}
-
-		// Emit iteration / retry / re-run banners between entries.
-		if lastGen != -1 && e.Generation > lastGen {
-			m.chatRenderPlan = append(m.chatRenderPlan, renderItem{
-				kind: renderEntrySep,
-				sep:  fmt.Sprintf("── re-run %d ──", e.Generation+1),
-			})
-		}
-		if lastIter != -1 && e.Iteration > lastIter {
-			m.chatRenderPlan = append(m.chatRenderPlan, renderItem{
-				kind: renderEntrySep,
-				sep:  fmt.Sprintf("── iteration %d ──", e.Iteration+1),
-			})
-		}
-		if lastAttempt != -1 && e.Attempt > lastAttempt {
-			m.chatRenderPlan = append(m.chatRenderPlan, renderItem{
-				kind: renderEntrySep,
-				sep:  fmt.Sprintf("── retry %d ──", e.Attempt),
-			})
-		}
-		lastIter, lastAttempt, lastGen = e.Iteration, e.Attempt, e.Generation
-
-		// Parse the entry timestamp for the header. RFC3339 failures silently
-		// produce an empty string so the header still renders without a timestamp.
-		ts := ""
-		if t, err := time.Parse(time.RFC3339, e.Ts); err == nil {
-			ts = t.Local().Format("15:04:05")
-		}
-
-		// Suppress the entry header if every block is absorbed into a group
-		// (tool-role entries: the user entry that carries only tool_result blocks).
-		allAbsorbed := false
-		absorbedBlocks := 0
-		for bi, blk := range e.Blocks {
-			if blk.Type == "" {
-				continue
-			}
-			if _, ok := inGroup[blockKey{seq: e.Seq, block: bi}]; !ok {
-				continue
-			}
-			absorbedBlocks++
-		}
-		allAbsorbed = visibleBlocks > 0 && visibleBlocks == absorbedBlocks
-		if !allAbsorbed {
-			m.chatRenderPlan = append(m.chatRenderPlan, renderItem{
-				kind: renderEntryHeader,
-				key:  blockKey{seq: e.Seq},
-				role: e.Role,
-				ts:   ts,
-			})
-		}
-
-		// Emit block items. Groups are emitted once at their first block's
-		// position; all other group members are skipped here.
-		//
-		// renderedVisible tracks whether this entry produced any visible output
-		// (entry header, group header, or standalone block). Fully-absorbed
-		// entries that host no group header — e.g. the individual tool_use and
-		// tool_result entries ACP writes one-per-message — contribute nothing
-		// visible and must not emit a trailing separator, or N tool calls
-		// stack N blank lines between the group header and the next message.
-		renderedVisible := !allAbsorbed // entry header counts as visible output
-		for bi := range e.Blocks {
-			bk := blockKey{seq: e.Seq, block: bi}
-			eRef := entryBySeq[e.Seq]
-			blk := &eRef.entry.Blocks[bi]
-			if blk.Type == "" {
-				continue
-			}
-
-			if groupItem, ok := groupByFirst[bk]; ok {
-				// First block of a group: emit the group header (and inner blocks
-				// if the group is expanded).
-				renderedVisible = true
-				expanded := m.chatGroupExpand[bk] || m.chatExpandAll
-				m.chatRenderPlan = append(m.chatRenderPlan, renderItem{
-					kind:  renderGroupHeader,
-					key:   bk,
-					group: groupItem.group,
-				})
-				if expanded {
-					for i, mbk := range groupItem.group.blocks {
-						if i > 0 {
-							m.chatRenderPlan = append(m.chatRenderPlan, renderItem{kind: renderGroupGap})
-						}
-						mRef := entryBySeq[mbk.seq]
-						var mBlk *transcript.Block
-						if mRef.entry != nil && mbk.block < len(mRef.entry.Blocks) {
-							mBlk = &mRef.entry.Blocks[mbk.block]
-						}
-						var mRole transcript.Role
-						if mRef.entry != nil {
-							mRole = mRef.entry.Role
-						}
-						m.chatRenderPlan = append(m.chatRenderPlan, renderItem{
-							kind: renderBlock,
-							key:  mbk,
-							blk:  mBlk,
-							role: mRole,
-						})
-					}
-				}
-				continue
-			}
-
-			if _, ok := inGroup[bk]; ok {
-				// Member of a group but not the first block: already handled above.
-				continue
-			}
-
-			// Standalone block (thinking or unsupported) or text.
-			renderedVisible = true
-			switch blk.Type {
-			case transcript.BlockText:
-				m.chatRenderPlan = append(m.chatRenderPlan, renderItem{
-					kind: renderText,
-					key:  bk,
-					blk:  blk,
-					role: e.Role,
-				})
-			default:
-				// BlockThinking and any future collapsible type.
-				m.chatRenderPlan = append(m.chatRenderPlan, renderItem{
-					kind: renderBlock,
-					key:  bk,
-					blk:  blk,
-					role: e.Role,
-				})
-			}
-		}
-
-		// Trailing blank line only when this entry rendered visible content.
-		if renderedVisible {
-			m.chatRenderPlan = append(m.chatRenderPlan, renderItem{kind: renderEntrySep, sep: ""})
-		}
-	}
-}
-
-// collapsible reports whether a block type is collapsed to chatCollapseWidth by
-// default (and thus navigable via the block cursor). Text renders in full as
-// markdown; unknown types render as an inert placeholder.
-func collapsible(t transcript.BlockType) bool {
-	switch t {
-	case transcript.BlockThinking, transcript.BlockToolUse, transcript.BlockToolResult:
-		return true
-	default:
-		return false
-	}
-}
-
-// chatBody renders one step's agent chat chain from its transcript, consuming
-// the pre-computed chatRenderPlan so all grouping and expansion decisions are
-// already resolved. chatBody itself is a dumb iterator over renderItems.
+// chatBody renders one step's agent chat chain from its transcript. Loaded
+// entries delegate to the normalized item renderer; this branch owns only the
+// empty-state and filter chrome.
 func (m *Model) chatBody() string {
 	if m.selKind == "file" && m.selFile != "" {
 		return m.fileBody()
@@ -772,92 +484,6 @@ func (m *Model) chatBody() string {
 			}
 		}
 	}
-
-	if m.chatPage.HasEarlier {
-		sep := "── earlier messages available · [ load older ──"
-		b.WriteString("\n  " + shared.Theme.Marker.Render(sep) + "\n\n")
-	}
-
-	// Dumb iterator over the pre-computed render plan.
-	m.chatLineRanges = make(map[chatLineKey]lineRange)
-	currentLine := strings.Count(b.String(), "\n")
-	for _, item := range m.chatRenderPlan {
-		var chunk strings.Builder
-		if hit, ok := m.currentSearchHit(); ok && item.key == hit.key &&
-			(item.kind == renderText || item.kind == renderBlock) {
-			match := fmt.Sprintf("match %d/%d · %s", m.searchHitCursor+1, len(m.searchHits), hit.preview)
-			chunk.WriteString("  " + shared.Theme.Accent.Render("▶ "+match) + "\n")
-		}
-		switch item.kind {
-		case renderEntrySep:
-			if item.sep == "" {
-				chunk.WriteString("\n")
-			} else {
-				chunk.WriteString("\n  " + shared.Theme.Marker.Render(item.sep) + "\n\n")
-			}
-		case renderEntryHeader:
-			left := fmt.Sprintf("#%d %s", item.key.seq, item.role)
-			if item.ts != "" && m.transcriptInnerW > 0 {
-				totalW := m.transcriptInnerW - 2 // subtract leading "  "
-				pad := totalW - utf8.RuneCountInString(left) - utf8.RuneCountInString(item.ts)
-				if pad < 1 {
-					pad = 1
-				}
-				line := left + strings.Repeat(" ", pad) + item.ts
-				chunk.WriteString("  " + shared.Theme.Chat.Hint.Render(line) + "\n")
-			} else {
-				chunk.WriteString("  " + shared.Theme.Chat.Hint.Render(left) + "\n")
-			}
-		case renderText:
-			if item.blk != nil {
-				m.writeBlock(&chunk, item.key, *item.blk, item.role)
-			}
-		case renderGroupHeader:
-			expanded := m.chatGroupExpand[item.key] || m.chatExpandAll
-			cursored := len(m.chatBlocks) > 0 && m.chatBlockCursor < len(m.chatBlocks) &&
-				m.chatBlocks[m.chatBlockCursor].isGroup &&
-				m.chatBlocks[m.chatBlockCursor].key == item.key
-			m.writeGroupHeader(&chunk, item, expanded, cursored)
-		case renderGroupGap:
-			chunk.WriteString("\n")
-		case renderBlock:
-			if item.blk != nil {
-				m.writeBlock(&chunk, item.key, *item.blk, item.role)
-			}
-		}
-		rendered := chunk.String()
-		lineCount := strings.Count(rendered, "\n")
-		switch item.kind {
-		case renderText, renderGroupHeader, renderBlock:
-			m.chatLineRanges[chatLineKey{
-				blockKey: item.key,
-				isGroup:  item.kind == renderGroupHeader,
-			}] = lineRange{
-				start: currentLine,
-				end:   max(currentLine, currentLine+lineCount-1),
-			}
-		}
-		b.WriteString(rendered)
-		currentLine += lineCount
-	}
-
-	if m.chatPage.HasLater {
-		b.WriteString("\n  " + shared.Theme.Marker.Render("── newer messages available · ] load newer ──") + "\n")
-	}
-
-	// Live tail: the current, not-yet-finalized bubble.
-	if running && hasTail {
-		b.WriteString("  " + shared.Theme.Question.Render("typing…") + "\n")
-		tail := m.stepOutput[m.chatStep].String()
-		lines := strings.Split(tail, "\n")
-		if len(lines) > outputMaxLines {
-			lines = lines[len(lines)-outputMaxLines:]
-		}
-		for _, l := range lines {
-			b.WriteString("  " + l + "\n")
-		}
-	}
-
 	return b.String()
 }
 
@@ -952,83 +578,6 @@ func reviewFormatLabel(format string) string {
 	}
 }
 
-// writeGroupHeader renders one tool call group header line:
-//
-//	▌ ▸/▾ N tool call(s)
-//
-// The bar is in shared.Theme.Chat.BarToolCall (charple accent, matching tool_use
-// blocks). Details stay hidden until the group is expanded so a folded group is
-// a compact count rather than a second summary of its individual blocks.
-func (m Model) writeGroupHeader(b *strings.Builder, item renderItem, expanded, cursored bool) {
-	bar := shared.Theme.Chat.BarToolCall
-	barGlyph := bar.Render(shared.BarThick)
-	marker := shared.CollapsedMarker
-	if expanded {
-		marker = shared.ExpandedMarker
-	}
-
-	g := item.group
-	label := ""
-	if g.count == 0 {
-		noun := "tool results"
-		if g.results == 1 {
-			noun = "tool result"
-		}
-		label = fmt.Sprintf("%d %s", g.results, noun)
-	} else {
-		noun := "tool calls"
-		if g.count == 1 {
-			noun = "tool call"
-		}
-		label = fmt.Sprintf("%d %s", g.count, noun)
-	}
-
-	if cursored {
-		b.WriteString("  " + barGlyph + " " + shared.Theme.Chat.BlockCursor.Render(marker+" "+label))
-	} else {
-		b.WriteString("  " + barGlyph + " " + shared.Theme.Chat.ToolCall.Render(marker) +
-			" " + shared.Theme.Chat.ToolCall.Render(label))
-	}
-	b.WriteString("\n")
-}
-
-// writeBlock renders one transcript block. Assistant text is markdown (cached);
-// system text (command output) is shown verbatim so terminal output is not
-// reflowed as prose; thinking, tool_use, and tool_result collapse to
-// chatCollapseWidth until expanded.
-func (m Model) writeBlock(b *strings.Builder, key blockKey, blk transcript.Block, role transcript.Role) {
-	switch blk.Type {
-	case transcript.BlockText:
-		if role == transcript.RoleUser {
-			m.writeUserGuidance(b, key, blk.Text)
-			return
-		}
-		if role == transcript.RoleSystem {
-			writeVerbatim(b, blk.Text)
-			return
-		}
-		b.WriteString(m.renderMarkdown(key, blk.Text))
-	case transcript.BlockThinking:
-		m.writeCollapsible(b, key, shared.Theme.Chat.Thinking, shared.Theme.Chat.BarThinking, shared.IconThinking+" reasoning", blk.Text, blk.Text, "", false, blk.Truncated)
-	case transcript.BlockToolUse:
-		inp := ""
-		if blk.Activity() != nil {
-			inp = expandView(string(blk.Activity().Input))
-		}
-		summary := summarizeToolCall(blk)
-		m.writeCollapsible(b, key, shared.Theme.Chat.ToolCall, shared.Theme.Chat.BarToolCall, summary.label, summary.preview, inp, fenceJSON(inp), false, false)
-	case transcript.BlockToolResult:
-		res := ""
-		failed := blk.Activity() != nil && blk.Activity().Status == "failed"
-		if blk.Activity() != nil {
-			res = expandView(searchableActivity(blk.Activity()))
-		}
-		m.writeCollapsible(b, key, shared.Theme.Chat.ToolResult, shared.Theme.Chat.BarToolResult, shared.IconToolResult+" result", res, res, fenceJSON(res), failed, blk.Truncated)
-	default:
-		b.WriteString("  " + shared.Theme.Question.Render("[unsupported block: "+string(blk.Type)+"]") + "\n")
-	}
-}
-
 // renderMarkdown renders a text block as markdown, caching the result per block.
 // Glamour recognizes code fences and delegates them to the registered
 // Chroma/Lip Gloss formatter. The cache map is shared across the value copies of
@@ -1110,86 +659,6 @@ func jsonlToMarkdown(content string) string {
 	return sb.String()
 }
 
-// writeCollapsible renders one collapsible block: a role-colored left bar ("▌")
-// and a labelled header with a ▸/▾ affordance, then either a one-line preview
-// clipped to chatCollapseWidth or the bounded full content (also bar-accented).
-// The block under the chat cursor is highlighted so the expand target is
-// obvious; error results take shared.Theme.Error and the danger bar.
-func (m Model) writeCollapsible(b *strings.Builder, key blockKey, labelStyle, barStyle lipgloss.Style, label, preview, content, formattedContent string, isError, truncated bool) {
-	expanded := m.chatExpandAll || m.chatExpand[key]
-	cursored := len(m.chatBlocks) > 0 && m.chatBlockCursor < len(m.chatBlocks) &&
-		!m.chatBlocks[m.chatBlockCursor].isGroup &&
-		m.chatBlocks[m.chatBlockCursor].key == key
-
-	marker := shared.CollapsedMarker
-	if expanded {
-		marker = shared.ExpandedMarker
-	}
-	head := labelStyle
-	bar := barStyle
-	if isError {
-		head = shared.Theme.Error
-		bar = shared.Theme.Chat.BarError
-	}
-	barGlyph := bar.Render(shared.BarThick)
-	if cursored {
-		b.WriteString("  " + barGlyph + " " + shared.Theme.Chat.BlockCursor.Render(marker+" "+label))
-	} else {
-		b.WriteString("  " + barGlyph + " " + marker + " " + head.Render(label))
-	}
-
-	if !expanded {
-		shown, clipped := collapseLine(preview)
-		if shown != "" {
-			b.WriteString(" " + shared.Theme.Question.Render(shown))
-		}
-		if clipped || truncated {
-			b.WriteString(shared.Theme.Chat.Hint.Render(
-				fmt.Sprintf(" [%d chars]", utf8.RuneCountInString(preview))))
-		}
-		b.WriteString("\n")
-		return
-	}
-
-	b.WriteString("\n")
-	if formattedContent != "" {
-		b.WriteString(withBar(bar, m.renderInsetMarkdown(key, formattedContent)))
-	} else {
-		var body strings.Builder
-		for _, l := range strings.Split(expandView(content), "\n") {
-			body.WriteString(shared.Theme.Question.Render(l) + "\n")
-		}
-		b.WriteString(withBar(bar, body.String()))
-	}
-	if truncated {
-		b.WriteString("    " + shared.Theme.Chat.Hint.Render("… (truncated at write)") + "\n")
-	}
-}
-
-// withBar prefixes every line of content with a role-colored thick bar ("▌"),
-// crush's signature block affordance. content may already carry ANSI styling
-// (e.g. glamour output); the bar is emitted before each line's styling begins so
-// nested SGR resets never clear it.
-func withBar(style lipgloss.Style, content string) string {
-	bar := style.Render(shared.BarThick)
-	var b strings.Builder
-	for _, l := range strings.Split(strings.TrimRight(content, "\n"), "\n") {
-		b.WriteString("  " + bar + " " + l + "\n")
-	}
-	return b.String()
-}
-
-// collapseLine flattens s to a single line and clips it to chatCollapseWidth
-// runes, reporting whether it was clipped. Interior whitespace is collapsed so a
-// multi-line block previews as one tidy line.
-func collapseLine(s string) (string, bool) {
-	flat := strings.Join(strings.Fields(s), " ")
-	if utf8.RuneCountInString(flat) <= chatCollapseWidth {
-		return flat, false
-	}
-	return string([]rune(flat)[:chatCollapseWidth]), true
-}
-
 // expandView bounds a block's expanded content: below chatExpandMax it returns
 // the content unchanged; above it, a head+tail with the middle elided so a
 // write-capped 256 KiB result never lays out in full.
@@ -1218,60 +687,6 @@ func clampRunesTail(s string) string {
 		s = s[1:]
 	}
 	return s
-}
-
-// writeDiff renders the same hunk-only diff presentation used by the review
-// workspace, while retaining transcript-specific indentation and truncation.
-func writeDiff(b *strings.Builder, diff string) {
-	b.WriteString("  " + shared.Theme.Question.Render("── diff ─────────────────────────────") + "\n")
-	lines := strings.Split(diff, "\n")
-	const maxDiffLines = 200
-	presentation := diffview.Parse(diff)
-	if presentation.ParseErr != nil || len(presentation.Hunks) == 0 {
-		writeRawDiff(b, lines, maxDiffLines)
-		return
-	}
-	rows := presentation.DisplayRows(nil)
-	truncated := len(rows) > maxDiffLines
-	if truncated {
-		rows = rows[:maxDiffLines]
-	}
-	for _, row := range rows {
-		if row.Separator {
-			b.WriteByte('\n')
-			continue
-		}
-		if hunk := hunkAt(presentation.Hunks, row.PatchLine); hunk != nil {
-			b.WriteString("  " + diffview.RenderHunkHeader(*hunk) + "\n")
-			continue
-		}
-		b.WriteString("  " + diffview.RenderRawLine(lines[row.PatchLine-1]) + "\n")
-	}
-	if truncated {
-		b.WriteString("  " + shared.Theme.Question.Render("… diff truncated") + "\n")
-	}
-}
-
-func hunkAt(hunks []diffview.Hunk, line int) *diffview.Hunk {
-	for i := range hunks {
-		if hunks[i].StartPatchLine == line {
-			return &hunks[i]
-		}
-	}
-	return nil
-}
-
-func writeRawDiff(b *strings.Builder, lines []string, maxLines int) {
-	truncated := len(lines) > maxLines
-	if truncated {
-		lines = lines[:maxLines]
-	}
-	for _, line := range lines {
-		b.WriteString("  " + diffview.RenderRawLine(line) + "\n")
-	}
-	if truncated {
-		b.WriteString("  " + shared.Theme.Question.Render("… diff truncated") + "\n")
-	}
 }
 
 // writeVerbatim renders text as-is, one indented line per line, without markdown

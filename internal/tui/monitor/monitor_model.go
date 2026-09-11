@@ -107,8 +107,6 @@ type gateContextSnapshot struct {
 	chatItem       transcriptItemKey
 	chatItemExpand map[transcriptItemKey]bool
 	chatExpandAll  bool
-	legacyExpand   map[blockKey]bool
-	legacyGroups   map[blockKey]bool
 	chatPageEnd    int64
 	searchQuery    string
 	filters        transcriptFilters
@@ -181,15 +179,6 @@ type Model struct {
 	chatEntries []transcript.Entry
 	chatPage    transcript.Page
 
-	// Legacy group state is retained only until Task 4 migration cleanup lands.
-	chatGroupHeaders   []chatItem
-	chatBlocks         []chatItem
-	chatRenderPlan     []renderItem
-	chatBlockCursor    int
-	chatExpand         map[blockKey]bool
-	chatGroupExpand    map[blockKey]bool
-	chatExpandAll      bool
-	chatGroupForBlock  map[blockKey]blockKey
 	chatItems          []transcriptItem
 	chatVisibleItems   []transcriptItem
 	chatItemCursor     int
@@ -202,9 +191,8 @@ type Model struct {
 	// keyed by block (glamour re-parses whole documents, so re-rendering on every
 	// event is wasteful). The cache is invalidated when the transcript panel's
 	// inner width changes (see lastTranscriptW / rebuildRenderer).
-	renderer       *glamour.TermRenderer
-	chatRendered   map[blockKey]string
-	chatLineRanges map[chatLineKey]lineRange
+	renderer     *glamour.TermRenderer
+	chatRendered map[blockKey]string
 
 	// Search is intentionally page-local: loading another bounded page rebuilds
 	// hits from that page rather than indexing the complete transcript in memory.
@@ -390,11 +378,6 @@ const (
 )
 
 const (
-	// chatCollapseWidth is the render-time collapse: large blocks (thinking,
-	// tool input, tool result) show at most this many characters on one line
-	// until expanded. Distinct from the writer's byte cap (Truncated).
-	chatCollapseWidth = 80
-
 	// chatExpandMax bounds an expanded block so a 256 KiB write-capped result
 	// never lays out in full; beyond it the middle is elided head+tail.
 	chatExpandMax = 4096
@@ -506,13 +489,6 @@ type lineRange struct {
 	end   int
 }
 
-type chatLineKey struct {
-	blockKey
-	isGroup bool
-}
-
-func (i chatItem) lineKey() chatLineKey { return chatLineKey{blockKey: i.key, isGroup: i.isGroup} }
-
 type searchHit struct {
 	key     blockKey
 	preview string
@@ -527,36 +503,6 @@ type transcriptFilters struct {
 	user      bool
 	system    bool
 	result    bool
-}
-
-type chatItem struct {
-	isGroup bool
-	key     blockKey
-	group   *toolGroup
-}
-type toolGroup struct {
-	blocks         []blockKey
-	count, results int
-}
-type renderKind int
-
-const (
-	renderEntrySep renderKind = iota
-	renderEntryHeader
-	renderText
-	renderGroupHeader
-	renderGroupGap
-	renderBlock
-)
-
-type renderItem struct {
-	kind  renderKind
-	sep   string
-	key   blockKey
-	blk   *transcript.Block
-	role  transcript.Role
-	group *toolGroup
-	ts    string
 }
 
 func (f transcriptFilters) active() bool {
@@ -607,11 +553,7 @@ func New(runID string) Model {
 		index:              make(map[string]int),
 		stepOutput:         make(map[string]*strings.Builder),
 		msgCount:           make(map[string]int),
-		chatExpand:         make(map[blockKey]bool),
-		chatGroupExpand:    make(map[blockKey]bool),
-		chatGroupForBlock:  make(map[blockKey]blockKey),
 		chatRendered:       make(map[blockKey]string),
-		chatLineRanges:     make(map[chatLineKey]lineRange),
 		chatItemExpand:     make(map[transcriptItemKey]bool),
 		chatItemRendered:   make(map[transcriptRenderKey]string),
 		chatItemLineRanges: make(map[transcriptLineKey]lineRange),
@@ -676,20 +618,8 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 	if m.msgCount == nil {
 		m.msgCount = make(map[string]int)
 	}
-	if m.chatExpand == nil {
-		m.chatExpand = make(map[blockKey]bool)
-	}
-	if m.chatGroupExpand == nil {
-		m.chatGroupExpand = make(map[blockKey]bool)
-	}
 	if m.chatRendered == nil {
 		m.chatRendered = make(map[blockKey]string)
-	}
-	if m.chatGroupForBlock == nil {
-		m.chatGroupForBlock = make(map[blockKey]blockKey)
-	}
-	if m.chatLineRanges == nil {
-		m.chatLineRanges = make(map[chatLineKey]lineRange)
 	}
 	if m.chatItemExpand == nil {
 		m.chatItemExpand = make(map[transcriptItemKey]bool)

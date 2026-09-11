@@ -318,17 +318,6 @@ func (m *Model) ensureCursorVisible() {
 	}
 }
 
-func (m *Model) ensureChatCursorVisible() {
-	if len(m.chatBlocks) == 0 || m.chatBlockCursor < 0 || m.chatBlockCursor >= len(m.chatBlocks) {
-		return
-	}
-	rng, ok := m.chatLineRanges[m.chatBlocks[m.chatBlockCursor].lineKey()]
-	if !ok {
-		return
-	}
-	m.ensureTranscriptRangeVisible(rng)
-}
-
 func (m *Model) ensureTranscriptItemCursorVisible() {
 	if m.chatItemCursor < 0 || m.chatItemCursor >= len(m.chatVisibleItems) {
 		return
