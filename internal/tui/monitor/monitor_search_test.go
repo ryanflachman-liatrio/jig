@@ -10,6 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"jig/internal/engine"
 	"jig/internal/transcript"
+	"jig/internal/tui/shared"
 )
 
 func manyTranscriptEntries(n int) []transcript.Entry {
@@ -275,9 +276,14 @@ func TestErrorFilterKeepsAtomicToolContext(t *testing.T) {
 
 	body := ansiStrip(m.chatBody())
 	if strings.Contains(body, "ordinary prose") ||
-		!strings.Contains(body, "Read failed") ||
+		!strings.Contains(body, "Read") ||
+		!strings.Contains(body, shared.IconStatusError) ||
+		!strings.Contains(body, "permission denied") ||
 		!strings.Contains(body, "agent failed") {
 		t.Fatalf("error-filtered body lost tool context or kept prose:\n%s", body)
+	}
+	if strings.Contains(body, "Read failed") {
+		t.Fatalf("error-filtered body appended state prose to the title:\n%s", body)
 	}
 	m.chatItemExpand[m.chatVisibleItems[0].key] = true
 	body = ansiStrip(m.chatBody())

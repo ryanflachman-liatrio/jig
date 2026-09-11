@@ -12,12 +12,17 @@ import (
 	"jig/internal/tui/shared"
 )
 
+// toolCallSummary is the sanitized, slot-shaped input the status-line
+// renderer (slice 02) consumes. `icon` is retained for callers that still
+// want a per-kind glyph; the Monitor header uses `kind` with
+// shared.ToolStatusIcon and does not read this field for the icon slot.
+// `kind` is the canonical name (`read`, `edit`, ...); empty when the
+// activity could not be classified.
 type toolCallSummary struct {
-	icon    string
-	action  string
-	detail  string
-	label   string
-	preview string
+	icon   string
+	action string
+	detail string
+	kind   string
 }
 
 func summarizeToolCall(blk transcript.Block) toolCallSummary {
@@ -26,7 +31,7 @@ func summarizeToolCall(blk transcript.Block) toolCallSummary {
 
 func summarizeActivity(activity *toolcall.Activity) toolCallSummary {
 	if activity == nil {
-		return toolSummary(shared.IconToolCall, "Tool", "")
+		return toolSummary(shared.IconToolCall, "Tool", "", "")
 	}
 	args := decodeToolArgs(activity.Input)
 	kind := strings.ToLower(strings.TrimSpace(activity.Kind))
@@ -36,12 +41,12 @@ func summarizeActivity(activity *toolcall.Activity) toolCallSummary {
 	if kind == "edit" {
 		for _, content := range activity.Content {
 			if content.Diff != nil {
-				return toolSummary("◈", "Edit", shortFile(content.Diff.Path))
+				return toolSummary(shared.IconToolEdit, "Edit", shortFile(content.Diff.Path), "edit")
 			}
 		}
 		for _, location := range activity.Locations {
 			if location.Path != "" {
-				return toolSummary("◈", "Edit", shortFile(location.Path))
+				return toolSummary(shared.IconToolEdit, "Edit", shortFile(location.Path), "edit")
 			}
 		}
 	}
@@ -51,51 +56,54 @@ func summarizeActivity(activity *toolcall.Activity) toolCallSummary {
 
 	switch kind {
 	case "read":
-		return toolSummary("◈", "Read", shortFile(stringArg(args, "file_path", "path")))
+		return toolSummary(shared.IconToolRead, "Read", shortFile(stringArg(args, "file_path", "path")), kind)
 	case "edit":
-		return toolSummary("◈", "Edit", shortFile(stringArg(args, "file_path", "path")))
+		return toolSummary(shared.IconToolEdit, "Edit", shortFile(stringArg(args, "file_path", "path")), kind)
 	case "write":
-		return toolSummary("◈", "Write", shortFile(stringArg(args, "file_path", "path")))
+		return toolSummary(shared.IconToolWrite, "Write", shortFile(stringArg(args, "file_path", "path")), kind)
 	case "notebookedit":
-		return toolSummary("◈", "Edit notebook", shortFile(stringArg(args, "notebook_path", "target_notebook", "path")))
+		return toolSummary(shared.IconToolEdit, "Edit notebook", shortFile(stringArg(args, "notebook_path", "target_notebook", "path")), kind)
 	case "glob":
-		return toolSummary("⌕", "Find", stringArg(args, "pattern", "glob_pattern"))
+		return toolSummary(shared.IconToolSearch, "Find", stringArg(args, "pattern", "glob_pattern"), kind)
 	case "grep":
-		return toolSummary("⌕", "Search", stringArg(args, "pattern", "query"))
+		return toolSummary(shared.IconToolSearch, "Search", stringArg(args, "pattern", "query"), kind)
 	case "bash":
-		return toolSummary("$", "Run", stringArg(args, "command"))
+		return toolSummary(shared.IconToolShell, "Run", stringArg(args, "command"), kind)
 	case "websearch":
-		return toolSummary("↗", "Search web", stringArg(args, "query", "search_term"))
+		return toolSummary(shared.IconToolWeb, "Search web", stringArg(args, "query", "search_term"), kind)
 	case "webfetch":
-		return toolSummary("↗", "Fetch", shortHost(stringArg(args, "url")))
+		return toolSummary(shared.IconToolWeb, "Fetch", shortHost(stringArg(args, "url")), kind)
 	case "task":
-		return toolSummary("⊙", taskAction(stringArg(args, "subagent_type")), stringArg(args, "description"))
+		return toolSummary(shared.IconToolAgent, taskAction(stringArg(args, "subagent_type")), stringArg(args, "description"), kind)
 	case "todowrite":
-		return toolSummary("⊙", "Update", countLabel(arrayLen(args, "todos"), "task", "tasks"))
+		return toolSummary(shared.IconToolTodo, "Update", countLabel(arrayLen(args, "todos"), "task", "tasks"), kind)
 	case "todoread":
-		return toolSummary("⊙", "Read todos", "")
+		return toolSummary(shared.IconToolTodo, "Read todos", "", kind)
 	case "askuserquestion":
-		return toolSummary("?", "Ask", firstQuestion(args))
+		return toolSummary(shared.IconToolAsk, "Ask", firstQuestion(args), kind)
 	case "skill":
-		return toolSummary("⊙", "Use skill", stringArg(args, "skill"))
+		return toolSummary(shared.IconToolAgent, "Use skill", stringArg(args, "skill"), kind)
 	}
 
 	name := displayToolName(activity.Title)
 	if name == "" {
 		name = "Tool"
 	}
-	return toolSummary(shared.IconToolCall, name, primaryToolArg(args))
+	return toolSummary(shared.IconToolCall, name, primaryToolArg(args), kind)
 }
 
-func toolSummary(icon, action, detail string) toolCallSummary {
-	icon = sanitizeToolSummary(icon)
-	action = sanitizeToolSummary(action)
-	detail = sanitizeToolSummary(detail)
-	s := toolCallSummary{icon: icon, action: action, detail: detail, label: strings.TrimSpace(icon + " " + action)}
-	if detail != "" {
-		s.preview = "· " + detail
+// toolSummary sanitizes each slot so agent-controlled tool arguments cannot
+// carry embedded control characters into the transcript row. It records the
+// canonical `kind` alongside the presentation fields so the Monitor renderer
+// can look up the settled-success signature glyph via shared.ToolStatusIcon
+// without re-canonicalizing here.
+func toolSummary(icon, action, detail, kind string) toolCallSummary {
+	return toolCallSummary{
+		icon:   sanitizeToolSummary(icon),
+		action: sanitizeToolSummary(action),
+		detail: sanitizeToolSummary(detail),
+		kind:   strings.ToLower(strings.TrimSpace(kind)),
 	}
-	return s
 }
 
 func decodeToolArgs(raw json.RawMessage) map[string]json.RawMessage {

@@ -16,6 +16,7 @@ import (
 	"jig/internal/step"
 	"jig/internal/toolcall"
 	"jig/internal/transcript"
+	"jig/internal/tui/shared"
 )
 
 func syntheticExchangePage(count int, detailRows int) transcript.Page {
@@ -117,8 +118,13 @@ func TestTranscriptCardCacheLifecycleBounded(t *testing.T) {
 	replacement.Entries[1].Blocks[0].Tool.Status = "failed"
 	m.setChatPage(replacement)
 	failed := m.itemTranscriptBody()
-	if !strings.Contains(stripANSI(failed), "failed") || !strings.Contains(stripANSI(failed), "Changed synthetic header") {
+	// FR-02.12/02.15: the failed exchange no longer contains " failed" prose;
+	// state is carried by the error icon and the card border.
+	if !strings.Contains(stripANSI(failed), shared.IconStatusError) || !strings.Contains(stripANSI(failed), "Changed synthetic header") {
 		t.Fatalf("same-key failed/header replacement stayed stale:\n%s", stripANSI(failed))
+	}
+	if strings.Contains(stripANSI(failed), " failed") {
+		t.Fatalf("state prose reappeared in header after replacement:\n%s", stripANSI(failed))
 	}
 	if len(m.chatItemRendered) != 4 {
 		t.Fatalf("replacement cache = %d, want 4", len(m.chatItemRendered))
@@ -127,7 +133,7 @@ func TestTranscriptCardCacheLifecycleBounded(t *testing.T) {
 	replacement.Entries[1].Blocks[0].Tool.Status = "completed"
 	m.setChatPage(replacement)
 	completed := m.itemTranscriptBody()
-	if strings.Contains(stripANSI(completed), "failed") || completed == failed {
+	if strings.Contains(stripANSI(completed), shared.IconStatusError) || completed == failed {
 		t.Fatalf("same-key success replacement stayed stale:\n%s", stripANSI(completed))
 	}
 
@@ -228,8 +234,21 @@ func syntheticTranscriptCardVisualPage() transcript.Page {
 				}}},
 			},
 		}}},
+		// Slice-02 additions (task 3.1): broaden state × kind coverage so the
+		// status-line header gallery shows the web signature glyph alongside
+		// the read/edit signatures. Appended at the end so slice-01 tests keep
+		// their existing chatItems[3] and chatItems[4] positions.
+		{Seq: 9, Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "web", Kind: "websearch", Title: "Search web for synthetic term", Input: []byte(`{"query":"synthetic release notes"}`)}}}},
+		{Seq: 10, Role: transcript.RoleUser, Blocks: []transcript.Block{{Type: transcript.BlockToolResult, Tool: &toolcall.Activity{ID: "web", Kind: "websearch", Status: "completed"}}}},
 	}
 	return transcript.Page{Entries: entries}
+}
+
+type monitorVisualCapture struct {
+	name          string
+	width, height int
+	selected      int
+	gotoBottom    bool
 }
 
 func TestTranscriptCardVisualProof(t *testing.T) {
@@ -241,20 +260,43 @@ func TestTranscriptCardVisualProof(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	type capture struct {
-		name          string
-		width, height int
-		selected      int
-		gotoBottom    bool
-	}
-	captures := []capture{
+	captures := []monitorVisualCapture{
 		{name: "25-task-5-monitor-states", width: 100, height: 30, selected: 1},
 		{name: "25-task-5-monitor-narrow", width: 58, height: 30, selected: 2},
 		{name: "25-task-5-monitor-wide", width: 132, height: 32, selected: 4, gotoBottom: true},
 	}
+	writeMonitorVisualCaptures(t, dir, captures, "Task 05")
+}
+
+// TestStatusLineHeaderVisualProof captures deterministic Monitor frames
+// that demonstrate slice-02's four-slot status-line header grammar
+// (icon carries state, per-kind signature glyph on settled success,
+// selection-only title emphasis, error hint routed to meta). It reuses
+// the slice-01 fabricated fixture so slice-01 captures still render;
+// output goes to the slice-02 proofs directory when JIG_UI_SNAPSHOT_DIR
+// is set to that location.
+func TestStatusLineHeaderVisualProof(t *testing.T) {
+	dir := os.Getenv("JIG_UI_SNAPSHOT_DIR")
+	if dir == "" {
+		t.Skip("set JIG_UI_SNAPSHOT_DIR to capture slice-02 Monitor frames")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	captures := []monitorVisualCapture{
+		{name: "25-task-3-monitor-headers", width: 100, height: 30, selected: 1},
+		{name: "25-task-3-monitor-narrow", width: 58, height: 30, selected: 1},
+		{name: "25-task-3-monitor-wide", width: 132, height: 32, selected: 4, gotoBottom: true},
+	}
+	writeMonitorVisualCaptures(t, dir, captures, "Task 03 (slice 02)")
+}
+
+func writeMonitorVisualCaptures(t *testing.T, dir string, captures []monitorVisualCapture, tag string) {
+	t.Helper()
 	var notes strings.Builder
-	notes.WriteString("Task 05 deterministic Monitor visual fixture\n")
-	notes.WriteString("Fixture source: TestTranscriptCardVisualProof / syntheticTranscriptCardVisualPage\n")
+	notes.WriteString(tag + " deterministic Monitor visual fixture\n")
+	notes.WriteString("Fixture source: syntheticTranscriptCardVisualPage (shared between slice 01 and slice 02 proofs)\n")
 	notes.WriteString("All paths, commands, status text, and code are fabricated.\n\n")
 	notes.WriteString("Rendering: production Model.View ANSI -> deterministic test HTML -> local headless Chrome PNG.\n\n")
 	for _, capture := range captures {
@@ -288,7 +330,11 @@ func TestTranscriptCardVisualProof(t *testing.T) {
 			m.chatItemExpandAll, m.chatItemExpand[m.chatItems[4].key], m.chatVP.YOffset())
 	}
 	notes.WriteString("\nObserved semantic states: success uses the quiet dim border; failure uses danger; running uses primary; incomplete uses warning. Selection retains its outside rail and emphasized header without replacing those state borders. The wide frame shows structured-edit details below its header card.\n")
-	if err := os.WriteFile(filepath.Join(dir, "25-task-5-monitor-states-notes.txt"), []byte(notes.String()), 0o644); err != nil {
+	notesName := "25-task-5-monitor-states-notes.txt"
+	if strings.HasPrefix(tag, "Task 03") {
+		notesName = "25-task-3-monitor-headers-notes.txt"
+	}
+	if err := os.WriteFile(filepath.Join(dir, notesName), []byte(notes.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
