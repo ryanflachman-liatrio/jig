@@ -163,6 +163,7 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir, m.root, repoRoot, onDone)
 	s.resolver = m.resolver
 	s.secretResolver = secrets
+	s.getCauseHint = run.causeSnapshot
 	s.seq = seq
 	s.states = checkpoint.states
 	s.reviewSessions = checkpoint.reviewSessions
@@ -216,6 +217,20 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 		cancel()
 		return fail(err)
 	}
+	s.observers = &m.observers
+
+	// Register the reopened run before any live event is fanned out. The
+	// notification lifecycle uses this seed to emit one filtered restored
+	// summary rather than replaying historical alerts.
+	m.observers.dispatchRegistered(RunRegistration{
+		RunID:           runID,
+		Workflow:        wf.Meta.Name,
+		Epoch:           m.nextEpoch(),
+		Reopen:          true,
+		Snapshot:        run.Snapshot,
+		UnresolvedWaits: unresolvedWaitsFromCheckpoint(checkpoint),
+	})
+
 	if err := s.emitBatch(reopenEvents); err != nil {
 		m.mu.Lock()
 		delete(m.runs, runID)
@@ -232,7 +247,10 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	if security != nil {
 		s.securitySignals = security.signals
 	}
-	go s.runLoop(ctx)
+	go func() {
+		defer m.observers.dispatchStopped(runID)
+		s.runLoop(ctx)
+	}()
 	return run, nil
 }
 
@@ -278,6 +296,33 @@ func (c *unfinishedCheckpoint) hasParks() bool {
 	return len(c.reviewSessions) > 0 || len(c.interrupted) > 0 || len(c.recoveries) > 0 ||
 		len(c.inputs) > 0 || len(c.questions) > 0 || len(c.integrations) > 0 ||
 		len(c.stopped) > 0 || len(c.missingInputPayload) > 0
+}
+
+// unresolvedWaitsFromCheckpoint translates a resumed checkpoint's still-parked
+// human waits into the wait-kind vocabulary observers consume. It is used only
+// by Manager.Resume to seed one filtered restored summary per (run, epoch)
+// through the notification lifecycle; the scheduler itself does not read it.
+func unresolvedWaitsFromCheckpoint(c *unfinishedCheckpoint) []UnresolvedWait {
+	if c == nil {
+		return nil
+	}
+	var out []UnresolvedWait
+	for stepID := range c.reviewSessions {
+		out = append(out, UnresolvedWait{StepID: stepID, Kind: WaitReview})
+	}
+	for stepID := range c.inputs {
+		out = append(out, UnresolvedWait{StepID: stepID, Kind: WaitInput})
+	}
+	for stepID := range c.questions {
+		out = append(out, UnresolvedWait{StepID: stepID, Kind: WaitQuestion})
+	}
+	for stepID := range c.recoveries {
+		out = append(out, UnresolvedWait{StepID: stepID, Kind: WaitRecovery})
+	}
+	for stepID := range c.integrations {
+		out = append(out, UnresolvedWait{StepID: stepID, Kind: WaitIntegrationConflict})
+	}
+	return out
 }
 
 // hasOutstandingWork reports whether Resume has anything at all to do: either
