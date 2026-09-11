@@ -154,7 +154,7 @@ func TestTranscriptSearchFindsFilteredLoadedBlocks(t *testing.T) {
 	}
 
 	m.filters.reasoning = true
-	m.rebuildLoadedChat(chatItem{})
+	m.rebuildTranscriptItemState(m.selectedTranscriptItemKey())
 	m.rerunSearch()
 	if len(m.searchHits) != 1 || m.searchHits[0].key.block != 1 {
 		t.Fatalf("reasoning-filtered hits = %+v", m.searchHits)
@@ -180,7 +180,7 @@ func TestTranscriptSearchFiltersRenderedPageAndKeepsToolContext(t *testing.T) {
 	m = enterChatStep(t, m, "a")
 
 	m.searchQuery = "MATCH"
-	m.rebuildLoadedChat(chatItem{})
+	m.rebuildTranscriptItemState(m.selectedTranscriptItemKey())
 	m.rerunSearch()
 	body := ansiStrip(m.chatBody())
 	for _, hidden := range []string{"unrelated reasoning", "more unrelated prose"} {
@@ -271,7 +271,7 @@ func TestErrorFilterKeepsAtomicToolContext(t *testing.T) {
 	m.RunDir = runDir
 	m = enterChatStep(t, m, "a")
 	m.filters.errors = true
-	m.rebuildLoadedChat(chatItem{})
+	m.rebuildTranscriptItemState(m.selectedTranscriptItemKey())
 
 	body := ansiStrip(m.chatBody())
 	if strings.Contains(body, "ordinary prose") ||
@@ -304,10 +304,9 @@ func TestToolFilterPreservesHiddenBlockGroupBoundaries(t *testing.T) {
 	m.RunDir = runDir
 	m = enterChatStep(t, m, "a")
 	m.filters.tools = true
-	m.rebuildLoadedChat(chatItem{})
-
-	if len(m.chatGroupHeaders) != 2 {
-		t.Fatalf("tool filter merged groups across hidden text: got %d groups", len(m.chatGroupHeaders))
+	m.rebuildTranscriptItemState(m.selectedTranscriptItemKey())
+	if len(m.chatVisibleItems) != 2 {
+		t.Fatalf("tool filter visible items = %d, want 2", len(m.chatVisibleItems))
 	}
 }
 
@@ -349,7 +348,7 @@ func TestSearchInputAndContextualNavigation(t *testing.T) {
 		t.Fatalf("N selected hit %d, want 0", m.searchHitCursor)
 	}
 	m.filters.reasoning = true
-	m.rebuildLoadedChat(chatItem{})
+	m.rebuildTranscriptItemState(m.selectedTranscriptItemKey())
 	m.rerunSearch()
 	m.filterOpen = true
 	m.filterCursor = 2

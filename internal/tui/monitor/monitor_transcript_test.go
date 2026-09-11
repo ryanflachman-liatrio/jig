@@ -2,7 +2,6 @@ package monitor
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -10,38 +9,6 @@ import (
 
 	"jig/internal/transcript"
 )
-
-func TestWriteDiffUsesSharedHunkPresentation(t *testing.T) {
-	diff := strings.Join([]string{
-		"diff --git a/internal/service.go b/internal/service.go",
-		"index 1234567..7654321 100644",
-		"--- a/internal/service.go",
-		"+++ b/internal/service.go",
-		"@@ -10 +10 @@ func Start()",
-		"-return oldService()",
-		"+return newService()",
-		"@@ -24 +24 @@ func Stop()",
-		"-return oldShutdown()",
-		"+return gracefulShutdown()",
-	}, "\n")
-
-	var rendered strings.Builder
-	writeDiff(&rendered, diff)
-	got := ansiStrip(rendered.String())
-	for _, want := range []string{"Hunk 1", "internal/service.go", "func Start()", "return newService()", "Hunk 2", "func Stop()", "return gracefulShutdown()"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("rendered diff missing %q:\n%s", want, got)
-		}
-	}
-	for _, hidden := range []string{"diff --git", "index 1234567", "--- a/internal", "+++ b/internal"} {
-		if strings.Contains(got, hidden) {
-			t.Errorf("rendered diff retained metadata %q:\n%s", hidden, got)
-		}
-	}
-	if !strings.Contains(got, fmt.Sprintf("%s\n\n\n", "+return newService()")) {
-		t.Errorf("hunks are not separated by two blank lines:\n%s", got)
-	}
-}
 
 // denseTranscriptFixture deliberately keeps each migration edge case in one
 // place. Item-normalization and rendering tests share it without needing a

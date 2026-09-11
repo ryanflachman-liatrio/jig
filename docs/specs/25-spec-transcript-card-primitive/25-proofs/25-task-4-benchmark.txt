@@ -1,0 +1,29 @@
+Task 04 cached transcript-card page benchmark
+
+Command:
+go test ./internal/tui/monitor -run '^$' -bench '^BenchmarkTranscriptCardPage$' -benchmem -count=3
+
+Fixture:
+- 300 fabricated transcript entries
+- 150 paired tool exchanges
+- transcriptInnerW: 100 cells
+- card cache populated before benchmark timer starts
+- repeated itemTranscriptBody rendering with allocation reporting
+
+Environment:
+- Go: go1.25.12 darwin/arm64
+- OS/architecture: Darwin 25.6.0 arm64
+- CPU: Apple M5 Pro (reported by Go benchmark output)
+
+Results:
+BenchmarkTranscriptCardPage-18  3319  362621 ns/op  909007 B/op  2587 allocs/op
+BenchmarkTranscriptCardPage-18  3300  363340 ns/op  909007 B/op  2587 allocs/op
+BenchmarkTranscriptCardPage-18  3319  364933 ns/op  909008 B/op  2587 allocs/op
+
+Result: PASS
+
+Budget comparison:
+The slowest recorded cached repaint was 364,933 ns/op (approximately 0.365 ms),
+which is approximately 274 times faster than the epic's 100 ms repaint budget.
+This is descriptive local evidence only; no load-sensitive timing assertion was
+added to the unit test suite.

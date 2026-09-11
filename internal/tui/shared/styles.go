@@ -63,6 +63,16 @@ type Styles struct {
 		BlurredBorder lipgloss.Style
 		Title         lipgloss.Style
 	}
+	Card struct {
+		BorderPending lipgloss.Style
+		BorderRunning lipgloss.Style
+		BorderSuccess lipgloss.Style
+		BorderWarning lipgloss.Style
+		BorderError   lipgloss.Style
+		BorderMuted   lipgloss.Style
+		TintNeutral   lipgloss.Style
+		TintError     lipgloss.Style
+	}
 	Textarea struct {
 		Base lipgloss.Style
 		// Borderless is Base with no border/padding: used when a surrounding panel
@@ -92,13 +102,6 @@ type Styles struct {
 		TranscriptDetail   lipgloss.Style
 		TranscriptLabel    lipgloss.Style
 		TranscriptError    lipgloss.Style
-
-		// Left thick-bar accents ("▌") coloring each chat block by role. Crush's
-		// signature block affordance; see withBar in monitor.go.
-		BarThinking   lipgloss.Style
-		BarToolCall   lipgloss.Style
-		BarToolResult lipgloss.Style
-		BarError      lipgloss.Style
 	}
 	// Badge renders a compact status pill: onPrimary text on a solid status
 	// background. Only ever wraps plain (unstyled) text so the background stays
@@ -260,6 +263,14 @@ func DefaultTheme() Styles {
 	s.Panel.FocusedBorder = panelBorder.BorderForeground(primary)
 	s.Panel.BlurredBorder = panelBorder.BorderForeground(lipgloss.Color(hexIron))
 	s.Panel.Title = lipgloss.NewStyle().Bold(true).Foreground(fgBase)
+	s.Card.BorderPending = lipgloss.NewStyle().Foreground(primary)
+	s.Card.BorderRunning = lipgloss.NewStyle().Foreground(primary)
+	s.Card.BorderSuccess = lipgloss.NewStyle().Foreground(fgDim)
+	s.Card.BorderWarning = lipgloss.NewStyle().Foreground(warning)
+	s.Card.BorderError = lipgloss.NewStyle().Foreground(danger)
+	s.Card.BorderMuted = lipgloss.NewStyle().Foreground(lipgloss.Color(hexIron))
+	s.Card.TintNeutral = lipgloss.NewStyle().Background(lipgloss.Color(hexToolNeutralBg))
+	s.Card.TintError = lipgloss.NewStyle().Background(lipgloss.Color(hexToolErrorBg))
 
 	s.Textarea.Base = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	s.Textarea.Borderless = lipgloss.NewStyle()
@@ -283,11 +294,6 @@ func DefaultTheme() Styles {
 	s.Chat.TranscriptDetail = lipgloss.NewStyle().Foreground(fgMuted)
 	s.Chat.TranscriptLabel = lipgloss.NewStyle().Bold(true).Foreground(fgMuted)
 	s.Chat.TranscriptError = lipgloss.NewStyle().Foreground(danger).Bold(true)
-
-	s.Chat.BarThinking = lipgloss.NewStyle().Foreground(fgDim)
-	s.Chat.BarToolCall = lipgloss.NewStyle().Foreground(primary)
-	s.Chat.BarToolResult = lipgloss.NewStyle().Foreground(accent)
-	s.Chat.BarError = lipgloss.NewStyle().Foreground(danger)
 
 	badge := lipgloss.NewStyle().Bold(true).Foreground(onPrimary).Padding(0, 1)
 	s.Badge.Error = badge.Background(danger)

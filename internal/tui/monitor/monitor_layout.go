@@ -257,6 +257,7 @@ func (m *Model) rebuildRenderer() {
 
 	if m.lastTranscriptW != m.transcriptInnerW {
 		m.chatRendered = make(map[blockKey]string)
+		m.chatItemRendered = make(map[transcriptRenderKey]string)
 		m.lastTranscriptW = m.transcriptInnerW
 	}
 }
@@ -329,17 +330,6 @@ func (m Model) stepRowRanges() []stepLineRange {
 		line += height
 	}
 	return ranges
-}
-
-func (m *Model) ensureChatCursorVisible() {
-	if len(m.chatBlocks) == 0 || m.chatBlockCursor < 0 || m.chatBlockCursor >= len(m.chatBlocks) {
-		return
-	}
-	rng, ok := m.chatLineRanges[m.chatBlocks[m.chatBlockCursor].lineKey()]
-	if !ok {
-		return
-	}
-	m.ensureTranscriptRangeVisible(rng)
 }
 
 func (m *Model) ensureTranscriptItemCursorVisible() {

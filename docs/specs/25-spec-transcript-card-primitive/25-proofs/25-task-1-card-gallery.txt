@@ -1,0 +1,47 @@
+Task 01 synthetic card gallery
+Fixture: internal/tui/shared TestRenderCardGallery
+Terminal widths: 40, 60, and 90 cells
+Data classification: fabricated paths, labels, and status text only
+
+Each pending, running, success, warning, and error case produced six rows at
+each requested width. ANSI styling is omitted below so geometry is reviewable;
+the automated state table verifies the semantic border style separately.
+
+width=40 state=pending/running/success/warning/error rows=6 (each row=40)
+╭─── Tool activity with a long synthe… ╮
+├─── Input ────────────────────────────┤
+│ synthetic/path/to/example.go         │
+├──────────────────────────────────────┤
+│ status: synthetic                    │
+╰──────────────────────────────────────╯
+
+width=60 state=pending rows=6 (each row=60)
+╭─── Tool activity with a long synthetic label · pending ──╮
+├─── Input ────────────────────────────────────────────────┤
+│ synthetic/path/to/example.go                             │
+├──────────────────────────────────────────────────────────┤
+│ status: synthetic                                        │
+╰──────────────────────────────────────────────────────────╯
+
+width=60 state=running/success/warning/error
+The same six-row geometry rendered with the state name in HeaderMeta and the
+corresponding primary/dim/warning/danger semantic border style.
+
+width=90 state=error rows=6 (each row=90)
+╭─── Tool activity with a long synthetic label · error ──────────────────────────────────╮
+├─── Input ──────────────────────────────────────────────────────────────────────────────┤
+│ synthetic/path/to/example.go                                                           │
+├────────────────────────────────────────────────────────────────────────────────────────┤
+│ status: synthetic                                                                      │
+╰────────────────────────────────────────────────────────────────────────────────────────╯
+
+width=90 state=pending/running/success/warning
+The same six-row geometry rendered with the state name in HeaderMeta and its
+semantic border style. TestRenderCardHeaderAndDividerGrammar separately covers
+header+metadata joining, and TestRenderCardHeaderOnly/state cases cover lone
+and omitted labels.
+
+Verification command:
+go test ./internal/tui/shared -run '^TestRenderCardGallery$' -count=1 -v
+
+Result: PASS

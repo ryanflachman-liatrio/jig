@@ -62,8 +62,6 @@ func (m *Model) saveGateContext(targetStep string) {
 		chatSeenSeq:    m.chatSeenSeq,
 		chatItemExpand: cloneTranscriptItemState(m.chatItemExpand),
 		chatExpandAll:  m.chatItemExpandAll,
-		legacyExpand:   cloneBlockState(m.chatExpand),
-		legacyGroups:   cloneBlockState(m.chatGroupExpand),
 		chatPageEnd:    m.chatPage.End,
 		searchQuery:    m.searchQuery,
 		filters:        m.filters,
@@ -134,8 +132,6 @@ func (m *Model) restoreGateContext() {
 	m.rerunSearch()
 	m.chatItemExpand = cloneTranscriptItemState(snapshot.chatItemExpand)
 	m.chatItemExpandAll = snapshot.chatExpandAll
-	m.chatExpand = cloneBlockState(snapshot.legacyExpand)
-	m.chatGroupExpand = cloneBlockState(snapshot.legacyGroups)
 	m.chatAutoScroll = snapshot.chatAutoScroll
 	m.chatSeenSeq = snapshot.chatSeenSeq
 	if m.hasGate() {

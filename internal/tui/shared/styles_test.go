@@ -79,3 +79,27 @@ func TestReviewStylesBelongToThemeAndPreserveVisibleWidth(t *testing.T) {
 		}
 	}
 }
+
+func TestCardStylesUseSemanticPaletteRoles(t *testing.T) {
+	theme := DefaultTheme()
+	if theme.Card.BorderPending.GetForeground() != theme.Title.GetForeground() ||
+		theme.Card.BorderRunning.GetForeground() != theme.Title.GetForeground() {
+		t.Fatal("pending/running card borders do not use primary")
+	}
+	if theme.Card.BorderSuccess.GetForeground() != theme.Footer.GetForeground() {
+		t.Fatal("success card border does not use dim")
+	}
+	if theme.Card.BorderWarning.GetForeground() != theme.Warning.GetForeground() {
+		t.Fatal("warning card border does not use warning")
+	}
+	if theme.Card.BorderError.GetForeground() != theme.Error.GetForeground() {
+		t.Fatal("error card border does not use danger")
+	}
+	if theme.Card.BorderMuted.GetForeground() != theme.Panel.BlurredBorder.GetBorderLeftForeground() {
+		t.Fatal("muted card border does not reuse subdued panel border")
+	}
+	if theme.Card.TintNeutral.GetBackground() == nil || theme.Card.TintError.GetBackground() == nil ||
+		theme.Card.TintNeutral.GetBackground() == theme.Card.TintError.GetBackground() {
+		t.Fatal("card tint backgrounds are missing or indistinguishable")
+	}
+}
