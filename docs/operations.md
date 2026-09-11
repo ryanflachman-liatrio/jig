@@ -160,8 +160,9 @@ instead of guessing from the current checkout.
 
 `jig notifications check WORKFLOW.toml [--root PATH]` validates author policy and
 inspects local notification bindings without sending network requests or
-showing desktop notifications. Policy/check support is available; live delivery
-and reopen integration remain pending in Spec 23.
+showing desktop notifications. Live delivery, snapshot integrity, and reopen
+restoration are implemented (Spec 23); the readiness command remains a pure
+inspection surface and never contacts a receiver.
 
 The root defaults to `.jig`, like other operational commands. Bindings are read
 from `<root>/notifications.toml`; `--root ''` disables file lookup. Missing config
@@ -215,3 +216,52 @@ These checks cannot verify a running notification service, OS permission,
 banner visibility, or that a person read anything. Network readiness checks do
 not verify TLS connectivity, receiver acceptance, or Slack channel access.
 The check command sends nothing. Terminal bell is a separate feature.
+
+### Live delivery
+
+The process runtime owns one dispatcher shared by the TUI and every `jig run`,
+`jig resume`, and applied `jig reset`. Each attention burst is coalesced for
+500 ms per (run, epoch, destination); the resulting summary carries at most
+ten sorted descriptors plus a total/omitted count. Send attempts are capped
+per attempt (three seconds), per destination (one at a time, plus a
+one-second Slack pacing floor), and per message lifetime (thirty seconds
+from enqueue). Retries fire up to three times against transient transport
+failures and HTTP 408/429/5xx, honoring valid `Retry-After` values; permanent
+4xx, TLS validation errors, and non-HTTPS URLs abandon without retry.
+
+Under queue pressure (256 pending destination expansions) an incoming
+`run_failed` evicts the oldest non-failure; when only failures remain the
+new failure is dropped and diagnostics record the loss with a stable reason
+code. Ordinary shutdown (SIGINT/SIGTERM or TUI quit) stops run producers
+first, then drains the dispatcher for one total five-second window and
+cancels the remainder. Retries and destinations may duplicate an already-
+accepted external message when a receiver's confirmation is lost.
+
+### Notification diagnostics
+
+Delivery outcomes are captured in a bounded per-process ring (100 sanitized
+entries with identical-failure aggregation). Fields include alias, optional
+run ID, event, outcome, reason code, attempt, and aggregate count only;
+response bodies, URLs, headers, and secret values are never retained.
+
+- Headless (`jig run`/`jig resume`) drains the ring to stderr after run
+  settlement; stdout envelopes and exit codes are unchanged.
+- The TUI exposes the same ring behind the `Ctrl+G` chord as a modal
+  overlay. The overlay never opens on its own — an arriving failure does
+  not steal Gate focus. `Esc` or `Ctrl+G` closes it.
+- Diagnostics accumulate across every run started in the same jig process;
+  on process exit the ring is not persisted.
+
+### Reopen behavior
+
+At run start jig freezes the resolved policy in the run's immutable
+workflow snapshot alongside its own SHA-256 field. Reopen (`jig resume`,
+`jig reset`, TUI resume) verifies the digest and restores the policy
+verbatim; a mismatch fails reopen. The source profile files are never
+re-read, so a changed or deleted profile does not alter a resumed run's
+policy. Operator bindings and secrets ARE resolved fresh per reopen — the
+same alias can point at a new URL between epochs, but the frozen event
+selection stays the same. On active reopen the observer emits at most one
+filtered restored summary per (run, epoch, destination). Historical
+inspection (`jig status`, journal replay, TUI Runs hydration) creates no
+notification producer.

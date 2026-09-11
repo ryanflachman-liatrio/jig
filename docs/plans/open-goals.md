@@ -60,7 +60,7 @@ and comparison to high-rated TUIs (lazygit, k9s, yazi, btop) plus agent peers
 | A21 | Graph export (Mermaid / DOT / SVG) | C | In-TUI chart only. |
 | A22 | Run share / anonymized export bundle | C | Local `.jig/runs` only. |
 | A23 | Multi-operator shared run store | C | Single local operator. |
-| A24 | Notifications (desktop / Slack / webhook on gate or failure) | C | Visual gate chrome only. |
+| A24 | Notifications (desktop / Slack / webhook on gate or failure) | C | **Done** ([Spec 23 run notifications](../specs/23-spec-run-notifications/23-spec-run-notifications.md)). Bounded metadata-only delivery, coalesced attention, ordered shutdown, frozen policy on reopen. |
 | A25 | Chart crossing-min + gate labels | S | Schema MVP exclusions. |
 | A26 | Charm clickable selector rows | S | Keyboard-only. |
 

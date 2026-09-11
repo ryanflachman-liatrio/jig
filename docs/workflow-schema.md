@@ -1322,8 +1322,9 @@ fails reopening when its registered run worktree or conflict markers are gone.
 
 `[notification]` is optional and root-workflow-only. It covers the expanded
 workflow; steps, defaults, and imported modules cannot declare notification
-policy. Omitting the table disables policy. Policy validation and local readiness
-checks are available; live delivery is being implemented in Spec 23.
+policy. Omitting the table disables policy. Live delivery, snapshot integrity,
+and reopen restoration are implemented (Spec 23); the CLI readiness check is
+still the way to inspect operator configuration without sending anything.
 
 ```toml
 [notification]
@@ -1356,7 +1357,23 @@ Workflow and profile files contain no destination URLs, tokens, enablement, or
 message templates. `jig validate` does not read operator bindings or secrets.
 Run `jig notifications check WORKFLOW.toml [--root PATH]` to inspect local
 readiness without sending anything; see [operator setup](operations.md#notification-readiness).
-The planned outbound metadata includes workflow name, run ID, event/time, and
-bounded step identifiers with fixed attention descriptions; those identifiers
-may disclose project information. Prompts, transcripts, paths, and outputs are
-not notification content.
+The outbound metadata is a fixed allowlist: schema version, opaque notification
+ID, event, UTC timestamp, workflow name, run ID, and bounded step identifiers
+with fixed attention descriptions. Those identifiers may disclose project
+information. Prompts, transcripts, paths, tool arguments, diffs, and outputs are
+not notification content. Slack and desktop bodies are capped at 2,000
+characters; workflow/step identifiers are capped at 128 characters; each request
+is capped at 16 KiB. Attention summaries carry at most ten sorted descriptors
+plus a total/omitted count.
+
+### Snapshot integrity and reopen
+
+At run start jig persists the fully resolved policy alongside its own SHA-256
+integrity field in the immutable workflow snapshot. `RestoreExpanded` and the
+source-decoding restore paths verify the digest before use; a tampered or
+absent policy is treated as disabled. Reopen never re-reads current profile
+files, so a changed or deleted source profile cannot silently promote a
+resumed run's policy. On active reopen the observer emits at most one
+filtered restored summary per (run, epoch, destination); subsequent genuinely
+new waits notify normally. Historical inspection (`jig status`,
+`ReplayJournal`, Runs hydration) creates no notification producer.
