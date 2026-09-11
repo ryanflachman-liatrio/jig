@@ -68,7 +68,7 @@ Extend chart node geometry and rendering so every `[step.validate]` form display
 - [x] 2.2 Render a gated node's existing `gateLabel` inside the node using the shared chart/node theme styles and `shared.TruncateTitle`; preserve the ID, type/gate glyph, loop, retry, and foreach annotations without introducing hard-coded styling.
 - [x] 2.3 Add focused renderer tests in `internal/tui/chart/render_test.go` for command, schema, contains, and exists validation forms, including a Unicode/long-label truncation case and combined gate-plus-loop/retry/foreach marker behavior.
 
-### [ ] 3.0 Verify Detail-chart behavior and chart regressions
+### [~] 3.0 Verify Detail-chart behavior and chart regressions
 
 Update fixed-width chart evidence and retain Detail-screen viewport behavior after the layout and node-height changes. Prove narrow charts, static foreach nodes, conditional labels, route back-edges, and non-gated nodes remain within the A25 boundary.
 
@@ -80,6 +80,6 @@ Update fixed-width chart evidence and retain Detail-screen viewport behavior aft
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Add or update fixed-width golden workflow cases in `internal/tui/chart/render_test.go`, then regenerate only the affected files in `internal/tui/chart/testdata/`; review that conditional forward labels, route back-edge labels, non-gated nodes, and static foreach markers remain visible and correctly placed.
-- [ ] 3.2 Extend `internal/tui/chart/render_test.go` narrow-width coverage and `internal/tui/detail/detail_test.go` chart-mode coverage as needed to prove no node/label clipping, no panic, the existing horizontal-scroll contract, and the defensive unavailable-workflow fallback.
-- [ ] 3.3 Run `go test ./internal/tui/chart ./internal/tui/detail`, `go test ./...`, `go vet ./...`, and `gofmt -l .`; record the exact passing commands and any intentionally updated golden fixtures in the task proof artifact created during implementation.
+- [x] 3.1 Add or update fixed-width golden workflow cases in `internal/tui/chart/render_test.go`, then regenerate only the affected files in `internal/tui/chart/testdata/`; review that conditional forward labels, route back-edge labels, non-gated nodes, and static foreach markers remain visible and correctly placed.
+- [x] 3.2 Extend `internal/tui/chart/render_test.go` narrow-width coverage and `internal/tui/detail/detail_test.go` chart-mode coverage as needed to prove no node/label clipping, no panic, the existing horizontal-scroll contract, and the defensive unavailable-workflow fallback.
+- [x] 3.3 Run `go test ./internal/tui/chart ./internal/tui/detail`, `go test ./...`, `go vet ./...`, and `gofmt -l .`; record the exact passing commands and any intentionally updated golden fixtures in the task proof artifact created during implementation.

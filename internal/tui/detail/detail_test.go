@@ -244,6 +244,78 @@ skill = "s"
 	})
 }
 
+func TestDetailChartHorizontalScrollAndUnavailableFallback(t *testing.T) {
+	const src = `
+[workflow]
+name = "wide-chart"
+version = "1"
+[[step]]
+id = "first_root"
+type = "command"
+run = "x"
+[[step]]
+id = "second_root"
+type = "command"
+run = "x"
+[[step]]
+id = "third_root"
+type = "command"
+run = "x"
+[[step]]
+id = "fourth_root"
+type = "command"
+run = "x"
+`
+	wf, err := workflow.Decode(src, "")
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	t.Run("wide chart changes viewport horizontal offset", func(t *testing.T) {
+		m := New("wide.toml")
+		m, _ = m.Update(tea.WindowSizeMsg{Width: 28, Height: 24})
+		m, _ = m.Update(workflowLoadedMsg{meta: wf.Meta, wf: wf})
+		m, _ = m.Update(tea.KeyPressMsg{Code: 'v', Text: "v"})
+		if got := m.vp.XOffset(); got != 0 {
+			t.Fatalf("initial chart x offset = %d, want 0", got)
+		}
+
+		m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyRight})
+		right := m.vp.XOffset()
+		if right <= 0 {
+			t.Fatalf("right key left chart x offset at %d; chart should be horizontally scrollable", right)
+		}
+		m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyLeft})
+		if got := m.vp.XOffset(); got >= right {
+			t.Errorf("left key changed chart x offset from %d to %d, want a smaller offset", right, got)
+		}
+	})
+
+	t.Run("failed reload leaves chart mode through the defensive list fallback", func(t *testing.T) {
+		m := New("wide.toml")
+		m, _ = m.Update(tea.WindowSizeMsg{Width: 28, Height: 24})
+		m, _ = m.Update(workflowLoadedMsg{meta: wf.Meta, wf: wf})
+		m, _ = m.Update(tea.KeyPressMsg{Code: 'v', Text: "v"})
+		m, _ = m.Update(workflowLoadedMsg{meta: wf.Meta, err: errors.New("reload failed")})
+		if m.viewMode {
+			t.Errorf("failed reload should leave chart mode")
+		}
+		if m.keys.Toggle.Enabled() {
+			t.Errorf("failed reload should disable the chart toggle")
+		}
+		if got := ansiStrip(m.body()); !strings.Contains(got, "invalid workflow") {
+			t.Errorf("failed reload body should render the list fallback error, got:\n%s", got)
+		}
+	})
+
+	t.Run("nil workflow chart fallback is empty and does not panic", func(t *testing.T) {
+		m := Model{viewMode: true}
+		if got := m.chartView(); got != "" {
+			t.Errorf("nil-workflow chart fallback = %q, want empty flat list", got)
+		}
+	})
+}
+
 func containsKey(keys []string, want string) bool {
 	for _, k := range keys {
 		if k == want {
