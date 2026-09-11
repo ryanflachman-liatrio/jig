@@ -62,6 +62,10 @@ func (m Model) WorkflowName() string { return m.workflowName }
 // Workflow is the loaded definition used to start a new run from Home.
 func (m Model) Workflow() *workflow.Workflow { return m.wf }
 
+// Cursor returns the selected visible-row index for parent composition tests
+// and read-only presentation coordination.
+func (m Model) Cursor() int { return m.cursor }
+
 // SetPaneSize fits the viewport to a titled panel outer size (Home owns the
 // shared footer, so no footer row is reserved here).
 func (m Model) SetPaneSize(width, height int) Model {
@@ -139,4 +143,48 @@ func (m Model) visibleRows() []runRow {
 		}
 	}
 	return rows
+}
+
+func (m Model) contentContains(x, y int) (int, bool) {
+	ox, oy := shared.PanelContentOrigin()
+	hFrame, vFrame := shared.PanelFrame()
+	w, h := m.width-hFrame, m.height-vFrame
+	cx, cy := x-ox, y-oy
+	return cy, m.ready && len(m.visibleRows()) > 0 && w > 0 && h > 0 &&
+		cx >= 0 && cy >= 0 && cx < w && cy < h
+}
+
+// SelectAt selects the rendered run row at a pane-local point. Blank viewport
+// fill is not a row and therefore cannot change selection.
+func (m Model) SelectAt(x, y int) (Model, bool) {
+	cy, ok := m.contentContains(x, y)
+	if !ok {
+		return m, false
+	}
+	idx := m.vp.YOffset() + cy
+	if idx < 0 || idx >= len(m.visibleRows()) {
+		return m, false
+	}
+	m.cursor = idx
+	return m.syncViewport(), true
+}
+
+// MoveSelectionAt moves by exactly three selectable rows when the pointer is
+// anywhere in the rendered Runs content rectangle, including blank fill.
+func (m Model) MoveSelectionAt(x, y, direction int) (Model, bool) {
+	if _, ok := m.contentContains(x, y); !ok || direction == 0 {
+		return m, false
+	}
+	before := m.cursor
+	m.cursor += direction * 3
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	if last := len(m.visibleRows()) - 1; m.cursor > last {
+		m.cursor = last
+	}
+	if m.cursor == before {
+		return m, false
+	}
+	return m.syncViewport(), true
 }

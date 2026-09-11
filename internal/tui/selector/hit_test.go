@@ -244,6 +244,26 @@ func TestItemAtFixedSizeFixture(t *testing.T) {
 	}
 }
 
+func TestMoveSelectionAtUsesThreeItemClampedIncrement(t *testing.T) {
+	m := newSizedSelector(t, numberedItems(10), 40, 14)
+	var changed bool
+	m, changed = m.MoveSelectionAt(3, 11, 1) // blank fill is wheel-eligible
+	if !changed || m.list.Index() != 3 {
+		t.Fatalf("wheel down index = %d changed=%v, want 3 true", m.list.Index(), changed)
+	}
+	m, changed = m.MoveSelectionAt(3, 2, -1)
+	if !changed || m.list.Index() != 0 {
+		t.Fatalf("wheel up index = %d changed=%v, want 0 true", m.list.Index(), changed)
+	}
+	m, changed = m.MoveSelectionAt(3, 2, -1)
+	if changed || m.list.Index() != 0 {
+		t.Fatalf("clamped wheel index = %d changed=%v, want 0 false", m.list.Index(), changed)
+	}
+	if _, changed = m.MoveSelectionAt(3, 1, 1); changed {
+		t.Fatal("list title/filter row must not be wheel-eligible")
+	}
+}
+
 // FuzzItemAt bounds arbitrary coordinates to a generous but finite range so
 // this stays a geometry test, not an unbounded resource consumer, and asserts
 // the seam never panics and never resolves outside the current page.

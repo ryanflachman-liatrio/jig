@@ -217,7 +217,9 @@ func (m rootModel) updateHome(msg tea.Msg) (rootModel, tea.Cmd) {
 
 	case tea.MouseMsg:
 		if m.showDetailOverlay {
-			return m, nil
+			var cmd tea.Cmd
+			m.detail, cmd = m.detail.Update(msg)
+			return m, cmd
 		}
 		return m.updateHomeMouse(msg)
 
@@ -326,34 +328,65 @@ func (m rootModel) sizeHomeChildren() rootModel {
 	return m
 }
 
-// updateHomeMouse handles a root-level mouse message while Home is active. A
-// primary click that lands inside the workflow pane and resolves to a
-// visible row selects that row — the same as moving the keyboard cursor to
-// it with j/k — regardless of which pane has focus. It does not open the
-// Detail overlay; only the 'd' key does that. Everything else (release/wheel/
-// motion, other buttons, out-of-bounds points, clicks on the Runs pane, or
-// clicks while the filter is capturing text) is a no-op.
+// updateHomeMouse routes eligible click and wheel messages to the visible pane
+// under the pointer. Selection remains owner-local; root owns only focus and
+// the existing workflow-to-Runs synchronization command.
 func (m rootModel) updateHomeMouse(msg tea.MouseMsg) (rootModel, tea.Cmd) {
-	click, ok := msg.(tea.MouseClickMsg)
-	if !ok {
-		return m, nil
-	}
-	mouse := click.Mouse()
-	if mouse.Button != tea.MouseLeft {
+	mouse := msg.Mouse()
+	if mouse.Mod != 0 || mouse.X < 0 || mouse.Y < 0 || mouse.X >= m.width || mouse.Y >= m.height {
 		return m, nil
 	}
 	if m.selector.CapturesText() {
 		return m, nil
 	}
 	l := m.homeLayout()
-	x, y := mouse.X-l.workflowX, mouse.Y-l.workflowY
-	if x < 0 || y < 0 || x >= l.workflowW || y >= l.workflowH {
-		return m, nil
+	inPane := func(x, y, px, py, pw, ph int) bool {
+		return x >= px && y >= py && x < px+pw && y < py+ph && pw > 0 && ph > 0
 	}
-	selector, ok := m.selector.SelectItemAt(x, y)
-	if !ok {
-		return m, nil
+	switch event := msg.(type) {
+	case tea.MouseClickMsg:
+		if event.Button != tea.MouseLeft {
+			return m, nil
+		}
+		if inPane(mouse.X, mouse.Y, l.workflowX, l.workflowY, l.workflowW, l.workflowH) {
+			selector, valid := m.selector.SelectItemAt(mouse.X-l.workflowX, mouse.Y-l.workflowY)
+			if !valid {
+				return m, nil
+			}
+			m.selector = selector
+			m.homeFocus = homeWorkflows
+			return m, m.maybeSyncHomeSelection()
+		}
+		if inPane(mouse.X, mouse.Y, l.runsX, l.runsY, l.runsW, l.runsH) {
+			runs, valid := m.runs.SelectAt(mouse.X-l.runsX, mouse.Y-l.runsY)
+			if !valid {
+				return m, nil
+			}
+			m.runs = runs
+			m.homeFocus = homeRuns
+		}
+	case tea.MouseWheelMsg:
+		direction := 0
+		switch event.Button {
+		case tea.MouseWheelUp:
+			direction = -1
+		case tea.MouseWheelDown:
+			direction = 1
+		default:
+			return m, nil
+		}
+		if inPane(mouse.X, mouse.Y, l.workflowX, l.workflowY, l.workflowW, l.workflowH) {
+			selector, changed := m.selector.MoveSelectionAt(mouse.X-l.workflowX, mouse.Y-l.workflowY, direction)
+			if changed {
+				m.selector = selector
+				return m, m.maybeSyncHomeSelection()
+			}
+		} else if inPane(mouse.X, mouse.Y, l.runsX, l.runsY, l.runsW, l.runsH) {
+			runs, changed := m.runs.MoveSelectionAt(mouse.X-l.runsX, mouse.Y-l.runsY, direction)
+			if changed {
+				m.runs = runs
+			}
+		}
 	}
-	m.selector = selector
-	return m, m.maybeSyncHomeSelection()
+	return m, nil
 }

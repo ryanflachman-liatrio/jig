@@ -1,0 +1,19 @@
+Spec 25 Task 1 — synthetic Home mouse-navigation capture
+
+Fixture: generated workflow files and in-memory run events only; no persisted run data.
+
+120x35 wide layout
+  click Workflows row beta -> focus=Workflows selection=beta activation=none
+  wheel Runs content down -> focus=Workflows run-cursor=3 activation=none
+  click Runs first rendered row -> focus=Runs run-cursor=0 activation=none
+  keyboard Enter after click -> existing open-run path remains available
+
+60x24 stacked layout
+  click Runs first rendered row -> focus=Runs run-cursor=0 activation=none
+  wheel Runs content down -> prior keyboard focus preserved run-cursor=3 activation=none
+  keyboard Enter after pointer selection -> existing open-run path remains available
+
+Focused verification
+  ok  jig/internal/tui/selector
+  ok  jig/internal/tui/runs
+  ok  jig/internal/tui

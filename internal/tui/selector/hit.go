@@ -2,6 +2,20 @@ package selector
 
 import "jig/internal/tui/shared"
 
+const mouseWheelItems = 3
+
+func (m Model) listContentContains(x, y int) bool {
+	if m.loading || m.err != nil || len(m.list.VisibleItems()) == 0 {
+		return false
+	}
+	ox, oy := shared.PanelContentOrigin()
+	hFrame, vFrame := shared.PanelFrame()
+	contentW := m.width - hFrame
+	contentH := m.height - vFrame - 2 // list title/filter and pagination rows
+	cx, cy := x-ox, y-(oy+1)
+	return contentW > 0 && contentH > 0 && cx >= 0 && cy >= 0 && cx < contentW && cy < contentH
+}
+
 // itemAtPoint resolves the pane-local point (x, y) to the visible item drawn
 // there, along with its global index in the list's current filtered item set
 // (the index list.Model.Select expects) — (0, 0) is the outer top-left corner
@@ -80,5 +94,28 @@ func (m Model) SelectItemAt(x, y int) (Model, bool) {
 		return m, false
 	}
 	m.list.Select(idx)
+	return m, true
+}
+
+// MoveSelectionAt moves the existing filtered-list selection by one mouse
+// wheel increment when the point is within the list's rendered content area.
+// Unlike clicks, blank fill inside that area remains an eligible wheel target.
+func (m Model) MoveSelectionAt(x, y, direction int) (Model, bool) {
+	if !m.listContentContains(x, y) || direction == 0 {
+		return m, false
+	}
+	items := m.list.VisibleItems()
+	before := m.list.Index()
+	after := before + direction*mouseWheelItems
+	if after < 0 {
+		after = 0
+	}
+	if after >= len(items) {
+		after = len(items) - 1
+	}
+	if after == before {
+		return m, false
+	}
+	m.list.Select(after)
 	return m, true
 }

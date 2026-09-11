@@ -58,6 +58,42 @@ func TestRuns(t *testing.T) {
 	}
 }
 
+func TestRunsPointerSelectionAndWheel(t *testing.T) {
+	m := NewModel().SetPaneSize(80, 8)
+	for i := 0; i < 10; i++ {
+		m, _ = m.Update(monitor.EngineEventMsg{Event: engine.RunStarted{
+			RunID: fmt.Sprintf("run-%02d", i), Workflow: "wf", Steps: []string{"s"},
+		}})
+	}
+
+	var ok bool
+	m, ok = m.SelectAt(3, 3) // content origin y=1, rendered row 2
+	if !ok || m.cursor != 2 {
+		t.Fatalf("click cursor = %d ok=%v, want 2 true", m.cursor, ok)
+	}
+	m, ok = m.MoveSelectionAt(3, 6, 1) // blank fill remains wheel eligible
+	if !ok || m.cursor != 5 {
+		t.Fatalf("wheel cursor = %d changed=%v, want 5 true", m.cursor, ok)
+	}
+	if top, bottom := m.vp.YOffset(), m.vp.YOffset()+m.vp.Height()-1; m.cursor < top || m.cursor > bottom {
+		t.Fatalf("cursor %d not visible in [%d,%d]", m.cursor, top, bottom)
+	}
+	if _, ok = m.SelectAt(3, 7); ok { // panel bottom border
+		t.Fatal("panel border must not select a run")
+	}
+}
+
+func TestRunsPointerNoOpWithoutRowsOrGeometry(t *testing.T) {
+	for _, m := range []Model{NewModel(), NewModel().SetPaneSize(0, 0), NewModel().SetPaneSize(40, 8)} {
+		if _, ok := m.SelectAt(3, 1); ok {
+			t.Fatal("empty or invalid geometry selected a row")
+		}
+		if _, changed := m.MoveSelectionAt(3, 1, 1); changed {
+			t.Fatal("empty or invalid geometry moved selection")
+		}
+	}
+}
+
 // TestRunsNewestFirst verifies rows stay sorted newest-first as runs arrive out
 // of order, that the cursor sticks to the top so a user at the head follows the
 // newest run, and that once scrolled the selection follows its run rather than

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -468,6 +469,43 @@ func TestHomeMouseClickSelectsRowNotKeyboardSelection(t *testing.T) {
 	}
 }
 
+func TestHomeMouseRoutesAcrossPanesAndPreservesWheelFocus(t *testing.T) {
+	for _, size := range []tea.WindowSizeMsg{{Width: 120, Height: 35}, {Width: 60, Height: 24}} {
+		t.Run(fmt.Sprintf("%dx%d", size.Width, size.Height), func(t *testing.T) {
+			model, _, _ := homeWithWorkflows(t)
+			model, _ = model.Update(size)
+			root := model.(rootModel)
+			for i := 0; i < 7; i++ {
+				root.runs, _ = root.runs.Update(monitor.EngineEventMsg{Event: engine.RunStarted{
+					RunID: fmt.Sprintf("run-%02d", i), Workflow: root.runs.WorkflowName(), Steps: []string{"s"},
+				}})
+			}
+			root = root.sizeHomeChildren()
+			layout := root.homeLayout()
+
+			root.homeFocus = homeWorkflows
+			next, cmd := root.Update(primaryClick(layout.runsX+3, layout.runsY+1))
+			if cmd != nil {
+				t.Fatalf("Runs click emitted activation command at %dx%d", size.Width, size.Height)
+			}
+			root = next.(rootModel)
+			if root.homeFocus != homeRuns || root.runs.Cursor() != 0 {
+				t.Fatalf("Runs click focus/cursor = %v/%d", root.homeFocus, root.runs.Cursor())
+			}
+
+			root.homeFocus = homeWorkflows
+			next, cmd = root.Update(tea.MouseWheelMsg{X: layout.runsX + 3, Y: layout.runsY + 2, Button: tea.MouseWheelDown})
+			if cmd != nil {
+				t.Fatal("Runs wheel emitted command")
+			}
+			root = next.(rootModel)
+			if root.homeFocus != homeWorkflows || root.runs.Cursor() != 3 {
+				t.Fatalf("Runs wheel focus/cursor = %v/%d, want workflows/3", root.homeFocus, root.runs.Cursor())
+			}
+		})
+	}
+}
+
 // TestHomeMouseClickNoOpCases is the negative-case table for click handling:
 // everything here must leave Home exactly as it was.
 func TestHomeMouseClickNoOpCases(t *testing.T) {
@@ -488,12 +526,23 @@ func TestHomeMouseClickNoOpCases(t *testing.T) {
 		unchanged(t, m, after)
 	})
 
-	t.Run("release, wheel, and motion are not click actions", func(t *testing.T) {
+	t.Run("release, horizontal wheel, and motion are not actions", func(t *testing.T) {
 		m, _, _ := homeWithWorkflows(t)
 		for _, msg := range []tea.MouseMsg{
 			tea.MouseReleaseMsg{X: 3, Y: 2, Button: tea.MouseLeft},
-			tea.MouseWheelMsg{X: 3, Y: 2, Button: tea.MouseWheelDown},
+			tea.MouseWheelMsg{X: 3, Y: 2, Button: tea.MouseWheelLeft},
 			tea.MouseMotionMsg{X: 3, Y: 2},
+		} {
+			after, _ := m.Update(msg)
+			unchanged(t, m, after)
+		}
+	})
+
+	t.Run("modified click and wheel", func(t *testing.T) {
+		m, _, _ := homeWithWorkflows(t)
+		for _, msg := range []tea.MouseMsg{
+			tea.MouseClickMsg{X: 3, Y: 5, Button: tea.MouseLeft, Mod: tea.ModShift},
+			tea.MouseWheelMsg{X: 3, Y: 2, Button: tea.MouseWheelDown, Mod: tea.ModCtrl},
 		} {
 			after, _ := m.Update(msg)
 			unchanged(t, m, after)
