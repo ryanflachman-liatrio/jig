@@ -1,0 +1,77 @@
+=== Unit 1: fuzzy ranking + match highlighting ===
+
+
+
+
+
+
+
+
+                ╭──────────────────────────────────────────────╮
+                │  Commands                                    │
+                │  > swr                                       │
+                │  › switch run                                │
+                │                                              │
+                │  type to filter · enter run · esc            │
+                ╰──────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+=== Unit 2: Monitor palette catalog, showing "Go to Home" ===
+
+
+
+
+
+
+
+
+                ╭──────────────────────────────────────────────╮
+                │  Commands                                    │
+                │  > go home                                   │
+                │  › Go to Home                                │
+                │                                              │
+                │  type to filter · enter run · esc            │
+                ╰──────────────────────────────────────────────╯
+
+
+
+
+
+
+
+
+
+
+=== Unit 2: Home palette catalog, showing "Go to Monitor" ===
+
+
+
+
+
+
+
+                ╭──────────────────────────────────────────────╮
+                │  Commands                                    │
+                │  >                                           │
+                │  › focus runs                    enter       │
+                │    new run                       r           │
+                │    Go to Monitor                             │
+                │                                              │
+                │  type to filter · enter run · esc            │
+                ╰──────────────────────────────────────────────╯
+
+
+
+
+
+
+
+

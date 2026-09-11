@@ -42,10 +42,10 @@ and Detail-overlay-open no-op cases.
 ```
 === RUN   TestRootViewMouseModeCellMotion
 --- PASS: TestRootViewMouseModeCellMotion (0.01s)
-=== RUN   TestHomeMouseClickOpensDetailOverlaySameAsDKey
---- PASS: TestHomeMouseClickOpensDetailOverlaySameAsDKey (0.01s)
-=== RUN   TestHomeMouseClickOpensRowNotKeyboardSelection
---- PASS: TestHomeMouseClickOpensRowNotKeyboardSelection (0.00s)
+=== RUN   TestHomeMouseClickSelectsRowWithoutOpeningDetail
+--- PASS: TestHomeMouseClickSelectsRowWithoutOpeningDetail (0.01s)
+=== RUN   TestHomeMouseClickSelectsRowNotKeyboardSelection
+--- PASS: TestHomeMouseClickSelectsRowNotKeyboardSelection (0.00s)
 === RUN   TestHomeMouseClickNoOpCases
 === RUN   TestHomeMouseClickNoOpCases/non-primary_button
 === RUN   TestHomeMouseClickNoOpCases/release,_wheel,_and_motion_are_not_click_actions

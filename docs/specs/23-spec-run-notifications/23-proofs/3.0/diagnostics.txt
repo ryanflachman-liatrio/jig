@@ -1,0 +1,6 @@
+=== RUN   TestDrainDiagnosticsToIsSilentWhenEmpty
+--- PASS: TestDrainDiagnosticsToIsSilentWhenEmpty (0.00s)
+=== RUN   TestDrainDiagnosticsToRendersWhenPresent
+--- PASS: TestDrainDiagnosticsToRendersWhenPresent (0.00s)
+PASS
+ok  	jig/cmd/jig	0.449s

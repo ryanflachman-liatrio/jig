@@ -40,14 +40,26 @@ type sub struct {
 // Manager is the registry of concurrent runs.
 // mu guards the registry only — workflow state is owned by each scheduler.
 type Manager struct {
-	mu       sync.Mutex
-	runs     map[string]*Run
-	exec     Executor
-	resolver IntegrationResolver
-	root     string // .jig/ root (used in Phase 2+ for file I/O)
-	subs     []sub  // manager-level fan-out; TUI subscribes once
-	monitors []sentinel.MonitorDef
-	secrets  SecretResolver
+	mu        sync.Mutex
+	runs      map[string]*Run
+	exec      Executor
+	resolver  IntegrationResolver
+	root      string // .jig/ root (used in Phase 2+ for file I/O)
+	subs      []sub  // manager-level fan-out; TUI subscribes once
+	monitors  []sentinel.MonitorDef
+	secrets   SecretResolver
+	observers observerRegistry
+	epochMu   sync.Mutex
+	epoch     int
+}
+
+// nextEpoch returns a monotonic epoch number stamped onto each Run
+// registration. The value is only ever consumed by observers.
+func (m *Manager) nextEpoch() int {
+	m.epochMu.Lock()
+	defer m.epochMu.Unlock()
+	m.epoch++
+	return m.epoch
 }
 
 // SecretResolver obtains a named secret at dispatch time. Workflow TOML only
@@ -201,7 +213,26 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	}
 	s.resolver = m.resolver
 	s.secretResolver = secrets
-	go s.run(ctx)
+	s.getCauseHint = run.causeSnapshot
+	s.observers = &m.observers
+
+	// Register the run before any live event is emitted. Observers that
+	// depend on immutable per-run metadata (workflow name, resolved policy)
+	// install their per-run state here, so they never see a Publish for an
+	// unregistered run.
+	m.observers.dispatchRegistered(RunRegistration{
+		RunID:    runID,
+		Workflow: wf.Meta.Name,
+		Epoch:    m.nextEpoch(),
+		Reopen:   false,
+		Snapshot: run.Snapshot,
+		Policy:   wf.NotificationPolicy(),
+	})
+
+	go func() {
+		defer m.observers.dispatchStopped(runID)
+		s.run(ctx)
+	}()
 
 	return run, nil
 }
@@ -256,10 +287,40 @@ type Run struct {
 	// done closed see the written value (Go memory model, channel close).
 	done      chan struct{}
 	finalSnap RunSnapshot
+	// causeMu guards causeHint, updated only from Run public methods; the
+	// scheduler reads it after ctx.Done to distinguish deliberate interruption
+	// from an unclassified engine-level cancellation.
+	causeMu   sync.Mutex
+	causeHint CompletionCause
 }
 
 // Cancel terminates the run. In-flight workers receive context cancellation.
-func (r *Run) Cancel() { r.cancel() }
+// The recorded completion cause is CauseCancelled.
+func (r *Run) Cancel() { r.CancelWithCause(CauseCancelled) }
+
+// CancelWithCause terminates the run and records a semantic cause used only
+// for the terminating RunFinished event's classification. The first non-empty
+// cause wins so a later interrupt does not overwrite a deliberate policy
+// rejection. Empty causes fall back to CauseCancelled.
+func (r *Run) CancelWithCause(cause CompletionCause) {
+	if cause == "" {
+		cause = CauseCancelled
+	}
+	r.causeMu.Lock()
+	if r.causeHint == "" {
+		r.causeHint = cause
+	}
+	r.causeMu.Unlock()
+	r.cancel()
+}
+
+// causeSnapshot reads the recorded cancellation cause without holding the
+// scheduler's inbox open.
+func (r *Run) causeSnapshot() CompletionCause {
+	r.causeMu.Lock()
+	defer r.causeMu.Unlock()
+	return r.causeHint
+}
 
 // Wait blocks until the scheduler goroutine exits and returns the final
 // snapshot. It is safe to call after Cancel — headless clients must wait for
@@ -805,6 +866,18 @@ type scheduler struct {
 
 	onDone func(RunSnapshot) // called once before the scheduler goroutine exits
 
+	// getCauseHint, when non-nil, tells the scheduler which semantic completion
+	// cause a caller assigned to Run.Cancel/CancelWithCause. It is read only from
+	// the scheduler goroutine after ctx.Done to classify the terminal event; a
+	// nil hint falls back to CauseCancelled. Kept out of newScheduler's parameter
+	// list so existing test constructors stay compatible.
+	getCauseHint func() CompletionCause
+
+	// observers, when non-nil, receives non-blocking notification of every
+	// ctrl-class engine Event after it has been journaled. The bridge is set
+	// only by production Start/Resume paths; test constructors leave it nil.
+	observers *observerRegistry
+
 	// Runtime fan-out registries (see fanout.go). Runtime children are NEVER
 	// appended to wf.Steps — the static DAG stays pure and visualizable — so
 	// they live only here, keyed by their stable instance id.
@@ -906,7 +979,7 @@ func (s *scheduler) run(ctx context.Context) {
 	// setup failure — fail the run before any step burns work.
 	if err := s.setupRunBranch(); err != nil {
 		s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("setup run branch: %v", err)})
-		s.emit(RunFinished{RunID: s.runID, Failed: true})
+		s.emit(RunFinished{RunID: s.runID, Failed: true, Cause: CauseFailed})
 		s.onDone(s.snapshot())
 		if s.writer != nil {
 			_ = s.writer.Close()
@@ -970,7 +1043,7 @@ func (s *scheduler) runLoop(ctx context.Context) {
 			if s.inFlight == 0 && !s.anyPendingRunnable() {
 				if !s.requestFinalMergeIfNeeded() {
 					s.cleanupWorktrees()
-					s.emit(RunFinished{RunID: s.runID, Failed: s.anyFailed()})
+					s.emit(RunFinished{RunID: s.runID, Failed: s.anyFailed(), Cause: s.terminalCause()})
 					return
 				}
 				// Parked on the final-merge gate: fall through and block on the inbox.
@@ -988,7 +1061,7 @@ func (s *scheduler) runLoop(ctx context.Context) {
 			}
 		case <-ctx.Done():
 			s.cleanupWorktrees()
-			s.emit(RunFinished{RunID: s.runID, Failed: true})
+			s.emit(RunFinished{RunID: s.runID, Failed: true, Cause: s.cancelCause(ctx)})
 			return
 		}
 	}
@@ -2423,7 +2496,33 @@ func (s *scheduler) handleFinalMerge(m finalMergeMsg) {
 	s.awaitingFinalMerge = false
 	s.terminated = true
 	s.cleanupWorktrees()
-	s.emit(RunFinished{RunID: s.runID, Failed: s.anyFailed()})
+	s.emit(RunFinished{RunID: s.runID, Failed: s.anyFailed(), Cause: s.terminalCause()})
+}
+
+// terminalCause classifies the outcome of a normally-settled run for the
+// terminating RunFinished event. Runs that reached this call site never
+// executed the ctx.Done branch so a hint set from a Cancel is treated as an
+// unrelated late signal.
+func (s *scheduler) terminalCause() CompletionCause {
+	if s.anyFailed() {
+		return CauseFailed
+	}
+	return CauseSucceeded
+}
+
+// cancelCause classifies a run that exited on ctx.Done. A caller may have set
+// an explicit semantic cause via Run.CancelWithCause; otherwise ctx.Err
+// distinguishes a deadline expiry from an unclassified interruption.
+func (s *scheduler) cancelCause(ctx context.Context) CompletionCause {
+	if s.getCauseHint != nil {
+		if c := s.getCauseHint(); c != "" {
+			return c
+		}
+	}
+	if ctx != nil && ctx.Err() == context.DeadlineExceeded {
+		return CauseTimeout
+	}
+	return CauseCancelled
 }
 
 // composeRecoveryMessage builds the resume prompt for RecoverResume: the failed
@@ -3476,6 +3575,9 @@ func (s *scheduler) fanOut(e Event) {
 		fanOutLive(s.subs, e)
 	default:
 		fanOutCtrl(s.subs, e)
+		if s.observers != nil {
+			s.observers.dispatchPublish(e)
+		}
 	}
 }
 

@@ -29,6 +29,14 @@ type workflowSnapshot struct {
 	Telemetry     workflow.Telemetry      `json:"telemetry,omitempty"`
 	PublicSteps   []workflow.Step         `json:"public_steps,omitempty"`
 	ExpandedSteps []workflow.Step         `json:"expanded_steps,omitempty"`
+	// Notification is the run's frozen resolved notification policy — the
+	// list of events and destination aliases that were in effect when the
+	// run started. It is secret-free: aliases only, no URL, bearer, or
+	// operator enablement. Absent means notification-disabled (older
+	// snapshots), which is not the same as an explicit disabled policy but
+	// the observable behavior is identical.
+	Notification       *workflow.NotificationPolicy `json:"notification,omitempty"`
+	NotificationSHA256 string                       `json:"notification_sha256,omitempty"`
 }
 
 func persistWorkflowSnapshot(runDir string, wf *workflow.Workflow) error {
@@ -51,6 +59,14 @@ func persistWorkflowSnapshot(runDir string, wf *workflow.Workflow) error {
 		Telemetry:     wf.Telemetry,
 		PublicSteps:   wf.PublicSteps(),
 		ExpandedSteps: wf.Steps,
+	}
+	policy := wf.NotificationPolicy()
+	if len(policy.Events) > 0 || len(policy.Routes) > 0 {
+		snap.Notification = &policy
+		hash, err := notificationPolicyDigest(policy)
+		if err == nil {
+			snap.NotificationSHA256 = hash
+		}
 	}
 	data, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {
@@ -92,10 +108,42 @@ func DecodeWorkflowSnapshot(data []byte) (*workflow.Workflow, error) {
 			return nil, fmt.Errorf("workflow snapshot module checksum mismatch")
 		}
 	}
-	if len(snap.ExpandedSteps) > 0 {
-		return workflow.RestoreExpandedWithTelemetry(snap.Meta, snap.Defaults, snap.Telemetry, snap.PublicSteps, snap.ExpandedSteps, snap.ModuleSources), nil
+	if snap.Notification != nil && snap.NotificationSHA256 != "" {
+		want, err := notificationPolicyDigest(*snap.Notification)
+		if err != nil || want != snap.NotificationSHA256 {
+			return nil, fmt.Errorf("workflow snapshot notification policy checksum mismatch")
+		}
 	}
-	return workflow.DecodeLocked(snap.TOML, snap.BaseDir, snap.SourcePath, snap.ModuleSources)
+	var wf *workflow.Workflow
+	if len(snap.ExpandedSteps) > 0 {
+		wf = workflow.RestoreExpandedWithTelemetry(snap.Meta, snap.Defaults, snap.Telemetry, snap.PublicSteps, snap.ExpandedSteps, snap.ModuleSources)
+	} else {
+		decoded, err := workflow.DecodeLocked(snap.TOML, snap.BaseDir, snap.SourcePath, snap.ModuleSources)
+		if err != nil {
+			return nil, err
+		}
+		wf = decoded
+	}
+	// Overwrite the workflow's notification policy with the frozen snapshot
+	// value: reopen must never re-read current profile files. When no
+	// notification policy was persisted we still call SetResolvedNotificationPolicy
+	// with the zero value so a later mutation of the source profile cannot
+	// silently promote a legacy run to notification-enabled.
+	if snap.Notification != nil {
+		wf.SetResolvedNotificationPolicy(*snap.Notification)
+	} else {
+		wf.SetResolvedNotificationPolicy(workflow.NotificationPolicy{})
+	}
+	return wf, nil
+}
+
+func notificationPolicyDigest(policy workflow.NotificationPolicy) (string, error) {
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // Resume restores every durable unfinished park under one scheduler. Workers
@@ -173,6 +221,7 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir, m.root, repoRoot, onDone)
 	s.resolver = m.resolver
 	s.secretResolver = secrets
+	s.getCauseHint = run.causeSnapshot
 	s.seq = seq
 	s.states = checkpoint.states
 	s.reviewSessions = checkpoint.reviewSessions
@@ -226,6 +275,21 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 		cancel()
 		return fail(err)
 	}
+	s.observers = &m.observers
+
+	// Register the reopened run before any live event is fanned out. The
+	// notification lifecycle uses this seed to emit one filtered restored
+	// summary rather than replaying historical alerts.
+	m.observers.dispatchRegistered(RunRegistration{
+		RunID:           runID,
+		Workflow:        wf.Meta.Name,
+		Epoch:           m.nextEpoch(),
+		Reopen:          true,
+		Snapshot:        run.Snapshot,
+		Policy:          wf.NotificationPolicy(),
+		UnresolvedWaits: unresolvedWaitsFromCheckpoint(checkpoint),
+	})
+
 	if err := s.emitBatch(reopenEvents); err != nil {
 		m.mu.Lock()
 		delete(m.runs, runID)
@@ -242,7 +306,10 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	if security != nil {
 		s.securitySignals = security.signals
 	}
-	go s.runLoop(ctx)
+	go func() {
+		defer m.observers.dispatchStopped(runID)
+		s.runLoop(ctx)
+	}()
 	return run, nil
 }
 
@@ -288,6 +355,47 @@ func (c *unfinishedCheckpoint) hasParks() bool {
 	return len(c.reviewSessions) > 0 || len(c.interrupted) > 0 || len(c.recoveries) > 0 ||
 		len(c.inputs) > 0 || len(c.questions) > 0 || len(c.integrations) > 0 ||
 		len(c.stopped) > 0 || len(c.missingInputPayload) > 0
+}
+
+// unresolvedWaitsFromCheckpoint translates a resumed checkpoint's still-parked
+// human waits into the wait-kind vocabulary observers consume. It is used only
+// by Manager.Resume to seed one filtered restored summary per (run, epoch)
+// through the notification lifecycle; the scheduler itself does not read it.
+//
+// Nonce is populated from the same identifier the live event will carry when
+// its durable record is replayed through the observer's Publish path — the
+// review round id, the AskUserQuestion request id, or the prompt alias — so
+// the seed and the replay collapse onto one wait identity and the observer
+// does not emit a second attention summary right after the restored one.
+func unresolvedWaitsFromCheckpoint(c *unfinishedCheckpoint) []UnresolvedWait {
+	if c == nil {
+		return nil
+	}
+	var out []UnresolvedWait
+	for stepID, session := range c.reviewSessions {
+		out = append(out, UnresolvedWait{StepID: stepID, Kind: WaitReview, Nonce: session.RoundID})
+	}
+	for stepID := range c.inputs {
+		out = append(out, UnresolvedWait{StepID: stepID, Kind: WaitInput})
+	}
+	for stepID, pending := range c.questions {
+		if len(pending) == 0 {
+			out = append(out, UnresolvedWait{StepID: stepID, Kind: WaitQuestion})
+			continue
+		}
+		// One seed per still-unresolved AskUserQuestion request so a
+		// replayed AgentQuestion Publish matches on the same request id.
+		for _, q := range pending {
+			out = append(out, UnresolvedWait{StepID: stepID, Kind: WaitQuestion, Nonce: q.Request.ID})
+		}
+	}
+	for stepID := range c.recoveries {
+		out = append(out, UnresolvedWait{StepID: stepID, Kind: WaitRecovery})
+	}
+	for stepID := range c.integrations {
+		out = append(out, UnresolvedWait{StepID: stepID, Kind: WaitIntegrationConflict})
+	}
+	return out
 }
 
 // hasOutstandingWork reports whether Resume has anything at all to do: either

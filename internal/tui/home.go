@@ -328,11 +328,11 @@ func (m rootModel) sizeHomeChildren() rootModel {
 
 // updateHomeMouse handles a root-level mouse message while Home is active. A
 // primary click that lands inside the workflow pane and resolves to a
-// visible row opens that workflow's Detail overlay — the same destination as
-// the 'd' key — regardless of which row is keyboard-selected or which pane
-// has focus. Everything else (release/wheel/motion, other buttons,
-// out-of-bounds points, clicks on the Runs pane, or clicks while the filter
-// is capturing text) is a no-op.
+// visible row selects that row — the same as moving the keyboard cursor to
+// it with j/k — regardless of which pane has focus. It does not open the
+// Detail overlay; only the 'd' key does that. Everything else (release/wheel/
+// motion, other buttons, out-of-bounds points, clicks on the Runs pane, or
+// clicks while the filter is capturing text) is a no-op.
 func (m rootModel) updateHomeMouse(msg tea.MouseMsg) (rootModel, tea.Cmd) {
 	click, ok := msg.(tea.MouseClickMsg)
 	if !ok {
@@ -350,9 +350,10 @@ func (m rootModel) updateHomeMouse(msg tea.MouseMsg) (rootModel, tea.Cmd) {
 	if x < 0 || y < 0 || x >= l.workflowW || y >= l.workflowH {
 		return m, nil
 	}
-	path, ok := m.selector.ItemAt(x, y)
+	selector, ok := m.selector.SelectItemAt(x, y)
 	if !ok {
 		return m, nil
 	}
-	return m.openDetailOverlay(path)
+	m.selector = selector
+	return m, m.maybeSyncHomeSelection()
 }

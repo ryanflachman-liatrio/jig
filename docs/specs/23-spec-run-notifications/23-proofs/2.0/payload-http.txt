@@ -1,0 +1,22 @@
+=== RUN   TestHTTPSenderWebhookSuccess
+--- PASS: TestHTTPSenderWebhookSuccess (0.00s)
+=== RUN   TestHTTPSenderNoRedirect
+--- PASS: TestHTTPSenderNoRedirect (0.00s)
+=== RUN   TestHTTPSenderRetryClassification
+--- PASS: TestHTTPSenderRetryClassification (0.02s)
+=== RUN   TestHTTPSenderRetryAfter
+--- PASS: TestHTTPSenderRetryAfter (0.00s)
+=== RUN   TestSlackSenderSuccess
+--- PASS: TestSlackSenderSuccess (0.00s)
+=== RUN   TestSlackSenderRejectsHTTP200NonOK
+--- PASS: TestSlackSenderRejectsHTTP200NonOK (0.00s)
+=== RUN   TestHTTPSenderRejectsInvalidURL
+--- PASS: TestHTTPSenderRejectsInvalidURL (0.00s)
+=== RUN   TestPayloadNeverIncludesSecrets
+--- PASS: TestPayloadNeverIncludesSecrets (0.00s)
+=== RUN   TestPayloadStripsControlChars
+--- PASS: TestPayloadStripsControlChars (0.00s)
+=== RUN   TestPayloadTerminalOmitsAttention
+--- PASS: TestPayloadTerminalOmitsAttention (0.00s)
+PASS
+ok  	jig/internal/notification	0.033s

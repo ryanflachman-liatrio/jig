@@ -103,8 +103,42 @@ type rootModel struct {
 	// finishing after navigation cannot overwrite a newer request.
 	clipboard clipboardState
 
+	// diagnostics renders a text dump of the process-wide notification
+	// diagnostic ring. It is nil when notifications are not wired (tests).
+	// The Monitor owns the actual overlay (FR-17: a named command on its own
+	// surface); root only holds the renderer so it can forward it into every
+	// monitor.New(...) construction site.
+	diagnostics DiagnosticsRenderer
+
 	width  int
 	height int
+}
+
+// DiagnosticsRenderer produces a pre-formatted, secret-free dump of the
+// process-wide notification diagnostic ring. The TUI treats the returned
+// text as opaque and never parses it. Implementations should:
+//
+//   - never block (return the current snapshot synchronously),
+//   - render a fixed short summary (a single "no diagnostics yet" line is fine
+//     for the empty case), and
+//   - never carry raw response bodies, URLs, or secret values.
+//
+// The renderer is optional: passing nil to WithDiagnostics leaves the overlay
+// wired but reporting a static "not available" line. This matches the
+// persistence-off/tests case where no process runtime exists.
+type DiagnosticsRenderer interface {
+	RenderDiagnostics() string
+}
+
+// DiagnosticsRendererFunc adapts a bare function to DiagnosticsRenderer.
+type DiagnosticsRendererFunc func() string
+
+// RenderDiagnostics implements DiagnosticsRenderer.
+func (f DiagnosticsRendererFunc) RenderDiagnostics() string {
+	if f == nil {
+		return ""
+	}
+	return f()
 }
 
 // helpProvider is implemented by every screen model that contributes a help
@@ -140,10 +174,56 @@ func (m rootModel) activeProvider() helpProvider {
 	return homeHelpBridge{m}
 }
 
+// Option configures a rootModel at construction. Options exist so callers
+// can add process-wide bridges (notification diagnostics, in future the
+// clipboard / IPC hooks) without every test having to construct them.
+type Option func(*rootModel)
+
+// WithDiagnostics installs a process-wide notification diagnostics renderer
+// that surfaces through the Monitor's "Notification diagnostics" command
+// (ctrl+g / command palette). A nil renderer is accepted and treated as "not
+// wired" — the overlay renders a fixed static line instead of stub-formatted
+// text. This matches the tests and headless entry paths, which construct the
+// TUI without a shared runtime.
+func WithDiagnostics(r DiagnosticsRenderer) Option {
+	return func(m *rootModel) { m.diagnostics = r }
+}
+
+// WithStartHook installs a hook invoked immediately after Manager.Start
+// returns successfully. cmd/jig uses it to register the run's workflow
+// metadata with the telemetry exporter so per-step metrics carry
+// step_type / backend / transport / model labels. A nil hook is a no-op.
+func WithStartHook(fn func(runID string, wf *workflow.Workflow)) Option {
+	return func(m *rootModel) { m.startHook = fn }
+}
+
+// WithTelemetryMode sets the resolved telemetry exporter mode (off | prom |
+// otlp | both) rendered as an "otel:<mode>" badge in the monitor status
+// line. Empty or "off" hides the badge.
+func WithTelemetryMode(mode string) Option {
+	return func(m *rootModel) { m.telemetryMode = mode }
+}
+
 // New returns jig's root TUI model. mgr is the engine manager; it must be
 // non-nil. The theme is dark-only, so no terminal-background detection is needed.
-func New(ctx context.Context, mgr *engine.Manager) tea.Model {
-	return NewWithHook(ctx, mgr, nil)
+func New(ctx context.Context, mgr *engine.Manager, opts ...Option) tea.Model {
+	live, ctrl := mgr.Subscribe()
+	m := rootModel{
+		active:           screenHome,
+		selector:         selector.New(),
+		runs:             runs.NewModel(),
+		homeFocus:        homeWorkflows,
+		ctx:              ctx,
+		manager:          mgr,
+		liveEvents:       live,
+		ctrlEvents:       ctrl,
+		handles:          make(map[string]*engine.Run),
+		pendingDeletions: make(map[string]bool),
+	}
+	for _, opt := range opts {
+		opt(&m)
+	}
+	return m
 }
 
 // NewWithHook is [New] with an optional startHook invoked immediately after
@@ -159,21 +239,7 @@ func NewWithHook(ctx context.Context, mgr *engine.Manager, startHook func(runID 
 	if len(telemetryMode) > 0 {
 		mode = telemetryMode[0]
 	}
-	live, ctrl := mgr.Subscribe()
-	return rootModel{
-		active:           screenHome,
-		selector:         selector.New(),
-		runs:             runs.NewModel(),
-		homeFocus:        homeWorkflows,
-		ctx:              ctx,
-		manager:          mgr,
-		liveEvents:       live,
-		ctrlEvents:       ctrl,
-		handles:          make(map[string]*engine.Run),
-		pendingDeletions: make(map[string]bool),
-		startHook:        startHook,
-		telemetryMode:    mode,
-	}
+	return New(ctx, mgr, WithStartHook(startHook), WithTelemetryMode(mode))
 }
 
 func (m rootModel) Init() tea.Cmd {

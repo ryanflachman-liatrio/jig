@@ -20,10 +20,32 @@ type RunStarted struct {
 }
 
 // RunFinished is emitted when the run reaches a terminal state.
+//
+// Cause distinguishes semantic outcomes so downstream consumers (notifications,
+// exit-code mapping) can tell an actual run failure apart from a deliberate
+// operator interruption or a headless policy rejection. Older journal records
+// decode with an empty Cause, treated as CauseUnknown; the boolean Failed
+// field is preserved for byte-compatible replay.
 type RunFinished struct {
 	RunID  string
 	Failed bool
+	// Cause classifies the semantic completion. Empty on older records.
+	Cause CompletionCause `json:"cause,omitempty"`
 }
+
+// CompletionCause classifies why a run settled. Notifications distinguish
+// actual failure from deliberate cancellation using this field; the headless
+// exit-code mapping keeps using Failed for compatibility.
+type CompletionCause string
+
+const (
+	CauseUnknown         CompletionCause = ""
+	CauseSucceeded       CompletionCause = "succeeded"
+	CauseFailed          CompletionCause = "failed"
+	CauseCancelled       CompletionCause = "cancelled"
+	CauseTimeout         CompletionCause = "timeout"
+	CausePolicyRejection CompletionCause = "policy_rejection"
+)
 
 // StepStatus records a single status transition for one step.
 type StepStatus struct {

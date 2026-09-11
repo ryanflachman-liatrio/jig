@@ -560,6 +560,9 @@ func (m Model) View() string {
 	if m.helpOpen {
 		return m.helpOverlay(base)
 	}
+	if m.showDiagnostics {
+		return m.diagnosticsOverlay(base)
+	}
 	return base
 }
 

@@ -28,7 +28,7 @@ format/race gates all pass clean.
 
 ## Artifact: Runs pane has no competing mouse handling
 
-**What it proves:** The click-to-open feature's bounds-check no-op for the
+**What it proves:** The click-to-select feature's bounds-check no-op for the
 Runs pane rectangle isn't accidentally suppressing existing Runs mouse
 behavior, because there is none.
 

@@ -50,6 +50,9 @@ type Styles struct {
 		Section lipgloss.Style
 		Key     lipgloss.Style
 		Desc    lipgloss.Style
+		// Match highlights the characters within a command palette row's title
+		// that matched the current fuzzy filter query.
+		Match lipgloss.Style
 	}
 	// Panel is the titled-box primitive (see panel.go). The border styles omit
 	// the top edge (the helper hand-composites the titled top line per ADR 0001);
@@ -237,6 +240,7 @@ func DefaultTheme() Styles {
 	s.Help.Section = lipgloss.NewStyle().Bold(true).Foreground(fgBase)
 	s.Help.Key = lipgloss.NewStyle().Foreground(secondary)
 	s.Help.Desc = lipgloss.NewStyle().Foreground(fgMuted)
+	s.Help.Match = lipgloss.NewStyle().Bold(true).Foreground(accent)
 
 	s.Viewport.Focused = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).

@@ -60,7 +60,7 @@ and comparison to high-rated TUIs (lazygit, k9s, yazi, btop) plus agent peers
 | A21 | Graph export (Mermaid / DOT / SVG) | C | In-TUI chart only. |
 | A22 | Run share / anonymized export bundle | C | **Done** (Spec 23). `jig export RUN_ID --destination PATH [--include-text]` produces a local, offline, alias-only ZIP archive. Spec: [`23-spec-run-share-export.md`](../specs/23-spec-run-share-export/23-spec-run-share-export.md); tasks/proofs: [`23-tasks-run-share-export.md`](../specs/23-spec-run-share-export/23-tasks-run-share-export.md), [`23-proofs/`](../specs/23-spec-run-share-export/23-proofs/); contract: [`docs/operations.md#export-a-run`](../operations.md#export-a-run). Validation: `go test ./internal/runexport ./cmd/jig -race -count=1`, `go test ./... -count=1`, `go vet ./...`, `gofmt -l .`, and every `.agents/jig/*.toml` re-validated. |
 | A23 | Multi-operator shared run store | C | Single local operator. |
-| A24 | Notifications (desktop / Slack / webhook on gate or failure) | C | Visual gate chrome only. |
+| A24 | Notifications (desktop / Slack / webhook on gate or failure) | C | **Done** ([Spec 23 run notifications](../specs/23-spec-run-notifications/23-spec-run-notifications.md)). Bounded metadata-only delivery, coalesced attention, ordered shutdown, frozen policy on reopen. |
 | A25 | Chart crossing-min + gate labels | S | Schema MVP exclusions. |
 | A26 | Charm clickable selector rows | S | Keyboard-only. |
 
