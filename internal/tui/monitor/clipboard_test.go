@@ -267,6 +267,9 @@ func TestClipboardItemPayloads(t *testing.T) {
 	if !strings.Contains(tool.Payload, "\"status\": \"completed\"") || !strings.Contains(tool.Payload, "\"text\": \"file body\"") {
 		t.Fatalf("tool payload missing result JSON body:\n%s", tool.Payload)
 	}
+	if strings.ContainsAny(tool.Payload, "╭╮╰╯") || strings.Contains(tool.Payload, "\x1b[") {
+		t.Fatalf("tool payload contains card decoration:\n%s", tool.Payload)
+	}
 }
 
 // TestClipboardItemPageBoundary asserts a use-only / result-only item still

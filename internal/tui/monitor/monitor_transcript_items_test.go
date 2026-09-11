@@ -145,4 +145,7 @@ func TestTranscriptPersistenceOffBuildsNoItems(t *testing.T) {
 	if len(m.chatItems) != 0 || len(m.chatEntries) != 0 {
 		t.Fatalf("persistence-off transcript state = items:%d entries:%d", len(m.chatItems), len(m.chatEntries))
 	}
+	if got := m.itemTranscriptBody(); got != "" || len(m.chatItemRendered) != 0 {
+		t.Fatalf("persistence-off render entered card path: body=%q cache=%d", got, len(m.chatItemRendered))
+	}
 }

@@ -468,9 +468,13 @@ type transcriptItem struct {
 // transcriptRenderKey separates markdown and detail cache surfaces so changing
 // a detail width cannot reuse output formatted for the conversation body.
 type transcriptRenderKey struct {
-	itemKey transcriptItemKey
-	surface transcriptRenderSurface
-	width   int
+	itemKey  transcriptItemKey
+	surface  transcriptRenderSurface
+	width    int
+	expanded bool
+	selected bool
+	state    toolDisplayState
+	header   string
 }
 
 type transcriptRenderSurface int
@@ -478,6 +482,7 @@ type transcriptRenderSurface int
 const (
 	transcriptRenderMarkdown transcriptRenderSurface = iota
 	transcriptRenderDetail
+	transcriptRenderCard
 )
 
 type transcriptLineKey struct {

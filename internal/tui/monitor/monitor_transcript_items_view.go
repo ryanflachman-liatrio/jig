@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"charm.land/lipgloss/v2"
+
 	"jig/internal/toolcall"
 	"jig/internal/transcript"
 	"jig/internal/tui/shared"
@@ -91,6 +93,10 @@ func (m *Model) itemTranscriptBody() string {
 			}
 			if item.displayState == toolDisplayError {
 				row += " · " + toolErrorHint(m, item)
+			}
+			if item.kind == transcriptItemToolExchange {
+				b.WriteString(m.renderToolExchangeCard(item, prefix, row, selected, expanded) + "\n")
+			} else if item.displayState == toolDisplayError {
 				b.WriteString(prefix + shared.Theme.Chat.TranscriptError.Render(row) + "\n")
 			} else if selected {
 				b.WriteString(prefix + shared.Theme.Chat.TranscriptSelected.Render(row) + "\n")
@@ -119,6 +125,52 @@ func (m *Model) itemTranscriptBody() string {
 		m.chatItemLineRanges[transcriptLineKey{itemKey: item.key}] = lineRange{start: start, end: max(start, line-1)}
 	}
 	return b.String()
+}
+
+func cardState(state toolDisplayState) shared.CardState {
+	switch state {
+	case toolDisplaySuccess:
+		return shared.CardSuccess
+	case toolDisplayError:
+		return shared.CardError
+	case toolDisplayRunning:
+		return shared.CardRunning
+	default:
+		return shared.CardWarning
+	}
+}
+
+// renderToolExchangeCard owns the exchange-only render cache. Detail output is
+// intentionally rendered below the header card and never enters this cache.
+func (m *Model) renderToolExchangeCard(item transcriptItem, prefix, header string, selected, expanded bool) string {
+	available := m.transcriptInnerW - lipgloss.Width(prefix)
+	if available < 3 {
+		return ""
+	}
+	if selected {
+		header = shared.Theme.Chat.TranscriptSelected.Render(header)
+	} else {
+		header = shared.Theme.Chat.TranscriptActivity.Render(header)
+	}
+	key := transcriptRenderKey{itemKey: item.key, surface: transcriptRenderCard, width: available, expanded: expanded, selected: selected, state: item.displayState, header: header}
+	if cached, ok := m.chatItemRendered[key]; ok {
+		return prefixCardRows(prefix, cached)
+	}
+	for old := range m.chatItemRendered {
+		if old.surface == transcriptRenderCard && old.itemKey == item.key {
+			delete(m.chatItemRendered, old)
+		}
+	}
+	card := shared.RenderCard(shared.Card{Header: header, Width: available, State: cardState(item.displayState), Tint: true})
+	m.chatItemRendered[key] = card
+	return prefixCardRows(prefix, card)
+}
+
+func prefixCardRows(prefix, card string) string {
+	if card == "" {
+		return ""
+	}
+	return prefix + strings.ReplaceAll(card, "\n", "\n"+prefix)
 }
 
 func itemHasDetail(item transcriptItem) bool {

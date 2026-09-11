@@ -127,7 +127,7 @@ covers every visible cell and remains contained to each card row.
 - [x] 2.7 Render a Go fence through a deterministic Glamour renderer configured with `shared.CodeBlockFormatter`, place its output in neutral and error cards, and cover synthetic resets, combined SGR, foreground preservation, explicit inner backgrounds, blank lines, indentation, unbroken words, and exact normal/defensive widths in `card_test.go`.
 - [x] 2.8 Generate the sanitized styled gallery at recorded terminal dimensions and save its output plus per-row width/background audit as `25-proofs/25-task-2-styled-gallery.txt`.
 
-### [~] 3.0 Render Monitor tool exchanges as truthful header cards
+### [x] 3.0 Render Monitor tool exchanges as truthful header cards
 
 Convert exactly the normalized tool-exchange item to a tinted, header-only
 card while preserving the current activity grammar, selection cue, expansion
@@ -148,8 +148,8 @@ notice. Orphan results and every non-exchange item keep their existing form.
 - [x] 3.4 Calculate the selected or unselected outside prefix once, subtract its `lipgloss.Width` once from `transcriptInnerW`, skip card rendering when no meaningful frame remains, and prefix every returned card row consistently so ANSI styling cannot cause overflow.
 - [x] 3.5 Render tool exchanges as `Tint: true`, header-only cards with zero sections; emit exactly the card's top and bottom rows with no synthetic empty body row and preserve the existing newline-based line accounting.
 - [x] 3.6 Leave `writeToolActivityDetails`, `writeItemDetail`, `writeNewCodeCards`, the structured-edit default expansion, write-time truncation notice, and per-item/expand-all toggles below the header card with their current widths and content.
-- [ ] 3.7 Add table-driven Monitor cases for paired success/failure, running use-only, terminal incomplete use-only, selected/unselected prefixes, narrow/wide widths, and no synthetic body row; use ANSI-aware assertions for border color and total row width.
-- [ ] 3.8 Add explicit regressions proving orphan results and text/system/thinking/unsupported items retain their existing flat presentation, expanded details and structured edits remain visible, clipboard payloads remain undecorated, and persistence-off loading produces the existing empty state without entering card rendering.
+- [x] 3.7 Add table-driven Monitor cases for paired success/failure, running use-only, terminal incomplete use-only, selected/unselected prefixes, narrow/wide widths, and no synthetic body row; use ANSI-aware assertions for border color and total row width.
+- [x] 3.8 Add explicit regressions proving orphan results and text/system/thinking/unsupported items retain their existing flat presentation, expanded details and structured edits remain visible, clipboard payloads remain undecorated, and persistence-off loading produces the existing empty state without entering card rendering.
 
 ### [~] 4.0 Preserve navigation and bound cached card rendering
 
