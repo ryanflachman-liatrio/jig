@@ -1,0 +1,40 @@
+=== RUN   TestSelectionAffordancePrefixesEqualTwoCells
+--- PASS: TestSelectionAffordancePrefixesEqualTwoCells (0.00s)
+=== RUN   TestSelectionAffordanceCardRowsSharePrefix
+--- PASS: TestSelectionAffordanceCardRowsSharePrefix (0.00s)
+=== RUN   TestSelectionAffordanceColumnParity
+--- PASS: TestSelectionAffordanceColumnParity (0.00s)
+=== RUN   TestSelectionAffordanceLineRangesStable
+--- PASS: TestSelectionAffordanceLineRangesStable (0.00s)
+=== RUN   TestSelectionAffordanceCardWidthStableAcrossSelection
+--- PASS: TestSelectionAffordanceCardWidthStableAcrossSelection (0.00s)
+=== RUN   TestSelectionAffordanceCardCacheDoesNotGrowOnSelection
+--- PASS: TestSelectionAffordanceCardCacheDoesNotGrowOnSelection (0.00s)
+=== RUN   TestTranscriptCardLineRangesCachedAndFresh
+--- PASS: TestTranscriptCardLineRangesCachedAndFresh (0.00s)
+=== RUN   TestTranscriptCardCacheLifecycleBounded
+--- PASS: TestTranscriptCardCacheLifecycleBounded (0.00s)
+=== RUN   TestTranscriptCardPageBoundsSearchExpansionAndClipboard
+--- PASS: TestTranscriptCardPageBoundsSearchExpansionAndClipboard (0.01s)
+=== RUN   TestToolExchangeHeaderCardStatesAndWidths
+=== RUN   TestToolExchangeHeaderCardStatesAndWidths/success_width_40
+=== RUN   TestToolExchangeHeaderCardStatesAndWidths/failed_width_40
+=== RUN   TestToolExchangeHeaderCardStatesAndWidths/running_use_only_width_40
+=== RUN   TestToolExchangeHeaderCardStatesAndWidths/terminal_incomplete_use_only_width_40
+=== RUN   TestToolExchangeHeaderCardStatesAndWidths/success_width_72
+=== RUN   TestToolExchangeHeaderCardStatesAndWidths/failed_width_72
+=== RUN   TestToolExchangeHeaderCardStatesAndWidths/running_use_only_width_72
+=== RUN   TestToolExchangeHeaderCardStatesAndWidths/terminal_incomplete_use_only_width_72
+--- PASS: TestToolExchangeHeaderCardStatesAndWidths (0.01s)
+    --- PASS: TestToolExchangeHeaderCardStatesAndWidths/success_width_40 (0.00s)
+    --- PASS: TestToolExchangeHeaderCardStatesAndWidths/failed_width_40 (0.00s)
+    --- PASS: TestToolExchangeHeaderCardStatesAndWidths/running_use_only_width_40 (0.00s)
+    --- PASS: TestToolExchangeHeaderCardStatesAndWidths/terminal_incomplete_use_only_width_40 (0.00s)
+    --- PASS: TestToolExchangeHeaderCardStatesAndWidths/success_width_72 (0.00s)
+    --- PASS: TestToolExchangeHeaderCardStatesAndWidths/failed_width_72 (0.00s)
+    --- PASS: TestToolExchangeHeaderCardStatesAndWidths/running_use_only_width_72 (0.00s)
+    --- PASS: TestToolExchangeHeaderCardStatesAndWidths/terminal_incomplete_use_only_width_72 (0.00s)
+=== RUN   TestToolExchangeHeaderCardSelectedAndUnselectedPrefixes
+--- PASS: TestToolExchangeHeaderCardSelectedAndUnselectedPrefixes (0.00s)
+PASS
+ok  	jig/internal/tui/monitor	0.062s

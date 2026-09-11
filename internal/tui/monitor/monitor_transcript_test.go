@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -193,4 +194,175 @@ func TestBuildTranscriptItemsPairsFixtureToolsByScopedFIFO(t *testing.T) {
 	if resultOnly != nil {
 		t.Fatalf("unexpected result-only item after matching out-of-order result: %+v", resultOnly)
 	}
+}
+
+// TestIsStructuralBlankRawBytesSemantics locks slice-04 FR-04.1: the
+// predicate must return true only when a line's raw bytes contain
+// exclusively ASCII whitespace, so a tinted card padding row (whose bytes
+// include SGR escapes) is treated as content while a bare " " line is not.
+func TestIsStructuralBlankRawBytesSemantics(t *testing.T) {
+	tintedPadding := "\x1b[48;2;26;25;31m" + strings.Repeat(" ", 20) + "\x1b[49m"
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{name: "empty", in: "", want: true},
+		{name: "single space", in: " ", want: true},
+		{name: "spaces and tabs", in: " \t  \t", want: true},
+		{name: "carriage return", in: "\r", want: true},
+		{name: "vertical tab", in: "\v", want: true},
+		{name: "form feed", in: "\f", want: true},
+		{name: "plain glyph", in: "x", want: false},
+		{name: "leading escape byte only", in: "\x1b", want: false},
+		{name: "tinted padding row", in: tintedPadding, want: false},
+		{name: "glamour blank row", in: "\x1b[38;2;80;80;80m\x1b[0m", want: false},
+		{name: "unicode nbsp", in: "\u00a0", want: false},
+		{name: "content with trailing space", in: "hi ", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isStructuralBlank(tt.in); got != tt.want {
+				t.Fatalf("isStructuralBlank(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestTrimStructuralBlankEdges locks slice-04 FR-04.2 / FR-04.3: the wrapper
+// splits on "\n", drops structurally-blank leading and trailing lines,
+// returns "" for an entirely blank input, and preserves the tinted card
+// padding row byte-for-byte so slice-09's user-message bubble can rely on
+// the same trimmer without a card-side padding marker.
+func TestTrimStructuralBlankEdges(t *testing.T) {
+	tintedPadding := "\x1b[48;2;26;25;31m" + strings.Repeat(" ", 20) + "\x1b[49m"
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{name: "empty", in: "", want: ""},
+		{name: "single blank", in: " ", want: ""},
+		{name: "single content line no newline", in: "only", want: "only"},
+		{name: "trailing newline", in: "a\n", want: "a"},
+		{name: "leading blanks", in: "\n\na", want: "a"},
+		{name: "trailing blanks", in: "a\n\n", want: "a"},
+		{name: "leading and trailing blanks", in: "\n\na\n\n", want: "a"},
+		{name: "interior blank preserved", in: "a\n\nb", want: "a\n\nb"},
+		{name: "all blank multi-line", in: "\n \n\t\n", want: ""},
+		{name: "tinted padding alone", in: tintedPadding, want: tintedPadding},
+		{name: "tinted padding surrounded by plain blanks",
+			in:   "\n" + tintedPadding + "\ncontent\n" + tintedPadding + "\n",
+			want: tintedPadding + "\ncontent\n" + tintedPadding},
+		{name: "glamour blank row survives",
+			in:   "\x1b[38;2;80;80;80m\x1b[0m",
+			want: "\x1b[38;2;80;80;80m\x1b[0m"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := trimStructuralBlankEdges(tt.in); got != tt.want {
+				t.Fatalf("trimStructuralBlankEdges(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestVerticalRhythmHelperCallSites locks slice-04 FR-04.4: the two
+// edge-trim helpers must not silently swap. stripBlankEdges (SGR-aware) is
+// correct for Glamour output normalization inside renderNewCodeCard and
+// fileBody; trimStructuralBlankEdges (raw-bytes) is correct for per-item
+// trimming inside itemTranscriptBody. Anything else is a regression.
+func TestVerticalRhythmHelperCallSites(t *testing.T) {
+	items, err := os.ReadFile("monitor_transcript_items_view.go")
+	if err != nil {
+		t.Fatalf("read monitor_transcript_items_view.go: %v", err)
+	}
+	itemsView := string(items)
+
+	transcriptSrc, err := os.ReadFile("monitor_transcript.go")
+	if err != nil {
+		t.Fatalf("read monitor_transcript.go: %v", err)
+	}
+	transcriptView := string(transcriptSrc)
+
+	// stripBlankEdges in monitor_transcript_items_view.go must appear only
+	// inside renderNewCodeCard.
+	if got := countCallsInFunction(t, itemsView, "renderNewCodeCard", "stripBlankEdges("); got == 0 {
+		t.Fatalf("expected stripBlankEdges( call inside renderNewCodeCard; not found")
+	}
+	if got, want := strings.Count(itemsView, "stripBlankEdges("), 1; got != want {
+		t.Fatalf("stripBlankEdges( occurrences in monitor_transcript_items_view.go = %d, want %d (only renderNewCodeCard)", got, want)
+	}
+
+	// trimStructuralBlankEdges( in monitor_transcript_items_view.go must
+	// appear only inside itemTranscriptBody.
+	if got := countCallsInFunction(t, itemsView, "itemTranscriptBody", "trimStructuralBlankEdges("); got == 0 {
+		t.Fatalf("expected trimStructuralBlankEdges( call inside itemTranscriptBody; not found")
+	}
+	if got, want := strings.Count(itemsView, "trimStructuralBlankEdges("), 1; got != want {
+		t.Fatalf("trimStructuralBlankEdges( occurrences in monitor_transcript_items_view.go = %d, want %d (only itemTranscriptBody)", got, want)
+	}
+
+	// stripBlankEdges call sites in monitor_transcript.go: the definition
+	// (`func stripBlankEdges`), a call inside chatBody's write path, and a
+	// call inside fileBody. Anything else is a new consumer that must be
+	// audited against the two semantics.
+	if got := strings.Count(transcriptView, "stripBlankEdges("); got < 2 {
+		t.Fatalf("stripBlankEdges( call sites in monitor_transcript.go = %d, want >= 2 (definition + callers)", got)
+	}
+	if !strings.Contains(transcriptView, "func stripBlankEdges(") {
+		t.Fatalf("stripBlankEdges definition missing from monitor_transcript.go")
+	}
+
+	// trimStructuralBlankEdges must be defined in monitor_transcript.go and
+	// must not be called from monitor_transcript.go (the transcript-item
+	// loop is the sole consumer).
+	if !strings.Contains(transcriptView, "func trimStructuralBlankEdges(") {
+		t.Fatalf("trimStructuralBlankEdges definition missing from monitor_transcript.go")
+	}
+	if got, want := strings.Count(transcriptView, "trimStructuralBlankEdges("), 1; got != want {
+		t.Fatalf("trimStructuralBlankEdges( occurrences in monitor_transcript.go = %d, want %d (definition only)", got, want)
+	}
+}
+
+// countCallsInFunction returns how many times needle appears in the body of
+// the named top-level function inside src. Brace-matching is naive but
+// sufficient for the Monitor package's Go source, where string literals do
+// not contain unbalanced braces at the top level of function bodies.
+func countCallsInFunction(t *testing.T, src, funcName, needle string) int {
+	t.Helper()
+	sig := "func " + funcName + "("
+	idx := strings.Index(src, sig)
+	if idx < 0 {
+		// Try method form: func (m ...) funcName(
+		idx = strings.Index(src, ") "+funcName+"(")
+		if idx < 0 {
+			t.Fatalf("function %s not found in source", funcName)
+		}
+	}
+	open := strings.Index(src[idx:], "{")
+	if open < 0 {
+		t.Fatalf("function %s has no opening brace", funcName)
+	}
+	body := src[idx+open:]
+	depth := 0
+	end := -1
+	for i := 0; i < len(body); i++ {
+		switch body[i] {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				end = i + 1
+			}
+		}
+		if end >= 0 {
+			break
+		}
+	}
+	if end < 0 {
+		t.Fatalf("function %s body did not close", funcName)
+	}
+	return strings.Count(body[:end], needle)
 }

@@ -1,0 +1,23 @@
+Task 04 (slice 04) vertical-rhythm visual fixture
+Fixture source: verticalRhythmVisualPage (slice-04 proof-only)
+All paths, commands, status text, and code are fabricated.
+
+terminal=80x30 transcriptInnerW=44 chatItems=6 visibleItems=6 cursor=0
+Rendering: production Model.View ANSI -> deterministic test HTML.
+PNG conversion (if performed) uses local headless Chrome — see the task-4 limitations note.
+
+Item ranges and inter-item gaps in the transcript body:
+  item[0] key={anchor:{seq:1 block:0} kind:0} range={start:0 end:3} first="▌  User"
+  item[1] key={anchor:{seq:2 block:0} kind:2} range={start:5 end:6} first="  ╭─── ▸ ○ Read ──────────\xe2\x94…"
+    ^ 1 blank line(s) since previous visible item
+  item[2] key={anchor:{seq:3 block:0} kind:0} range={start:8 end:9} first="  "
+    ^ 1 blank line(s) since previous visible item
+  item[3] key={anchor:{seq:4 block:0} kind:2} range={start:11 end:12} first="  ╭─── ▸ ◈ Read ──────────\xe2\x94…"
+    ^ 1 blank line(s) since previous visible item
+  item[4] key={anchor:{seq:6 block:0} kind:4} range={start:15 end:15} first="    iteration 1 begin"
+    ^ 2 blank line(s) since previous visible item
+  item[5] key={anchor:{seq:7 block:0} kind:2} range={start:17 end:18} first="  ╭─── ▸ ○ Search ──────────…"
+    ^ 1 blank line(s) since previous visible item
+
+Zero-height item: the empty assistant block at Seq=3 does not appear in the range list above; the guard skipped it and no ghost gap remains between the surrounding cards.
+Coord change: Seq=6 bumps Iteration to 1; itemSpacingBefore returns 2, so the gap between the second card (Seq=4-5) and the coord-change system item is 2 blank lines (slice 12's boundary banner will render inside that gap).
