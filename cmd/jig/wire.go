@@ -119,14 +119,10 @@ func (r *Runtime) Close(ctx context.Context) {
 // stdout envelope is byte-compatible even when delivery is disabled or
 // failing. Persistence-off callers can pass the runtime output.
 func (r *Runtime) DrainDiagnosticsTo(w interface{ Write(p []byte) (int, error) }) {
-	if r == nil || r.Diagnostics == nil {
+	if r == nil || r.Diagnostics == nil || r.Diagnostics.Empty() {
 		return
 	}
-	text := r.Diagnostics.Render("notification: ")
-	if text == "" {
-		return
-	}
-	_, _ = w.Write([]byte(text))
+	_, _ = w.Write([]byte(r.Diagnostics.Render("notification: ")))
 }
 
 // ResolvedPolicyForRun is the accessor the TUI diagnostic surface uses to

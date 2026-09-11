@@ -114,6 +114,15 @@ func (s *DiagnosticStore) OverflowCounts() map[string]int {
 	return out
 }
 
+// Empty reports whether the store has no recorded diagnostics yet. Headless
+// output uses this to avoid printing an unhelpful "no diagnostics" line on
+// every ordinary run.
+func (s *DiagnosticStore) Empty() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.entries) == 0
+}
+
 // Render prints a fixed textual dump suitable for stderr or a debug view.
 func (s *DiagnosticStore) Render(indent string) string {
 	entries := s.Snapshot()

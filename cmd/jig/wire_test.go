@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
+	"jig/internal/notification"
 	"jig/internal/workflow"
 )
 
@@ -52,5 +54,52 @@ func TestRuntimePrepareRunRecordsPolicy(t *testing.T) {
 	got = rt.ResolvedPolicyForRun("run-1")
 	if len(got.Events) != 0 {
 		t.Fatalf("policy not released: %+v", got)
+	}
+}
+
+// TestDrainDiagnosticsToIsSilentWhenEmpty proves FR-17's "byte-for-byte
+// compatible" invariant: a run with no notification diagnostics must not
+// write anything to headless stderr. Regression test for a prior bug where
+// Render's fixed "no notification diagnostics" fallback string was
+// misinterpreted as non-empty, printing noise on every ordinary run.
+func TestDrainDiagnosticsToIsSilentWhenEmpty(t *testing.T) {
+	t.Chdir(t.TempDir())
+	rt, err := NewRuntime("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close(context.Background())
+
+	var buf bytes.Buffer
+	rt.DrainDiagnosticsTo(&buf)
+	if buf.Len() != 0 {
+		t.Fatalf("expected silent stderr for an empty diagnostic store, got %q", buf.String())
+	}
+}
+
+// TestDrainDiagnosticsToRendersWhenPresent proves the complementary case: a
+// recorded diagnostic is actually drained to the writer.
+func TestDrainDiagnosticsToRendersWhenPresent(t *testing.T) {
+	t.Chdir(t.TempDir())
+	rt, err := NewRuntime("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close(context.Background())
+
+	rt.Diagnostics.Record(notification.Diagnostic{
+		Alias:   "ops",
+		RunID:   "run-1",
+		Outcome: "failed",
+		Reason:  "timeout",
+	})
+
+	var buf bytes.Buffer
+	rt.DrainDiagnosticsTo(&buf)
+	if buf.Len() == 0 {
+		t.Fatal("expected diagnostic output, got none")
+	}
+	if got := buf.String(); !bytes.Contains([]byte(got), []byte("ops")) {
+		t.Fatalf("drained output missing alias: %q", got)
 	}
 }
