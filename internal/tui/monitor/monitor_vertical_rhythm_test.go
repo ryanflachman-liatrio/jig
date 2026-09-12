@@ -56,9 +56,12 @@ func TestTranscriptZeroHeightItemContributesNothing(t *testing.T) {
 	if len(m.chatItems) < 3 {
 		t.Fatalf("verticalRhythmPage produced %d items, want at least 3", len(m.chatItems))
 	}
+	empty := m.chatItems[1]
+	if rendered := m.renderMarkdown(empty.primary.key, ""); trimStructuralBlankEdges(rendered) != "" {
+		t.Fatalf("empty markdown rendered %q, want structurally empty output after edge trim", rendered)
+	}
 	body := m.itemTranscriptBody()
 
-	empty := m.chatItems[1]
 	if _, ok := m.chatItemLineRanges[transcriptLineKey{itemKey: empty.key}]; ok {
 		t.Fatalf("zero-height item leaked a chatItemLineRanges entry: %+v", m.chatItemLineRanges[transcriptLineKey{itemKey: empty.key}])
 	}
@@ -95,10 +98,10 @@ func TestTranscriptTrimsStructuralEdgeBlanksBetweenItems(t *testing.T) {
 		{Seq: 1, Role: transcript.RoleUser,
 			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "leading synthetic prose"}}},
 		{Seq: 2, Role: transcript.RoleSystem,
-			// Trailing newlines here would be edge whitespace the item's
-			// own writer emits; the loop must absorb them so only one
-			// structural separator lands between this item and the next.
-			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "synthetic system prose\n\n\n"}}},
+			// Leading and trailing newlines here become edge whitespace in
+			// the verbatim rendering path. The loop must absorb both so only
+			// the structural separator lands between this item and the next.
+			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "\nsynthetic system prose\n\n\n"}}},
 		{Seq: 3, Role: transcript.RoleUser,
 			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "trailing synthetic prose"}}},
 	}
@@ -157,6 +160,55 @@ func TestTranscriptPreservesTintedPaddingRow(t *testing.T) {
 	// bottom padding. If either padding row is trimmed, this drops to 2.
 	if want := 3; systemRng.end-systemRng.start+1 != want {
 		t.Fatalf("tinted padding item spans %d rows, want %d", systemRng.end-systemRng.start+1, want)
+	}
+}
+
+// structuralEdgesPage combines the zero-height, plain-edge, and tinted-edge
+// cases in one fabricated page. It is shared by the narrow-layout and
+// line-range tests so both verify the same bytes through the production item
+// loop without adding a test-only rendering branch.
+func structuralEdgesPage() transcript.Page {
+	tintedPadding := "\x1b[48;2;26;25;31m" + strings.Repeat(" ", 20) + "\x1b[49m"
+	return transcript.Page{Entries: []transcript.Entry{
+		{Seq: 1, Role: transcript.RoleUser,
+			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "narrow first visible"}}},
+		{Seq: 2, Role: transcript.RoleAssistant,
+			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: ""}}},
+		{Seq: 3, Role: transcript.RoleSystem,
+			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "\nedge content\n\n"}}},
+		{Seq: 4, Role: transcript.RoleSystem,
+			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: tintedPadding + "\nnarrow tinted content\n" + tintedPadding}}},
+		{Seq: 5, Role: transcript.RoleUser,
+			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "narrow final visible"}}},
+	}}
+}
+
+// TestTranscriptStructuralEdgesAtNarrowWidth exercises the combined edge
+// discipline at transcriptInnerW=24, where wrapping and short card rows make
+// line-accounting mistakes easiest to expose.
+func TestTranscriptStructuralEdgesAtNarrowWidth(t *testing.T) {
+	tintedPadding := "\x1b[48;2;26;25;31m" + strings.Repeat(" ", 20) + "\x1b[49m"
+	m := newMonitorWithSteps(t)
+	m.transcriptInnerW = 24
+	m.setChatPage(structuralEdgesPage())
+	body := m.itemTranscriptBody()
+
+	if _, ok := m.chatItemLineRanges[transcriptLineKey{itemKey: m.chatItems[1].key}]; ok {
+		t.Fatalf("narrow zero-height item acquired a line range")
+	}
+	if got := strings.Count(body, tintedPadding); got != 2 {
+		t.Fatalf("narrow tinted padding occurrences = %d, want 2", got)
+	}
+
+	rendered := []int{0, 2, 3, 4}
+	for i := 1; i < len(rendered); i++ {
+		previous := m.chatItems[rendered[i-1]]
+		current := m.chatItems[rendered[i]]
+		previousRange := m.chatItemLineRanges[transcriptLineKey{itemKey: previous.key}]
+		currentRange := m.chatItemLineRanges[transcriptLineKey{itemKey: current.key}]
+		if got, want := currentRange.start-previousRange.end-1, itemSpacingBefore(previous, current); got != want {
+			t.Fatalf("narrow gap %d->%d = %d, want %d\nbody:\n%s", rendered[i-1], rendered[i], got, want, stripANSI(body))
+		}
 	}
 }
 
@@ -224,17 +276,15 @@ func TestTranscriptExecutionCoordinateGapPreserved(t *testing.T) {
 func TestTranscriptLineRangesMatchRenderedRows(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	m.transcriptInnerW = 60
-	m.setChatPage(verticalRhythmPage())
+	m.setChatPage(structuralEdgesPage())
 	body := m.itemTranscriptBody()
 	rows := strings.Split(strings.TrimRight(body, "\n"), "\n")
 
 	characteristic := map[transcriptItemKey]string{
-		m.chatItems[0].key: "first synthetic user prose",
-		m.chatItems[2].key: "second synthetic user prose",
-		// The tool-card header renders the summarized kind ("Read"), not
-		// the block's Title field, so the coord-change item's
-		// characteristic is the header token, not the title text.
-		m.chatItems[3].key: "Read",
+		m.chatItems[0].key: "narrow first visible",
+		m.chatItems[2].key: "edge content",
+		m.chatItems[3].key: "narrow tinted content",
+		m.chatItems[4].key: "narrow final visible",
 	}
 
 	for _, item := range m.chatItems {
