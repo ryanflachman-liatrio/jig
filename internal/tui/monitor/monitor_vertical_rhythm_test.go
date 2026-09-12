@@ -374,23 +374,16 @@ func TestVerticalRhythmVisualProof(t *testing.T) {
 
 	view := m.View()
 
-	name := "25-task-4-monitor-rhythm"
-	if err := os.WriteFile(filepath.Join(dir, name+".ansi"), []byte(view), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, name+".html"), []byte(terminalHTML(view)), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
 	// Independently count the blank-line gaps between each pair of visible
 	// items and record them in the notes so a reviewer can diff the
 	// baseline capture without re-deriving item boundaries.
 	body := m.itemTranscriptBody()
 	rows := strings.Split(strings.TrimRight(body, "\n"), "\n")
 	var notes strings.Builder
-	notes.WriteString("Task 04 (slice 04) vertical-rhythm visual fixture\n")
+	notes.WriteString("Tasks 03-04 (slice 04) vertical-rhythm visual fixture\n")
 	notes.WriteString("Fixture source: verticalRhythmVisualPage (slice-04 proof-only)\n")
 	notes.WriteString("All paths, commands, status text, and code are fabricated.\n\n")
+	notes.WriteString("baseline_commit=6b583fa (pre-implementation slice-03 merge)\n")
 	fmt.Fprintf(&notes, "terminal=80x30 transcriptInnerW=%d chatItems=%d visibleItems=%d cursor=%d\n",
 		m.transcriptInnerW, len(m.chatItems), len(m.chatVisibleItems), m.chatItemCursor)
 	notes.WriteString("Rendering: production Model.View ANSI -> deterministic test HTML.\n")
@@ -422,8 +415,16 @@ func TestVerticalRhythmVisualProof(t *testing.T) {
 	notes.WriteString("\nZero-height item: the empty assistant block at Seq=3 does not appear in the range list above; the guard skipped it and no ghost gap remains between the surrounding cards.\n")
 	notes.WriteString("Coord change: Seq=6 bumps Iteration to 1; itemSpacingBefore returns 2, so the gap between the second card (Seq=4-5) and the coord-change system item is 2 blank lines (slice 12's boundary banner will render inside that gap).\n")
 
-	if err := os.WriteFile(filepath.Join(dir, name+"-notes.txt"), []byte(notes.String()), 0o644); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"25-task-3-rhythm", "25-task-4-monitor-rhythm"} {
+		if err := os.WriteFile(filepath.Join(dir, name+".ansi"), []byte(view), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name+".html"), []byte(terminalHTML(view)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name+"-notes.txt"), []byte(notes.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

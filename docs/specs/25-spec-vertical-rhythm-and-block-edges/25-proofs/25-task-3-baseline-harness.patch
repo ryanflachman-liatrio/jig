@@ -1,0 +1,68 @@
+diff --git a/internal/tui/monitor/monitor_vertical_rhythm_baseline_test.go b/internal/tui/monitor/monitor_vertical_rhythm_baseline_test.go
+new file mode 100644
+index 0000000..3fa331e
+--- /dev/null
++++ b/internal/tui/monitor/monitor_vertical_rhythm_baseline_test.go
+@@ -0,0 +1,62 @@
++package monitor
++
++import (
++    "fmt"
++    "os"
++    "path/filepath"
++    "testing"
++
++    tea "charm.land/bubbletea/v2"
++
++    "jig/internal/engine"
++    "jig/internal/step"
++    "jig/internal/toolcall"
++    "jig/internal/transcript"
++)
++
++func verticalRhythmBaselinePage() transcript.Page {
++    return transcript.Page{Entries: []transcript.Entry{
++        {Seq: 1, Generation: 0, Iteration: 0, Attempt: 0, Role: transcript.RoleUser,
++            Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "Let me check the synthetic entrypoint."}}},
++        {Seq: 2, Generation: 0, Iteration: 0, Attempt: 0, Role: transcript.RoleAssistant,
++            Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "read-live", Kind: "read", Title: "Read synthetic/config.toml"}}}},
++        {Seq: 3, Generation: 0, Iteration: 0, Attempt: 0, Role: transcript.RoleAssistant,
++            Blocks: []transcript.Block{{Type: transcript.BlockText, Text: ""}}},
++        {Seq: 4, Generation: 0, Iteration: 0, Attempt: 0, Role: transcript.RoleAssistant,
++            Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "read-ok", Kind: "read", Title: "Read synthetic/entrypoint.go"}}}},
++        {Seq: 5, Generation: 0, Iteration: 0, Attempt: 0, Role: transcript.RoleUser,
++            Blocks: []transcript.Block{{Type: transcript.BlockToolResult, Tool: &toolcall.Activity{ID: "read-ok", Kind: "read", Status: "completed"}}}},
++        {Seq: 6, Generation: 0, Iteration: 1, Attempt: 0, Role: transcript.RoleSystem,
++            Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "iteration 1 begin\n\n\n"}}},
++        {Seq: 7, Generation: 0, Iteration: 1, Attempt: 0, Role: transcript.RoleAssistant,
++            Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "grep-live", Kind: "grep", Title: "Search fabricated sources after coord change"}}}},
++    }}
++}
++
++func TestVerticalRhythmVisualProof(t *testing.T) {
++    dir := os.Getenv("JIG_UI_SNAPSHOT_DIR")
++    if dir == "" {
++        t.Skip("set JIG_UI_SNAPSHOT_DIR to capture slice-04 baseline")
++    }
++    if err := os.MkdirAll(dir, 0o755); err != nil {
++        t.Fatal(err)
++    }
++
++    m := newMonitorWithSteps(t)
++    m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
++    m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{RunID: "run-1", StepID: "a", To: step.StatusRunning}})
++    m.chatStep = "a"
++    m.focus = focusTranscript
++    m.setChatPage(verticalRhythmBaselinePage())
++    m.chatItemCursor = 0
++    m.refreshPanels()
++
++    view := m.View()
++    if err := os.WriteFile(filepath.Join(dir, "25-task-3-rhythm-baseline.ansi"), []byte(view), 0o644); err != nil {
++        t.Fatal(err)
++    }
++    notes := fmt.Sprintf("baseline_commit=6b583fa\nterminal=80x30 transcriptInnerW=%d chatItems=%d visibleItems=%d cursor=%d\nfixture=verticalRhythmBaselinePage; all content fabricated\n", m.transcriptInnerW, len(m.chatItems), len(m.chatVisibleItems), m.chatItemCursor)
++    if err := os.WriteFile(filepath.Join(dir, "25-task-3-rhythm-baseline-notes.txt"), []byte(notes), 0o644); err != nil {
++        t.Fatal(err)
++    }
++}

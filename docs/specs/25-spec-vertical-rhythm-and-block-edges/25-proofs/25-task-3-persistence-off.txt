@@ -1,0 +1,8 @@
+$ go test ./internal/tui/monitor -run 'TestTranscriptPersistenceOffBuildsNoItems|TestTranscriptEmptyStateNoFakeCTA' -v
+=== RUN   TestTranscriptPersistenceOffBuildsNoItems
+--- PASS: TestTranscriptPersistenceOffBuildsNoItems (0.00s)
+=== RUN   TestTranscriptEmptyStateNoFakeCTA
+--- PASS: TestTranscriptEmptyStateNoFakeCTA (0.00s)
+PASS
+ok  jig/internal/tui/monitor
+EXIT=0
