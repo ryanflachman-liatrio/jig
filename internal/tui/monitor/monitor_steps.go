@@ -252,10 +252,21 @@ func (m Model) listBody() string {
 				recent = append(recent, l)
 			}
 		}
+		dropped := 0
 		if len(recent) > outputMaxLines {
+			dropped = len(recent) - outputMaxLines
 			recent = recent[len(recent)-outputMaxLines:]
 		}
 		b.WriteString("\n  " + shared.Theme.Question.Render("▸ "+s.id) + "\n")
+		if dropped > 0 {
+			// Slice 06 FR-06.13: the Steps-panel live tail already tail-
+			// anchors by dropping leading rows; surface a shared-vocabulary
+			// hint so the operator sees the drop. No expand affordance is
+			// offered here (there is no per-item toggle for a streaming
+			// buffer), so ExpandHint is not called and the drop line has
+			// no key hint.
+			b.WriteString("    " + shared.Theme.Chat.Hint.Render(shared.EarlierItems(dropped, "line", "lines")) + "\n")
+		}
 		for _, l := range recent {
 			b.WriteString("    " + l + "\n")
 		}

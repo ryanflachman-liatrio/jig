@@ -1,0 +1,63 @@
+# Slice 06 anchor gallery
+#
+# transcriptInnerW=80 for the Transcript panels; the Steps panel uses
+# its natural width. All fixtures fabricated; no real .jig/ data used.
+
+== (a) Settled tool exchange (toolDisplaySuccess) -> head anchor + appended "more lines" ==
+▌ ╭─── ▾ ◈ Read ───────────────────────────────────────────────────────────────╮
+▌ ╰────────────────────────────────────────────────────────────────────────────╯
+      Output:
+      │ row-01
+      │ row-02
+      │ row-03
+      │ row-04
+      │ row-05
+      │ row-06
+      │ row-07
+      │ row-08
+      │ row-09
+      │ row-18
+      │ row-19
+      │ row-20
+      … 8 more lines [enter: Expand]
+
+== (b) Running tool exchange (toolDisplayRunning) -> tail anchor + prepended "earlier lines" ==
+▌ ╭─── ▾ ○ Read ───────────────────────────────────────────────────────────────╮
+▌ ╰────────────────────────────────────────────────────────────────────────────╯
+      Input:
+      … 8 earlier lines [enter: Expand]
+      │ row-09
+      │ row-10
+      │ row-11
+      │ row-12
+      │ row-13
+      │ row-14
+      │ row-15
+      │ row-16
+      │ row-17
+      │ row-18
+      │ row-19
+      │ row-20
+
+== (c) Steps-panel live streaming output (outputMaxLines drop) ==
+▌  ●  a   running
+     —
+   ○  b   pending
+     —
+   ○  c   pending
+     —
+
+
+  ▸ a
+    … 5 earlier lines
+    streaming line 06
+    streaming line 07
+    streaming line 08
+    streaming line 09
+    streaming line 10
+    streaming line 11
+    streaming line 12
+    streaming line 13
+    streaming line 14
+    streaming line 15
+
