@@ -1,6 +1,6 @@
 # Spec 25 Validation - Optional Mouse Navigation
 
-**Validation Completed:** 2026-09-11 13:33:36 CDT
+**Validation Completed:** 2026-09-11 20:54:33 CDT
 
 **Validation Performed By:** OpenAI Codex (GPT-5)
 
@@ -11,6 +11,7 @@
 - **Requirements Verified:** 15/15 (100%).
 - **Proof Artifacts Working:** 10/10 persisted proof/evidence files accessible; every referenced test command passed in a fresh validation run.
 - **Files Changed vs Expected:** 30 total: 8 core Go files, all mapped to the task list; 22 supporting test/document/proof files, all linked to a requirement or core change.
+- **Revalidation Scope:** Feature traceability uses `abb7425^..3d54b74`; executable verification was repeated against current `HEAD` `c162679525d3`. Later merged features and unrelated working-tree changes are outside this spec's ownership.
 
 ### Gate Results
 
@@ -105,6 +106,10 @@ Every implementation commit includes an explicit `Related to Tn in Spec 25` trai
 - No dependency, workflow schema, engine, backend, transcript format, infrastructure, or runtime configuration file changed.
 
 ### Fresh validation commands
+
+Revalidated against current `HEAD` `c162679525d3` on 2026-09-11. The first
+repository-wide run was sandbox-blocked only where existing `httptest` cases
+needed local loopback listeners; the authorized rerun passed.
 
 ~~~text
 GOCACHE=<validation-cache> go test ./internal/tui/...
