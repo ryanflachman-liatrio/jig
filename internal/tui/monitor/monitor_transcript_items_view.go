@@ -122,23 +122,35 @@ func (m *Model) writeTranscriptItem(b *strings.Builder, item transcriptItem, sel
 			b.WriteString(prefix + row + "\n")
 		}
 		if expanded {
-			m.writeToolActivityDetails(b, detailActivity, item.displayState == toolDisplaySuccess)
+			m.writeToolActivityDetails(b, detailActivity, item.displayState == toolDisplaySuccess, anchorForState(item.displayState))
 			if (item.toolUse != nil && use.Truncated) || (item.toolResult != nil && m.chatEntries[item.toolResult.entryIdx].Blocks[item.toolResult.blockIdx].Truncated) {
-				b.WriteString("      " + shared.Theme.Chat.Hint.Render("… capture truncated at write") + "\n")
+				b.WriteString("      " + shared.Theme.Chat.Hint.Render(shared.CaptureTruncatedHint()) + "\n")
 			}
 		}
 	case transcriptItemThinking:
 		b.WriteString(prefix + marker + " " + shared.Theme.Chat.Thinking.Render(shared.IconThinking+" reasoning") + "\n")
 		if expanded {
-			m.writeItemDetail(b, "Reasoning", block.Text)
+			m.writeItemDetail(b, "Reasoning", block.Text, detailAnchorHead)
 		}
 	default:
 		label := "Unsupported " + string(block.Type)
 		b.WriteString(prefix + marker + " " + shared.Theme.Chat.Hint.Render(label) + "\n")
 		if expanded {
-			m.writeItemDetail(b, "Content", unsupportedBlockContent(block))
+			m.writeItemDetail(b, "Content", unsupportedBlockContent(block), detailAnchorHead)
 		}
 	}
+}
+
+// anchorForState maps a tool exchange's display state to its detail anchor:
+// running exchanges tail-anchor so a streaming buffer pins its newest rows
+// to the bottom; every other state (settled success, error, warning,
+// unknown-use, unknown-result) keeps the head+tail head anchor so the
+// beginning of a completed result stays visible (slice 06 Q-06.2).
+func anchorForState(state toolDisplayState) detailAnchor {
+	if state == toolDisplayRunning {
+		return detailAnchorTail
+	}
+	return detailAnchorHead
 }
 
 func cardState(state toolDisplayState) shared.CardState {
@@ -231,22 +243,34 @@ func itemHasDetail(item transcriptItem) bool {
 	return item.kind != transcriptItemText
 }
 
-func (m *Model) writeItemDetail(b *strings.Builder, label, content string) {
-	shown, hidden := boundTranscriptDetail(content, max(m.transcriptInnerW-8, 1))
+func (m *Model) writeItemDetail(b *strings.Builder, label, content string, anchor detailAnchor) {
+	shown, hidden := boundTranscriptDetail(content, max(m.transcriptInnerW-8, 1), anchor)
+	// The detail body is currently rendered inside `if expanded { ... }`
+	// so the item's toggle state is always true here; passing expanded=false
+	// lets ExpandHint short-circuit only on hasMore, which keeps the hint
+	// visible whenever content is bounded. jig has no separate "fully
+	// expanded body" state distinct from the row bound, so this is the
+	// correct semantic (epic slice 06, Q-06.1).
+	hint := shared.ExpandHint(false, hidden > 0, m.keys.Toggle.Help().Key)
 	b.WriteString("      " + shared.Theme.Chat.TranscriptLabel.Render(label+":") + "\n")
+	if hidden > 0 && anchor == detailAnchorTail {
+		line := shared.HintLine(shared.EarlierItems(hidden, "line", "lines"), hint)
+		b.WriteString("      " + shared.Theme.Chat.Hint.Render(line) + "\n")
+	}
 	for _, row := range strings.Split(shown, "\n") {
 		b.WriteString("      " + shared.Theme.Chat.TranscriptDetail.Render("│ "+row) + "\n")
 	}
-	if hidden > 0 {
-		b.WriteString("      " + shared.Theme.Chat.Hint.Render(fmt.Sprintf("… %d lines hidden", hidden)) + "\n")
+	if hidden > 0 && anchor != detailAnchorTail {
+		line := shared.HintLine(shared.MoreItems(hidden, "line", "lines"), hint)
+		b.WriteString("      " + shared.Theme.Chat.Hint.Render(line) + "\n")
 	}
 }
 
-func (m *Model) writeToolActivityDetails(b *strings.Builder, activity *toolcall.Activity, completed bool) {
+func (m *Model) writeToolActivityDetails(b *strings.Builder, activity *toolcall.Activity, completed bool, anchor detailAnchor) {
 	if activity == nil {
 		return
 	}
-	if activity.IsEdit() && writeNewCodeCards(m, b, activity) {
+	if activity.IsEdit() && writeNewCodeCards(m, b, activity, anchor) {
 		return
 	}
 	hasDetail := false
@@ -260,15 +284,15 @@ func (m *Model) writeToolActivityDetails(b *strings.Builder, activity *toolcall.
 			}
 			locations = append(locations, value)
 		}
-		m.writeItemDetail(b, "Locations", strings.Join(locations, "\n"))
+		m.writeItemDetail(b, "Locations", strings.Join(locations, "\n"), anchor)
 	}
 	if len(activity.Input) > 0 {
 		hasDetail = true
-		m.writeItemDetail(b, "Input", prettyToolInput(activity.Input))
+		m.writeItemDetail(b, "Input", prettyToolInput(activity.Input), anchor)
 	}
 	if len(activity.Output) > 0 {
 		hasDetail = true
-		m.writeItemDetail(b, "Output", prettyToolInput(activity.Output))
+		m.writeItemDetail(b, "Output", prettyToolInput(activity.Output), anchor)
 	}
 	for _, content := range activity.Content {
 		if content.Diff != nil {
@@ -276,35 +300,43 @@ func (m *Model) writeToolActivityDetails(b *strings.Builder, activity *toolcall.
 		}
 		if content.Text != "" {
 			hasDetail = true
-			m.writeItemDetail(b, "Content", content.Text)
+			m.writeItemDetail(b, "Content", content.Text, anchor)
 		}
 		if len(content.Raw) > 0 {
 			hasDetail = true
-			m.writeItemDetail(b, "Content", prettyToolInput(content.Raw))
+			m.writeItemDetail(b, "Content", prettyToolInput(content.Raw), anchor)
 		}
 	}
 	if completed && activity.IsEdit() && !hasDetail {
-		m.writeItemDetail(b, "Edit", "Adapter did not provide edit details.")
+		m.writeItemDetail(b, "Edit", "Adapter did not provide edit details.", anchor)
 	}
 }
 
 // writeNewCodeCards deliberately shows the resulting source rather than a
 // before/after patch. The inset Glamour renderer uses the shared Charm v2 code
-// formatter, whose Lip Gloss code-block style owns the rounded card.
-func writeNewCodeCards(m *Model, b *strings.Builder, activity *toolcall.Activity) bool {
+// formatter, whose Lip Gloss code-block style owns the rounded card. The
+// anchor argument mirrors writeItemDetail: a running exchange tail-anchors so
+// the newest lines pin to the bottom of the visible window.
+func writeNewCodeCards(m *Model, b *strings.Builder, activity *toolcall.Activity, anchor detailAnchor) bool {
 	wrote := false
 	for _, content := range activity.Content {
 		if content.Diff == nil {
 			continue
 		}
 		wrote = true
-		shown, hidden := boundTranscriptDetail(content.Diff.NewText, max(m.transcriptInnerW-8, 1))
+		shown, hidden := boundTranscriptDetail(content.Diff.NewText, max(m.transcriptInnerW-8, 1), anchor)
+		hint := shared.ExpandHint(false, hidden > 0, m.keys.Toggle.Help().Key)
 		b.WriteString("    " + shared.Theme.Chat.TranscriptLabel.Render("New code · "+content.Diff.Path) + "\n")
+		if hidden > 0 && anchor == detailAnchorTail {
+			line := shared.HintLine(shared.EarlierItems(hidden, "line", "lines"), hint)
+			b.WriteString("    " + shared.Theme.Chat.Hint.Render(line) + "\n")
+		}
 		for _, line := range strings.Split(strings.TrimRight(m.renderNewCodeCard(content.Diff.Path, shown), "\n"), "\n") {
 			b.WriteString("    " + line + "\n")
 		}
-		if hidden > 0 {
-			b.WriteString("    " + shared.Theme.Chat.Hint.Render(fmt.Sprintf("… %d lines hidden", hidden)) + "\n")
+		if hidden > 0 && anchor != detailAnchorTail {
+			line := shared.HintLine(shared.MoreItems(hidden, "line", "lines"), hint)
+			b.WriteString("    " + shared.Theme.Chat.Hint.Render(line) + "\n")
 		}
 	}
 	return wrote
