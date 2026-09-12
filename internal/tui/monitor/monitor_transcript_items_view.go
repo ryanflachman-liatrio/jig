@@ -124,7 +124,7 @@ func (m *Model) writeTranscriptItem(b *strings.Builder, item transcriptItem, sel
 		if expanded {
 			m.writeToolActivityDetails(b, detailActivity, item.displayState == toolDisplaySuccess)
 			if (item.toolUse != nil && use.Truncated) || (item.toolResult != nil && m.chatEntries[item.toolResult.entryIdx].Blocks[item.toolResult.blockIdx].Truncated) {
-				b.WriteString("      " + shared.Theme.Chat.Hint.Render("… capture truncated at write") + "\n")
+				b.WriteString("      " + shared.Theme.Chat.Hint.Render(shared.CaptureTruncatedHint()) + "\n")
 			}
 		}
 	case transcriptItemThinking:
@@ -238,7 +238,15 @@ func (m *Model) writeItemDetail(b *strings.Builder, label, content string) {
 		b.WriteString("      " + shared.Theme.Chat.TranscriptDetail.Render("│ "+row) + "\n")
 	}
 	if hidden > 0 {
-		b.WriteString("      " + shared.Theme.Chat.Hint.Render(fmt.Sprintf("… %d lines hidden", hidden)) + "\n")
+		// The detail body is currently rendered inside `if expanded { ... }`
+		// so the item's toggle state is always true here; passing
+		// expanded=false lets ExpandHint short-circuit only on hasMore, which
+		// keeps the hint visible whenever content is bounded. jig has no
+		// separate "fully expanded body" state distinct from the 12-row
+		// bound, so this is the correct semantic (epic slice 06, Q-06.1).
+		hint := shared.ExpandHint(false, hidden > 0, m.keys.Toggle.Help().Key)
+		line := shared.HintLine(shared.MoreItems(hidden, "line", "lines"), hint)
+		b.WriteString("      " + shared.Theme.Chat.Hint.Render(line) + "\n")
 	}
 }
 
@@ -304,7 +312,9 @@ func writeNewCodeCards(m *Model, b *strings.Builder, activity *toolcall.Activity
 			b.WriteString("    " + line + "\n")
 		}
 		if hidden > 0 {
-			b.WriteString("    " + shared.Theme.Chat.Hint.Render(fmt.Sprintf("… %d lines hidden", hidden)) + "\n")
+			hint := shared.ExpandHint(false, hidden > 0, m.keys.Toggle.Help().Key)
+			line := shared.HintLine(shared.MoreItems(hidden, "line", "lines"), hint)
+			b.WriteString("    " + shared.Theme.Chat.Hint.Render(line) + "\n")
 		}
 	}
 	return wrote
