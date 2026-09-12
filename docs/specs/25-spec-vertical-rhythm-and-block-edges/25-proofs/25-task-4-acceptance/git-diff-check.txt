@@ -1,2 +1,2 @@
-$ git diff --check main HEAD -- internal/tui/monitor/
+$ git diff --check
 EXIT=0

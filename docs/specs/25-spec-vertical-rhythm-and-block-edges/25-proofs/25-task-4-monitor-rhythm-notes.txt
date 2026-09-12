@@ -1,7 +1,8 @@
-Task 04 (slice 04) vertical-rhythm visual fixture
+Tasks 03-04 (slice 04) vertical-rhythm visual fixture
 Fixture source: verticalRhythmVisualPage (slice-04 proof-only)
 All paths, commands, status text, and code are fabricated.
 
+baseline_commit=6b583fa (pre-implementation slice-03 merge)
 terminal=80x30 transcriptInnerW=44 chatItems=6 visibleItems=6 cursor=0
 Rendering: production Model.View ANSI -> deterministic test HTML.
 PNG conversion (if performed) uses local headless Chrome — see the task-4 limitations note.
