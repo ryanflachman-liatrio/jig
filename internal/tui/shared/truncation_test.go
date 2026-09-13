@@ -118,6 +118,34 @@ func TestTruncationCaptureTruncatedHint(t *testing.T) {
 	}
 }
 
+// TestDiffClampedHint locks the slice-07 wording for a diff over
+// write-time-clamped content. Callers style the returned string once
+// through Theme.Chat.Hint.Render; the helper itself remains
+// presentation-agnostic (no lipgloss import at package scope).
+func TestDiffClampedHint(t *testing.T) {
+	got := DiffClampedHint()
+	want := "… content clamped at write; diff may be incomplete"
+	if got != want {
+		t.Fatalf("DiffClampedHint() = %q, want %q", got, want)
+	}
+	if strings.HasPrefix(got, " ") || strings.HasSuffix(got, " ") {
+		t.Fatalf("DiffClampedHint() has leading or trailing whitespace: %q", got)
+	}
+}
+
+// TestDiffUnavailableHint locks the slice-07 wording for the
+// resulting-source fallback when computation was skipped or failed.
+func TestDiffUnavailableHint(t *testing.T) {
+	got := DiffUnavailableHint()
+	want := "… diff unavailable; showing resulting source"
+	if got != want {
+		t.Fatalf("DiffUnavailableHint() = %q, want %q", got, want)
+	}
+	if strings.HasPrefix(got, " ") || strings.HasSuffix(got, " ") {
+		t.Fatalf("DiffUnavailableHint() has leading or trailing whitespace: %q", got)
+	}
+}
+
 // TestTruncationSharedGallery writes a deterministic capture of the
 // helper outputs for representative inputs. It runs only when
 // JIG_UI_SNAPSHOT_DIR is set, matching the pattern established by

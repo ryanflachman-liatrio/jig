@@ -127,6 +127,22 @@ type Styles struct {
 		Add    lipgloss.Style
 		Remove lipgloss.Style
 		Hunk   lipgloss.Style
+		// Context styles unchanged rows shown around edits in the Monitor's
+		// transcript diff cards. It is a foreground-only token so the
+		// card's state tint (slice 01) owns the row background.
+		Context lipgloss.Style
+		// Intraline highlights the differing spans within a 1↔1
+		// replacement using SGR 7 (Reverse). Callers exclude leading
+		// whitespace from the wrapped span so indentation is never
+		// inverted (slice 07 FR-07.9).
+		Intraline lipgloss.Style
+		// Gutter styles the fused marker+line-number token that precedes
+		// the `│` column of each diff row. Foreground-only.
+		Gutter lipgloss.Style
+		// Indent styles the visible-indentation glyphs (dim middle dot
+		// for a leading space, dim arrow for a leading tab) applied on
+		// added, removed, and context rows.
+		Indent lipgloss.Style
 	}
 	Review struct {
 		ModeActive          lipgloss.Style
@@ -319,6 +335,10 @@ func DefaultTheme() Styles {
 	s.Diff.Add = lipgloss.NewStyle().Foreground(success)
 	s.Diff.Remove = lipgloss.NewStyle().Foreground(danger)
 	s.Diff.Hunk = lipgloss.NewStyle().Foreground(info)
+	s.Diff.Context = lipgloss.NewStyle().Foreground(fgMuted)
+	s.Diff.Intraline = lipgloss.NewStyle().Reverse(true)
+	s.Diff.Gutter = lipgloss.NewStyle().Foreground(fgDim)
+	s.Diff.Indent = lipgloss.NewStyle().Foreground(fgDim).Faint(true)
 
 	s.Review.ModeActive = lipgloss.NewStyle().Bold(true).Foreground(onPrimary).Background(primary)
 	s.Review.ModeInactive = lipgloss.NewStyle().Foreground(fgMuted)

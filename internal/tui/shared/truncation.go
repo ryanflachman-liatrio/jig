@@ -73,6 +73,24 @@ func CaptureTruncatedHint() string {
 	return "… capture truncated at write"
 }
 
+// DiffClampedHint returns the fixed wording the Monitor emits above a
+// computed diff when the enclosing transcript block was truncated at
+// write time. Slice 07 pins the phrasing here so the diff section, the
+// existing capture-truncated hint, and any future consumer share one
+// canonical source of truth.
+func DiffClampedHint() string {
+	return "… content clamped at write; diff may be incomplete"
+}
+
+// DiffUnavailableHint returns the fixed wording used when diff
+// computation was skipped or failed and the Monitor falls back to the
+// resulting-source card. Kept alongside CaptureTruncatedHint and
+// DiffClampedHint so the whole diff-fallback vocabulary lives in one
+// place (slice 07 FR-07.15).
+func DiffUnavailableHint() string {
+	return "… diff unavailable; showing resulting source"
+}
+
 func pluralWord(n int, singular, plural string) string {
 	if n == 1 {
 		return singular

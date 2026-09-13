@@ -13,6 +13,7 @@ require (
 	github.com/bluekeyes/go-gitdiff v0.8.1
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/coder/acp-go-sdk v0.13.5
+	github.com/hexops/gotextdiff v1.0.3
 	github.com/prometheus/client_golang v1.24.1
 	github.com/severity1/claude-agent-sdk-go v0.6.22
 	github.com/yuin/goldmark v1.7.13

@@ -469,8 +469,10 @@ type transcriptItem struct {
 	coord        toolCorrelationKey
 }
 
-// transcriptRenderKey separates markdown and detail cache surfaces so changing
-// a detail width cannot reuse output formatted for the conversation body.
+// transcriptRenderKey separates markdown, detail, card, and diff
+// cache surfaces so changing a detail width cannot reuse output
+// formatted for the conversation body and a diff rendered under one
+// expansion state cannot be served under another.
 type transcriptRenderKey struct {
 	itemKey  transcriptItemKey
 	surface  transcriptRenderSurface
@@ -487,6 +489,7 @@ const (
 	transcriptRenderMarkdown transcriptRenderSurface = iota
 	transcriptRenderDetail
 	transcriptRenderCard
+	transcriptRenderDiff
 )
 
 type transcriptLineKey struct {
