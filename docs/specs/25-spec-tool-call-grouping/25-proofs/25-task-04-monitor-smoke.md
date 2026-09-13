@@ -7,7 +7,7 @@
 ## After `n` (group selected)
 
 ```text
-    before grouped reads                    
+    before grouped reads
 
 
 ▌ ✗ Read (3)
@@ -16,13 +16,13 @@
 ▌ └─ ✗ three.go:21-23
 
 
-    after grouped reads                     
+    after grouped reads
 ```
 
 ## After `enter` (local expansion)
 
 ```text
-    before grouped reads                    
+    before grouped reads
 
 
 ▌ ✗ Read (3)
@@ -63,13 +63,13 @@
 ▌    │ third-content-only
 
 
-    after grouped reads                     
+    after grouped reads
 ```
 
 ## After collapse then `o` (global expansion)
 
 ```text
-    before grouped reads                    
+    before grouped reads
 
 
 ▌ ✗ Read (3)
@@ -110,7 +110,7 @@
 ▌    │ third-content-only
 
 
-    after grouped reads                     
+    after grouped reads
 ```
 
 ## Search for third-member-only token

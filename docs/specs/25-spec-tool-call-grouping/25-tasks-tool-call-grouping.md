@@ -159,7 +159,7 @@ covers FR-08.17 through FR-08.20 and FR-08.22.
 
 #### 3.0 Proof Artifact(s)
 
-- Model test: `go test ./internal/tui/monitor -run 'TestReadGroup(Toggle|Navigation|ExpandAll|Copy)' -count=1` passes after driving real Bubble Tea key messages, demonstrating one cursor stop, local toggle behavior, global override semantics, ordered member details, no edit auto-expansion, and collapsed/expanded copy output for FR-08.17 through FR-08.20 and FR-08.22.
+- Model test: `go test ./internal/tui/monitor -run 'TestReadGroup(Toggle|Navigation|ExpandAll|Copy|Expanded)' -count=1` passes after driving real Bubble Tea key messages, demonstrating one cursor stop, local toggle behavior, global override semantics, ordered member details, no edit auto-expansion, and collapsed/expanded copy output for FR-08.17 through FR-08.20 and FR-08.22.
 - Terminal capture: `docs/specs/25-spec-tool-call-grouping/25-proofs/25-task-03-read-group-interaction.txt` records a synthetic collapsed group, expanded member details, and the items immediately before and after it, demonstrating the complete keyboard navigation and disclosure cycle.
 - Proof document: `docs/specs/25-spec-tool-call-grouping/25-proofs/25-task-03-proofs.md` records the exact interaction sequence and focused test result and maps each observation to FR-08.17 through FR-08.20 and FR-08.22.
 
@@ -192,7 +192,7 @@ covers FR-08.17 through FR-08.20 and FR-08.22.
   `JIG_UI_SNAPSHOT_DIR=docs/specs/25-spec-tool-call-grouping/25-proofs go test
   ./internal/tui/monitor -run TestReadGroupGallery -count=1` and
   `go test ./internal/tui/monitor -run
-  'TestReadGroup(Toggle|Navigation|ExpandAll|Copy)' -count=1`, then write
+  'TestReadGroup(Toggle|Navigation|ExpandAll|Copy|Expanded)' -count=1`, then write
   `25-proofs/25-task-03-proofs.md` with the exact key sequence, output, and FR
   mapping.
 

@@ -229,12 +229,12 @@ func TestReadGroupTerminalSmoke(t *testing.T) {
 	fmt.Fprintln(&proof, "- Sequence: `n`, `enter`, `enter`, `o`, `o`, `/third-content-only`, `F` + errors, resize narrow/wide, `N`/`n`.")
 
 	m, _ = m.Update(key("n"))
-	fmt.Fprintf(&proof, "\n## After `n` (group selected)\n\n```text\n%s```\n", ansi.Strip(m.chatBody()))
+	fmt.Fprintf(&proof, "\n## After `n` (group selected)\n\n```text\n%s```\n", proofPlainText(m.chatBody()))
 	m, _ = m.Update(key("enter"))
-	fmt.Fprintf(&proof, "\n## After `enter` (local expansion)\n\n```text\n%s```\n", ansi.Strip(m.chatBody()))
+	fmt.Fprintf(&proof, "\n## After `enter` (local expansion)\n\n```text\n%s```\n", proofPlainText(m.chatBody()))
 	m, _ = m.Update(key("enter"))
 	m, _ = m.Update(key("o"))
-	fmt.Fprintf(&proof, "\n## After collapse then `o` (global expansion)\n\n```text\n%s```\n", ansi.Strip(m.chatBody()))
+	fmt.Fprintf(&proof, "\n## After collapse then `o` (global expansion)\n\n```text\n%s```\n", proofPlainText(m.chatBody()))
 	m, _ = m.Update(key("o"))
 
 	m, _ = m.Update(key("/"))
@@ -247,10 +247,10 @@ func TestReadGroupTerminalSmoke(t *testing.T) {
 	m, _ = m.Update(key("F"))
 	m, _ = m.Update(key(" "))
 	m, _ = m.Update(key("enter"))
-	fmt.Fprintf(&proof, "\n## Error filter\n\n```text\n%s```\n", ansi.Strip(m.chatBody()))
+	fmt.Fprintf(&proof, "\n## Error filter\n\n```text\n%s```\n", proofPlainText(m.chatBody()))
 
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 56, Height: 20})
-	fmt.Fprintf(&proof, "\n## Narrow resize\n\nTerminal: %dx%d; transcript inner width: %d\n\n```text\n%s```\n", m.width, m.height, m.transcriptInnerW, ansi.Strip(m.chatBody()))
+	fmt.Fprintf(&proof, "\n## Narrow resize\n\nTerminal: %dx%d; transcript inner width: %d\n\n```text\n%s```\n", m.width, m.height, m.transcriptInnerW, proofPlainText(m.chatBody()))
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	m, _ = m.Update(key("N"))
 	m, _ = m.Update(key("n"))

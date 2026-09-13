@@ -33,7 +33,7 @@ hidden output silently appear in a collapsed clipboard capture.
 **Command:**
 
 ```bash
-go test ./internal/tui/monitor -run 'TestReadGroup(Toggle|Navigation|ExpandAll|Copy)' -count=1
+go test ./internal/tui/monitor -run 'TestReadGroup(Toggle|Navigation|ExpandAll|Copy|Expanded)' -count=1
 ```
 
 **Result summary:** The focused interaction suite passed.
@@ -56,8 +56,12 @@ using real run data.
 collapses, `o` expands all without rewriting the local map, `o` collapses all,
 and `N`/`n` traverse the adjacent items.
 
-**Result summary:** The generated capture contains collapsed and expanded scenes
-at 32 and 72 transcript columns using fabricated paths and output.
+**Result summary:** The dedicated generated capture contains nine labeled model
+states: the initial item before the group, group selection, local expansion and
+collapse, global expansion and collapse, the item after the group, and reverse
+navigation back through the group to the preceding item. Every state records the
+cursor index, selected kind, visible-item count, local expansion value, and
+expand-all override using fabricated paths and output.
 
 ## Reviewer Conclusion
 

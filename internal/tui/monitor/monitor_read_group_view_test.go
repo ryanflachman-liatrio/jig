@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 
 	"jig/internal/toolcall"
 	"jig/internal/transcript"
+	"jig/internal/tui/shared"
 )
 
 func readGroupFixture(reads ...struct {
@@ -95,6 +97,75 @@ func TestReadGroupRenderStatesAndWidths(t *testing.T) {
 				t.Fatalf("failure not visible at width %d:\n%s", width, plain)
 			}
 		}
+	}
+}
+
+func TestReadGroupRenderAggregateStates(t *testing.T) {
+	tests := []struct {
+		name       string
+		states     []toolDisplayState
+		wantState  toolDisplayState
+		wantRowFor string
+	}{
+		{name: "all success", states: []toolDisplayState{toolDisplaySuccess, toolDisplaySuccess}, wantState: toolDisplaySuccess},
+		{name: "running", states: []toolDisplayState{toolDisplaySuccess, toolDisplayRunning}, wantState: toolDisplayRunning, wantRowFor: "two.go"},
+		{name: "unknown", states: []toolDisplayState{toolDisplaySuccess, toolDisplayUnknownUse}, wantState: toolDisplayUnknownUse, wantRowFor: "two.go"},
+		{name: "error wins", states: []toolDisplayState{toolDisplayRunning, toolDisplayError}, wantState: toolDisplayError, wantRowFor: "two.go"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newMonitorWithSteps(t)
+			m.transcriptInnerW = 72
+			m.setChatPage(readGroupInteractionPage())
+			group := &m.chatItems[1]
+			for i := range group.groupMembers {
+				group.groupMembers[i].displayState = tt.states[i]
+			}
+			group.displayState = aggregateReadGroupState(group.groupMembers)
+			plain := ansi.Strip(m.itemTranscriptBody())
+			if group.displayState != tt.wantState {
+				t.Fatalf("aggregate state = %v, want %v", group.displayState, tt.wantState)
+			}
+			glyph, _ := shared.ToolStatusIcon(tt.wantState, "read")
+			if !strings.Contains(plain, glyph+" Read (2)") {
+				t.Fatalf("header missing %q for state %v:\n%s", glyph, tt.wantState, plain)
+			}
+			if tt.wantRowFor != "" && !strings.Contains(plain, glyph+" "+tt.wantRowFor) {
+				t.Fatalf("row missing %q for state %v:\n%s", glyph+" "+tt.wantRowFor, tt.wantState, plain)
+			}
+			if tt.wantState == toolDisplaySuccess && (strings.Contains(plain, glyph+" one.go") || strings.Contains(plain, glyph+" two.go")) {
+				t.Fatalf("success glyph appeared on a target row:\n%s", plain)
+			}
+		})
+	}
+}
+
+func TestReadGroupExpandedDetailsPreserveInterleavedMemberOrder(t *testing.T) {
+	reads := []struct {
+		id, path, status string
+		offset, limit    int
+	}{
+		{"a", "synthetic/alpha.go", "completed", 1, 1},
+		{"b", "synthetic/beta.go", "completed", 2, 1},
+		{"c", "synthetic/alpha.go", "completed", 3, 1},
+	}
+	entries := readGroupFixture(reads...)
+	for i := 1; i < len(entries); i += 2 {
+		activity := entries[i].Blocks[0].Activity()
+		activity.Output = json.RawMessage(fmt.Sprintf(`{"text":"member-%s"}`, activity.ID))
+	}
+	m := newMonitorWithSteps(t)
+	m.transcriptInnerW = 72
+	m.setChatPage(transcript.Page{Entries: entries})
+	m.chatItemExpand[m.chatItems[0].key] = true
+	plain := ansi.Strip(m.itemTranscriptBody())
+	previous := -1
+	for _, want := range []string{"member-a", "member-b", "member-c"} {
+		index := strings.Index(plain, want)
+		if index < 0 || index <= previous {
+			t.Fatalf("expanded member order does not preserve a,b,c; %q index=%d previous=%d:\n%s", want, index, previous, plain)
+		}
+		previous = index
 	}
 }
 

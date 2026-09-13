@@ -62,26 +62,33 @@ func (m *Model) writeReadGroup(b *strings.Builder, item transcriptItem, selected
 	if !expanded {
 		return
 	}
+	rowIndexes := make(map[string]int, len(rows))
 	for rowIdx, row := range rows {
+		rowIndexes[row.path] = rowIdx
+	}
+	for _, member := range item.groupMembers {
+		target, ok := readTargetForItem(member, m.chatEntries)
+		if !ok {
+			continue
+		}
+		rowIdx := rowIndexes[target.path]
 		last := rowIdx == len(rows)-1
 		continuation := shared.Theme.Chat.ReadGroupConnector.Render(shared.TreeContinuationPrefix(last))
-		for _, member := range row.members {
-			activity := m.readGroupMemberActivity(member)
-			var detail strings.Builder
-			m.writeToolActivityDetails(&detail, activity, member.displayState == toolDisplaySuccess, anchorForState(member.displayState))
-			if (member.toolUse != nil && m.chatEntries[member.toolUse.entryIdx].Blocks[member.toolUse.blockIdx].Truncated) ||
-				(member.toolResult != nil && m.chatEntries[member.toolResult.entryIdx].Blocks[member.toolResult.blockIdx].Truncated) {
-				detail.WriteString("      " + shared.Theme.Chat.Hint.Render(shared.CaptureTruncatedHint()) + "\n")
+		activity := m.readGroupMemberActivity(member)
+		var detail strings.Builder
+		m.writeToolActivityDetails(&detail, activity, member.displayState == toolDisplaySuccess, anchorForState(member.displayState))
+		if (member.toolUse != nil && m.chatEntries[member.toolUse.entryIdx].Blocks[member.toolUse.blockIdx].Truncated) ||
+			(member.toolResult != nil && m.chatEntries[member.toolResult.entryIdx].Blocks[member.toolResult.blockIdx].Truncated) {
+			detail.WriteString("      " + shared.Theme.Chat.Hint.Render(shared.CaptureTruncatedHint()) + "\n")
+		}
+		for _, line := range strings.Split(strings.TrimRight(detail.String(), "\n"), "\n") {
+			if line == "" {
+				continue
 			}
-			for _, line := range strings.Split(strings.TrimRight(detail.String(), "\n"), "\n") {
-				if line == "" {
-					continue
-				}
-				b.WriteString(prefix)
-				b.WriteString(continuation)
-				b.WriteString(strings.TrimPrefix(line, "      "))
-				b.WriteByte('\n')
-			}
+			b.WriteString(prefix)
+			b.WriteString(continuation)
+			b.WriteString(strings.TrimPrefix(line, "      "))
+			b.WriteByte('\n')
 		}
 	}
 }

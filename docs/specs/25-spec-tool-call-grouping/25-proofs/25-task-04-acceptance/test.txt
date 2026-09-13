@@ -1,9 +1,8 @@
 Command: go test ./...
 Result: PASS
 
-The first sandboxed run reached existing cmd/jig notification tests and was
-blocked because the sandbox denied an httptest loopback listener. The identical
-command was rerun with loopback permission and passed:
+The validation-remediation run used loopback permission required by existing
+integration tests and passed:
 
 ok  jig/cmd/jig
 ok  jig/internal/datastore

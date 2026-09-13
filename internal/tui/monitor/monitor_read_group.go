@@ -18,7 +18,6 @@ type readTarget struct {
 type readGroupRow struct {
 	path      string
 	selectors []string
-	members   []transcriptItem
 	state     toolDisplayState
 }
 
@@ -182,7 +181,6 @@ func readGroupRows(group transcriptItem, entries []transcript.Entry) []readGroup
 		} else {
 			rows[idx].state = aggregateReadGroupState([]transcriptItem{{displayState: rows[idx].state}, member})
 		}
-		rows[idx].members = append(rows[idx].members, member)
 		activity := entries[member.toolUse.entryIdx].Blocks[member.toolUse.blockIdx].Activity()
 		selector := readSelector(activity)
 		if selector == "" {
