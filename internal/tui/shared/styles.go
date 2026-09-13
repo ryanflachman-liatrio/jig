@@ -107,10 +107,13 @@ type Styles struct {
 		// 02). Each slot is styled independently: ToolTitle in plain fg,
 		// ToolDescription muted, ToolMeta dim, ToolBadge as a neutral pill.
 		// Callers may still override any slot via StatusLine.*Style fields.
-		ToolTitle       lipgloss.Style
-		ToolDescription lipgloss.Style
-		ToolMeta        lipgloss.Style
-		ToolBadge       lipgloss.Style
+		ToolTitle          lipgloss.Style
+		ToolDescription    lipgloss.Style
+		ToolMeta           lipgloss.Style
+		ToolBadge          lipgloss.Style
+		ReadGroupTitle     lipgloss.Style
+		ReadGroupConnector lipgloss.Style
+		ReadGroupTarget    lipgloss.Style
 	}
 	// Badge renders a compact status pill: onPrimary text on a solid status
 	// background. Only ever wraps plain (unstyled) text so the background stays
@@ -323,6 +326,9 @@ func DefaultTheme() Styles {
 	s.Chat.ToolDescription = lipgloss.NewStyle().Foreground(fgMuted)
 	s.Chat.ToolMeta = lipgloss.NewStyle().Foreground(fgDim)
 	s.Chat.ToolBadge = lipgloss.NewStyle().Bold(true).Foreground(onPrimary).Background(bgLess)
+	s.Chat.ReadGroupTitle = lipgloss.NewStyle().Bold(true).Foreground(fgBase)
+	s.Chat.ReadGroupConnector = lipgloss.NewStyle().Foreground(fgDim)
+	s.Chat.ReadGroupTarget = lipgloss.NewStyle().Foreground(fgBase)
 
 	badge := lipgloss.NewStyle().Bold(true).Foreground(onPrimary).Padding(0, 1)
 	s.Badge.Error = badge.Background(danger)

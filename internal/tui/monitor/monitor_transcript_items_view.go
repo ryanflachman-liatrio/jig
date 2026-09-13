@@ -74,6 +74,8 @@ func (m *Model) writeTranscriptItem(b *strings.Builder, item transcriptItem, sel
 		}
 	}
 	switch item.kind {
+	case transcriptItemReadGroup:
+		m.writeReadGroup(b, item, selected, expanded)
 	case transcriptItemText:
 		rendered := m.renderMarkdown(item.primary.key, block.Text)
 		if item.role == transcript.RoleUser {

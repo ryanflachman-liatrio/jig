@@ -45,7 +45,7 @@
 
 ## Tasks
 
-### [~] 1.0 Normalize adjacent eligible reads into stable group items
+### [x] 1.0 Normalize adjacent eligible reads into stable group items
 
 Add the pure post-correlation grouping pass and group item representation so a
 loaded run of eligible local-file reads at one execution coordinate becomes one
@@ -93,7 +93,7 @@ identity. This parent task covers FR-08.1 through FR-08.8.
   surviving-group reload, and stale expansion/render/range pruning cases. Run
   `go test ./internal/tui/monitor -run 'Test(GroupReadTranscriptItems|ReadGroupPageState|ReadGroupResultFirst)' -count=1` and record the sanitized output and FR mapping in `25-proofs/25-task-01-proofs.md` (FR-08.5 through FR-08.8).
 
-### [ ] 2.0 Render the compact read tree with merged selectors and visible state
+### [~] 2.0 Render the compact read tree with merged selectors and visible state
 
 Render grouped reads as a flat, unframed `Read (N)` tree using the shared status,
 style, glyph, width, and truncation vocabulary. Preserve every distinct loaded
@@ -110,42 +110,42 @@ task covers FR-08.9 through FR-08.16.
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Add shared branch, last, and continuation glyph names in
+- [x] 2.1 Add shared branch, last, and continuation glyph names in
   `internal/tui/shared/icons.go`, plus pure `TreePrefix`/`TreeContinuationPrefix`
   helpers in `internal/tui/shared/tree.go`. Make every returned prefix exactly
   three visible columns including its trailing space, and table-test the widths
   with `lipgloss.Width` (FR-08.13).
-- [ ] 2.2 Add semantic connector/target styles to `shared.Styles.Chat` only if the
+- [x] 2.2 Add semantic connector/target styles to `shared.Styles.Chat` only if the
   existing `ToolMeta`/`ToolDescription` tokens cannot express the specified dim
   connector and target emphasis. Initialize any additions in `DefaultTheme`
   from existing palette tokens; do not add render-time styles or hex literals
   (FR-08.9, FR-08.13, FR-08.16).
-- [ ] 2.3 Implement selector decoding from positive numeric `offset`/`limit`
+- [x] 2.3 Implement selector decoding from positive numeric `offset`/`limit`
   input and `Location.Line` fallback, inclusive range formatting, duplicate
   removal, and first-two/ellipsis/last elision. Group rows by sanitized full path
   while preserving first-seen order, then derive the displayed target with
   `shortFile` (FR-08.10 through FR-08.12).
-- [ ] 2.4 Implement deterministic member and group state aggregation with
+- [x] 2.4 Implement deterministic member and group state aggregation with
   precedence error, running, warning/unknown, success. Suppress the member glyph
   for successful rows; render the winning shared glyph for failed, running, or
   warning/unknown rows and use the aggregate state for the header (FR-08.14,
   FR-08.15).
-- [ ] 2.5 In `monitor_read_group_view.go`, compose the unframed group header
+- [x] 2.5 In `monitor_read_group_view.go`, compose the unframed group header
   through `shared.RenderStatusLine` as status icon + `Read` + dim member count,
   followed by one shared-prefix tree row per merged target. Do not call
   `RenderCard` for a group, and keep singleton reads on the existing exchange
   renderer (FR-08.1, FR-08.9, FR-08.10).
-- [ ] 2.6 Bound every rendered header/tree row to `transcriptInnerW` with the
+- [x] 2.6 Bound every rendered header/tree row to `transcriptInnerW` with the
   existing ANSI-aware truncation primitives while reserving connector and
   non-success glyph columns. Include width, selection, expansion, aggregate
   state, and member-derived content in cache identity or invalidate the group
   cache on every page replacement (FR-08.16).
-- [ ] 2.7 Dispatch `transcriptItemReadGroup` from `writeTranscriptItem` and add
+- [x] 2.7 Dispatch `transcriptItemReadGroup` from `writeTranscriptItem` and add
   render tests for count-before-merge, target order, same-basename separation,
   selector merge/elision, no-card chrome, singleton byte equivalence, success
   glyph omission, exceptional-state glyphs, aggregate failure, ANSI/control
   sanitization, and very small/narrow/wide dimensions (FR-08.9 through FR-08.16).
-- [ ] 2.8 Add `TestReadGroupGallery`, gated by
+- [x] 2.8 Add `TestReadGroupGallery`, gated by
   `JIG_UI_SNAPSHOT_DIR`, to emit deterministic synthetic text/HTML/PNG captures
   and geometry notes. Run `JIG_UI_SNAPSHOT_DIR=docs/specs/25-spec-tool-call-grouping/25-proofs go test ./internal/tui/monitor -run TestReadGroupGallery -count=1`, embed the PNG in `25-task-02-proofs.md`, and record the focused Monitor/shared test outcomes and FR mapping.
 

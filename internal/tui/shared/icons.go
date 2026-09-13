@@ -43,8 +43,11 @@ const (
 	IconToolTodo   = "⊙"
 	IconToolAsk    = "?"
 
-	CollapsedMarker = "▸"
-	ExpandedMarker  = "▾"
+	CollapsedMarker   = "▸"
+	ExpandedMarker    = "▾"
+	TreeBranchGlyph   = "├─"
+	TreeLastGlyph     = "└─"
+	TreeContinueGlyph = "│ "
 
 	BarThick     = "▌" // left accent bar on chat blocks
 	CursorBar    = "▌" // selected-row marker
