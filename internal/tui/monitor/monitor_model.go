@@ -418,6 +418,7 @@ const (
 	transcriptItemThinking
 	transcriptItemToolExchange
 	transcriptItemToolResult
+	transcriptItemReadGroup
 	transcriptItemSystem
 	transcriptItemUnsupported
 )
@@ -465,6 +466,7 @@ type transcriptItem struct {
 	primary      transcriptBlockRef
 	toolUse      *transcriptBlockRef
 	toolResult   *transcriptBlockRef
+	groupMembers []transcriptItem
 	displayState toolDisplayState
 	coord        toolCorrelationKey
 }
@@ -490,6 +492,7 @@ const (
 	transcriptRenderDetail
 	transcriptRenderCard
 	transcriptRenderDiff
+	transcriptRenderReadGroup
 )
 
 type transcriptLineKey struct {

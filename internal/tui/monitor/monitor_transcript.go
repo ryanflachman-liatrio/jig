@@ -168,7 +168,7 @@ func (m *Model) setChatPage(page transcript.Page) {
 	}
 	m.chatPage = page
 	m.chatEntries = page.Entries
-	m.chatItems = buildTranscriptItems(page.Entries, m.currentChatStepRunning())
+	m.chatItems = groupReadTranscriptItems(buildTranscriptItems(page.Entries, m.currentChatStepRunning()), page.Entries)
 	m.defaultExpandEditCodeItems()
 	m.chatVisibleItems = nil
 	m.prunePageState()
