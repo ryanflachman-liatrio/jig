@@ -1,6 +1,7 @@
 package shared
 
 import (
+	"image/color"
 	"testing"
 
 	"charm.land/lipgloss/v2"
@@ -147,5 +148,50 @@ func TestChatToolStylesAndStatusIconStylesDeriveFromTokens(t *testing.T) {
 				t.Fatalf("state %v icon fg = %v, want %v", tc.name, got, want)
 			}
 		})
+	}
+}
+
+// TestThemeDiffTokens locks the slice-07 contract: added/removed/context
+// styles are foreground-only (no per-row background), intra-line highlight
+// uses SGR 7 (Reverse), and gutter/indent tokens are dim foregrounds.
+// A background on any of these would fight the card tint (slice 01, CC-9).
+func TestThemeDiffTokens(t *testing.T) {
+	theme := DefaultTheme()
+	// lipgloss v2 returns lipgloss.NoColor{} (satisfying color.Color) when
+	// a style has no foreground/background set; a plain `!= nil` check is
+	// therefore insufficient.
+	isUnset := func(c color.Color) bool {
+		if c == nil {
+			return true
+		}
+		_, ok := c.(lipgloss.NoColor)
+		return ok
+	}
+	cases := []struct {
+		name  string
+		style lipgloss.Style
+	}{
+		{"add", theme.Diff.Add},
+		{"remove", theme.Diff.Remove},
+		{"hunk", theme.Diff.Hunk},
+		{"context", theme.Diff.Context},
+		{"gutter", theme.Diff.Gutter},
+		{"indent", theme.Diff.Indent},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if isUnset(tc.style.GetForeground()) {
+				t.Fatalf("%s style has no foreground; slice 07 requires a theme foreground", tc.name)
+			}
+			if !isUnset(tc.style.GetBackground()) {
+				t.Fatalf("%s style carries background %v; slice 07 FR-07.12 requires foreground-only", tc.name, tc.style.GetBackground())
+			}
+		})
+	}
+	if !theme.Diff.Intraline.GetReverse() {
+		t.Fatal("Intraline style must set Reverse(true) for word-level highlighting (slice 07 FR-07.9)")
+	}
+	if !isUnset(theme.Diff.Intraline.GetBackground()) {
+		t.Fatalf("Intraline style should rely on SGR 7 not an explicit background; got %v", theme.Diff.Intraline.GetBackground())
 	}
 }
