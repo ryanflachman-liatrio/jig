@@ -191,6 +191,11 @@ and attempt. **Use-only** or **result-only tool item:** one counterpart is
 absent from the loaded page or durable record; its outcome is not invented.
 A use-only item is pending only while its step is running.
 
+**Grouped read:** one page-local transcript item formed from at least two
+adjacent local-file read exchanges at the same generation, iteration, and
+attempt. It is one navigation target; filtering, expansion, and copy retain the
+loaded member evidence without inferring reads beyond the current page.
+
 **User guidance:** human-authored text, including initial and resumed input.
 A user-role tool result is not user guidance. **Unsupported transcript item:**
 unknown content preserved in place for inspection rather than silently dropped.

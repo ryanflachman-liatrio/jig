@@ -149,7 +149,7 @@ task covers FR-08.9 through FR-08.16.
   `JIG_UI_SNAPSHOT_DIR`, to emit deterministic synthetic text/HTML/PNG captures
   and geometry notes. Run `JIG_UI_SNAPSHOT_DIR=docs/specs/25-spec-tool-call-grouping/25-proofs go test ./internal/tui/monitor -run TestReadGroupGallery -count=1`, embed the PNG in `25-task-02-proofs.md`, and record the focused Monitor/shared test outcomes and FR mapping.
 
-### [~] 3.0 Integrate group expansion, navigation, and copy behavior
+### [x] 3.0 Integrate group expansion, navigation, and copy behavior
 
 Connect group items to the existing per-item and expand-all state so each group
 remains one cursor stop while expansion reveals member detail in order. Reuse the
@@ -196,7 +196,7 @@ covers FR-08.17 through FR-08.20 and FR-08.22.
   `25-proofs/25-task-03-proofs.md` with the exact key sequence, output, and FR
   mapping.
 
-### [ ] 4.0 Prove filtering, line ranges, lifecycle integrity, and regression safety
+### [~] 4.0 Prove filtering, line ranges, lifecycle integrity, and regression safety
 
 Extend item-level visibility and lifecycle seams so a member search/filter hit
 keeps the whole group, line ranges cover collapsed and expanded output exactly,
@@ -216,32 +216,32 @@ for the complete specification.
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Verify and, only where necessary, extend `filteredTranscriptItems`,
+- [x] 4.1 Verify and, only where necessary, extend `filteredTranscriptItems`,
   `rerunSearch`, `applyCurrentSearchHit`, and `ensureCurrentSearchHitVisible` to
   use recursive group membership. Add cases where only the third member's input,
   output, location, error, role, or retry coordinate matches and assert the full
   group remains visible and selected/expanded as one item (FR-08.21).
-- [ ] 4.2 Add collapsed and expanded `chatItemLineRanges` tests that compare the
+- [x] 4.2 Add collapsed and expanded `chatItemLineRanges` tests that compare the
   stored range with actual rendered row indexes for the group header, every tree
   row, and all revealed detail rows. Repeat after selection changes, filter/search
   activation, local/global toggle, same-page reload, and width change (FR-08.23).
-- [ ] 4.3 Add lifecycle tests proving a focused-step change clears group
+- [x] 4.3 Add lifecycle tests proving a focused-step change clears group
   expansion/render/range state, a same-step renderer rebuild preserves expansion
   while invalidating width-dependent renders, a removed page group is pruned, and
   `RunDir == ""` retains the current persistence-off empty state (FR-08.24,
   FR-08.25).
-- [ ] 4.4 Review `docs/TUI.md` and `CONTEXT.md` against the shipped behavior.
+- [x] 4.4 Review `docs/TUI.md` and `CONTEXT.md` against the shipped behavior.
   Document the page-local grouped-read navigation/filtering contract and term
   only where current guidance would otherwise be incomplete; do not restate
   implementation details or alter unrelated epic-slice documentation.
-- [ ] 4.5 Run the focused suites from Tasks 1–4, then
+- [x] 4.5 Run the focused suites from Tasks 1–4, then
   `go test -race ./internal/tui/... -count=1`, `go build ./cmd/jig`,
   `go test ./...`, and `go vet ./...`. Run `gofmt -l` over the explicit paths
   `internal/tui/monitor/{monitor_model.go,monitor_read_group.go,monitor_read_group_test.go,monitor_read_group_view.go,monitor_read_group_view_test.go,monitor_read_group_interaction_test.go,monitor_read_group_integrity_test.go,monitor_read_group_gallery_test.go,monitor_transcript_items.go,monitor_transcript.go,monitor_transcript_items_view.go,monitor_tool_summary.go,clipboard.go}`
   and
   `internal/tui/shared/{icons.go,tree.go,tree_test.go,styles.go}`; record actual
   outcomes without describing blocked checks as passing.
-- [ ] 4.6 Record command outputs as
+- [x] 4.6 Record command outputs as
   `25-proofs/25-task-04-acceptance/{build,test,vet,race-tui,gofmt,git-diff-check,credential-scan}.txt`.
   Run `git diff --check` and scan `25-proofs/` for private-key headers and common
   AWS, OpenAI, and GitHub token shapes; the credential scan artifact shall record
@@ -249,7 +249,7 @@ for the complete specification.
   matched secret. Write `25-task-04-proofs.md` with a complete
   FR-08.1–FR-08.25 evidence map plus an explicit final-diff check against every
   non-goal.
-- [ ] 4.7 Perform the synthetic persisted-transcript terminal smoke at recorded
+- [x] 4.7 Perform the synthetic persisted-transcript terminal smoke at recorded
   dimensions: navigate into/out of the group with `n`/`N`, toggle local and
   global expansion, search for a third-member-only token, enable representative
   filters, resize narrow/wide, and confirm failed-member visibility. Save only

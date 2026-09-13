@@ -121,6 +121,13 @@ a user-role tool result is not human guidance. Preserve truncation indicators
 and bounded window reads. Follow the live tail only while the user is already
 at the tail; new output must not steal the position of someone reading history.
 
+Adjacent local-file read exchanges at one execution coordinate form a
+page-local **grouped read** when at least two are loaded without an intervening
+item. A grouped read is one navigation and expansion target; its compact tree
+retains every distinct loaded target, and a search or filter match on any member
+retains the complete group. Expansion and selected-item copy use only the
+members present on the loaded page, so grouping never implies off-page evidence.
+
 Keep render caches local to their owner and include all inputs that affect
 rendering in invalidation decisions (width, content/version, expansion, and
 presentation mode as applicable). Shared map storage under a value receiver
