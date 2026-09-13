@@ -281,8 +281,35 @@ func (m Model) copyTranscriptItemCmd() tea.Cmd {
 	if !ok {
 		return clipboardImmediateItemUnavailable("no item selected")
 	}
+	if item.kind == transcriptItemReadGroup {
+		return m.copyReadGroupItemRequest(item)
+	}
 	entries := m.chatEntries
 	return copyTranscriptItemRequest(item, entries)
+}
+
+// copyReadGroupItemRequest captures the visible group projection immediately,
+// before the asynchronous clipboard loader runs. The temporary cache prevents
+// capture from mutating the live render cache, and the final string has no
+// dependency on a later page replacement.
+func (m Model) copyReadGroupItemRequest(item transcriptItem) tea.Cmd {
+	expanded := m.chatItemExpandAll || m.chatItemExpand[item.key]
+	m.chatItemRendered = make(map[transcriptRenderKey]string)
+	var b strings.Builder
+	m.writeReadGroup(&b, item, false, expanded)
+	captured := strings.TrimRight(b.String(), "\n")
+	target := shared.ClipboardTarget{Surface: shared.ClipboardSurfaceTranscriptItem, Label: "read group"}
+	return func() tea.Msg {
+		return shared.ClipboardRequest{
+			Target: target,
+			Loader: func() shared.ClipboardPayload {
+				if captured == "" {
+					return shared.ClipboardPayload{Err: shared.ErrClipboardEmpty}
+				}
+				return shared.ClipboardPayload{Payload: captured}
+			},
+		}
+	}
 }
 
 func (m Model) selectedTranscriptItem() (transcriptItem, bool) {
@@ -374,6 +401,8 @@ func describeTranscriptItem(item transcriptItem) string {
 		return "thinking"
 	case transcriptItemToolExchange:
 		return "tool exchange"
+	case transcriptItemReadGroup:
+		return "read group"
 	case transcriptItemToolResult:
 		return "tool result"
 	case transcriptItemSystem:

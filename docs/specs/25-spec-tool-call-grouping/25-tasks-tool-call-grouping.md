@@ -93,7 +93,7 @@ identity. This parent task covers FR-08.1 through FR-08.8.
   surviving-group reload, and stale expansion/render/range pruning cases. Run
   `go test ./internal/tui/monitor -run 'Test(GroupReadTranscriptItems|ReadGroupPageState|ReadGroupResultFirst)' -count=1` and record the sanitized output and FR mapping in `25-proofs/25-task-01-proofs.md` (FR-08.5 through FR-08.8).
 
-### [~] 2.0 Render the compact read tree with merged selectors and visible state
+### [x] 2.0 Render the compact read tree with merged selectors and visible state
 
 Render grouped reads as a flat, unframed `Read (N)` tree using the shared status,
 style, glyph, width, and truncation vocabulary. Preserve every distinct loaded
@@ -149,7 +149,7 @@ task covers FR-08.9 through FR-08.16.
   `JIG_UI_SNAPSHOT_DIR`, to emit deterministic synthetic text/HTML/PNG captures
   and geometry notes. Run `JIG_UI_SNAPSHOT_DIR=docs/specs/25-spec-tool-call-grouping/25-proofs go test ./internal/tui/monitor -run TestReadGroupGallery -count=1`, embed the PNG in `25-task-02-proofs.md`, and record the focused Monitor/shared test outcomes and FR mapping.
 
-### [ ] 3.0 Integrate group expansion, navigation, and copy behavior
+### [~] 3.0 Integrate group expansion, navigation, and copy behavior
 
 Connect group items to the existing per-item and expand-all state so each group
 remains one cursor stop while expansion reveals member detail in order. Reuse the
@@ -165,29 +165,29 @@ covers FR-08.17 through FR-08.20 and FR-08.22.
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Make `itemHasDetail` recognize group items while leaving the existing
+- [x] 3.1 Make `itemHasDetail` recognize group items while leaving the existing
   `chatItemExpand[item.key]` and `chatItemExpandAll` decision authoritative.
   Confirm the generic toggle and expand-all handlers need no group-specific
   state mutation; if dispatch is required, keep it in the existing transcript
   update branch rather than introducing another key path (FR-08.17, FR-08.18).
-- [ ] 3.2 Render an expanded group under the same header/tree by associating each
+- [x] 3.2 Render an expanded group under the same header/tree by associating each
   original member with its merged target row and invoking the existing
   tool-activity detail helpers in original member order. Preserve use/result
   pairing, verbatim output, detail anchors, truncation hints, and the flat
   unframed group boundary (FR-08.19).
-- [ ] 3.3 Keep group members out of `chatVisibleItems` in both states. Verify
+- [x] 3.3 Keep group members out of `chatVisibleItems` in both states. Verify
   `n`/`N` traverses from the item before the group to the group and then to the
   item after it, and that toggling changes rendered detail without changing the
   visible-item count or cursor key (FR-08.17).
-- [ ] 3.4 Add a group-specific branch to selected-item copy capture: clone every
+- [x] 3.4 Add a group-specific branch to selected-item copy capture: clone every
   member up front, serialize the visible sanitized header/tree, and include
   member detail evidence only when the captured group is expanded. Preserve the
   existing clipboard size/sanitization boundary and page-edge notes (FR-08.22).
-- [ ] 3.5 Add Bubble Tea model tests for local toggle, repeated toggle, global
+- [x] 3.5 Add Bubble Tea model tests for local toggle, repeated toggle, global
   expand-all override without per-item map rewrites, navigation across the group,
   resize-independent cursor identity, edit auto-expansion exclusion, and
   collapsed/expanded copy payloads (FR-08.17 through FR-08.20, FR-08.22).
-- [ ] 3.6 Extend `TestReadGroupGallery` to emit the synthetic collapsed/expanded
+- [x] 3.6 Extend `TestReadGroupGallery` to emit the synthetic collapsed/expanded
   interaction capture at a recorded terminal width. Run
   `JIG_UI_SNAPSHOT_DIR=docs/specs/25-spec-tool-call-grouping/25-proofs go test
   ./internal/tui/monitor -run TestReadGroupGallery -count=1` and
