@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -199,7 +200,10 @@ func (m *Model) renderToolExchangeCard(item transcriptItem, prefix, header strin
 //
 // The error hint moves from the appended-label position (previously
 // `label += " · " + toolErrorHint(...)`) into the Meta slot so it remains
-// visible on collapsed rows without occupying the title (FR-02.17).
+// visible on collapsed rows without occupying the title (FR-02.17). Slice
+// 07 additionally emits a `+N/-M` badge in Meta on expanded non-error
+// edit exchanges whose diff computes cleanly (FR-07.18). The error hint
+// wins the slot when both would be present.
 func composeToolHeader(m *Model, item transcriptItem, s toolCallSummary, selected bool) string {
 	title := s.action
 	kind := s.kind
@@ -220,6 +224,10 @@ func composeToolHeader(m *Model, item transcriptItem, s toolCallSummary, selecte
 		if hint := toolErrorHint(m, item); hint != "" {
 			meta = append(meta, hint)
 		}
+	} else if item.kind == transcriptItemToolExchange && (m.chatItemExpandAll || m.chatItemExpand[item.key]) {
+		if badge := diffStatsBadge(m, item); badge != "" {
+			meta = append(meta, badge)
+		}
 	}
 
 	return shared.RenderStatusLine(shared.StatusLine{
@@ -230,6 +238,43 @@ func composeToolHeader(m *Model, item transcriptItem, s toolCallSummary, selecte
 		Description: s.detail,
 		Meta:        meta,
 	})
+}
+
+// diffStatsBadge returns the `+N/-M` badge text for a tool exchange
+// whose activity carries at least one Diff that computes cleanly and
+// records a non-empty change count. Slice 07 uses ASCII bracketing
+// (`+3/-2`, not `⟦+3/-2⟧`) until slice 14's glyph preset lands. The
+// Diff payload can live on either the tool-use block or its paired
+// result block depending on the harness; both are checked and the
+// counts aggregated.
+func diffStatsBadge(m *Model, item transcriptItem) string {
+	if m == nil {
+		return ""
+	}
+	var stats diffStats
+	var any bool
+	if item.toolUse != nil {
+		if a := m.chatEntries[item.toolUse.entryIdx].Blocks[item.toolUse.blockIdx].Activity(); a != nil {
+			if s, ok := activityDiffStats(a); ok {
+				stats.added += s.added
+				stats.removed += s.removed
+				any = true
+			}
+		}
+	}
+	if item.toolResult != nil {
+		if a := m.chatEntries[item.toolResult.entryIdx].Blocks[item.toolResult.blockIdx].Activity(); a != nil {
+			if s, ok := activityDiffStats(a); ok {
+				stats.added += s.added
+				stats.removed += s.removed
+				any = true
+			}
+		}
+	}
+	if !any {
+		return ""
+	}
+	return "+" + strconv.Itoa(stats.added) + "/-" + strconv.Itoa(stats.removed)
 }
 
 func prefixCardRows(prefix, card string) string {
@@ -312,34 +357,130 @@ func (m *Model) writeToolActivityDetails(b *strings.Builder, activity *toolcall.
 	}
 }
 
-// writeNewCodeCards deliberately shows the resulting source rather than a
-// before/after patch. The inset Glamour renderer uses the shared Charm v2 code
-// formatter, whose Lip Gloss code-block style owns the rounded card. The
-// anchor argument mirrors writeItemDetail: a running exchange tail-anchors so
-// the newest lines pin to the bottom of the visible window.
+// writeNewCodeCards renders the diff section below an edit tool
+// exchange. When Diff.OldText is present and computation succeeds it
+// emits the before/after diff produced by renderDiffRows below a
+// `Diff · <path>` label; otherwise it falls back to the resulting-
+// source card (the historical behavior) below the `New code · <path>`
+// label. File creation renders no fallback hint; skipped or failed
+// computation prepends shared.DiffUnavailableHint(); a truncated
+// enclosing block prepends shared.DiffClampedHint() so the operator
+// sees the clamp before trusting the change spans.
+//
+// The anchor argument mirrors writeItemDetail: a running exchange
+// tail-anchors so the newest lines pin to the bottom of the visible
+// window.
 func writeNewCodeCards(m *Model, b *strings.Builder, activity *toolcall.Activity, anchor detailAnchor) bool {
 	wrote := false
+	blockTruncated := activityBlockTruncated(m, activity)
 	for _, content := range activity.Content {
 		if content.Diff == nil {
 			continue
 		}
 		wrote = true
-		shown, hidden := boundTranscriptDetail(content.Diff.NewText, max(m.transcriptInnerW-8, 1), anchor)
-		hint := shared.ExpandHint(false, hidden > 0, m.keys.Toggle.Help().Key)
-		b.WriteString("    " + shared.Theme.Chat.TranscriptLabel.Render("New code · "+content.Diff.Path) + "\n")
-		if hidden > 0 && anchor == detailAnchorTail {
-			line := shared.HintLine(shared.EarlierItems(hidden, "line", "lines"), hint)
-			b.WriteString("    " + shared.Theme.Chat.Hint.Render(line) + "\n")
-		}
-		for _, line := range strings.Split(strings.TrimRight(m.renderNewCodeCard(content.Diff.Path, shown), "\n"), "\n") {
-			b.WriteString("    " + line + "\n")
-		}
-		if hidden > 0 && anchor != detailAnchorTail {
-			line := shared.HintLine(shared.MoreItems(hidden, "line", "lines"), hint)
-			b.WriteString("    " + shared.Theme.Chat.Hint.Render(line) + "\n")
+		proj, _, outcome := computeDiff(content.Diff)
+		switch outcome {
+		case computeOK:
+			if proj == nil || len(proj.Presentation.Hunks) == 0 {
+				// Identical inputs (no visible change): fall through to the
+				// resulting-source card so the operator still sees the file
+				// content the exchange wrote.
+				writeResultingSourceCard(m, b, content.Diff, "", anchor)
+				continue
+			}
+			hintText := ""
+			if blockTruncated {
+				hintText = shared.DiffClampedHint()
+			}
+			writeDiffSection(m, b, content.Diff, proj, hintText, anchor)
+		case computeFileCreation:
+			writeResultingSourceCard(m, b, content.Diff, "", anchor)
+		default:
+			writeResultingSourceCard(m, b, content.Diff, shared.DiffUnavailableHint(), anchor)
 		}
 	}
 	return wrote
+}
+
+// writeDiffSection emits the diff-labeled section: an optional
+// clamped-content hint, the diff rows produced by renderDiffRows,
+// and the slice-06 head/tail anchor bound applied over the joined
+// rows so long diffs share the transcript's row budget.
+func writeDiffSection(m *Model, b *strings.Builder, d *toolcall.Diff, proj *diffProjection, hintText string, anchor detailAnchor) {
+	label := "Diff · " + d.Path
+	if d.Path == "" {
+		label = "Diff"
+	}
+	b.WriteString("    " + shared.Theme.Chat.TranscriptLabel.Render(label) + "\n")
+
+	contentWidth := max(m.transcriptInnerW-4, 1)
+	expandKey := m.keys.Toggle.Help().Key
+	rows := renderDiffRows(proj, d.Path, contentWidth, true, m.insetRenderer, expandKey)
+	joined := strings.Join(rows, "\n")
+	shown, hidden := boundTranscriptDetail(joined, contentWidth, anchor)
+	hint := shared.ExpandHint(false, hidden > 0, expandKey)
+
+	if hintText != "" {
+		b.WriteString("    " + shared.Theme.Chat.Hint.Render(hintText) + "\n")
+	}
+	if hidden > 0 && anchor == detailAnchorTail {
+		line := shared.HintLine(shared.EarlierItems(hidden, "line", "lines"), hint)
+		b.WriteString("    " + shared.Theme.Chat.Hint.Render(line) + "\n")
+	}
+	for _, row := range strings.Split(shown, "\n") {
+		b.WriteString("    " + row + "\n")
+	}
+	if hidden > 0 && anchor != detailAnchorTail {
+		line := shared.HintLine(shared.MoreItems(hidden, "line", "lines"), hint)
+		b.WriteString("    " + shared.Theme.Chat.Hint.Render(line) + "\n")
+	}
+}
+
+// writeResultingSourceCard emits the historical "resulting source"
+// card. It preserves the pre-slice-07 shape verbatim so slice 07's
+// fallback path exercises the same rendering as file-creation cases
+// have always used. hintText, when non-empty, is prepended as a dim
+// row above the card so the operator learns why the diff view is not
+// being shown.
+func writeResultingSourceCard(m *Model, b *strings.Builder, d *toolcall.Diff, hintText string, anchor detailAnchor) {
+	shown, hidden := boundTranscriptDetail(d.NewText, max(m.transcriptInnerW-8, 1), anchor)
+	hint := shared.ExpandHint(false, hidden > 0, m.keys.Toggle.Help().Key)
+	b.WriteString("    " + shared.Theme.Chat.TranscriptLabel.Render("New code · "+d.Path) + "\n")
+	if hintText != "" {
+		b.WriteString("    " + shared.Theme.Chat.Hint.Render(hintText) + "\n")
+	}
+	if hidden > 0 && anchor == detailAnchorTail {
+		line := shared.HintLine(shared.EarlierItems(hidden, "line", "lines"), hint)
+		b.WriteString("    " + shared.Theme.Chat.Hint.Render(line) + "\n")
+	}
+	for _, line := range strings.Split(strings.TrimRight(m.renderNewCodeCard(d.Path, shown), "\n"), "\n") {
+		b.WriteString("    " + line + "\n")
+	}
+	if hidden > 0 && anchor != detailAnchorTail {
+		line := shared.HintLine(shared.MoreItems(hidden, "line", "lines"), hint)
+		b.WriteString("    " + shared.Theme.Chat.Hint.Render(line) + "\n")
+	}
+}
+
+// activityBlockTruncated reports whether the transcript block that
+// carries this activity's tool-use payload was clamped at write time.
+// It lets the diff section emit shared.DiffClampedHint before rows so
+// the operator sees the correctness label above the diff itself.
+func activityBlockTruncated(m *Model, activity *toolcall.Activity) bool {
+	if m == nil || activity == nil || activity.ID == "" {
+		return false
+	}
+	for _, entry := range m.chatEntries {
+		for _, block := range entry.Blocks {
+			if block.Tool == nil || block.Tool.ID != activity.ID {
+				continue
+			}
+			if block.Type == transcript.BlockToolUse && block.Truncated {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (m *Model) renderNewCodeCard(path, code string) string {

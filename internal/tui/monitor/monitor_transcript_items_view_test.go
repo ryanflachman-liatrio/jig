@@ -461,19 +461,33 @@ func TestStructuredEditShowsNewCodeInDefaultOpenCard(t *testing.T) {
 	}
 
 	body := stripANSI(m.itemTranscriptBody())
-	for _, want := range []string{"New code · internal/greeting.go", "new implementation", "╭", "╰"} {
+	// Slice 07 replaces the resulting-source card with a real diff
+	// when OldText is present: assert the Diff label appears, both
+	// old and new content are visible via the diff, and the +N/-M
+	// badge lands in the header Meta slot.
+	for _, want := range []string{"Diff · internal/greeting.go", "new implementation", "╭", "╰"} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("default-open code card missing %q:\n%s", want, body)
+			t.Fatalf("default-open diff card missing %q:\n%s", want, body)
 		}
 	}
-	for _, unwanted := range []string{"old implementation", "old:"} {
-		if strings.Contains(body, unwanted) {
-			t.Fatalf("code card included %q:\n%s", unwanted, body)
-		}
+	// The delete row carries the "old" content; assert its distinguishing
+	// fragment survives the wrap so both sides of the diff are visible.
+	if !strings.Contains(body, "\"old") {
+		t.Fatalf("default-open diff card missing delete row content (fragment %q):\n%s", "\"old", body)
+	}
+	if strings.Contains(body, "New code · internal/greeting.go") {
+		t.Fatalf("expected slice-07 Diff label, not the resulting-source fallback:\n%s", body)
+	}
+	if !strings.Contains(body, "+3/-1") {
+		t.Fatalf("expected +3/-1 diff badge in header Meta slot:\n%s", body)
 	}
 
 	m.chatItemExpand[m.chatItems[0].key] = false
-	if body := stripANSI(m.itemTranscriptBody()); strings.Contains(body, "new implementation") {
-		t.Fatalf("folded code card remained visible:\n%s", body)
+	folded := stripANSI(m.itemTranscriptBody())
+	if strings.Contains(folded, "new implementation") {
+		t.Fatalf("folded diff card remained visible:\n%s", folded)
+	}
+	if strings.Contains(folded, "+3/-1") {
+		t.Fatalf("collapsed exchange must not carry the +N/-M badge:\n%s", folded)
 	}
 }
