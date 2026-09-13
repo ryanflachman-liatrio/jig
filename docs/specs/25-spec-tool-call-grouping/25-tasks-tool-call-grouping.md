@@ -196,7 +196,7 @@ covers FR-08.17 through FR-08.20 and FR-08.22.
   `25-proofs/25-task-03-proofs.md` with the exact key sequence, output, and FR
   mapping.
 
-### [~] 4.0 Prove filtering, line ranges, lifecycle integrity, and regression safety
+### [x] 4.0 Prove filtering, line ranges, lifecycle integrity, and regression safety
 
 Extend item-level visibility and lifecycle seams so a member search/filter hit
 keeps the whole group, line ranges cover collapsed and expanded output exactly,
