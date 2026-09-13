@@ -348,6 +348,13 @@ type terminalSGR struct {
 	background string
 	bold       bool
 	italic     bool
+	// reverse tracks SGR 7 (reverse video). When set, the emitted CSS
+	// swaps foreground and background so slice 07's intra-line span
+	// highlight reads as an inverted run even in the static HTML
+	// capture. The default palette color is used when the current
+	// foreground/background is unset.
+	reverse bool
+	faint   bool
 }
 
 func terminalHTML(input string) string {
@@ -387,7 +394,14 @@ func terminalCSS(state terminalSGR) string {
 	if state.italic {
 		style = "italic"
 	}
-	return fmt.Sprintf("color:%s;background:%s;font-weight:%s;font-style:%s", state.foreground, state.background, weight, style)
+	fg, bg := state.foreground, state.background
+	if state.reverse {
+		fg, bg = bg, fg
+	}
+	if state.faint {
+		style = style + ";opacity:0.6"
+	}
+	return fmt.Sprintf("color:%s;background:%s;font-weight:%s;font-style:%s", fg, bg, weight, style)
 }
 
 func applyTerminalSGR(state terminalSGR, params string) terminalSGR {
@@ -402,12 +416,19 @@ func applyTerminalSGR(state terminalSGR, params string) terminalSGR {
 			state = terminalSGR{foreground: "#C5C5D2", background: "#100F14"}
 		case 1:
 			state.bold = true
+		case 2:
+			state.faint = true
 		case 3:
 			state.italic = true
+		case 7:
+			state.reverse = true
 		case 22:
 			state.bold = false
+			state.faint = false
 		case 23:
 			state.italic = false
+		case 27:
+			state.reverse = false
 		case 39:
 			state.foreground = "#C5C5D2"
 		case 49:

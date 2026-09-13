@@ -119,7 +119,7 @@ A/B/C.
 
 ## Tasks
 
-### [ ] 1.0 Compute a unified diff and project it through `diffview`
+### [x] 1.0 Compute a unified diff and project it through `diffview`
 
 Add `internal/tui/monitor/monitor_diff_compute.go` with `computeDiff`, the
 byte/line caps, and the determinism-preserving patch emission via
@@ -162,7 +162,7 @@ shapes, the file-creation and empty-diff cases, and both cap bypasses.
 - [ ] 1.6 Add `TestComputeDiffDeterministic` computing the same input twice and asserting the emitted patch strings and the `presentation.Hunks` are byte- and shape-equal. Add `TestComputeDiffRoundTripsThroughDiffview` asserting `presentation.ParseErr == nil` on each canonical shape.
 - [ ] 1.7 Run `gofmt -w` on every file touched. Run `go test ./internal/tui/monitor -run 'TestComputeDiff' -v -count=1`. Write `25-proofs/25-task-01-proofs.md` with the exact commands, outcomes, artifact paths, requirement coverage, and any limitations.
 
-### [ ] 2.0 Render the fused-gutter diff rows
+### [x] 2.0 Render the fused-gutter diff rows
 
 Add `internal/tui/monitor/monitor_diff_render.go` with `renderDiffRows`,
 the gutter formatter, duplicate-number suppression, the 1↔1 intra-line
@@ -192,7 +192,7 @@ collapse budget wired through the slice-06 vocabulary. Register the new
 - [ ] 2.10 Run `gofmt -w` on every file touched. Run `go test ./internal/tui/monitor -run 'TestRenderDiff' -count=1 -v` and `go test ./internal/tui/shared -run 'TestThemeDiffTokens' -count=1 -v`. Generate `25-proofs/25-task-2-diff-gallery.txt` by driving a small test that writes the rendered rows for each canonical shape at widths 60 and 90; include a `.notes.txt` recording the terminal geometry, the language derived from the sample path, and the expand key.
 - [ ] 2.11 Write `25-proofs/25-task-02-proofs.md` with the exact commands, outcomes, artifact paths, FR-07.6..FR-07.14 coverage, and any limitations.
 
-### [ ] 3.0 Wire the diff renderer into the Monitor with fallback and the header badge
+### [x] 3.0 Wire the diff renderer into the Monitor with fallback and the header badge
 
 Replace `writeNewCodeCards`'s body with the compute + render pipeline;
 preserve the resulting-source card for `OldText == nil` and for
@@ -229,7 +229,7 @@ regressions.
 - [ ] 3.9 Run `gofmt -w` on every file this task modifies. Run `go test ./internal/tui/monitor -run 'TestMonitorDiff' -count=1 -v` and `go test ./internal/tui/shared -run 'TestDiffClampedHint|TestDiffUnavailableHint|TestTruncationSourceShape' -count=1 -v`. Generate `25-proofs/25-task-3-monitor-diff.txt` and (when headless Chrome is available) its `.png`; otherwise record the missing screenshot in a `.limitations.md`. Run `go test -race ./internal/tui/... ./internal/helpchat -count=1` and capture the output.
 - [ ] 3.10 Write `25-proofs/25-task-03-proofs.md` with the exact commands, outcomes, artifact paths, FR-07.15..FR-07.21 coverage, and any limitations.
 
-### [ ] 4.0 Record acceptance evidence and confirm scope integrity
+### [x] 4.0 Record acceptance evidence and confirm scope integrity
 
 Run the applicable repository acceptance commands, capture their output
 alongside a short limitations note for anything that could not run, and
