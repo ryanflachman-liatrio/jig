@@ -53,6 +53,38 @@ func TestGroupReadTranscriptItems(t *testing.T) {
 		}
 	})
 
+	t.Run("adjacent use-only page-edge reads retain only loaded evidence", func(t *testing.T) {
+		firstInput := json.RawMessage(`{"file_path":"synthetic/first.go"}`)
+		secondInput := json.RawMessage(`{"file_path":"synthetic/second.go"}`)
+		entries := []transcript.Entry{{Seq: 1, Role: transcript.RoleAssistant, Blocks: []transcript.Block{
+			{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "first", Title: "Read", Kind: "read", Input: firstInput}},
+			{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "second", Title: "Read", Kind: "read", Input: secondInput}},
+		}}}
+		got := groupReadTranscriptItems(buildTranscriptItems(entries, true), entries)
+		if len(got) != 1 || got[0].kind != transcriptItemReadGroup || got[0].displayState != toolDisplayRunning {
+			t.Fatalf("use-only items = %+v, want one running read group", got)
+		}
+		if refs := itemMembers(got[0]); len(refs) != 2 {
+			t.Fatalf("use-only group refs = %d, want exactly two loaded uses", len(refs))
+		}
+	})
+
+	t.Run("result-only item interrupts reads", func(t *testing.T) {
+		left := renumberEntries(readExchange("left", "left.go", 0, 0, 0), 1)
+		orphan := transcript.Entry{Seq: 3, Role: transcript.RoleUser, Blocks: []transcript.Block{{Type: transcript.BlockToolResult, Tool: &toolcall.Activity{ID: "orphan", Kind: "read", Status: "completed", Input: json.RawMessage(`{"file_path":"orphan.go"}`)}}}}
+		right := renumberEntries(readExchange("right", "right.go", 0, 0, 0), 4)
+		entries := append(append(left, orphan), right...)
+		got := groupReadTranscriptItems(buildTranscriptItems(entries, false), entries)
+		if len(got) != 3 || got[1].kind != transcriptItemToolResult {
+			t.Fatalf("result-only boundary items = %+v, want read/result-only/read", got)
+		}
+		for _, item := range got {
+			if item.kind == transcriptItemReadGroup {
+				t.Fatalf("result-only boundary incorrectly grouped reads: %+v", got)
+			}
+		}
+	})
+
 	tests := []struct {
 		name   string
 		middle transcript.Entry

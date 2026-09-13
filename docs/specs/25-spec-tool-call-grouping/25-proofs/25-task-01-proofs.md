@@ -17,10 +17,11 @@ file reads at one generation, iteration, and attempt become a group.
 
 ## Evidence Summary
 
-Synthetic transcript fixtures cover adjacent and singleton reads, missing and
-URI targets, canonical-kind precedence, text/thinking/system/unsupported/tool
-interruptions, every execution coordinate, result-first ACP ordering, reload,
-and state pruning. No persisted user run data is used.
+Synthetic transcript fixtures cover adjacent and singleton reads, adjacent
+use-only page-edge reads, result-only boundaries, missing and URI targets,
+canonical-kind precedence, text/thinking/system/unsupported/tool interruptions,
+every execution coordinate, result-first ACP ordering, reload, and state pruning.
+No persisted user run data is used.
 
 ## Artifact: Focused normalization suite
 
@@ -39,7 +40,7 @@ go test ./internal/tui/monitor -run 'Test(GroupReadTranscriptItems|ReadGroupPage
 **Result summary:** The focused suite passed.
 
 ```text
-ok  	jig/internal/tui/monitor	0.439s
+ok  	jig/internal/tui/monitor	0.406s
 ```
 
 ## Reviewer Conclusion
