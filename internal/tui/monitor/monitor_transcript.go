@@ -404,17 +404,11 @@ func (m *Model) chatBody() string {
 	}
 	s := m.steps[i]
 	indicator, _ := stepIndicator(s.status)
+	// The per-step iter/attempt hint that used to live here has moved
+	// into the per-turn metadata row emitted by itemTranscriptBody
+	// (omp-transcript-parity slice 11). Keep only the status label so
+	// this empty-transcript branch still reports where the step is.
 	header := indicator + "  " + statusStyle(s.status).Render(string(s.status))
-	var context []string
-	if s.iteration > 0 {
-		context = append(context, fmt.Sprintf("iter %d", s.iteration+1))
-	}
-	if s.attempt > 0 {
-		context = append(context, fmt.Sprintf("attempt %d", s.attempt))
-	}
-	if len(context) > 0 {
-		header += "  " + shared.Theme.Chat.Hint.Render(strings.Join(context, " • "))
-	}
 	b.WriteString("  " + header + "\n\n")
 
 	if m.searchOpen {

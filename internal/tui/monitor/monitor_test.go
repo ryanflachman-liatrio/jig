@@ -1513,15 +1513,23 @@ func TestMonitorNarrowTitleKeepsRunAndCurrentContent(t *testing.T) {
 }
 
 func TestTranscriptStatusContextDoesNotRepeatStepID(t *testing.T) {
+	// The empty-transcript header keeps only the status label. The
+	// per-turn iter/attempt facts have moved into the metadata row
+	// emitted by itemTranscriptBody (slice 11); on an empty transcript
+	// no items exist to hang the row on, so those facts are not
+	// duplicated here.
 	m := newMonitorWithSteps(t)
 	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
 		RunID: "run-1", StepID: "a", To: step.StatusRunning, Iteration: 1, Attempt: 2,
 	}})
 	body := ansiStrip(m.chatBody())
 	first := strings.TrimSpace(strings.SplitN(body, "\n", 2)[0])
-	for _, want := range []string{"running", "iter 2", "attempt 2"} {
-		if !strings.Contains(first, want) {
-			t.Fatalf("status context %q missing %q", first, want)
+	if !strings.Contains(first, "running") {
+		t.Fatalf("empty-transcript header %q missing status word", first)
+	}
+	for _, unwanted := range []string{"iter", "attempt"} {
+		if strings.Contains(first, unwanted) {
+			t.Fatalf("empty-transcript header %q still carries %q hint (should have moved to per-turn row)", first, unwanted)
 		}
 	}
 	if strings.Contains(first, " a ") || strings.HasSuffix(first, " a") {
