@@ -188,14 +188,42 @@ shared artifact as part of this slice.
 
 ## Open Questions
 
-- **Q-11.1 (must resolve first)** What per-step metrics does jig actually have?
-  Specifically: does any harness surface token usage into the transcript or
-  `result.json`? *Blocking for the row's content, not for the slice.*
-- **Q-11.2** Timestamp format: time-only (`15:04:05`) or full date? *Suggest
-  time-only; a run is typically one sitting.*
-- **Q-11.3** Should the row render for a **failed** step, and if so does it also
-  carry the error? *Suggest yes to the row, no to the error — the error already
-  has a prominent home at `chatBody`'s top (`monitor_transcript.go:668`).*
-- **Q-11.4** One row per step, or one per iteration within a looping step?
-  *Suggest per iteration — an iteration is the unit that has its own elapsed
-  time, and slice 12's banners already mark the boundaries.*
+Resolved during implementation. See
+[`docs/plans/omp-slice-11-turn-metadata-row.md`](../../../plans/omp-slice-11-turn-metadata-row.md)
+for the full audit and rationale; the resolutions below are the
+minimum record needed inside this slice document.
+
+- **Q-11.1** *(answered)* jig has: per-entry `transcript.Entry.Ts`
+  (RFC3339, second precision); per-step `monitorStep.start`, `.end`,
+  `.cost` (`*float64`), `.tokens`, `.iteration`, `.attempt` fed from
+  `engine.StepStatus`; `step.Result.Duration` and `.TotalCostUSD` on
+  `result.json`; and `step.Result.TokenCount()` breaking the usage
+  map into a summed total. `StepStatus.Cost` and `.Tokens` are
+  **cumulative per step**, not per turn, so per-turn cost/tokens are
+  not available without changing the harness contract (CC-12). TTFT,
+  throughput, cache-read, and per-direction token split are not
+  surfaced anywhere and are dropped from the row.
+- **Q-11.2** *(answered)* Time-only `15:04:05` in local time. A run
+  is typically one sitting; adding the date widens the row without
+  information. The formatter matches the pre-existing
+  `t.Local().Format("15:04:05")` at
+  `monitor_transcript.go:529-531`.
+- **Q-11.3** *(answered)* Yes to the row, no to the error. The
+  failure banner keeps its existing home at `chatBody`'s top
+  (`monitor_transcript.go:380-384`); duplicating the error in the
+  metadata row would violate CC-2 (state carried by border/color,
+  not appended prose).
+- **Q-11.4** *(answered)* Per-turn timestamps and elapsed, per-step
+  cost and tokens. The interior boundary row is emitted at every
+  `(gen, iter, attempt)` coordinate change; the step-end row is
+  emitted below the last item once `monitorStep.end != zero`, and
+  cost/tokens attach only there.
+
+### Persistent notes
+
+- The row's `Δ` slot is dropped for durations under 500 ms so a
+  same-second turn does not render as `Δ 0s`. This is a consequence
+  of `transcript.Entry.Ts`'s second precision, not a policy choice.
+- The row is folded into the *previous* rendered item's
+  `chatItemLineRanges` entry rather than owning its own key, so
+  `n`/`N` block navigation still lands on items.

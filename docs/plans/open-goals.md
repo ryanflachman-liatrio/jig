@@ -138,7 +138,7 @@ Ranked. Status: **have** / **partial** / **missing**.
 | T4 | **In-transcript edit cards with optional unified diff** — keep “New code” default; toggle before/after hunks without leaving Transcript | partial | New-code Glamour cards exist; peers show patch impact inline. Full diff today lives mainly in review/diffview. |
 | T5 | **Smart burst folding** — presentation-only collapse of consecutive successful tool rows between prose (Claude-style tool storms) | missing | Spec 15 removed heavy Spec 11 group chrome; without *light* burst folding, parallel tool spam still overwhelms. |
 | T6 | **Transcript noise & secrets policy** — redact secret-like tokens in collapsed previews; default-hide huge JSON behind “N bytes”; never markdown-interpret tool output | partial | Summaries sanitize; expanded output is verbatim. Collapsed previews can still leak or flood. |
-| T7 | **Per-turn / per-exchange timing + tokens** — muted duration/cost on expand or in a density mode | missing | Step/run totals exist on the status line; peers show spend *per turn*, which builds trust mid-run. |
+| T7 | **Per-turn / per-exchange timing + tokens** — muted duration/cost on expand or in a density mode | partial | Step/run totals exist on the status line; peers show spend *per turn*, which builds trust mid-run. Plan: [`omp-slice-11-turn-metadata-row.md`](omp-slice-11-turn-metadata-row.md) (per-turn metadata row inside the Transcript panel — omp-parity slice 11). |
 | T8 | **Density + optional metadata modes** — compact / comfortable; optional seq+timestamp+cost chrome without changing durable schema | missing | Spec 15 correctly hid log chrome by default; operators still need a debug density for forensics. |
 
 #### Strong polish (best-in-class, not merely “good”)
