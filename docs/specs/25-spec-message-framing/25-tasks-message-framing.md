@@ -201,7 +201,7 @@
       wrapper around `renderMarkdown`) to assert zero render invocations on
       first paint for an oversized block.
 
-### [ ] 4.0 Expand toggle renders the full bubble; collapse bypasses the markdown cache (Unit 2 — expansion and cache discipline)
+### [x] 4.0 Expand toggle renders the full bubble; collapse bypasses the markdown cache (Unit 2 — expansion and cache discipline)
 
 #### 4.0 Proof Artifact(s)
 
@@ -224,21 +224,21 @@
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Confirm (from Task 3.0's wiring) that the expanded branch calls
+- [x] 4.1 Confirm (from Task 3.0's wiring) that the expanded branch calls
       `m.renderMarkdown(item.primary.key, block.Text)` exactly as the
       always-rendered Unit 1 path does, so `chatRendered` population on
       expansion is identical to the non-collapsible case; add a direct
       assertion on the `chatRendered` map contents (not just renderer call
       count) confirming the summary string is never present as a value.
-- [ ] 4.2 Add a toggle-round-trip test in `monitor_transcript_expand_test.go`:
+- [x] 4.2 Add a toggle-round-trip test in `monitor_transcript_expand_test.go`:
       expand via `m.chatItemExpand[item.key] = true` renders full markdown
       once; toggling back to `false` restores the single summary row without
       a second render call.
-- [ ] 4.3 Extend `monitor_search_test.go` with a case constructing an
+- [x] 4.3 Extend `monitor_search_test.go` with a case constructing an
       oversized collapsed user item, producing a search hit against its raw
       block text, and asserting the hit selects the item without requiring
       `chatItemExpand` to be set.
-- [ ] 4.4 Run `go build ./cmd/jig`, `go test ./...`, `go vet ./...`, and
+- [x] 4.4 Run `go build ./cmd/jig`, `go test ./...`, `go vet ./...`, and
       `gofmt -l` on all changed files at the repository root; capture output
       in `docs/specs/25-spec-message-framing/25-proofs/25-task-04-proofs.md`
       confirming Success Metrics 1–3 (grep for zero literal `User` labels
