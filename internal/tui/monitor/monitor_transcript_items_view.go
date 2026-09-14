@@ -28,6 +28,14 @@ import (
 // raw bytes contain any non-whitespace (including an SGR escape) survives
 // the trim, so a tinted card padding row is preserved as intentional
 // content while a plain blank line is not.
+//
+// Slice-11 addition: at each coordinate boundary (itemSpacingBefore == 2)
+// and after the last visible item of a terminal step, the loop emits one
+// dim metadata row for the closing turn. The row's rendered lines are
+// folded into the preceding item's chatItemLineRanges entry so n/N block
+// navigation still lands on items rather than on the reference row; when
+// the row renders empty (all fields unavailable) the layout matches slice
+// 04 exactly.
 func (m *Model) itemTranscriptBody() string {
 	var b strings.Builder
 	m.chatItemLineRanges = make(map[transcriptLineKey]lineRange)
@@ -41,9 +49,38 @@ func (m *Model) itemTranscriptBody() string {
 			continue
 		}
 		if lastRenderedIdx >= 0 {
-			for range itemSpacingBefore(m.chatVisibleItems[lastRenderedIdx], item) {
+			prev := m.chatVisibleItems[lastRenderedIdx]
+			spacing := itemSpacingBefore(prev, item)
+			// Coordinate change: split the two-line gap so the metadata
+			// row for the closing turn (if any fields exist) lands
+			// between one leading and one trailing blank. Slice 12's
+			// boundary banner will later share this gap; slice 11 only
+			// owns the interior row.
+			if spacing >= 2 {
 				b.WriteString("\n")
 				line++
+				row := m.renderTurnMetadataRow(prev.coord, false, false)
+				if row != "" {
+					b.WriteString(row)
+					b.WriteString("\n")
+					line += strings.Count(row, "\n") + 1
+					// Fold the metadata row's rows into the previous
+					// item's line range so n/N navigation lands on the
+					// item and treats the row as its trailing chrome.
+					key := transcriptLineKey{itemKey: prev.key}
+					rng := m.chatItemLineRanges[key]
+					rng.end = line - 1
+					m.chatItemLineRanges[key] = rng
+				}
+				for range spacing - 1 {
+					b.WriteString("\n")
+					line++
+				}
+			} else {
+				for range spacing {
+					b.WriteString("\n")
+					line++
+				}
 			}
 		}
 		start := line
@@ -52,6 +89,26 @@ func (m *Model) itemTranscriptBody() string {
 		line += strings.Count(body, "\n") + 1
 		m.chatItemLineRanges[transcriptLineKey{itemKey: item.key}] = lineRange{start: start, end: line - 1}
 		lastRenderedIdx = i
+	}
+	// Step-end metadata row: emit below the last rendered item when the
+	// current step has reached a terminal status. Interior boundaries do
+	// not carry cost/tokens because StepStatus.Cost/Tokens accrue across
+	// attempts, not per turn (see docs/plans/omp-slice-11-turn-metadata-row.md).
+	if lastRenderedIdx >= 0 {
+		prev := m.chatVisibleItems[lastRenderedIdx]
+		if idx, ok := m.index[m.chatStep]; ok && !m.steps[idx].end.IsZero() {
+			if row := m.renderTurnMetadataRow(prev.coord, true, true); row != "" {
+				b.WriteString("\n")
+				line++
+				b.WriteString(row)
+				b.WriteString("\n")
+				line += strings.Count(row, "\n") + 1
+				key := transcriptLineKey{itemKey: prev.key}
+				rng := m.chatItemLineRanges[key]
+				rng.end = line - 1
+				m.chatItemLineRanges[key] = rng
+			}
+		}
 	}
 	return b.String()
 }
