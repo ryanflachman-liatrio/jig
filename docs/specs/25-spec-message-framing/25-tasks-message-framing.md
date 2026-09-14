@@ -80,7 +80,7 @@
       files; capture the passing output in
       `docs/specs/25-spec-message-framing/25-proofs/25-task-01-proofs.md`.
 
-### [ ] 2.0 User bubble framing replaces the `User` label (Unit 1)
+### [x] 2.0 User bubble framing replaces the `User` label (Unit 1)
 
 #### 2.0 Proof Artifact(s)
 
@@ -112,35 +112,35 @@
 
 #### 2.0 Tasks
 
-- [ ] 2.1 In `internal/tui/shared/styles.go`, add `UserBubble lipgloss.Style`
+- [x] 2.1 In `internal/tui/shared/styles.go`, add `UserBubble lipgloss.Style`
       to the `Chat` struct (with a short "why" comment: background-only tint,
       no foreground override, reused for bubble content and padding rows) and
       initialize it as `lipgloss.NewStyle().Background(bgLeast)` (the existing
       `hexBBQ` token); remove the `UserGuidance` field and its initializer.
-- [ ] 2.2 Delete `internal/tui/monitor/monitor_transcript_view.go`
+- [x] 2.2 Delete `internal/tui/monitor/monitor_transcript_view.go`
       (`writeUserGuidance` has no remaining callers once 2.1 lands).
-- [ ] 2.3 In `monitor_transcript_items_view.go`, replace the
+- [x] 2.3 In `monitor_transcript_items_view.go`, replace the
       `item.role == transcript.RoleUser` branch of the `transcriptItemText`
       case: compute the bubble's content width from `m.transcriptInnerW`
       less the prefix width, right-pad each rendered markdown row to that
       width, and wrap each row through `shared.TintRow` using
       `shared.Theme.Chat.UserBubble`'s resolved background.
-- [ ] 2.4 Emit one fully tinted blank padding row (via `TintRow` on a
+- [x] 2.4 Emit one fully tinted blank padding row (via `TintRow` on a
       space-filled row of content width) immediately before and after the
       bubble's content rows.
-- [ ] 2.5 Extend the selection-prefix composition so the cursor-bar prefix is
+- [x] 2.5 Extend the selection-prefix composition so the cursor-bar prefix is
       applied to every bubble row (content and both padding rows), following
       `prefixCardRows`; verify the unselected two-space prefix still applies
       per row identically to the assistant branch.
-- [ ] 2.6 Confirm (add a regression test if not already covered) that the
+- [x] 2.6 Confirm (add a regression test if not already covered) that the
       assistant branch is untouched: same top-margin-trim behavior, same
       leading offset, no background escape.
-- [ ] 2.7 Write `monitor_transcript_bubble_test.go` covering the six Proof
+- [x] 2.7 Write `monitor_transcript_bubble_test.go` covering the six Proof
       Artifact tests above (no-`User`-label + padding tint, equal offsets,
       fenced-code tint survival, edge-trim survival, selection prefix on all
       rows, and `UserBubble`'s background resolving to `hexBBQ` with no new
       palette constant added).
-- [ ] 2.8 Capture the screenshot/capture proof and the `go build ./cmd/jig`
+- [x] 2.8 Capture the screenshot/capture proof and the `go build ./cmd/jig`
       output in
       `docs/specs/25-spec-message-framing/25-proofs/25-task-02-proofs.md`.
 

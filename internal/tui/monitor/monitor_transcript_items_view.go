@@ -151,10 +151,10 @@ func (m *Model) writeTranscriptItem(b *strings.Builder, item transcriptItem, sel
 	case transcriptItemReadGroup:
 		m.writeReadGroup(b, item, selected, expanded)
 	case transcriptItemText:
-		rendered := m.renderMarkdown(item.primary.key, block.Text)
 		if item.role == transcript.RoleUser {
-			b.WriteString(prefix + shared.Theme.Chat.UserGuidance.Render("User") + "\n" + rendered)
+			b.WriteString(m.renderUserText(prefix, item, block))
 		} else {
+			rendered := m.renderMarkdown(item.primary.key, block.Text)
 			// Glamour prepends a top-margin blank line. Land the item
 			// prefix (bar+space when selected, two spaces when unselected)
 			// on the first content line instead of on a standalone blank
@@ -351,6 +351,43 @@ func diffStatsBadge(m *Model, item transcriptItem) string {
 		return ""
 	}
 	return "+" + strconv.Itoa(stats.added) + "/-" + strconv.Itoa(stats.removed)
+}
+
+// renderUserText builds the operator-authored text item's rendered content
+// (currently always the full markdown body) and frames it as a background
+// bubble (FR-09.1/FR-09.2). Threading collapse through this function keeps
+// one call site responsible for choosing between the summary row and the
+// full body once the oversized-item collapse lands.
+func (m *Model) renderUserText(prefix string, item transcriptItem, block transcript.Block) string {
+	rendered := m.renderMarkdown(item.primary.key, block.Text)
+	return m.renderUserBubble(prefix, rendered)
+}
+
+// renderUserBubble wraps already-rendered content in the user bubble: one
+// tinted blank row above and below the content rows, each row padded with
+// trailing fill to the panel's content width so the tint reads as a full
+// background fill rather than a highlight limited to the text. Width matches
+// the wrap width baked into m.renderer (FR-09.3: same horizontal offset as
+// assistant prose, which is prefixed without a separate width reservation).
+// Rows are tinted via shared.TintRow so a background-resetting SGR sequence
+// inside glamour output (fenced code) does not punch a hole in the bubble
+// (FR-09.10).
+func (m *Model) renderUserBubble(prefix, content string) string {
+	width := m.transcriptInnerW
+	if width < 1 {
+		width = 1
+	}
+	background := shared.StyleBackground(shared.Theme.Chat.UserBubble)
+	lines := strings.Split(strings.Trim(content, "\n"), "\n")
+	rows := make([]string, 0, len(lines)+2)
+	padding := shared.TintRow(strings.Repeat(" ", width), background)
+	rows = append(rows, padding)
+	for _, line := range lines {
+		fill := max(width-lipgloss.Width(line), 0)
+		rows = append(rows, shared.TintRow(line+strings.Repeat(" ", fill), background))
+	}
+	rows = append(rows, padding)
+	return prefixCardRows(prefix, strings.Join(rows, "\n"))
 }
 
 func prefixCardRows(prefix, card string) string {

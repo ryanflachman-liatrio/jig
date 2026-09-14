@@ -83,16 +83,18 @@ type Styles struct {
 		BlurredBorder color.Color
 	}
 	Chat struct {
-		// UserGuidance distinguishes operator-authored Markdown from assistant prose
-		// without introducing monitor-local colors.
-		UserGuidance lipgloss.Style
-		Thinking     lipgloss.Style
-		ToolCall     lipgloss.Style
-		ToolResult   lipgloss.Style
-		Hint         lipgloss.Style
-		BlockCursor  lipgloss.Style
-		CodeBlock    lipgloss.Style
-		CodeText     lipgloss.Style
+		// UserBubble is the background-only tint that distinguishes
+		// operator-authored text from assistant prose (omp parity: role is
+		// carried by fill, not a label). It reuses the existing bgLeastVisible
+		// token (hexBBQ) rather than introducing a new palette color.
+		UserBubble  lipgloss.Style
+		Thinking    lipgloss.Style
+		ToolCall    lipgloss.Style
+		ToolResult  lipgloss.Style
+		Hint        lipgloss.Style
+		BlockCursor lipgloss.Style
+		CodeBlock   lipgloss.Style
+		CodeText    lipgloss.Style
 
 		// TranscriptActivity and TranscriptDetail form the quiet, one-level
 		// disclosure hierarchy used by the run monitor. They intentionally do
@@ -306,7 +308,7 @@ func DefaultTheme() Styles {
 	s.Textarea.BlurredBorder = lipgloss.Color(hexIron)
 
 	s.Chat.Thinking = lipgloss.NewStyle().Italic(true).Foreground(fgDim)
-	s.Chat.UserGuidance = lipgloss.NewStyle().Foreground(fgMuted).PaddingLeft(1)
+	s.Chat.UserBubble = lipgloss.NewStyle().Background(bgLeast)
 	s.Chat.ToolCall = lipgloss.NewStyle().Foreground(primary)
 	s.Chat.ToolResult = lipgloss.NewStyle().Foreground(accent)
 	s.Chat.Hint = lipgloss.NewStyle().Foreground(fgDim)

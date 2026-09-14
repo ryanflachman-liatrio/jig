@@ -3,9 +3,20 @@ package shared
 import (
 	"regexp"
 	"strings"
+
+	"charm.land/lipgloss/v2"
 )
 
 var sgrSequence = regexp.MustCompile(`\x1b\[([0-9;]*)m`)
+
+// StyleBackground returns the raw SGR sequence that opens style's background,
+// suitable as the background argument to TintRow. It renders style against
+// empty content and strips the trailing reset, so a caller building a tinted
+// multi-row surface can source its background from one themed style instead
+// of a duplicated hex literal.
+func StyleBackground(style lipgloss.Style) string {
+	return strings.TrimSuffix(style.Render(""), "\x1b[m")
+}
 
 // TintRow wraps row in background and reapplies it after any SGR sequence
 // that resets the background (parameters `0`, empty, or `49`). Content can
