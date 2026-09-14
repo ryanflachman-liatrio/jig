@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"testing"
+	"time"
 
 	"jig/internal/transcript"
 )
@@ -135,6 +136,65 @@ func TestTranscriptReloadBuildsAndPrunesPageLocalItems(t *testing.T) {
 	m.setChatPage(transcript.Page{})
 	if len(m.chatItems) != 0 || len(m.chatItemExpand) != 0 {
 		t.Fatalf("empty page retained item state: items=%+v expand=%+v", m.chatItems, m.chatItemExpand)
+	}
+}
+
+func TestTurnTimestampsSelectsFirstAndLast(t *testing.T) {
+	entries := []transcript.Entry{
+		{Seq: 1, Ts: "2026-09-14T10:00:00Z", Generation: 0, Iteration: 0, Attempt: 0, Role: transcript.RoleUser,
+			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "turn 0 begin"}}},
+		{Seq: 2, Ts: "2026-09-14T10:00:04Z", Generation: 0, Iteration: 0, Attempt: 0, Role: transcript.RoleAssistant,
+			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "turn 0 end"}}},
+		{Seq: 3, Ts: "2026-09-14T10:00:07Z", Generation: 0, Iteration: 1, Attempt: 0, Role: transcript.RoleAssistant,
+			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "turn 1"}}},
+	}
+	start, end, ok := turnTimestamps(entries, toolCorrelationKey{})
+	if !ok {
+		t.Fatalf("turnTimestamps ok=false, want true")
+	}
+	wantStart, _ := time.Parse(time.RFC3339, "2026-09-14T10:00:00Z")
+	wantEnd, _ := time.Parse(time.RFC3339, "2026-09-14T10:00:04Z")
+	if !start.Equal(wantStart) || !end.Equal(wantEnd) {
+		t.Fatalf("turn 0 endpoints = (%v,%v), want (%v,%v)", start, end, wantStart, wantEnd)
+	}
+	// The toolCorrelationKey.toolUseID field is deliberately ignored so a
+	// tool exchange and its result fold into one turn.
+	start, end, ok = turnTimestamps(entries, toolCorrelationKey{toolUseID: "unused"})
+	if !ok || !start.Equal(wantStart) || !end.Equal(wantEnd) {
+		t.Fatalf("toolUseID must be ignored, got (start=%v,end=%v,ok=%v)", start, end, ok)
+	}
+}
+
+func TestTurnTimestampsSingleEntryEqualEndpoints(t *testing.T) {
+	entries := []transcript.Entry{
+		{Seq: 1, Ts: "2026-09-14T10:00:00Z", Generation: 0, Iteration: 0, Attempt: 0, Role: transcript.RoleUser,
+			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "only entry"}}},
+	}
+	start, end, ok := turnTimestamps(entries, toolCorrelationKey{})
+	if !ok || !start.Equal(end) {
+		t.Fatalf("single entry: got (start=%v,end=%v,ok=%v), want equal endpoints ok=true", start, end, ok)
+	}
+}
+
+func TestTurnTimestampsUnparseableTsIgnored(t *testing.T) {
+	entries := []transcript.Entry{
+		{Seq: 1, Ts: "", Generation: 0, Iteration: 0, Attempt: 0, Role: transcript.RoleUser,
+			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "no ts"}}},
+		{Seq: 2, Ts: "not-a-timestamp", Generation: 0, Iteration: 0, Attempt: 0, Role: transcript.RoleAssistant,
+			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "bad ts"}}},
+	}
+	if _, _, ok := turnTimestamps(entries, toolCorrelationKey{}); ok {
+		t.Fatalf("turnTimestamps ok=true, want false when no entry has a parseable Ts")
+	}
+}
+
+func TestTurnTimestampsCoordinateAbsentReturnsFalse(t *testing.T) {
+	entries := []transcript.Entry{
+		{Seq: 1, Ts: "2026-09-14T10:00:00Z", Generation: 0, Iteration: 0, Attempt: 0, Role: transcript.RoleUser,
+			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "wrong coord"}}},
+	}
+	if _, _, ok := turnTimestamps(entries, toolCorrelationKey{iteration: 5}); ok {
+		t.Fatalf("turnTimestamps ok=true, want false when coord has no entries")
 	}
 }
 
