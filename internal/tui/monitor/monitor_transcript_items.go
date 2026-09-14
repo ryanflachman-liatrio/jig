@@ -24,11 +24,12 @@ func buildTranscriptItems(entries []transcript.Entry, stepRunning bool) []transc
 			kind := itemKindForBlock(entry.Role, block)
 			if block.Type != transcript.BlockToolUse && block.Type != transcript.BlockToolResult {
 				items = append(items, transcriptItem{
-					key:     transcriptItemKey{anchor: ref.key, kind: kind},
-					kind:    kind,
-					role:    entry.Role,
-					primary: ref,
-					coord:   toolCorrelationKey{generation: entry.Generation, iteration: entry.Iteration, attempt: entry.Attempt},
+					key:       transcriptItemKey{anchor: ref.key, kind: kind},
+					kind:      kind,
+					role:      entry.Role,
+					primary:   ref,
+					coord:     toolCorrelationKey{generation: entry.Generation, iteration: entry.Iteration, attempt: entry.Attempt},
+					oversized: kind == transcriptItemText && entry.Role == transcript.RoleUser && len(block.Text) > chatTextCollapseBytes,
 				})
 				continue
 			}

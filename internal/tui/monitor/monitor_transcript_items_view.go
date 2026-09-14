@@ -152,7 +152,7 @@ func (m *Model) writeTranscriptItem(b *strings.Builder, item transcriptItem, sel
 		m.writeReadGroup(b, item, selected, expanded)
 	case transcriptItemText:
 		if item.role == transcript.RoleUser {
-			b.WriteString(m.renderUserText(prefix, item, block))
+			b.WriteString(m.renderUserText(prefix, item, block, expanded))
 		} else {
 			rendered := m.renderMarkdown(item.primary.key, block.Text)
 			// Glamour prepends a top-margin blank line. Land the item
@@ -353,12 +353,16 @@ func diffStatsBadge(m *Model, item transcriptItem) string {
 	return "+" + strconv.Itoa(stats.added) + "/-" + strconv.Itoa(stats.removed)
 }
 
-// renderUserText builds the operator-authored text item's rendered content
-// (currently always the full markdown body) and frames it as a background
-// bubble (FR-09.1/FR-09.2). Threading collapse through this function keeps
-// one call site responsible for choosing between the summary row and the
-// full body once the oversized-item collapse lands.
-func (m *Model) renderUserText(prefix string, item transcriptItem, block transcript.Block) string {
+// renderUserText builds the operator-authored text item's content and frames
+// it as a background bubble (FR-09.1/FR-09.2). An oversized item that is not
+// expanded renders a dim one-line summary instead of invoking the markdown
+// renderer at all (FR-09.4/FR-09.5); every other user-role text item, and an
+// oversized item once expanded, renders the full markdown body (FR-09.6).
+func (m *Model) renderUserText(prefix string, item transcriptItem, block transcript.Block, expanded bool) string {
+	if item.oversized && !expanded {
+		summary := shared.Theme.Chat.Hint.Render(buildCollapseSummary(block.Text, m.transcriptInnerW))
+		return m.renderUserBubble(prefix, summary)
+	}
 	rendered := m.renderMarkdown(item.primary.key, block.Text)
 	return m.renderUserBubble(prefix, rendered)
 }
@@ -398,7 +402,7 @@ func prefixCardRows(prefix, card string) string {
 }
 
 func itemHasDetail(item transcriptItem) bool {
-	return item.kind != transcriptItemText
+	return item.kind != transcriptItemText || item.oversized
 }
 
 func (m *Model) writeItemDetail(b *strings.Builder, label, content string, anchor detailAnchor) {

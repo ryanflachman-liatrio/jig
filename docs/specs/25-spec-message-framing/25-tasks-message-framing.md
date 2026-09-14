@@ -144,7 +144,7 @@
       output in
       `docs/specs/25-spec-message-framing/25-proofs/25-task-02-proofs.md`.
 
-### [ ] 3.0 Oversized user text collapses into a dim summary row (Unit 2 — trigger and rendering)
+### [x] 3.0 Oversized user text collapses into a dim summary row (Unit 2 — trigger and rendering)
 
 #### 3.0 Proof Artifact(s)
 
@@ -168,22 +168,22 @@
 
 #### 3.0 Tasks
 
-- [ ] 3.1 In `monitor_model.go`, add
+- [x] 3.1 In `monitor_model.go`, add
       `chatTextCollapseBytes = 4096` beside `chatExpandMax`/`chatWindowMax`,
       with a comment explaining the measurement is on raw block bytes because
       rendered size is unknowable without the render this budget exists to
       skip (per the spec's Technical Considerations).
-- [ ] 3.2 Add an `oversized bool` field to the `transcriptItem` struct in
+- [x] 3.2 Add an `oversized bool` field to the `transcriptItem` struct in
       `monitor_model.go` with a comment naming its scope (user-role text
       items only).
-- [ ] 3.3 In `monitor_transcript_items.go`, set `oversized` at construction
+- [x] 3.3 In `monitor_transcript_items.go`, set `oversized` at construction
       time in the non-tool-use/tool-result branch of `buildTranscriptItems`
       (or `itemKindForBlock`'s call site): true only when
       `kind == transcriptItemText && role == transcript.RoleUser &&
       len(block.Text) > chatTextCollapseBytes`.
-- [ ] 3.4 Update `itemHasDetail` in `monitor_transcript_items_view.go` to
+- [x] 3.4 Update `itemHasDetail` in `monitor_transcript_items_view.go` to
       return `item.kind != transcriptItemText || item.oversized`.
-- [ ] 3.5 Create `monitor_transcript_collapse.go` with: a heading-label
+- [x] 3.5 Create `monitor_transcript_collapse.go` with: a heading-label
       extractor (first line matching a markdown ATX heading, trimmed of `#`
       and whitespace) falling back to `"User input"`; a human-readable byte
       size formatter; a raw-newline line counter; and a
@@ -191,12 +191,12 @@
       `<label> · <size> · <n> line(s)` and ANSI-aware truncates it
       (`ansi.Truncate`, matching the existing `monitor_view.go` pattern) to
       `width` with a trailing ellipsis.
-- [ ] 3.6 Wire `buildCollapseSummary` into the `transcriptItemText` /
+- [x] 3.6 Wire `buildCollapseSummary` into the `transcriptItemText` /
       `RoleUser` branch from Task 2.0: when `item.oversized && !expanded`,
       render the summary row (styled with `Theme.Chat.Hint`) as the bubble's
       sole content row instead of calling `renderMarkdown`; when expanded,
       fall through to the Task 2.0 full-markdown bubble path.
-- [ ] 3.7 Write `monitor_transcript_collapse_test.go` covering the five Proof
+- [x] 3.7 Write `monitor_transcript_collapse_test.go` covering the five Proof
       Artifact tests above, using a counting fake renderer (or a call-count
       wrapper around `renderMarkdown`) to assert zero render invocations on
       first paint for an oversized block.

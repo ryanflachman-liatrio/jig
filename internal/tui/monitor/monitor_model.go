@@ -386,6 +386,13 @@ const (
 	// run with thousands of messages stays responsive. Earlier entries are
 	// available through fixed-size pages.
 	chatWindowMax = 300
+
+	// chatTextCollapseBytes bounds a user-role text block above which it
+	// renders as a collapsed summary row instead of full markdown. It is
+	// measured against the raw block text in bytes, not rendered lines,
+	// because counting rendered lines would require the very render this
+	// budget exists to skip.
+	chatTextCollapseBytes = 4096
 	// A tool exchange can straddle an entry-count page boundary. Keep only a
 	// small adjacent run of tool-only entries so the common batched use/result
 	// pair stays together without making memory proportional to transcript size.
@@ -469,6 +476,11 @@ type transcriptItem struct {
 	groupMembers []transcriptItem
 	displayState toolDisplayState
 	coord        toolCorrelationKey
+	// oversized is set only for a user-role text item whose raw block text
+	// exceeds chatTextCollapseBytes. It is computed once at construction
+	// time (buildTranscriptItems) so the view never re-reads block bytes to
+	// decide whether to collapse.
+	oversized bool
 }
 
 // transcriptRenderKey separates markdown, detail, card, and diff
