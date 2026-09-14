@@ -205,10 +205,7 @@ func (m *Model) writeTranscriptItem(b *strings.Builder, item transcriptItem, sel
 			}
 		}
 	case transcriptItemThinking:
-		b.WriteString(prefix + marker + " " + shared.Theme.Chat.Thinking.Render(shared.IconThinking+" reasoning") + "\n")
-		if expanded {
-			m.writeItemDetail(b, "Reasoning", block.Text, detailAnchorHead)
-		}
+		m.writeThinkingItem(b, item, block, prefix, marker, expanded)
 	default:
 		label := "Unsupported " + string(block.Type)
 		b.WriteString(prefix + marker + " " + shared.Theme.Chat.Hint.Render(label) + "\n")
@@ -401,8 +398,30 @@ func prefixCardRows(prefix, card string) string {
 	return prefix + strings.ReplaceAll(card, "\n", "\n"+prefix)
 }
 
+// writeThinkingItem renders a thinking block's label row followed by its
+// content: full italic/muted markdown prose when the block is at or under
+// the collapse threshold (FR-10.1/FR-10.2, unconditionally — there is no
+// expand/collapse toggle for an under-threshold block), or the shared
+// collapse-summary row/full prose pair driven by `expanded` when oversized
+// (FR-10.3), reusing the same helpers renderUserText uses for oversized
+// user text.
+func (m *Model) writeThinkingItem(b *strings.Builder, item transcriptItem, block transcript.Block, prefix, marker string, expanded bool) {
+	label := shared.IconThinking + " reasoning"
+	b.WriteString(prefix + marker + " " + shared.Theme.Chat.Thinking.Render(label) + "\n")
+	if item.oversized && !expanded {
+		summary := shared.Theme.Chat.Hint.Render(buildCollapseSummary(block.Text, m.transcriptInnerW))
+		b.WriteString(prefix + summary + "\n")
+		return
+	}
+	rendered := m.renderThinkingMarkdown(item.primary.key, block.Text)
+	b.WriteString(prefix + strings.TrimLeft(rendered, "\n"))
+}
+
 func itemHasDetail(item transcriptItem) bool {
-	return item.kind != transcriptItemText || item.oversized
+	if item.kind == transcriptItemText || item.kind == transcriptItemThinking {
+		return item.oversized
+	}
+	return true
 }
 
 func (m *Model) writeItemDetail(b *strings.Builder, label, content string, anchor detailAnchor) {

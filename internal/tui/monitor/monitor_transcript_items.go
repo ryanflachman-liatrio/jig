@@ -29,7 +29,7 @@ func buildTranscriptItems(entries []transcript.Entry, stepRunning bool) []transc
 					role:      entry.Role,
 					primary:   ref,
 					coord:     toolCorrelationKey{generation: entry.Generation, iteration: entry.Iteration, attempt: entry.Attempt},
-					oversized: kind == transcriptItemText && entry.Role == transcript.RoleUser && len(block.Text) > chatTextCollapseBytes,
+					oversized: itemOversized(kind, entry.Role, block.Text),
 				})
 				continue
 			}
@@ -178,6 +178,22 @@ func itemSpacingBefore(previous, current transcriptItem) int {
 		return 0
 	}
 	return 1
+}
+
+// itemOversized reports whether a text or thinking item exceeds
+// chatTextCollapseBytes and so collapses to the shared summary row (FR-09.4,
+// FR-10.3). User-role text collapses only when authored by the operator;
+// thinking blocks collapse regardless of role, since reasoning has no
+// operator/assistant distinction.
+func itemOversized(kind transcriptItemKind, role transcript.Role, text string) bool {
+	switch kind {
+	case transcriptItemText:
+		return role == transcript.RoleUser && len(text) > chatTextCollapseBytes
+	case transcriptItemThinking:
+		return len(text) > chatTextCollapseBytes
+	default:
+		return false
+	}
 }
 
 func itemKindForBlock(role transcript.Role, block transcript.Block) transcriptItemKind {

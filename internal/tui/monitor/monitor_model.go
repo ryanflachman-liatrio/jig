@@ -194,6 +194,15 @@ type Model struct {
 	renderer     *glamour.TermRenderer
 	chatRendered map[blockKey]string
 
+	// thinkingRenderer renders thinking blocks with Theme.Chat.Thinking's
+	// italic/muted document styling (FR-10.1), built once per renderer
+	// rebuild in rebuildRenderer rather than per render. chatThinkingRendered
+	// is its per-block cache, kept separate from chatRendered so a thinking
+	// block's italic/muted output never collides with a plain-styled render
+	// under the same blockKey.
+	thinkingRenderer     *glamour.TermRenderer
+	chatThinkingRendered map[blockKey]string
+
 	// Search is intentionally page-local: loading another bounded page rebuilds
 	// hits from that page rather than indexing the complete transcript in memory.
 	searchOpen      bool
@@ -575,23 +584,24 @@ type lifecycleActions struct {
 // New creates a fresh monitor model for the given runID.
 func New(runID string) Model {
 	return Model{
-		RunID:              runID,
-		keys:               defaultMonitorKeys(),
-		index:              make(map[string]int),
-		stepOutput:         make(map[string]*strings.Builder),
-		msgCount:           make(map[string]int),
-		chatRendered:       make(map[blockKey]string),
-		chatItemExpand:     make(map[transcriptItemKey]bool),
-		chatItemRendered:   make(map[transcriptRenderKey]string),
-		chatItemLineRanges: make(map[transcriptLineKey]lineRange),
-		reviews:            make(map[string]engine.ReviewRequest),
-		reviewOutcomes:     make(map[string]reviewOutcome),
-		reviewDraftErrors:  make(map[string]string),
-		chatAutoScroll:     true,
-		expanded:           make(map[string]bool),
-		stepFiles:          make(map[string][]outputFile),
-		familyChildren:     make(map[string][]string),
-		simpleMode:         true, // C5 default; WithPrefs overrides from disk
+		RunID:                runID,
+		keys:                 defaultMonitorKeys(),
+		index:                make(map[string]int),
+		stepOutput:           make(map[string]*strings.Builder),
+		msgCount:             make(map[string]int),
+		chatRendered:         make(map[blockKey]string),
+		chatThinkingRendered: make(map[blockKey]string),
+		chatItemExpand:       make(map[transcriptItemKey]bool),
+		chatItemRendered:     make(map[transcriptRenderKey]string),
+		chatItemLineRanges:   make(map[transcriptLineKey]lineRange),
+		reviews:              make(map[string]engine.ReviewRequest),
+		reviewOutcomes:       make(map[string]reviewOutcome),
+		reviewDraftErrors:    make(map[string]string),
+		chatAutoScroll:       true,
+		expanded:             make(map[string]bool),
+		stepFiles:            make(map[string][]outputFile),
+		familyChildren:       make(map[string][]string),
+		simpleMode:           true, // C5 default; WithPrefs overrides from disk
 	}
 }
 
@@ -647,6 +657,9 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 	}
 	if m.chatRendered == nil {
 		m.chatRendered = make(map[blockKey]string)
+	}
+	if m.chatThinkingRendered == nil {
+		m.chatThinkingRendered = make(map[blockKey]string)
 	}
 	if m.chatItemExpand == nil {
 		m.chatItemExpand = make(map[transcriptItemKey]bool)

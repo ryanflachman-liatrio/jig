@@ -83,6 +83,7 @@ func (m *Model) reloadTranscript() {
 	// from the previous step would collide with the new step's same-seq blocks.
 	// Reset the render cache along with the other per-step view state.
 	m.chatRendered = make(map[blockKey]string)
+	m.chatThinkingRendered = make(map[blockKey]string)
 	m.pendingGPrefix = false
 	m.loadChatTail()
 	m.resumeTranscriptFollow()
@@ -592,6 +593,26 @@ func (m Model) renderMarkdown(key blockKey, text string) string {
 	}
 	if m.chatRendered != nil {
 		m.chatRendered[key] = out
+	}
+	return out
+}
+
+// renderThinkingMarkdown renders a thinking block's text through the italic/
+// muted thinkingRenderer variant (FR-10.1), caching the result per block in
+// chatThinkingRendered — a cache kept separate from chatRendered/renderer so
+// a reused blockKey never returns the wrong style.
+func (m Model) renderThinkingMarkdown(key blockKey, text string) string {
+	if cached, ok := m.chatThinkingRendered[key]; ok {
+		return cached
+	}
+	out := text
+	if m.thinkingRenderer != nil {
+		if rendered, err := m.thinkingRenderer.Render(text); err == nil {
+			out = rendered
+		}
+	}
+	if m.chatThinkingRendered != nil {
+		m.chatThinkingRendered[key] = out
 	}
 	return out
 }

@@ -255,8 +255,15 @@ func (m *Model) rebuildRenderer() {
 	}
 	m.insetRenderer = newMarkdownRenderer(fileStyle, insetWidth)
 
+	// thinkingRenderer renders reasoning blocks italic/muted at the same word
+	// wrap as m.renderer (FR-10.1); it is built from the shared themed
+	// ThinkingMarkdown config, not a local color literal, so thinking styling
+	// stays centralized in shared.Styles.
+	m.thinkingRenderer = newMarkdownRenderer(shared.Theme.ThinkingMarkdown, wordWrap)
+
 	if m.lastTranscriptW != m.transcriptInnerW {
 		m.chatRendered = make(map[blockKey]string)
+		m.chatThinkingRendered = make(map[blockKey]string)
 		m.chatItemRendered = make(map[transcriptRenderKey]string)
 		m.lastTranscriptW = m.transcriptInnerW
 	}

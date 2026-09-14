@@ -221,6 +221,11 @@ type Styles struct {
 	// render, replacing glamour's stock "dark" style so headings/code/links
 	// carry the Charmtone brand.
 	Markdown ansi.StyleConfig
+
+	// ThinkingMarkdown is Markdown with the document/text primitives set
+	// italic and muted, matching Chat.Thinking's styling, for the dedicated
+	// glamour renderer variant thinking blocks render through.
+	ThinkingMarkdown ansi.StyleConfig
 }
 
 // DefaultTheme builds the Charmtone Pantera theme (dark-only). All colors derive
@@ -434,6 +439,7 @@ func DefaultTheme() Styles {
 	s.GradTo = secondary
 
 	s.Markdown = charmtoneMarkdown()
+	s.ThinkingMarkdown = thinkingMarkdown(s.Markdown)
 
 	s.Security.Header = lipgloss.NewStyle().Bold(true).Foreground(fgMuted)
 	s.Security.CriticalRow = lipgloss.NewStyle().Bold(true).Foreground(danger)
@@ -487,6 +493,22 @@ func charmtoneMarkdown() ansi.StyleConfig {
 	c.BlockQuote.Italic = bp(true)
 	c.HorizontalRule.Color = sp(hexChar)
 
+	return c
+}
+
+// thinkingMarkdown clones the themed markdown style and repaints the document
+// and text primitives italic/muted (matching Chat.Thinking), so reasoning
+// prose reads as a quieter voice in the same column as assistant text
+// (FR-10.1) without fighting the ANSI markdown rendering already contains.
+func thinkingMarkdown(base ansi.StyleConfig) ansi.StyleConfig {
+	bp := func(b bool) *bool { return &b }
+	sp := func(s string) *string { return &s }
+
+	c := base
+	c.Document.Italic = bp(true)
+	c.Document.Color = sp(hexOyster)
+	c.Text.Italic = bp(true)
+	c.Text.Color = sp(hexOyster)
 	return c
 }
 
