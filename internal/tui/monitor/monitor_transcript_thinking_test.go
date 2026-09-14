@@ -126,15 +126,29 @@ func TestThinkingPulseAnimatesForRunningTrailingItem(t *testing.T) {
 	base := time.UnixMilli(1_700_000_000_000)
 	m, _ = m.Update(TickMsg(base))
 	first := stripANSI(m.itemTranscriptBody())
+	firstRange, ok := m.chatItemLineRanges[transcriptLineKey{itemKey: last.key}]
+	if !ok {
+		t.Fatalf("no line range recorded for the running thinking item")
+	}
 
 	m, _ = m.Update(TickMsg(base.Add(monitorFrameInterval)))
 	second := stripANSI(m.itemTranscriptBody())
+	secondRange, ok := m.chatItemLineRanges[transcriptLineKey{itemKey: last.key}]
+	if !ok {
+		t.Fatalf("line range disappeared for the running thinking item after a tick")
+	}
 
 	if first == second {
 		t.Fatalf("pulse glyph did not change one frame interval later:\nframe1:\n%s\nframe2:\n%s", first, second)
 	}
 	if !strings.Contains(first, "reasoning") || !strings.Contains(second, "reasoning") {
 		t.Fatalf("reasoning label missing from a pulse frame:\nframe1:\n%s\nframe2:\n%s", first, second)
+	}
+	// FR-10.5 (equal-width frames) implies the pulse never changes the
+	// item's rendered height: only the glyph's identity changes, not its
+	// cell width, so chatItemLineRanges must stay stable across frames.
+	if firstRange != secondRange {
+		t.Fatalf("pulse animation shifted the item's line range: %+v -> %+v", firstRange, secondRange)
 	}
 }
 

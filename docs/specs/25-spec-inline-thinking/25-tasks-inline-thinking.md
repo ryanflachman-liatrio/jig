@@ -94,7 +94,7 @@
   - Running/settled and tick-driven cases added to `monitor_transcript_thinking_test.go` alongside Unit 1's tests instead of a separate `monitor_test.go` addition, keeping all thinking-item behavior in one file per `docs/CONVENTIONS.md`'s "name files after the concern they own."
 - [x] 2.8 `gofmt -w` changed files; run `go test ./internal/tui/monitor/... -run Pulse` and `-run Tick`, and `go vet ./internal/tui/monitor/...`.
 
-### [ ] 3.0 Verify no regression to selection, expansion, copy, search, and line-range behavior for thinking items
+### [x] 3.0 Verify no regression to selection, expansion, copy, search, and line-range behavior for thinking items
 
 #### 3.0 Proof Artifact(s)
 
@@ -104,8 +104,12 @@
 
 #### 3.0 Tasks
 
-- [ ] 3.1 Review and, if needed, extend `monitor_search_test.go` so a search match on thinking prose still locates/expands the item under default-visible rendering (search previously operated on collapsed stubs).
-- [ ] 3.2 Review and, if needed, extend `clipboard_test.go` so copy-selected-item behavior for a thinking item (settled and running) matches its newly rendered content.
-- [ ] 3.3 Confirm `chatItemLineRanges` entries for thinking items remain correct (non-zero height, stable start/end) for under-threshold, oversized-collapsed, oversized-expanded, and running-pulse states.
-- [ ] 3.4 Run the full verification pass: `gofmt -l` on all changed files (expect empty output), `go build ./cmd/jig`, `go test ./...`, `go vet ./...`; record results as the task's CLI proof artifact.
-- [ ] 3.5 Review the final diff for scope creep (no unrelated file changes) before marking the spec's tasks complete.
+- [x] 3.1 Review and, if needed, extend `monitor_search_test.go` so a search match on thinking prose still locates/expands the item under default-visible rendering (search previously operated on collapsed stubs).
+  - Reviewed `TestTranscriptSearchFindsFilteredLoadedBlocks` and `TestTranscriptSearchFiltersRenderedPageAndKeepsToolContext`: both already exercise a thinking block through search/filter and continued to pass unchanged; `applyCurrentSearchHit`'s unconditional `chatItemExpand[item.key] = true` is now a no-op for under-threshold items (harmlessly redundant with Unit 1's always-visible rendering) and still matters for oversized ones. No gap found; no new test needed.
+- [x] 3.2 Review and, if needed, extend `clipboard_test.go` so copy-selected-item behavior for a thinking item (settled and running) matches its newly rendered content.
+  - Reviewed `TestClipboardItemPayloads`: the copy path (`runItemLoader`) serializes raw block text independent of the visual header/marker/pulse, so it is unaffected by Units 1-2. No gap found; no new test needed.
+- [x] 3.3 Confirm `chatItemLineRanges` entries for thinking items remain correct (non-zero height, stable start/end) for under-threshold, oversized-collapsed, oversized-expanded, and running-pulse states.
+  - Under-threshold/oversized-collapsed/oversized-expanded already covered by `monitor_test.go`'s pre-existing `TestMonitorItemNavigationKeepsCursorVisible`/`TestMonitorTallExpandedBlockKeepsHeaderVisible` (unchanged, still passing) and Task 1's new tests. Added an explicit running-pulse assertion to `TestThinkingPulseAnimatesForRunningTrailingItem`: the item's `chatItemLineRanges` entry stays present and identical across two distinct pulse frames, proving the glyph swap never changes rendered height.
+- [x] 3.4 Run the full verification pass: `gofmt -l` on all changed files (expect empty output), `go build ./cmd/jig`, `go test ./...`, `go vet ./...`; record results as the task's CLI proof artifact.
+- [x] 3.5 Review the final diff for scope creep (no unrelated file changes) before marking the spec's tasks complete.
+  - `git diff --stat` against the pre-Task-3 commit shows only the task-file status update and the one line-range assertion added to the test file; no production code changed in this task.
