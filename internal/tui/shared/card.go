@@ -1,15 +1,12 @@
 package shared
 
 import (
-	"regexp"
 	"strings"
 	"unicode"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 )
-
-var sgrSequence = regexp.MustCompile(`\x1b\[([0-9;]*)m`)
 
 // CardState controls the card's semantic border and optional recessed tint.
 type CardState int
@@ -123,45 +120,7 @@ func (c Card) finishRow(row string) string {
 	if c.State == CardError {
 		background = "\x1b[48;2;42;26;30m"
 	}
-	// Content can contain full/background SGR resets (notably Glamour output).
-	// Reapply the card background after those resets, while leaving intentional
-	// foreground and non-reset attributes intact. A parameter is a reset only
-	// when it is exactly 0 or 49; zeros in RGB parameters are not resets.
-	row = sgrSequence.ReplaceAllStringFunc(row, func(sequence string) string {
-		match := sgrSequence.FindStringSubmatch(sequence)
-		if sgrResetsBackground(match[1]) {
-			return sequence + background
-		}
-		return sequence
-	})
-	return background + row + "\x1b[49m"
-}
-
-func sgrResetsBackground(params string) bool {
-	if params == "" {
-		return true
-	}
-	fields := strings.Split(params, ";")
-	for i := 0; i < len(fields); i++ {
-		switch fields[i] {
-		case "0", "49":
-			return true
-		case "38", "48", "58":
-			// Extended foreground/background/underline colors consume their mode
-			// plus either one palette index or three RGB components. Those color
-			// components may legitimately be zero and are not SGR reset codes.
-			if i+1 >= len(fields) {
-				continue
-			}
-			switch fields[i+1] {
-			case "2":
-				i += min(4, len(fields)-i-1)
-			case "5":
-				i += min(2, len(fields)-i-1)
-			}
-		}
-	}
-	return false
+	return TintRow(row, background)
 }
 
 // RenderCard returns newline-separated rows without a trailing newline.
