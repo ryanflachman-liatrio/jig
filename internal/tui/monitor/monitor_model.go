@@ -301,6 +301,13 @@ type Model struct {
 	dirtyList bool
 	dirtyChat bool
 
+	// lastTick is the most recent frame timestamp (TickMsg), used only to
+	// select the running-step thinking pulse's current frame (FR-10.4/10.5).
+	// It is not a second animation clock: pulseFrame derives the frame index
+	// as a pure function of this timestamp, quantized to the same 100ms
+	// cadence that already drives EnsureFrame/monitorTickCmd.
+	lastTick time.Time
+
 	// chatAutoScroll tracks whether the Transcript panel should follow new
 	// content to the bottom. True by default; cleared when the user scrolls up;
 	// restored when the user scrolls back to bottom or navigates to a new step.
@@ -490,6 +497,12 @@ type transcriptItem struct {
 	// time (buildTranscriptItems) so the view never re-reads block bytes to
 	// decide whether to collapse.
 	oversized bool
+	// running is set only for a thinking item that is the running step's
+	// trailing item (no item after it in the built sequence), mirroring
+	// standaloneToolItem's stepRunning check for an orphan tool item. It
+	// drives the FR-10.4 pulse label; every other thinking item always
+	// renders the plain, non-animated label (FR-10.7).
+	running bool
 }
 
 // transcriptRenderKey separates markdown, detail, card, and diff

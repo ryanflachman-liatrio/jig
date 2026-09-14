@@ -249,6 +249,18 @@ func (m Model) currentChatStepRunning() bool {
 	return ok && m.steps[i].status == step.StatusRunning
 }
 
+// hasActiveThinkingPulse reports whether the loaded chat page's trailing item
+// is the running step's active thinking item (FR-10.4) — the only reason
+// TickMsg needs to dirty the Transcript panel, since every other item's
+// rendering does not depend on the current tick's timestamp.
+func (m Model) hasActiveThinkingPulse() bool {
+	if len(m.chatItems) == 0 {
+		return false
+	}
+	last := m.chatItems[len(m.chatItems)-1]
+	return last.kind == transcriptItemThinking && last.running
+}
+
 func (m *Model) loadOlderChat() {
 	if !m.chatPage.HasEarlier || m.RunDir == "" || m.chatStep == "" {
 		return

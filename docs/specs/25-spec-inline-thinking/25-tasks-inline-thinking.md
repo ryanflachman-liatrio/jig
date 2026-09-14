@@ -67,7 +67,7 @@
   - Added a dedicated `monitor_transcript_thinking_test.go` instead (file named after the concern it owns, per `docs/CONVENTIONS.md`).
 - [x] 1.9 `gofmt -w` changed files; run `go test ./internal/tui/monitor/... -run Thinking` and `go vet ./internal/tui/monitor/...`.
 
-### [ ] 2.0 Animate the running step's active thinking item with a fixed-width, frame-loop-quantized pulse
+### [x] 2.0 Animate the running step's active thinking item with a fixed-width, frame-loop-quantized pulse
 
 #### 2.0 Proof Artifact(s)
 
@@ -79,14 +79,20 @@
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Add the default and ASCII-fallback pulse glyph frame sets to `internal/tui/shared/icons.go` (or a new `internal/tui/shared` file if warranted), each glyph verified single-cell, following the qualified "pending Slice 14 preset table" phrasing already used for other glyph pairs.
-- [ ] 2.2 Create `monitor_transcript_pulse.go` with a pure `pulseFrame(t time.Time, frames []string) string` (or equivalent) computing `int(t.UnixMilli()/100) % len(frames)` — no new field, counter, or ticker.
-- [ ] 2.3 Add the trailing-running-thinking-item derivation to `monitor_transcript_items.go`/`monitor_transcript_items_view.go`: an item is the active running thinking item when `stepRunning` is true and it is the trailing item in the built sequence with no item after it (mirroring `standaloneToolItem`'s existing running check).
-- [ ] 2.4 In `writeTranscriptItem`'s thinking case, render `<pulse glyph> reasoning` in place of the static label when the item is the active running one, using the current tick's timestamp (threaded from the model, e.g. via a `m.lastTick`/render-time argument) to select the frame; otherwise render the plain `◇ reasoning` label from Unit 1 unchanged.
-- [ ] 2.5 Select the ASCII vs. default glyph set using the same qualification other pending glyphs already use in this package (Unicode by default; ASCII-fallback configuration where already supported).
-- [ ] 2.6 In `monitor_update.go`'s `TickMsg` case, set `dirtyChat = true` when the currently visible step has an active running trailing thinking item (in addition to the existing `dirtyList` on `anyRunning()`), so `chatBody()` is re-invoked each tick and the pulse actually advances; keep this gated (not a blanket `dirtyChat` on every tick) to avoid rerendering the transcript when no pulse is visible, per the "avoid rerendering unchanged documents" convention.
-- [ ] 2.7 Add/update tests: `monitor_transcript_pulse_test.go` (width/determinism/ASCII-fallback), `monitor_transcript_items_test.go`/`_view_test.go` (running vs. settled rendering), `monitor_test.go` (tick-driven glyph change + dirty-chat gating).
-- [ ] 2.8 `gofmt -w` changed files; run `go test ./internal/tui/monitor/... -run Pulse` and `-run Tick`, and `go vet ./internal/tui/monitor/...`.
+- [x] 2.1 Add the default and ASCII-fallback pulse glyph frame sets to `internal/tui/shared/icons.go` (or a new `internal/tui/shared` file if warranted), each glyph verified single-cell, following the qualified "pending Slice 14 preset table" phrasing already used for other glyph pairs.
+  - Added `PulseFrames`/`PulseFramesASCII` (breathing-dot frames) to `icons.go`.
+- [x] 2.2 Create `monitor_transcript_pulse.go` with a pure `pulseFrame(t time.Time, frames []string) string` (or equivalent) computing `int(t.UnixMilli()/100) % len(frames)` — no new field, counter, or ticker.
+- [x] 2.3 Add the trailing-running-thinking-item derivation to `monitor_transcript_items.go`/`monitor_transcript_items_view.go`: an item is the active running thinking item when `stepRunning` is true and it is the trailing item in the built sequence with no item after it (mirroring `standaloneToolItem`'s existing running check).
+  - Added a `running bool` field on `transcriptItem`, set at the end of `buildTranscriptItems`.
+- [x] 2.4 In `writeTranscriptItem`'s thinking case, render `<pulse glyph> reasoning` in place of the static label when the item is the active running one, using the current tick's timestamp (threaded from the model, e.g. via a `m.lastTick`/render-time argument) to select the frame; otherwise render the plain `◇ reasoning` label from Unit 1 unchanged.
+  - `m.lastTick` added to `Model`, updated in the `TickMsg` handler; `writeThinkingItem` selects the glyph from it when `item.running`.
+- [x] 2.5 Select the ASCII vs. default glyph set using the same qualification other pending glyphs already use in this package (Unicode by default; ASCII-fallback configuration where already supported).
+  - No ASCII-fallback runtime switch exists anywhere in this codebase today (verified during planning); production code uses `shared.PulseFrames` unconditionally. `shared.PulseFramesASCII` is defined and tested (`TestPulseFramesAreSingleCell`/`TestPulseFramesASCIINonEmpty`) so it is ready for Slice 14's preset table, matching this task list's stated assumption.
+- [x] 2.6 In `monitor_update.go`'s `TickMsg` case, set `dirtyChat = true` when the currently visible step has an active running trailing thinking item (in addition to the existing `dirtyList` on `anyRunning()`), so `chatBody()` is re-invoked each tick and the pulse actually advances; keep this gated (not a blanket `dirtyChat` on every tick) to avoid rerendering the transcript when no pulse is visible, per the "avoid rerendering unchanged documents" convention.
+  - Implemented via a new `hasActiveThinkingPulse()` helper on `Model`.
+- [x] 2.7 Add/update tests: `monitor_transcript_pulse_test.go` (width/determinism/ASCII-fallback), `monitor_transcript_items_test.go`/`_view_test.go` (running vs. settled rendering), `monitor_test.go` (tick-driven glyph change + dirty-chat gating).
+  - Running/settled and tick-driven cases added to `monitor_transcript_thinking_test.go` alongside Unit 1's tests instead of a separate `monitor_test.go` addition, keeping all thinking-item behavior in one file per `docs/CONVENTIONS.md`'s "name files after the concern they own."
+- [x] 2.8 `gofmt -w` changed files; run `go test ./internal/tui/monitor/... -run Pulse` and `-run Tick`, and `go vet ./internal/tui/monitor/...`.
 
 ### [ ] 3.0 Verify no regression to selection, expansion, copy, search, and line-range behavior for thinking items
 

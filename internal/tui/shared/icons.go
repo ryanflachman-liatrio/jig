@@ -64,3 +64,12 @@ const (
 	CondArrowGlyph = "▽"
 	ArrowLeftGlyph = "◄"
 )
+
+// PulseFrames is the running-step thinking pulse's default single-cell
+// animation frame set (FR-10.4/10.5); PulseFramesASCII is its single-cell
+// ASCII-fallback pair, defined alongside the other glyphs still pending
+// Slice 14's general preset table rather than a parallel mechanism.
+var (
+	PulseFrames      = []string{"·", "•", "●", "•"}
+	PulseFramesASCII = []string{".", "o", "O", "o"}
+)

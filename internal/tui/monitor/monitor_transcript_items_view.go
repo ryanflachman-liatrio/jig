@@ -406,7 +406,11 @@ func prefixCardRows(prefix, card string) string {
 // (FR-10.3), reusing the same helpers renderUserText uses for oversized
 // user text.
 func (m *Model) writeThinkingItem(b *strings.Builder, item transcriptItem, block transcript.Block, prefix, marker string, expanded bool) {
-	label := shared.IconThinking + " reasoning"
+	glyph := shared.IconThinking
+	if item.running {
+		glyph = pulseFrame(m.lastTick, shared.PulseFrames)
+	}
+	label := glyph + " reasoning"
 	b.WriteString(prefix + marker + " " + shared.Theme.Chat.Thinking.Render(label) + "\n")
 	if item.oversized && !expanded {
 		summary := shared.Theme.Chat.Hint.Render(buildCollapseSummary(block.Text, m.transcriptInnerW))

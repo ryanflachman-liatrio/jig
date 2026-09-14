@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"strings"
+	"time"
 
 	keybind "charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
@@ -78,8 +79,17 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case TickMsg:
 		// One animation frame: advance the live clock (a running step's elapsed
 		// column changes even with no new events) and flush whatever is dirty.
+		m.lastTick = time.Time(msg)
 		if m.anyRunning() {
 			m.dirtyList = true
+		}
+		// Only dirty the Transcript panel when its own pulse is actually
+		// animating: dirtying it on every tick while any step runs would
+		// rerender an unchanged transcript for the common case of a running
+		// step whose active item is not a thinking block (CONVENTIONS.md:
+		// avoid rerendering unchanged documents for every message).
+		if m.hasActiveThinkingPulse() {
+			m.dirtyChat = true
 		}
 		m.flushDirty()
 		// Re-arm while there is ongoing work: a running clock, or a pending repaint

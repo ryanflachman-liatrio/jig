@@ -3,7 +3,10 @@ package monitor
 import (
 	"strings"
 	"testing"
+	"time"
 
+	"jig/internal/engine"
+	"jig/internal/step"
 	"jig/internal/transcript"
 	"jig/internal/tui/shared"
 )
@@ -92,5 +95,84 @@ func TestThinkingOversizedCollapseExpandPersistsAcrossReload(t *testing.T) {
 	reloaded := stripANSI(m.itemTranscriptBody())
 	if !strings.Contains(reloaded, "reasoning reasoning") {
 		t.Fatalf("reloaded oversized thinking item lost its expanded content:\n%.200s", reloaded)
+	}
+}
+
+// FR-10.4: the running step's active (trailing) thinking item renders an
+// animated pulse label, and the frame advances as distinct TickMsg
+// timestamps are driven through Update — the tick-driven repaint path
+// (TickMsg dirtying the Transcript panel) that makes the pulse visible
+// between engine events. FR-10.6: the "reasoning" text label persists at
+// every frame.
+func TestThinkingPulseAnimatesForRunningTrailingItem(t *testing.T) {
+	runDir := writeTranscript(t, "a", []transcript.Entry{{
+		Seq: 1, Role: transcript.RoleAssistant,
+		Blocks: []transcript.Block{{Type: transcript.BlockThinking, Text: "still working"}},
+	}})
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{RunID: "run-1", StepID: "a", To: step.StatusRunning}})
+	m.loadChatTail() // reload now that the step's status flipped to running
+
+	last := m.chatItems[len(m.chatItems)-1]
+	if last.kind != transcriptItemThinking || !last.running {
+		t.Fatalf("expected trailing thinking item to be marked running, got %+v", last)
+	}
+	if !m.hasActiveThinkingPulse() {
+		t.Fatalf("expected hasActiveThinkingPulse to report true while the trailing item runs")
+	}
+
+	base := time.UnixMilli(1_700_000_000_000)
+	m, _ = m.Update(TickMsg(base))
+	first := stripANSI(m.itemTranscriptBody())
+
+	m, _ = m.Update(TickMsg(base.Add(monitorFrameInterval)))
+	second := stripANSI(m.itemTranscriptBody())
+
+	if first == second {
+		t.Fatalf("pulse glyph did not change one frame interval later:\nframe1:\n%s\nframe2:\n%s", first, second)
+	}
+	if !strings.Contains(first, "reasoning") || !strings.Contains(second, "reasoning") {
+		t.Fatalf("reasoning label missing from a pulse frame:\nframe1:\n%s\nframe2:\n%s", first, second)
+	}
+}
+
+// FR-10.7: a settled thinking item (step not running, or not the trailing
+// item) always renders the plain, non-animated ◇ reasoning label — never a
+// pulse frame — across repeated ticks, and does not cause TickMsg to dirty
+// the Transcript panel.
+func TestThinkingSettledItemNeverAnimates(t *testing.T) {
+	runDir := writeTranscript(t, "a", []transcript.Entry{{
+		Seq: 1, Role: transcript.RoleAssistant,
+		Blocks: []transcript.Block{{Type: transcript.BlockThinking, Text: "already settled"}},
+	}})
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+
+	last := m.chatItems[len(m.chatItems)-1]
+	if last.running {
+		t.Fatalf("settled step's trailing thinking item must not be marked running")
+	}
+	if m.hasActiveThinkingPulse() {
+		t.Fatalf("expected hasActiveThinkingPulse to report false for a settled step")
+	}
+
+	base := time.UnixMilli(1_700_000_000_000)
+	m, _ = m.Update(TickMsg(base))
+	first := stripANSI(m.itemTranscriptBody())
+	if m.dirtyChat {
+		t.Fatalf("TickMsg dirtied the Transcript panel for a settled thinking item")
+	}
+
+	m, _ = m.Update(TickMsg(base.Add(10 * monitorFrameInterval)))
+	second := stripANSI(m.itemTranscriptBody())
+
+	if first != second {
+		t.Fatalf("settled thinking item's rendering changed across ticks:\nframe1:\n%s\nframe2:\n%s", first, second)
+	}
+	if !strings.Contains(first, shared.IconThinking+" reasoning") {
+		t.Fatalf("settled thinking item missing the plain %q label:\n%s", shared.IconThinking+" reasoning", first)
 	}
 }

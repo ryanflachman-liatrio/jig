@@ -107,6 +107,16 @@ func buildTranscriptItems(entries []transcript.Entry, stepRunning bool) []transc
 			pendingResults[coord] = append(pendingResults[coord], len(items)-1)
 		}
 	}
+	// The active running thinking item is the trailing item in the built
+	// sequence when the step is running (mirrors standaloneToolItem's
+	// stepRunning check for an orphan tool item, which has no item after it
+	// either). This drives the FR-10.4 pulse; every other thinking item keeps
+	// the plain label (FR-10.7).
+	if stepRunning && len(items) > 0 {
+		if last := len(items) - 1; items[last].kind == transcriptItemThinking {
+			items[last].running = true
+		}
+	}
 	return items
 }
 
