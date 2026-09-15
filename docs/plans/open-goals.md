@@ -146,7 +146,7 @@ Ranked. Status: **have** / **partial** / **missing**.
 | ID | Goal | Status | Notes |
 |----|------|--------|-------|
 | T9 | **Turn grouping** — visual rhythm for user↔assistant units (spacing/headers without event-log chrome) | missing | Items are block-derived; spacing helpers only. |
-| T10 | **Richer tool lifecycle** — start → running (progress/spinner) → done/error with elapsed | partial | `· running` exists; no progress or duration. |
+| T10 | **Richer tool lifecycle** — start → running (progress/spinner) → done/error with elapsed | partial | `· running` exists; no progress or duration. Panel-header liveness pulse landed via omp-parity slice 13 (see [`omp-slice-13-liveness-and-spinners.md`](omp-slice-13-liveness-and-spinners.md)); per-tool progress/duration is still open. |
 | T11 | **Inline permission / question cards in transcript** (or clear deep-link into Gate) | partial | Questions/gates are Gate panel; tool failures hint in-row. Peers keep approvals in-stream. |
 | T12 | **Jump affinities** — next error / next tool / next edit without manually setting filters | partial | `n/N` + `F` filters; no dedicated affinity keys. |
 | T13 | **Full-run search index (optional)** — page-local `/` is correct for bounds; offer “search all pages” as an explicit opt-in | partial | By design page-local today. |
