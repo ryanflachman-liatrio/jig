@@ -165,3 +165,69 @@ func TestLiveCrumbVisualProof(t *testing.T) {
 		})
 	}
 }
+
+// TestLiveCrumbAnimationFrames captures one full 8-frame revolution of
+// the panel-header pulse. Each frame is a full 80x30 Monitor View() at
+// a real wall-clock moment shared.SpinnerFrame maps to that frame
+// index: SpinnerAdvanceMS apart, aligned to a window boundary.
+//
+// The output is a small numbered gallery slice-13-pulse-frame-N.html
+// that a downstream tool (ffmpeg, imagemagick, headless chrome + a
+// stitcher) can convert into an animated GIF or MP4 for a PR
+// walkthrough. The plain notes file records the frame glyph per file.
+//
+// The frames are captured with an actual wall-clock sleep between
+// renders (SpinnerAdvanceMS = 100ms → ~800ms total for a full
+// revolution) rather than injecting a clock; the animation surface is
+// the panel chrome, and View() reads time.Now() at composition. Only
+// runs under JIG_UI_SNAPSHOT_DIR so it never adds latency to a normal
+// go test invocation.
+func TestLiveCrumbAnimationFrames(t *testing.T) {
+	dir := os.Getenv("JIG_UI_SNAPSHOT_DIR")
+	if dir == "" {
+		t.Skip("set JIG_UI_SNAPSHOT_DIR to capture slice-13 animation frames")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := newMonitorWithSteps(t)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 80, Height: 30})
+	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{
+		RunID: "run-1", StepID: "a", To: step.StatusRunning,
+	}})
+	m.chatStep = "a"
+	m.focus = focusTranscript
+	m.setChatPage(slice13Page())
+	m.chatAutoScroll = true
+	m.refreshPanels()
+
+	// Sleep to the next window boundary so frame 0 starts at a
+	// predictable index; then sample every SpinnerAdvanceMS ms.
+	now := time.Now()
+	boundary := now.Truncate(shared.SpinnerAdvanceMS * time.Millisecond).Add(shared.SpinnerAdvanceMS * time.Millisecond)
+	time.Sleep(time.Until(boundary))
+
+	frames := 8
+	var index strings.Builder
+	fmt.Fprintf(&index, "Slice-13 animation frames: one full revolution of the 'status' spinner set.\n\n")
+	fmt.Fprintf(&index, "Each frame is a full 80x30 Monitor View() captured %dms apart.\n\n", shared.SpinnerAdvanceMS)
+	for i := 0; i < frames; i++ {
+		view := m.View()
+		crumb := m.liveCrumb(time.Now())
+		base := fmt.Sprintf("slice-13-pulse-frame-%d", i)
+		if err := os.WriteFile(filepath.Join(dir, base+".ansi"), []byte(view), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, base+".html"), []byte(terminalHTML(view)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		fmt.Fprintf(&index, "  frame %d → %s  (%q)\n", i, base, crumb)
+		if i < frames-1 {
+			time.Sleep(shared.SpinnerAdvanceMS * time.Millisecond)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "slice-13-pulse-frames-index.txt"), []byte(index.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

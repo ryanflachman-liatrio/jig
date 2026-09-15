@@ -25,6 +25,29 @@ import (
 // and in test assertions that grep for "LIVE". Slice 14's ASCII glyph
 // preset flips the SpinnerFrame lookup in one place.
 
+// liveCrumbClock is the source of "now" for the panel-header pulse.
+// It is a package-level function (rather than a Model field) so
+// tests can pin the pulse to a specific frame index without threading
+// a clock through every construction path. Production always sees
+// time.Now.
+var liveCrumbClock = time.Now
+
+// SetLiveCrumbClockForTest overrides the wall-clock the pulse consumer
+// reads and returns a restore closure the caller MUST defer. This is
+// the seam golden-frame proof tests use to render a deterministic
+// frame index; production code never calls it.
+//
+// Concurrent calls from parallel tests will race; tests that use this
+// hook must not run in parallel with any other test that reads or
+// writes the same global (t.Parallel is not appropriate here). This
+// is a testability wart accepted in exchange for keeping Model free
+// of a clock field.
+func SetLiveCrumbClockForTest(now func() time.Time) (restore func()) {
+	prev := liveCrumbClock
+	liveCrumbClock = now
+	return func() { liveCrumbClock = prev }
+}
+
 // liveCrumb returns the trailing `LIVE` label for the Transcript
 // panel's status line and title crumb. When the run is live, a
 // running step exists, and the operator is currently following the
@@ -33,11 +56,12 @@ import (
 // any other condition the label stays verbatim, so nothing regresses
 // on paused / not-following / no-step-running paths.
 //
-// The `now` parameter is passed by callers as time.Now() during View
-// composition. It is not captured; there is no per-caller state and no
-// timer — the existing monitor frame loop (monitor_frame.go) re-arms
-// while anyRunning() is true, and this function reads whatever frame
-// that loop is currently on.
+// The `now` parameter is passed by callers as liveCrumbClock() (which
+// resolves to time.Now in production) during View composition. It is
+// not captured; there is no per-caller state and no timer — the
+// existing monitor frame loop (monitor_frame.go) re-arms while
+// anyRunning() is true, and this function reads whatever frame that
+// loop is currently on.
 func (m Model) liveCrumb(now time.Time) string {
 	if !m.liveCrumbShouldPulse() {
 		return "LIVE"
