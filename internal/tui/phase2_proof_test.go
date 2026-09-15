@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -15,6 +16,14 @@ import (
 )
 
 func TestPhase2ProofFrames(t *testing.T) {
+	// Pin the panel-header pulse (omp-parity slice 13) so captures do
+	// not drift by frame index every wall-clock second; see
+	// golden_path_proof_test.go for the rationale.
+	restore := monitor.SetLiveCrumbClockForTest(func() time.Time {
+		return time.UnixMilli(0)
+	})
+	defer restore()
+
 	dir := filepath.Join("..", "..", "docs", "plans", "tui-lazygit-polish", "phase-2", "proofs")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)

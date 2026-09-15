@@ -196,12 +196,29 @@ None identified.
 
 ## Open Questions
 
-- **Q-13.1 (resolve before implementing)** Given FR-13.7 and slice 01's
-  state-colored borders, does a spinner have any consumer besides the thinking
-  pulse? *If not, fold this slice into slice 10 and close it.*
-- **Q-13.2** Quantize to the existing 100 ms tick, or raise the rate while
-  animating? *Suggest quantize; 10 fps is smooth enough for a rotor and costs
-  nothing.*
-- **Q-13.3** Should the running *step* (as opposed to a running tool exchange)
-  carry the pulse in the panel header rather than inline? *Suggest yes — one
-  indicator per panel is calmer than one per item.*
+- **Q-13.1 (resolved)** Given FR-13.7 and slice 01's state-colored borders,
+  does a spinner have any consumer besides the thinking pulse? **Yes — the
+  Transcript panel's `LIVE` chip.** The consumer audit in
+  [`docs/plans/omp-slice-13-liveness-and-spinners.md`](../../../plans/omp-slice-13-liveness-and-spinners.md#consumer-availability-audit-q-131)
+  ruled out every transcript-body candidate (card headers per FR-13.7,
+  card borders per CC-9 nesting cost, banners/turn rows as reference
+  material, Steps panel per NG6, the removed `typing…` label). Slice 13
+  therefore ships the mechanism with the panel-header `LIVE` chip as the
+  first consumer; slice 10 will register `spinner.thinking` in one line
+  when it lands.
+- **Q-13.2 (resolved)** Quantize to the existing 100 ms tick, or raise the
+  rate while animating? **Quantize.** `shared.SpinnerAdvanceMS = 100`
+  matches `monitor.monitorFrameInterval`, so no frame ever arrives that
+  the monitor has not already scheduled a repaint for. Ten fps on an
+  8-frame set is one revolution in 800 ms — smooth enough for a rotor,
+  no second `tea.Tick`, and the `ticking` single-owner invariant is
+  preserved by construction (`TestLiveCrumbAddsNoTickers`).
+- **Q-13.3 (resolved)** Should the running *step* carry the pulse in the
+  panel header rather than inline? **Yes.** The Transcript panel title
+  crumb and status line each promote the `LIVE` chip from a static word
+  to `<frame> LIVE` while all four preconditions hold
+  (`contentTranscript && showsTranscriptFollow && chatAutoScroll &&
+  anyRunning`). Card headers, boundary banners, metadata rows, and text
+  items stay still. Slice 10 will add a second panel-scoped indicator
+  (the thinking pulse next to the reasoning body), not a per-item
+  spinner. One indicator per panel is calmer than one per item.

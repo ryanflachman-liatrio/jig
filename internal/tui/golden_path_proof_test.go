@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -22,6 +23,17 @@ import (
 // TestGoldenPathProofFrames writes the six SCRIPT.md reference frames as
 // stripped text proofs under docs/plans/tui-lazygit-polish/golden-path/.
 func TestGoldenPathProofFrames(t *testing.T) {
+	// Pin the panel-header pulse (omp-parity slice 13) to a deterministic
+	// frame so the golden captures do not shift by frame index every
+	// wall-clock second. The chosen timestamp lands on frame index 0 of
+	// the "status" spinner (⣾) at a window boundary; if slice 13 ever
+	// changes SpinnerAdvanceMS or the frame set order this expected
+	// glyph will change and every golden capture updates in lockstep.
+	restore := monitor.SetLiveCrumbClockForTest(func() time.Time {
+		return time.UnixMilli(0)
+	})
+	defer restore()
+
 	outDir := filepath.Join("..", "..", "docs", "plans", "tui-lazygit-polish", "golden-path")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		t.Fatal(err)
