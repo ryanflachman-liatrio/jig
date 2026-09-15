@@ -6,6 +6,7 @@ import (
 
 	"jig/internal/toolcall"
 	"jig/internal/transcript"
+	"jig/internal/tui/shared"
 )
 
 type blockRef struct {
@@ -269,10 +270,10 @@ func searchPreview(text, lowerNeedle string) string {
 	const maxRunes = 72
 	runes := []rune(flat)
 	if len(runes) > maxRunes {
-		flat = string(runes[:maxRunes]) + "…"
+		flat = string(runes[:maxRunes]) + shared.EllipsisGlyph
 	}
 	if start > 0 {
-		flat = "…" + flat
+		flat = shared.EllipsisGlyph + flat
 	}
 	return flat
 }

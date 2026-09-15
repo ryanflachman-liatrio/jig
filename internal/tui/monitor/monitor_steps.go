@@ -104,7 +104,7 @@ func (m Model) listBody() string {
 				head += "  " + shared.Theme.Badge.Error.Render(label)
 			}
 			if len(children) > 0 {
-				head += "  " + shared.Theme.Badge.Accent.Render(fmt.Sprintf("×%d", len(children)))
+				head += "  " + shared.Theme.Badge.Accent.Render(fmt.Sprintf("%s%d", shared.ForEachGlyph, len(children)))
 			}
 			if i == m.cursor {
 				b.WriteString(shared.Theme.SelectedLine.Render(head) + "\n")
@@ -257,7 +257,7 @@ func (m Model) listBody() string {
 			dropped = len(recent) - outputMaxLines
 			recent = recent[len(recent)-outputMaxLines:]
 		}
-		b.WriteString("\n  " + shared.Theme.Question.Render("▸ "+s.id) + "\n")
+		b.WriteString("\n  " + shared.Theme.Question.Render(shared.CollapsedMarker+" "+s.id) + "\n")
 		if dropped > 0 {
 			// Slice 06 FR-06.13: the Steps-panel live tail already tail-
 			// anchors by dropping leading rows; surface a shared-vocabulary
@@ -327,25 +327,25 @@ func fanOutProgress(children []string, index map[string]int, steps []monitorStep
 func stepIndicator(s step.Status) (string, lipgloss.Style) {
 	switch s {
 	case step.StatusPending:
-		return "○", shared.Theme.Question
+		return shared.IconPending, shared.Theme.Question
 	case step.StatusRunning:
-		return "●", shared.Theme.Running
+		return shared.IconRunning, shared.Theme.Running
 	case step.StatusSucceeded:
-		return "✓", shared.Theme.Valid
+		return shared.IconSuccess, shared.Theme.Valid
 	case step.StatusFailed:
-		return "✗", shared.Theme.Error
+		return shared.IconError, shared.Theme.Error
 	case step.StatusSkipped:
-		return "—", shared.Theme.Question
+		return shared.IconSkipped, shared.Theme.Question
 	case step.StatusValidating:
-		return "⇢", shared.Theme.Question
+		return shared.IconValidate, shared.Theme.Question
 	case step.StatusAwaitingReview:
-		return "?", shared.Theme.Marker
+		return shared.IconReview, shared.Theme.Marker
 	case step.StatusNeedsInput:
-		return "⊙", shared.Theme.Marker
+		return shared.IconInput, shared.Theme.Marker
 	case step.StatusAwaitingRecovery:
-		return "⚠", shared.Theme.Error
+		return shared.IconRecovery, shared.Theme.Error
 	default:
-		return "·", shared.Theme.Question
+		return shared.IconStateUnknown, shared.Theme.Question
 	}
 }
 
@@ -378,7 +378,7 @@ func subtypeBadgeLabel(subtype string) string {
 
 func stepDuration(s monitorStep) string {
 	if s.start.IsZero() {
-		return "—"
+		return shared.IconSkipped
 	}
 	end := s.end
 	running := end.IsZero()

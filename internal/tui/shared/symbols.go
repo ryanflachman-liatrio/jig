@@ -59,6 +59,14 @@ type symbolTable struct {
 	IconToolCall   string
 	IconToolResult string
 
+	// Step-indicator vocabulary (monitor_steps.go). AwaitingRecovery
+	// deserves its own key rather than reusing IconStatusWarning so the
+	// step indicator and the tool-status-line glyph can diverge without
+	// disturbing each other. IconStateUnknown is the fallback returned
+	// when a caller passes an unrecognized step.Status.
+	IconRecovery     string
+	IconStateUnknown string
+
 	// Status-line header glyphs (slice 02).
 	IconStatusSuccess string
 	IconStatusError   string
@@ -87,6 +95,10 @@ type symbolTable struct {
 	CursorBar         string
 	RuleGlyph         string
 	EllipsisGlyph     string
+	// CommentGlyph is the filled dot used by the review workspace to
+	// mark a line with review comments (view.go's `● N label`); kept
+	// distinct from IconRunning so the two can evolve independently.
+	CommentGlyph string
 
 	// Chart-grid glyphs (single-cell in both presets).
 	LoopGlyph      string
@@ -130,6 +142,9 @@ var unicodeSymbols = symbolTable{
 	IconToolCall:   "▸",
 	IconToolResult: "↳",
 
+	IconRecovery:     "⚠",
+	IconStateUnknown: "·",
+
 	IconStatusSuccess: "•",
 	IconStatusError:   "✗",
 	IconStatusRunning: "○",
@@ -154,6 +169,7 @@ var unicodeSymbols = symbolTable{
 	CursorBar:         "▌",
 	RuleGlyph:         "─",
 	EllipsisGlyph:     "…",
+	CommentGlyph:      "●",
 
 	LoopGlyph:      "↺",
 	RetryGlyph:     "↻",
@@ -193,6 +209,9 @@ var asciiSymbols = symbolTable{
 	IconToolCall:   ">",
 	IconToolResult: "->",
 
+	IconRecovery:     "!!",
+	IconStateUnknown: ".",
+
 	IconStatusSuccess: "*",
 	IconStatusError:   "!",
 	IconStatusRunning: ".",
@@ -217,6 +236,7 @@ var asciiSymbols = symbolTable{
 	CursorBar:         "|",
 	RuleGlyph:         "-",
 	EllipsisGlyph:     "...",
+	CommentGlyph:      "*",
 
 	LoopGlyph:      "L",
 	RetryGlyph:     "R",

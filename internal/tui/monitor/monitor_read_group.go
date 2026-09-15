@@ -9,6 +9,7 @@ import (
 
 	"jig/internal/toolcall"
 	"jig/internal/transcript"
+	"jig/internal/tui/shared"
 )
 
 type readTarget struct {
@@ -199,5 +200,5 @@ func compactReadSelectors(selectors []string) []string {
 	if len(selectors) <= 3 {
 		return append([]string(nil), selectors...)
 	}
-	return []string{selectors[0], selectors[1], "…", selectors[len(selectors)-1]}
+	return []string{selectors[0], selectors[1], shared.EllipsisGlyph, selectors[len(selectors)-1]}
 }

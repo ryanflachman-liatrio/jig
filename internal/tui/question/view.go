@@ -108,5 +108,5 @@ func clip(s string, width int) string {
 	if width < 2 {
 		return s
 	}
-	return ansi.Truncate(s, width, "…")
+	return ansi.Truncate(s, width, shared.EllipsisGlyph)
 }

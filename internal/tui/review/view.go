@@ -32,7 +32,7 @@ func (m *Model) EmbeddedView() string {
 		return m.summaryBody()
 	}
 	if m.width > 0 && m.width < 90 {
-		divider := shared.Theme.Review.Gutter.Render(strings.Repeat("─", max(m.width, 1)))
+		divider := shared.Theme.Review.Gutter.Render(strings.Repeat(shared.RuleGlyph, max(m.width, 1)))
 		base := m.compactDocumentSwitcher() + "\n" + divider + "\n" + m.documentViewBody(false)
 		if m.mode == ModeComposeComment || m.mode == ModeEditComment {
 			return m.commentOverlay(base)
@@ -45,7 +45,7 @@ func (m *Model) EmbeddedView() string {
 	left := m.documentListBody(railWidth, true)
 	right := m.documentViewBody(true)
 	height := max(max(lipgloss.Height(left), lipgloss.Height(right)), 1)
-	separator := strings.TrimSuffix(strings.Repeat(" "+shared.Theme.Review.Gutter.Render("│")+" \n", height), "\n")
+	separator := strings.TrimSuffix(strings.Repeat(" "+shared.Theme.Review.Gutter.Render(shared.BoxVertical)+" \n", height), "\n")
 	base := lipgloss.JoinHorizontal(
 		lipgloss.Top,
 		fitReviewWidth(left, railWidth),
@@ -123,13 +123,13 @@ func (m *Model) documentListBody(width int, withHeading bool) string {
 		b.WriteString("\n\n")
 	}
 	for i, d := range m.docs {
-		mark := "○"
+		mark := shared.IconPending
 		if m.reviewed[d.meta.ID] {
-			mark = "✓"
+			mark = shared.IconSuccess
 		}
 		cursor := " "
 		if i == m.active {
-			cursor = "▌"
+			cursor = shared.CursorBar
 		}
 		count := 0
 		for _, c := range m.comments {
@@ -141,7 +141,7 @@ func (m *Model) documentListBody(width int, withHeading bool) string {
 		if count > 0 {
 			line += fmt.Sprintf("  %d", count)
 		}
-		b.WriteString(ansi.Truncate(line, max(width, 1), "…"))
+		b.WriteString(ansi.Truncate(line, max(width, 1), shared.EllipsisGlyph))
 		b.WriteByte('\n')
 	}
 	return b.String()
@@ -327,11 +327,11 @@ func (m *Model) writeSourceRow(b *strings.Builder, line int) {
 	rail, railStyle := " ", shared.Theme.Review.Gutter
 	gutterStyle := shared.Theme.Review.Gutter
 	if selected {
-		rail, railStyle = "▌", shared.Theme.Review.RangeRail
+		rail, railStyle = shared.CursorBar, shared.Theme.Review.RangeRail
 		gutterStyle = shared.Theme.Review.GutterRange
 	}
 	if line == m.cursor {
-		rail, railStyle = "▌", shared.Theme.Review.CursorRail
+		rail, railStyle = shared.CursorBar, shared.Theme.Review.CursorRail
 		gutterStyle = shared.Theme.Review.GutterCursor
 	}
 
@@ -355,7 +355,7 @@ func (m *Model) writeSourceRow(b *strings.Builder, line int) {
 		digits := len(fmt.Sprint(len(m.docs[m.active].lines)))
 		b.WriteString(gutterStyle.Render(fmt.Sprintf("%*d", digits, line)))
 	}
-	b.WriteString(shared.Theme.Review.Gutter.Render(" │ "))
+	b.WriteString(shared.Theme.Review.Gutter.Render(" " + shared.BoxVertical + " "))
 	b.WriteString(content)
 	b.WriteByte('\n')
 }
@@ -377,9 +377,9 @@ func (m *Model) writeFoldedSourceRow(b *strings.Builder, hunk *diffHunk) {
 	b.WriteString(shared.Theme.Review.Gutter.Render("  "))
 	b.WriteByte(' ')
 	m.writeDiffGutters(b, diffRow{}, false, false)
-	b.WriteString(shared.Theme.Review.Gutter.Render(" │ "))
+	b.WriteString(shared.Theme.Review.Gutter.Render(" " + shared.BoxVertical + " "))
 	bodyRows := hunk.endPatchLine - hunk.startPatchLine
-	placeholder := fmt.Sprintf("… %d patch rows folded; press z to expand", bodyRows)
+	placeholder := fmt.Sprintf("%s %d patch rows folded; press z to expand", shared.EllipsisGlyph, bodyRows)
 	content := shared.Theme.Review.FoldedPlaceholder.Render(placeholder)
 	b.WriteString(ansi.Cut(content, 0, m.sourceContentWidth()))
 	b.WriteByte('\n')
@@ -455,11 +455,11 @@ func (m *Model) sourceCommentMarker(line int) (string, lipgloss.Style) {
 	if len(comments) == 0 {
 		return "", shared.Theme.Review.CommentMarker
 	}
-	marker := "●"
+	marker := shared.CommentGlyph
 	if len(comments) > 1 {
-		marker = fmt.Sprintf("●%d", len(comments))
+		marker = fmt.Sprintf("%s%d", shared.CommentGlyph, len(comments))
 		if lipgloss.Width(marker) > 2 {
-			marker = "●+"
+			marker = shared.CommentGlyph + "+"
 		}
 	}
 	for _, comment := range comments {
@@ -473,10 +473,10 @@ func (m *Model) sourceCommentMarker(line int) (string, lipgloss.Style) {
 func (m *Model) sourceGutterWidth() int {
 	if m.parsedDiffPresentation() != nil {
 		digits := m.diffGutterDigits()
-		return lipgloss.Width("  " + "  " + " " + strings.Repeat("0", digits) + " " + strings.Repeat("0", digits) + " │ ")
+		return lipgloss.Width("  " + "  " + " " + strings.Repeat("0", digits) + " " + strings.Repeat("0", digits) + " " + shared.BoxVertical + " ")
 	}
 	digits := len(fmt.Sprint(len(m.docs[m.active].lines)))
-	return lipgloss.Width("  " + "  " + " " + strings.Repeat("0", digits) + " │ ")
+	return lipgloss.Width("  " + "  " + " " + strings.Repeat("0", digits) + " " + shared.BoxVertical + " ")
 }
 
 func (m *Model) sourceContentWidth() int {
@@ -545,10 +545,10 @@ func previewWindow(rows []string, activeStart, activeEnd, limit int) []string {
 
 func (m *Model) writePreviewBlock(b *strings.Builder, index int, block previewBlock, rendered string) {
 	active := index == m.previewBlock
-	rail, railStyle := "│", shared.Theme.Review.BlockRailInactive
+	rail, railStyle := shared.BoxVertical, shared.Theme.Review.BlockRailInactive
 	metaStyle := shared.Theme.Review.BlockMetaInactive
 	if active {
-		rail, railStyle = "▌", shared.Theme.Review.BlockRailActive
+		rail, railStyle = shared.CursorBar, shared.Theme.Review.BlockRailActive
 		metaStyle = shared.Theme.Review.BlockMetaActive
 	}
 
@@ -558,14 +558,14 @@ func (m *Model) writePreviewBlock(b *strings.Builder, index int, block previewBl
 	comments := m.commentsForRange(m.docs[m.active].meta.ID, block.startLine, block.endLine)
 	if activeID := m.activeCommentForRange(comments); activeID != "" {
 		b.WriteString("  ")
-		b.WriteString(shared.Theme.Review.ActiveComment.Render("● " + activeID + " active"))
+		b.WriteString(shared.Theme.Review.ActiveComment.Render(shared.CommentGlyph + " " + activeID + " active"))
 	} else if len(comments) > 0 {
 		label := "comment"
 		if len(comments) != 1 {
 			label = "comments"
 		}
 		b.WriteString("  ")
-		b.WriteString(shared.Theme.Review.CommentMarker.Render(fmt.Sprintf("● %d %s", len(comments), label)))
+		b.WriteString(shared.Theme.Review.CommentMarker.Render(fmt.Sprintf("%s %d %s", shared.CommentGlyph, len(comments), label)))
 	}
 	b.WriteByte('\n')
 	for _, row := range strings.Split(rendered, "\n") {
@@ -673,7 +673,7 @@ func (m *Model) summaryBody() string {
 	for i, choice := range m.choices {
 		row := fmt.Sprintf("  [%d] %s", i+1, choice)
 		if choice == m.verdict {
-			row = shared.Theme.SelectedLine.Render("▌ " + row[2:])
+			row = shared.Theme.SelectedLine.Render(shared.CursorBar + " " + row[2:])
 		}
 		b.WriteString(row + "\n")
 	}
@@ -691,7 +691,7 @@ func (m *Model) compactDocumentSwitcher() string {
 		label = doc.ID
 	}
 	line := fmt.Sprintf("Documents  %d/%d · %s  ·  {/} change", m.active+1, len(m.docs), label)
-	return ansi.Truncate(line, max(m.width, 1), "…")
+	return ansi.Truncate(line, max(m.width, 1), shared.EllipsisGlyph)
 }
 
 func fitReviewWidth(content string, width int) string {

@@ -141,14 +141,14 @@ func stepMarkers(s workflow.Step) []string {
 		}
 	}
 	for _, route := range s.Routes {
-		m := fmt.Sprintf("↺ route→%s", route.Goto)
+		m := fmt.Sprintf("%s route→%s", shared.LoopGlyph, route.Goto)
 		if route.MaxIterations > 0 {
 			m += fmt.Sprintf(" (max %d)", route.MaxIterations)
 		}
 		out = append(out, m)
 	}
 	if s.Validate != nil {
-		out = append(out, "⇢ gate")
+		out = append(out, shared.GateGlyph+" gate")
 	}
 	if s.When != "" {
 		out = append(out, "when "+s.When)

@@ -25,6 +25,10 @@ var (
 	IconToolCall   string
 	IconToolResult string
 
+	// Step-indicator vocabulary (monitor_steps.go).
+	IconRecovery     string
+	IconStateUnknown string
+
 	// Status glyphs for the tool-exchange status-line header. These are the
 	// slot-independent state marks: RenderStatusLine writes them into the icon
 	// slot, ToolStatusIcon supplies them per state. Running and pending share
@@ -62,6 +66,7 @@ var (
 	CursorBar     string // selected-row marker
 	RuleGlyph     string
 	EllipsisGlyph string
+	CommentGlyph  string
 	LoopGlyph     string
 	RetryGlyph    string
 	GateGlyph     string
@@ -120,6 +125,9 @@ func refreshVocabulary() {
 	IconToolCall = t.IconToolCall
 	IconToolResult = t.IconToolResult
 
+	IconRecovery = t.IconRecovery
+	IconStateUnknown = t.IconStateUnknown
+
 	IconStatusSuccess = t.IconStatusSuccess
 	IconStatusError = t.IconStatusError
 	IconStatusRunning = t.IconStatusRunning
@@ -145,6 +153,7 @@ func refreshVocabulary() {
 	CursorBar = t.CursorBar
 	RuleGlyph = t.RuleGlyph
 	EllipsisGlyph = t.EllipsisGlyph
+	CommentGlyph = t.CommentGlyph
 	LoopGlyph = t.LoopGlyph
 	RetryGlyph = t.RetryGlyph
 	GateGlyph = t.GateGlyph

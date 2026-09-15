@@ -29,7 +29,7 @@ func clipReason(s string, width, maxLines int) string {
 	if len(r) > 0 {
 		r = r[:len(r)-1]
 	}
-	lines[maxLines-1] = string(r) + "…"
+	lines[maxLines-1] = string(r) + shared.EllipsisGlyph
 	return strings.Join(lines, "\n")
 }
 

@@ -534,16 +534,16 @@ func (m *Model) writeReviewOverview(b *strings.Builder, request engine.ReviewReq
 		return
 	}
 	for _, document := range request.Documents {
-		mark := "○"
+		mark := shared.IconPending
 		for i := range m.inputQueue {
 			entry := &m.inputQueue[i]
 			if entry.kind == inputKindReview && entry.stepID == request.StepID && entry.workspace != nil && entry.workspace.Reviewed(document.ID) {
-				mark = "✓"
+				mark = shared.IconSuccess
 				break
 			}
 		}
 		if submitted {
-			mark = "✓"
+			mark = shared.IconSuccess
 		}
 		label := document.Label
 		if label == "" {
@@ -700,7 +700,7 @@ func expandView(s string) string {
 	head := clampRunes(s[:half])
 	tail := clampRunesTail(s[len(s)-half:])
 	elided := len(s) - len(head) - len(tail)
-	return head + fmt.Sprintf("\n… %d KB elided …\n", elided/1024) + tail
+	return head + fmt.Sprintf("\n%s %d KB elided %s\n", shared.EllipsisGlyph, elided/1024, shared.EllipsisGlyph) + tail
 }
 
 // clampRunes / clampRunesTail back a byte slice off to a rune boundary so
