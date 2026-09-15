@@ -139,12 +139,12 @@ func RenderCard(c Card) string {
 		}
 		label += c.HeaderMeta
 	}
-	rows := []string{c.finishRow(composeBorderBar(c.Width, "╭", "╮", 3, cardLabel(label), border))}
+	rows := []string{c.finishRow(composeBorderBar(c.Width, BoxCornerTL, BoxCornerTR, 3, cardLabel(label), border))}
 	pl, pr := cardPadding(c.Width, c.PadLeft, c.PadRight)
 	contentWidth := CardContentWidth(c.Width, c.PadLeft, c.PadRight)
 	for i, section := range c.Sections {
 		if section.Label != "" || (section.Rule && i > 0) {
-			rows = append(rows, c.finishRow(composeBorderBar(c.Width, "├", "┤", 3, cardLabel(section.Label), border)))
+			rows = append(rows, c.finishRow(composeBorderBar(c.Width, BoxTeeL, BoxTeeR, 3, cardLabel(section.Label), border)))
 		}
 		for _, logical := range section.Lines {
 			for _, line := range strings.Split(logical, "\n") {
@@ -152,12 +152,12 @@ func RenderCard(c Card) string {
 				wrapped := ansi.Hardwrap(line, contentWidth, true)
 				for _, body := range strings.Split(wrapped, "\n") {
 					fill := max(contentWidth-lipgloss.Width(body), 0)
-					row := border.Render("│") + strings.Repeat(" ", pl) + body + strings.Repeat(" ", fill+pr) + border.Render("│")
+					row := border.Render(BoxVertical) + strings.Repeat(" ", pl) + body + strings.Repeat(" ", fill+pr) + border.Render(BoxVertical)
 					rows = append(rows, c.finishRow(row))
 				}
 			}
 		}
 	}
-	rows = append(rows, c.finishRow(composeBorderBar(c.Width, "╰", "╯", 3, "", border)))
+	rows = append(rows, c.finishRow(composeBorderBar(c.Width, BoxCornerBL, BoxCornerBR, 3, "", border)))
 	return strings.Join(rows, "\n")
 }

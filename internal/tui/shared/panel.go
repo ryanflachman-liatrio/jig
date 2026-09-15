@@ -94,7 +94,7 @@ func BreadcrumbTitle(parts []string, maxWidth int) string {
 	root, leaf := clean[0], clean[len(clean)-1]
 	middle := ""
 	if len(clean) > 2 {
-		middle = BreadcrumbSeparator + "…"
+		middle = BreadcrumbSeparator + EllipsisGlyph
 	}
 	fixed := middle + BreadcrumbSeparator + leaf
 	rootWidth := maxWidth - lipgloss.Width(fixed)
@@ -175,7 +175,7 @@ func composeBorderBar(width int, left, right string, capLength int, label string
 	}
 	edge := lipgloss.NewStyle().Foreground(foreground)
 	capLength = min(max(capLength, 0), width-lipgloss.Width(left)-lipgloss.Width(right))
-	cap := strings.Repeat("─", capLength)
+	cap := strings.Repeat(RuleGlyph, capLength)
 	budget := max(width-lipgloss.Width(left)-lipgloss.Width(right)-capLength-2, 0)
 	label = TruncateTitle(label, budget)
 	plain := left + cap
@@ -188,7 +188,7 @@ func composeBorderBar(width int, left, right string, capLength int, label string
 			return ""
 		}
 		return " " + label + " "
-	}() + edge.Render(strings.Repeat("─", fill)+right)
+	}() + edge.Render(strings.Repeat(RuleGlyph, fill)+right)
 }
 
 // TruncateTitle clips s to at most max visible cells, appending … when it must
@@ -200,7 +200,7 @@ func TruncateTitle(s string, max int) string {
 	if lipgloss.Width(s) <= max {
 		return s
 	}
-	return ansi.Truncate(s, max, "…")
+	return ansi.Truncate(s, max, EllipsisGlyph)
 }
 
 // PanelFrame returns the horizontal and vertical cells a panel's border+title
