@@ -1,4 +1,4 @@
-╭─ cd1234ef › [STEPS] ──────────╮╭─ seed › Transcript › LIVE ──────────────────────────────────────╮
+╭─ cd1234ef › [STEPS] ──────────╮╭─ seed › Transcript › ⣾ LIVE ────────────────────────────────────╮
 │ ▌  ●  seed  running           ││   ●  running                                                    │
 │      1.2k tok · $0.0200 · 0s  ││                                                                 │
 │    ○  gate  pending           ││                                                                 │
@@ -24,5 +24,5 @@
 │                               ││                                                                 │
 ╰───────────────────────────────╯╰─────────────────────────────────────────────────────────────────╯
   GATE · needs input  ·  Step: gate  ·  1 pending  ·  tab to open                                   
- cd1234ef · golden-path · gate · 1.2k tok · $0.0200 · LIVE                                          
+ cd1234ef · golden-path · gate · 1.2k tok · $0.0200 · ⣾ LIVE                                        
   awaiting review  ·  tab gate  •  enter transcript  •  j/k select  •  ? more  ·  simple            

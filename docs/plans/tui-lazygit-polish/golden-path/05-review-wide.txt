@@ -36,5 +36,5 @@
 │                                                                                                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
   GATE · awaiting review · workspace open  ·  Step: gate  ·  1 pending  ·  esc to close                                                                                             
- cd1234ef · golden-path · gate · 1.2k tok · $0.0200 · LIVE                                                                                                                          
+ cd1234ef · golden-path · gate · 1.2k tok · $0.0200 · ⣾ LIVE                                                                                                                        
   awaiting review  ·  S finish review  •  j/k move block  •  {/} change document  •  c new comment  •  enter open comment  •  r mark reviewed  •  s view  •  ? more  ·  simple      

@@ -36,5 +36,5 @@
 │                                                                                                                      │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
   GATE · awaiting review · workspace open  ·  Step: review  ·  1 pending  ·  esc to close                               
- cd1234ef · feature · review · 12.4k tok · $0.0800 · LIVE                                                               
+ cd1234ef · feature · review · 12.4k tok · $0.0800 · ⣾ LIVE                                                             
   awaiting review  ·  S finish review  •  j/k move block  •  {/} change document  •  c new comment  •  ? more  ·  simple
