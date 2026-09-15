@@ -13,10 +13,20 @@ import (
 
 	"jig/internal/datastore"
 	"jig/internal/tui"
+	"jig/internal/tui/shared"
 	"jig/internal/workflow"
 )
 
 func main() {
+	// --ascii is a process-wide glyph-preset selector (omp slice 14). We
+	// strip it from os.Args before the subcommand dispatcher so it works
+	// as either a global flag (\`jig --ascii\`) or ahead of a subcommand
+	// (\`jig --ascii run x.toml\`), and subcommand flag.Parse calls do
+	// not see an unknown flag. Every rendered glyph after this point
+	// consults the swapped vocabulary (shared.SetPreset), so downstream
+	// code — TUI, headless prompts, capture — degrades in one place.
+	applyGlobalPresetFlag()
+
 	// Subcommands run and exit before the TUI takes over the terminal.
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
@@ -155,4 +165,66 @@ func runPrune(args []string) int {
 	}
 	fmt.Printf("prune: removed %d run(s)\n", len(pruned))
 	return 0
+}
+
+// applyGlobalPresetFlag scans os.Args for the --ascii / -ascii /
+// --ascii=<bool> forms, strips the matched token when present, and
+// switches the shared glyph vocabulary to PresetASCII (omp slice 14
+// FR-14.3). Absent the flag the process keeps the default Unicode
+// preset — SetPreset(PresetUnicode) is not called explicitly so this
+// stays a no-op cost path.
+//
+// The flag is handled here, before flag.NewFlagSet in any subcommand,
+// so subcommand parsers do not have to redeclare --ascii and never see
+// it as an unknown flag. Recognized forms:
+//
+//	jig --ascii              (long)
+//	jig -ascii               (short-style, matches Go's flag package)
+//	jig --ascii=true         (explicit true)
+//	jig --ascii=false        (explicit false, treated as absent)
+//	jig --ascii <subcommand> (position between binary and subcommand)
+//	jig <subcommand> --ascii (any position; the token is stripped
+//	                          before the subcommand's flag.Parse runs)
+//
+// The literal token \`--\` terminates flag processing exactly as
+// flag.Parse would: an \`--ascii\` after \`--\` is treated as a
+// positional argument and left in place.
+func applyGlobalPresetFlag() {
+	if len(os.Args) < 2 {
+		return
+	}
+	filtered := os.Args[:1]
+	seen := false
+	value := true
+	stop := false
+	for _, arg := range os.Args[1:] {
+		if stop {
+			filtered = append(filtered, arg)
+			continue
+		}
+		if arg == "--" {
+			stop = true
+			filtered = append(filtered, arg)
+			continue
+		}
+		switch arg {
+		case "--ascii", "-ascii":
+			seen = true
+			value = true
+			continue
+		case "--ascii=true", "-ascii=true", "--ascii=1", "-ascii=1":
+			seen = true
+			value = true
+			continue
+		case "--ascii=false", "-ascii=false", "--ascii=0", "-ascii=0":
+			seen = true
+			value = false
+			continue
+		}
+		filtered = append(filtered, arg)
+	}
+	if seen && value {
+		shared.SetPreset(shared.PresetASCII)
+	}
+	os.Args = filtered
 }
