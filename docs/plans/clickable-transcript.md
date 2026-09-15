@@ -1,6 +1,6 @@
 # Implementation Plan: clickable Monitor transcript
 
-**Status:** Draft — awaiting approval
+**Status:** Implemented — 2026-09-15
 **Risk:** **low–medium** — the change lives entirely inside
 `internal/tui/monitor` and extends the existing optional-mouse contract already
 covered by [`monitor_mouse.go`](../../internal/tui/monitor/monitor_mouse.go)
@@ -151,7 +151,8 @@ under their finger between the click and the release.
 
 ## Data and state model
 
-No new struct fields, no new maps. The plan reuses:
+No new struct fields, no new maps, and no changes to the read-group or
+compact tool-group renderers. The implementation reuses:
 
 - `m.chatItemLineRanges` (body-line-space; already keyed by
   `transcriptItemKey`)
@@ -160,11 +161,14 @@ No new struct fields, no new maps. The plan reuses:
 - `m.chatItemExpand` / `m.chatItemExpandAll` (already the expansion
   source of truth)
 
-The one bit of new work is teaching the read-group renderer to record
-per-member line ranges the same way the compact tool-group renderer
-already does. That gives clicks on read-group children a target and
-harmonizes the two group renderers behind one hit-testing rule. See the
-**Read-group parity** step below.
+The plan originally proposed adding per-member line ranges to the
+read-group renderer for parity with compact tool groups. After tracing
+the render pipeline it turned out to be unnecessary: read-group children
+have no independent expansion state (a read group is single-level), so a
+click on any child row of an expanded read group is naturally handled by
+the "click on the header line only toggles; body clicks select-only"
+rule below. That rule collapses the two group kinds behind one
+hit-testing predicate without touching either renderer.
 
 ### Line-range invariant
 
@@ -175,8 +179,10 @@ body-line-space, inclusive of `end` (matching current usage in
 - Every visible top-level item has exactly one entry.
 - Every visible member of an expanded compact tool group has one entry,
   scoped to the lines its child card actually occupies.
-- **New:** Every visible member of an expanded read group has one entry,
-  scoped to the lines its child detail actually occupies.
+- A read group has a single entry (unchanged): the group's whole
+  rendered block. Hit-testing distinguishes header-line from body-line
+  clicks by comparing `line == rng.start`, so no per-member range is
+  needed there.
 - The group header and its children may overlap on the header line
   itself; hit-testing resolves that by preferring the smallest containing
   range (a child's range is always a strict subrange of the group's).
@@ -189,11 +195,11 @@ body-line-space, inclusive of `end` (matching current usage in
 | Standalone `transcriptItemToolResult` header | focus, select, toggle expansion |
 | `transcriptItemReadGroup` header (collapsed) | focus, select, expand group |
 | `transcriptItemReadGroup` header (expanded) | focus, select, collapse group (returns to summary) |
-| `transcriptItemReadGroup` child row (expanded) | focus, select the child, toggle that child's detail card |
+| `transcriptItemReadGroup` body row (expanded) | focus, select the group; **do not** collapse (reader-trap rule) |
 | `transcriptItemToolGroup` header (collapsed) | focus, select, expand group |
 | `transcriptItemToolGroup` header (expanded) | focus, select, collapse group |
 | `transcriptItemToolGroup` child card (expanded) | focus, select the child, toggle that child's detail card |
-| Detail body row *inside* an already-expanded exchange | focus, select the enclosing exchange, **do not** re-collapse (avoids the "click to read → oops, collapsed" trap) |
+| Detail body row *inside* an already-expanded exchange or group | focus, select the enclosing item, **do not** re-collapse it (avoids the "click to read → oops, collapsed" trap) |
 | `transcriptItemText` / `transcriptItemThinking` — under threshold | focus, select |
 | `transcriptItemText` / `transcriptItemThinking` — oversized | focus, select, toggle its summary/full toggle |
 | Boundary banner / per-turn metadata row | folded into the previous item's range; click behaves as a click on that previous item |
@@ -241,28 +247,7 @@ This helper is deliberately a `Model` method (value receiver) with no
 side effects — it is safe to call from `View` in future for hover
 affordances if we ever add them.
 
-### 2. Read-group parity — record per-member line ranges
-
-`writeReadGroup` in `monitor_read_group_view.go` currently writes the
-header + per-target summary rows into one string that becomes the
-group's block, and then walks members to write their expanded detail
-below. Extend it to accept `*map[transcriptItemKey]lineRange` (or
-return a small `readGroupRender` struct the way
-`renderCompactToolGroup` does), and record the start/end line for each
-expanded member.
-
-Constraints:
-
-- Keep the existing render cache (`transcriptRenderReadGroup`) intact —
-  the summary-string cache is width-and-state keyed and is not affected
-  by adding line-range accounting outside the cached string.
-- Do not add per-member ranges when the group is collapsed; only the
-  group-header range exists then, matching the compact tool-group
-  behavior.
-- Member ranges must land inside the group's overall range so the
-  reverse-walk hit test resolves them before the group header.
-
-### 3. `updateMouse` — Transcript click dispatch
+### 2. `updateMouse` — Transcript click dispatch
 
 Change the transcript-click branch of `updateMouse`:
 
@@ -292,7 +277,7 @@ the group kinds. Keeping the two predicates aligned is cheap and keeps
 the caret/marker glyph and the click-toggle in agreement: if the row
 shows a `▸`/`▾` marker, a click on it toggles that marker.
 
-### 4. Auto-scroll follow
+### 3. Auto-scroll follow
 
 Set `m.chatAutoScroll = false` on any transcript-panel click that
 resolves to a hit, mirroring `keys.BlockNav`, `keys.Toggle`, and
@@ -300,7 +285,7 @@ resolves to a hit, mirroring `keys.BlockNav`, `keys.Toggle`, and
 follow alone — a stray click in dead space shouldn't detach the user
 from live output.
 
-### 5. Search interaction
+### 4. Search interaction
 
 If a search is open (`m.searchOpen` is `true`), `mouseExcluded()` already
 returns `true` through `m.textareaActive()` — the click is dropped. No
@@ -314,14 +299,14 @@ not a search `n`/`N`: it sets `chatItemCursor` (not
 expandable. This is the natural mapping — a click at a specific line
 targets a specific item, not "the next search match after that item."
 
-### 6. File view
+### 5. File view
 
 `chatBody()` returns `m.fileBody()` when `m.selKind == "file"`, and
 `itemTranscriptBody` is never called. `chatItemLineRanges` is
 consequently empty. `itemAtTranscriptLine` returns `false`, and the
 click path resolves to "focus only" — unchanged from today.
 
-### 7. Docs & help
+### 6. Docs & help
 
 - **`docs/TUI.md`** — replace the transcript-click paragraph so it
   reads (approximately):
@@ -345,7 +330,7 @@ click path resolves to "focus only" — unchanged from today.
   selection` note to reflect the delivered behavior; keep drag-select
   and hover as open items.
 
-### 8. Testing
+### 7. Testing
 
 Add table-driven click tests alongside the existing
 `monitor_mouse_test.go` cases. The existing helpers (`monitorClick`,
@@ -394,7 +379,7 @@ appropriate but not required for the model correctness: expand a tool
 group with the mouse, capture the frame, confirm the caret glyph state
 matches the expected `▸`/`▾`.
 
-### 9. Performance
+### 8. Performance
 
 Each click walks `chatCursorTargets` in reverse — bounded by the
 loaded page (`chatWindowMax = 300`) and typically dominated by a
@@ -450,16 +435,16 @@ contract.
 
 ## Rollout
 
-- Ship as a plain code change in `internal/tui/monitor` plus the two
-  doc files above; no schema, no config, no prefs. The behavior is
+- Shipped as a plain code change in `internal/tui/monitor` plus the
+  two doc files above; no schema, no config, no prefs. The behavior is
   additive to `updateMouse` — a terminal or emulator without mouse
   reporting sees no change.
 - No feature flag. Simple mode does not gate mouse behavior today and
-  should not gate this either.
-- Bisect-safe: the change is one commit for the read-group range
-  accounting, one commit for the hit-testing helper + `updateMouse`
-  branch, one commit for docs. The tests land alongside the code
-  commit they cover.
+  does not gate this either.
+- Landed as three commits: the plan document, the hit-testing helper
+  plus `updateMouse` branch (with the read-group renderer left
+  untouched, see the note in the data-model section), and the docs +
+  tests. Each is independently revertable.
 
 ## Open questions
 

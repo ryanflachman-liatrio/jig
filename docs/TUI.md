@@ -89,9 +89,18 @@ jig remains keyboard-primary: mouse navigation is optional, requires no configur
 and does not replace contextual keyboard help. A plain primary
 click selects and focuses a visible row in Home's Workflows or Runs list and
 Monitor's Steps list, but it does not activate, open, start, resume, delete, or
-otherwise execute that row. A primary click in Monitor's Transcript content
-focuses Transcript without changing its selection or scroll offset. Detail
-clicks remain inactive.
+otherwise execute that row. A primary click in Monitor's Transcript body
+focuses Transcript, moves the block cursor to the clicked row, and, when
+that row is expandable, toggles its expansion state — the same view state
+change `enter`/`space` performs from the keyboard. Tool group headers,
+compact-group child cards, standalone tool exchanges, oversized text
+messages, and oversized reasoning rows are expandable; short text,
+reasoning under the collapse threshold, boundary banners, per-turn metadata
+rows, blank spacers, and file view are not. A click on an already-expanded
+item's body (any line past its header) selects the enclosing item without
+re-collapsing it so a click into a long expanded exchange never folds it
+shut. Auto-scroll follow is paused on any transcript click that resolves
+to a hit. Detail clicks remain inactive.
 
 A plain vertical wheel targets the eligible panel under the pointer and
 preserves keyboard focus. In Workflows, Runs, and Steps, one wheel event moves
