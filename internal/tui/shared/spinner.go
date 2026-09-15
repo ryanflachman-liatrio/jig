@@ -129,13 +129,12 @@ func activeSpinnerFrames(set SpinnerFrames) []string {
 	return set.ASCII
 }
 
-// spinnerASCIIPreset is the future ASCII glyph preset predicate (CC-7,
-// slice 14). Today it always reports false; when slice 14 lands it will
-// consult the same preset selector that Rule/IconStatus* will consult.
-// Kept as a private predicate so slice 14 edits one function rather
-// than every caller.
+// spinnerASCIIPreset reports whether the active glyph preset (symbols.go)
+// is PresetASCII. Slice 13 established the branch; slice 14 wired it to
+// the vocabulary selector so cmd/jig's --ascii flag reaches the spinner
+// through the same SetPreset call that reskins every other glyph.
 func spinnerASCIIPreset() bool {
-	return false
+	return activePreset() == PresetASCII
 }
 
 // SpinnerFrameWidth returns the cell width of the widest glyph in a
