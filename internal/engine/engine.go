@@ -1952,6 +1952,31 @@ func (s *scheduler) enterRecovery(stepID string) {
 	})
 }
 
+// writeStepSecurityMarkdown refreshes steps/<stepID>/security.md from the
+// run's findings.jsonl (the source of truth) so the step's on-disk artifacts
+// carry a human-readable security report alongside input.md/output.md,
+// visible in the same file list. Best-effort: persistence-off runs and read
+// errors are silently skipped since findings.jsonl is authoritative.
+func (s *scheduler) writeStepSecurityMarkdown(stepID string) {
+	if s.runDir == "" || stepID == "" {
+		return
+	}
+	findings, err := sentinel.ReadAll(datastore.FindingsPath(s.runDir))
+	if err != nil {
+		return
+	}
+	var stepFindings []sentinel.Finding
+	for _, f := range findings {
+		if f.StepID == stepID {
+			stepFindings = append(stepFindings, f)
+		}
+	}
+	if _, err := datastore.StepDir(s.runDir, stepID); err != nil {
+		return
+	}
+	_ = os.WriteFile(datastore.SecurityPath(s.runDir, stepID), []byte(sentinel.RenderMarkdown(stepID, stepFindings)), 0o644)
+}
+
 // handleSecurityFinding escalates critical security findings to the recovery
 // gate. Non-critical findings are silently recorded (seenEscalations) so
 // duplicate fingerprints remain no-ops even if they later become critical.
@@ -1964,6 +1989,7 @@ func (s *scheduler) handleSecurityFinding(sf SecurityFinding) {
 	}
 	s.seenEscalations[sf.Fingerprint] = true
 	s.securityFindings++
+	s.writeStepSecurityMarkdown(sf.StepID)
 
 	if sf.Severity != "critical" {
 		return

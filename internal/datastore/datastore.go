@@ -205,6 +205,14 @@ func OutputJSONPath(runDir, stepID string) string {
 	return filepath.Join(runDir, "steps", stepID, "output.json")
 }
 
+// SecurityPath returns the canonical path to security.md for a step inside
+// runDir. Content is a human-readable rendering of every finding.jsonl entry
+// scoped to this step (see internal/sentinel.RenderMarkdown), refreshed each
+// time the run records a new finding for the step.
+func SecurityPath(runDir, stepID string) string {
+	return filepath.Join(runDir, "steps", stepID, "security.md")
+}
+
 func ReviewRoot(runDir, stepID string) string {
 	if runDir == "" {
 		return ""
