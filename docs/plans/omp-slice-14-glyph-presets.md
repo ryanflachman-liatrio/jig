@@ -839,3 +839,83 @@ Unicode) and `jig --ascii`:
     records Q-14.1 as answered by the CLI-flag argument, Q-14.2 as
     answered by the `BarThick` deletion, and Q-14.3 as answered by
     the audit above.
+
+---
+
+## Deviations from the plan discovered during implementation
+
+The mechanism and delivery phases held. Two categories of change
+landed during implementation that this section captures so a later
+reviewer sees the delta between plan and diff without archeology.
+
+### Vocabulary keys added beyond the initial audit
+
+The audit-time list called out `BoxCornerTL/TR/BL/BR`, `BoxTeeL/R`,
+`BoxVertical`, `DiffGutter`, and `EllipsisGlyph`. Implementation
+uncovered five more literal call sites that also needed vocabulary
+keys to satisfy the discipline test; they were added alongside the
+migration rather than left as follow-ups:
+
+- `IconRecovery` (`⚠` / `!!`) — `monitor_steps.stepIndicator`'s
+  `AwaitingRecovery` state and `chat/view.fatalLine`'s error prefix.
+  Kept separate from `IconStatusWarning` so the step-indicator and
+  the tool-status-line glyph can diverge in later slices.
+- `IconStateUnknown` (`·` / `.`) — the default branch of
+  `stepIndicator` for unrecognized `step.Status` values. Migrated so
+  the entire step-indicator switch flows through the vocabulary.
+- `CommentGlyph` (`●` / `*`) — `review/view.go`'s line-comment
+  marker. Distinct from `IconRunning` even though they share the
+  Unicode form; a later slice that redesigns either surface can
+  evolve them independently.
+- `ArrowUpGlyph` (`▲` / `^`) — added for symmetry with
+  `ArrowDownGlyph` so list-scroll indicators (`question/view.go`
+  option list, and any future scrollable list) reach the ASCII
+  fallback through the same identifier.
+- `SelectionMarker` (`▶` / `>`) — `question/view.go`'s row-cursor
+  pointer. Distinct from `CursorBar` so a narrow scroll cursor and
+  a wide row pointer can diverge later.
+
+### Discipline test scope: ambiguous punctuation excluded
+
+`TestVocabularyLiteralsAreCentralized` deliberately excludes three
+punctuation characters that carry both a vocabulary role and an
+unrelated prose role: U+00B7 middle dot (both `IconStateUnknown` and
+` · ` meta separator), U+2014 em dash (both `IconSkipped` and prose
+em-dash), and U+2022 bullet (both `IconStatusSuccess` and help-panel
+bullet). Migrating every text separator to a dedicated
+`MetaSeparator` vocabulary key would extend slice 14 across dozens
+of call sites (status lines, breadcrumbs, footer hints, help text)
+without touching decorative glyphs, so a follow-up slice owns that
+work. The exclusion is documented in the test's leading comment so
+the rationale survives a future rescope.
+
+FR-14.5 is therefore satisfied for every vocabulary glyph the
+mechanism reroutes; the three ambiguous punctuation runes remain
+where prose expects them under ASCII. Operators on strict
+`TERM=linux` render `·`, `—`, and `•` correctly on every terminal
+that supports Latin-1 Supplement / General Punctuation — a wider
+set than the terminals that need slice 14 to begin with.
+
+### Follow-ups the plan named but slice 14 defers
+
+- **Steps panel `stepIndicator` under ASCII.** Migration to
+  vocabulary happened (`stepIndicator` now uses `IconPending`,
+  `IconRunning`, ...); NG6's exemption meant we did not rewrite the
+  panel around the wider ASCII widths, but the vocabulary flip
+  reaches the panel through the shared identifiers, so `--ascii`
+  degrades the Steps panel legibly today.
+- **Chart-package end-to-end test** (planned task 20 covered the
+  key-level width invariant; the chart-render regression test was
+  not added because the chart package has no bare glyph literals of
+  its own and its glyph consumption already routes through the
+  vocabulary). If a chart-specific ASCII regression surfaces, a
+  follow-up owns it.
+- **Proof captures under `docs/specs/25-spec-glyph-presets/`.** Not
+  yet regenerated on this branch; the vocabulary and rendering
+  tests supply machine-readable proof of the FR-14.5/14.6 contracts
+  in the meantime. A separate follow-up commit refreshes the
+  gallery snapshots once the underlying `JIG_UI_SNAPSHOT_DIR`
+  captures are re-taken.
+- **`docs/operations.md` note** on `--ascii`. Not landed on this
+  branch; `jig --help` documents the flag as the operator-facing
+  discovery path and the plan and PR body describe the semantics.
