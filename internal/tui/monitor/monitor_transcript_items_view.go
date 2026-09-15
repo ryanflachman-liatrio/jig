@@ -51,11 +51,12 @@ func (m *Model) itemTranscriptBody() string {
 		if lastRenderedIdx >= 0 {
 			prev := m.chatVisibleItems[lastRenderedIdx]
 			spacing := itemSpacingBefore(prev, item)
-			// Coordinate change: split the two-line gap so the metadata
-			// row for the closing turn (if any fields exist) lands
-			// between one leading and one trailing blank. Slice 12's
-			// boundary banner will later share this gap; slice 11 only
-			// owns the interior row.
+			// Coordinate change: split the two-line gap so the closing
+			// turn's metadata row (slice 11) and the arriving turn's
+			// boundary banner (slice 12) sit between one leading and
+			// one trailing blank. Both rows fold into the previous
+			// item's line range so n/N block navigation still lands on
+			// items rather than on this trailing chrome.
 			if spacing >= 2 {
 				b.WriteString("\n")
 				line++
@@ -64,9 +65,14 @@ func (m *Model) itemTranscriptBody() string {
 					b.WriteString(row)
 					b.WriteString("\n")
 					line += strings.Count(row, "\n") + 1
-					// Fold the metadata row's rows into the previous
-					// item's line range so n/N navigation lands on the
-					// item and treats the row as its trailing chrome.
+				}
+				banner := m.renderBoundaryBanner(prev.coord, item.coord)
+				if banner != "" {
+					b.WriteString(banner)
+					b.WriteString("\n")
+					line += strings.Count(banner, "\n") + 1
+				}
+				if row != "" || banner != "" {
 					key := transcriptLineKey{itemKey: prev.key}
 					rng := m.chatItemLineRanges[key]
 					rng.end = line - 1
@@ -82,6 +88,17 @@ func (m *Model) itemTranscriptBody() string {
 					line++
 				}
 			}
+		} else if banner := m.renderBoundaryBanner(toolCorrelationKey{}, item.coord); banner != "" {
+			// Page-edge banner (visibleExecutionBoundaries i==0 case):
+			// the loaded page begins mid-run, so announce the arriving
+			// coord above the first rendered item. Emitted outside any
+			// item's chatItemLineRanges entry — its rows sit above the
+			// first item's start so n/N navigation lands on the item.
+			b.WriteString(banner)
+			b.WriteString("\n")
+			line += strings.Count(banner, "\n") + 1
+			b.WriteString("\n")
+			line++
 		}
 		start := line
 		b.WriteString(body)
