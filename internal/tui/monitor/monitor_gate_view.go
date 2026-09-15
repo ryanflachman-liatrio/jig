@@ -41,7 +41,11 @@ func (m Model) inputBarView() string {
 
 	entry, _ := m.activeEntry()
 	title := m.gateChromeTitle(entry)
-	label := shared.Theme.Title.Render(title)
+	labelStyle := shared.Theme.Title
+	if m.gateShouldPulse() {
+		labelStyle = labelStyle.Foreground(shared.GateAttentionColor(liveCrumbClock()))
+	}
+	label := labelStyle.Render(title)
 	subject := shared.Theme.Marker.Render(presentationForGate(entry).subjectLabel + ": " + presentationForGate(entry).subject)
 	count := fmt.Sprintf("%d pending", len(m.inputQueue))
 	action := "tab to open"

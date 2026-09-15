@@ -96,7 +96,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		// we could actually flush (a dirty flag only counts once ready — before the
 		// first resize there is no viewport, and resize repaints synchronously — so
 		// pending dirt while un-ready must not spin the loop). Otherwise fall silent.
-		if m.anyRunning() || (m.ready && (m.dirtyList || m.dirtyChat)) {
+		if m.anyRunning() || (m.ready && (m.dirtyList || m.dirtyChat)) || m.gateShouldPulse() {
 			return m, monitorTickCmd()
 		}
 		m.ticking = false
@@ -299,6 +299,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 // hasGate reports whether the input queue has any pending entries.
 func (m Model) hasGate() bool {
 	return len(m.inputQueue) > 0
+}
+
+// gateShouldPulse reports whether the collapsed gate bar should breathe
+// toward the attention color: there is a pending gate and the operator is
+// not already looking at it. Once they tab into the gate (focus ==
+// focusGate) the pulse stops — they have already seen it.
+func (m Model) gateShouldPulse() bool {
+	return m.hasGate() && m.focus != focusGate
 }
 
 // textareaActive reports whether the focused gate is currently capturing free

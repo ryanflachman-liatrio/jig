@@ -16,7 +16,8 @@ import (
 const monitorFrameInterval = 100 * time.Millisecond
 
 // monitorTickCmd schedules the next frame. The loop re-arms itself from the
-// TickMsg handler while a step runs or a panel is dirty, then falls silent.
+// TickMsg handler while a step runs, a panel is dirty, or a gate is pulsing
+// for attention, then falls silent.
 func monitorTickCmd() tea.Cmd {
 	return tea.Tick(monitorFrameInterval, func(t time.Time) tea.Msg {
 		return TickMsg(t)
@@ -50,7 +51,7 @@ func (m *Model) EnsureFrame() tea.Cmd {
 	if m.ticking {
 		return nil
 	}
-	if m.dirtyList || m.dirtyChat || m.anyRunning() {
+	if m.dirtyList || m.dirtyChat || m.anyRunning() || m.gateShouldPulse() {
 		m.ticking = true
 		return monitorTickCmd()
 	}
