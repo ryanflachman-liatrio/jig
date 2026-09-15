@@ -101,6 +101,7 @@ func TestChartGlyphSingleCellUnderBothPresets(t *testing.T) {
 		ascii   string
 	}{
 		{"ArrowDownGlyph", unicodeSymbols.ArrowDownGlyph, asciiSymbols.ArrowDownGlyph},
+		{"ArrowUpGlyph", unicodeSymbols.ArrowUpGlyph, asciiSymbols.ArrowUpGlyph},
 		{"CondArrowGlyph", unicodeSymbols.CondArrowGlyph, asciiSymbols.CondArrowGlyph},
 		{"ArrowLeftGlyph", unicodeSymbols.ArrowLeftGlyph, asciiSymbols.ArrowLeftGlyph},
 		{"LoopGlyph", unicodeSymbols.LoopGlyph, asciiSymbols.LoopGlyph},

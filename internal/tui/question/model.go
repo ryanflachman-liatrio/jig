@@ -274,7 +274,7 @@ func (m *Model) buildTextarea() {
 	field := m.currentField()
 	placeholder := field.Prompt
 	if m.phase == phaseCustom {
-		placeholder = "Other answer…"
+		placeholder = "Other answer" + shared.EllipsisGlyph
 	}
 	rows := 3
 	if m.height < rows+3 {

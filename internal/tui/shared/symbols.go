@@ -106,8 +106,15 @@ type symbolTable struct {
 	GateGlyph      string
 	ForEachGlyph   string
 	ArrowDownGlyph string
+	ArrowUpGlyph   string
 	CondArrowGlyph string
 	ArrowLeftGlyph string
+
+	// SelectionMarker points at the row under the input cursor in
+	// list-style views (question workspace, palette rows). Distinct
+	// from CursorBar so a scroll-in-progress narrow cursor and a
+	// row-selection wide pointer can diverge in later slices.
+	SelectionMarker string
 
 	// Box drawing (card and panel chrome).
 	BoxCornerTL string
@@ -176,8 +183,11 @@ var unicodeSymbols = symbolTable{
 	GateGlyph:      "⇢",
 	ForEachGlyph:   "×",
 	ArrowDownGlyph: "▼",
+	ArrowUpGlyph:   "▲",
 	CondArrowGlyph: "▽",
 	ArrowLeftGlyph: "◄",
+
+	SelectionMarker: "▶",
 
 	BoxCornerTL: "╭",
 	BoxCornerTR: "╮",
@@ -243,8 +253,11 @@ var asciiSymbols = symbolTable{
 	GateGlyph:      "G",
 	ForEachGlyph:   "x",
 	ArrowDownGlyph: "v",
+	ArrowUpGlyph:   "^",
 	CondArrowGlyph: "V",
 	ArrowLeftGlyph: "<",
+
+	SelectionMarker: ">",
 
 	BoxCornerTL: "+",
 	BoxCornerTR: "+",

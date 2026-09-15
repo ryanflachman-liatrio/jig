@@ -12,7 +12,7 @@ func (m Model) View() string {
 	switch {
 	case m.loading:
 		return shared.RenderEmptyState(shared.EmptyState{
-			Title: "Loading workflows…",
+			Title: "Loading workflows" + shared.EllipsisGlyph,
 			Body:  "Scanning " + workflowsDir + ".",
 		})
 	case m.err != nil:

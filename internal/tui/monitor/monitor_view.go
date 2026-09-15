@@ -516,7 +516,7 @@ func (m Model) reviewPanelBody() string {
 func (m Model) View() string {
 	if !m.ready {
 		return shared.RenderEmptyState(shared.EmptyState{
-			Title: "Loading run…",
+			Title: "Loading run" + shared.EllipsisGlyph,
 			Body:  "Waiting for the run monitor to finish sizing.",
 		})
 	}

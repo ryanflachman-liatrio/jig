@@ -78,8 +78,13 @@ var (
 	// must remain single-rune under every preset because chart/render.go
 	// composes them via `[]rune(glyph)[0]`.
 	ArrowDownGlyph string
+	ArrowUpGlyph   string
 	CondArrowGlyph string
 	ArrowLeftGlyph string
+
+	// SelectionMarker is the row-cursor pointer used by list-style views
+	// (question workspace, palette entries). Distinct from CursorBar.
+	SelectionMarker string
 
 	// Box-drawing glyphs used by card and panel chrome. Kept alongside the
 	// singleton vocabulary so slice 14's preset flip covers card corners,
@@ -160,8 +165,11 @@ func refreshVocabulary() {
 	ForEachGlyph = t.ForEachGlyph
 
 	ArrowDownGlyph = t.ArrowDownGlyph
+	ArrowUpGlyph = t.ArrowUpGlyph
 	CondArrowGlyph = t.CondArrowGlyph
 	ArrowLeftGlyph = t.ArrowLeftGlyph
+
+	SelectionMarker = t.SelectionMarker
 
 	BoxCornerTL = t.BoxCornerTL
 	BoxCornerTR = t.BoxCornerTR

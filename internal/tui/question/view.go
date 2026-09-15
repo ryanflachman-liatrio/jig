@@ -56,10 +56,10 @@ func (m Model) fieldLines() []string {
 		end = count
 	}
 	if m.scrollOffset > 0 {
-		lines = append(lines, shared.Theme.Chat.Hint.Render("  ▲ more"))
+		lines = append(lines, shared.Theme.Chat.Hint.Render("  "+shared.ArrowUpGlyph+" more"))
 	}
 	for i := m.scrollOffset; i < end; i++ {
-		label := "Other…"
+		label := "Other" + shared.EllipsisGlyph
 		description := ""
 		selected := false
 		if i < len(field.Options) {
@@ -80,13 +80,13 @@ func (m Model) fieldLines() []string {
 			line += " — " + description
 		}
 		if i == m.optionCursor {
-			lines = append(lines, shared.Theme.SelectedLine.Render("▶ "+line))
+			lines = append(lines, shared.Theme.SelectedLine.Render(shared.SelectionMarker+" "+line))
 		} else {
 			lines = append(lines, "  "+line)
 		}
 	}
 	if end < count {
-		lines = append(lines, shared.Theme.Chat.Hint.Render("  ▼ more"))
+		lines = append(lines, shared.Theme.Chat.Hint.Render("  "+shared.ArrowDownGlyph+" more"))
 	}
 	return lines
 }
@@ -96,7 +96,7 @@ func (m Model) reviewLines() []string {
 	for i, field := range m.request.Fields {
 		line := fmt.Sprintf("%s: %s", field.Prompt, m.answerText(field))
 		if i == m.reviewCursor {
-			lines = append(lines, shared.Theme.SelectedLine.Render("▶ "+line))
+			lines = append(lines, shared.Theme.SelectedLine.Render(shared.SelectionMarker+" "+line))
 		} else {
 			lines = append(lines, "  "+line)
 		}

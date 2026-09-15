@@ -33,7 +33,7 @@ func (m Model) listBody() string {
 
 	if len(m.steps) == 0 {
 		b.WriteString(shared.RenderEmptyState(shared.EmptyState{
-			Title: "Loading run…",
+			Title: "Loading run" + shared.EllipsisGlyph,
 			Body:  "Waiting for the first step event.",
 		}))
 		return b.String()

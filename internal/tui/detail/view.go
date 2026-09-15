@@ -14,7 +14,7 @@ import (
 
 func (m Model) View() string {
 	if !m.Ready {
-		return "\n  Loading…\n"
+		return "\n  Loading" + shared.EllipsisGlyph + "\n"
 	}
 	footer := m.footerView()
 	body := shared.Panel(m.titleText(), m.vp.View(), m.width, m.height-lipgloss.Height(footer), true)
@@ -49,7 +49,7 @@ func (m Model) titleText() string {
 // body renders the header and step list into the viewport's content.
 func (m Model) body() string {
 	if !m.Loaded {
-		return "\n  Loading…\n"
+		return "\n  Loading" + shared.EllipsisGlyph + "\n"
 	}
 
 	// The panel title carries the workflow name, so the body opens with the

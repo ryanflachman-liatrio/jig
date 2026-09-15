@@ -16,7 +16,7 @@ import (
 func (m chatModel) conversationTitle() string {
 	title := "Conversation"
 	if !m.connected && !m.fatal {
-		return title + " · connecting…"
+		return title + " · connecting" + shared.EllipsisGlyph
 	}
 	if len(m.turns) > 1 {
 		return fmt.Sprintf("%s · Turn %d of %d", title, m.activeTurn+1, len(m.turns))
@@ -29,7 +29,7 @@ func (m chatModel) conversationTitle() string {
 // would jitter the top line every tick.
 func (m chatModel) messageTitle() string {
 	if m.streaming {
-		return "Message · responding…"
+		return "Message · responding" + shared.EllipsisGlyph
 	}
 	return "Message"
 }
@@ -41,9 +41,9 @@ func (m chatModel) fatalLine() string {
 	if !m.fatal || m.fatalErr == nil {
 		return ""
 	}
-	line := shared.Theme.Error.Render("⚠ " + m.fatalErr.Error())
+	line := shared.Theme.Error.Render(shared.IconRecovery + " " + m.fatalErr.Error())
 	if m.width > 0 {
-		line = shared.Theme.Error.MaxWidth(m.width).Render("⚠ " + m.fatalErr.Error())
+		line = shared.Theme.Error.MaxWidth(m.width).Render(shared.IconRecovery + " " + m.fatalErr.Error())
 	}
 	return line
 }
