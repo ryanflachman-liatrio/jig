@@ -1,0 +1,12 @@
+Slice-11 (per-turn metadata row) visual scene: settled-success-step-end
+Fixture: fabricated content only; no real .jig/ data.
+terminal=80x30 transcriptInnerW=44 chatItems=4 visibleItems=4
+monitorStep{status=succeeded cost=0xc00037bf28 tokens=4200 end.IsZero=false err=""}
+Item ranges and inter-item gaps in the transcript body:
+  item[0] key={anchor:{seq:1 block:0} kind:0} range={start:0 end:2} first="▌  User"
+  item[1] key={anchor:{seq:2 block:0} kind:2} range={start:4 end:7} first="  ╭─── ▸ ◈ Read ──────────\xe2\x94…"
+    ^ 1 blank line(s) since previous item's last row
+  item[2] key={anchor:{seq:4 block:0} kind:0} range={start:9 end:11} first="   User"
+    ^ 1 blank line(s) since previous item's last row
+  item[3] key={anchor:{seq:5 block:0} kind:0} range={start:13 end:15} first="    Edit landed; verifying.                 "
+    ^ 1 blank line(s) since previous item's last row

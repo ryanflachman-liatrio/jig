@@ -1,6 +1,10 @@
 package monitor
 
-import "jig/internal/transcript"
+import (
+	"time"
+
+	"jig/internal/transcript"
+)
 
 // buildTranscriptItems turns only the currently loaded page into immutable
 // conversation units. It never opens a reader or scans outside entries: a page
@@ -216,4 +220,43 @@ func toolStateForBlock(block transcript.Block) toolDisplayState {
 		return toolDisplayError
 	}
 	return toolDisplaySuccess
+}
+
+// turnTimestamps folds the first and last parseable RFC3339 timestamps
+// among entries at the given execution coordinate. It ignores the
+// coord.toolUseID field so tool-use and result entries at the same
+// generation/iteration/attempt fold into one turn, matching how
+// itemSpacingBefore identifies a coord change.
+//
+// Returns (zero, zero, false) when the coordinate has no entries in
+// the loaded page or when every candidate entry's Ts fails RFC3339
+// parsing. When only one endpoint parses, both start and end return
+// that same timestamp so the caller can still render a timestamp while
+// dropping the elapsed field.
+//
+// Slice 11 (per-turn metadata row) consumes this: the interior boundary
+// row derives its `time` and `Δ` fields from a single call keyed on the
+// previous item's coord, and the step-end row derives them from a call
+// keyed on the last visible item's coord.
+func turnTimestamps(entries []transcript.Entry, coord toolCorrelationKey) (start, end time.Time, ok bool) {
+	for _, entry := range entries {
+		if entry.Generation != coord.generation || entry.Iteration != coord.iteration || entry.Attempt != coord.attempt {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, entry.Ts)
+		if err != nil {
+			continue
+		}
+		if !ok {
+			start, end, ok = t, t, true
+			continue
+		}
+		if t.Before(start) {
+			start = t
+		}
+		if t.After(end) {
+			end = t
+		}
+	}
+	return start, end, ok
 }
