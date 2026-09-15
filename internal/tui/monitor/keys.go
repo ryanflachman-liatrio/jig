@@ -41,7 +41,8 @@ type monitorKeys struct {
 	Follow       keybind.Binding // matched (f/G — resume follow at latest entry)
 	Search       keybind.Binding // matched (/)
 	Filters      keybind.Binding // matched (F)
-	ClearView    keybind.Binding // matched (c — clear search and filters)
+	CompactTools keybind.Binding // matched (c — compact eligible non-read tools)
+	ClearView    keybind.Binding // matched (x — clear search and filters)
 	PageOlder    keybind.Binding // matched ([)
 	PageNewer    keybind.Binding // matched (])
 
@@ -118,7 +119,8 @@ func defaultMonitorKeys() monitorKeys {
 		Follow:       keybind.NewBinding(keybind.WithKeys("f", "G"), keybind.WithHelp("f/G", "follow")),
 		Search:       keybind.NewBinding(keybind.WithKeys("/"), keybind.WithHelp("/", "search transcript")),
 		Filters:      keybind.NewBinding(keybind.WithKeys("F"), keybind.WithHelp("F", "filters")),
-		ClearView:    keybind.NewBinding(keybind.WithKeys("c"), keybind.WithHelp("c", "clear")),
+		CompactTools: keybind.NewBinding(keybind.WithKeys("c"), keybind.WithHelp("c", "compact tools")),
+		ClearView:    keybind.NewBinding(keybind.WithKeys("x"), keybind.WithHelp("x", "clear")),
 		PageOlder:    keybind.NewBinding(keybind.WithKeys("["), keybind.WithHelp("[", "older")),
 		PageNewer:    keybind.NewBinding(keybind.WithKeys("]"), keybind.WithHelp("]", "newer")),
 

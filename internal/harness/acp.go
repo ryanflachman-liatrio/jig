@@ -661,7 +661,7 @@ func applyACPEvent(tool *toolcall.Activity, ev acp.Event) {
 		tool.Status = ev.Status
 	}
 	if ev.HasKind || ev.ToolKind != "" {
-		tool.Kind = ev.ToolKind
+		tool.Kind = canonicalACPToolKind(ev.ToolKind)
 	}
 	if ev.HasInput || len(ev.Input) > 0 {
 		tool.Input = append(json.RawMessage(nil), ev.Input...)
@@ -688,6 +688,17 @@ func applyACPEvent(tool *toolcall.Activity, ev acp.Event) {
 				tool.Content[i].Diff = &toolcall.Diff{Path: d.Path, OldText: d.OldText, NewText: d.NewText}
 			}
 		}
+	}
+}
+
+func canonicalACPToolKind(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "execute":
+		return "bash"
+	case "fetch":
+		return "webfetch"
+	default:
+		return strings.ToLower(strings.TrimSpace(kind))
 	}
 }
 

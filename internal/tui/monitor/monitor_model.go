@@ -181,11 +181,14 @@ type Model struct {
 
 	chatItems          []transcriptItem
 	chatVisibleItems   []transcriptItem
+	chatCursorTargets  []transcriptCursorTarget
 	chatItemCursor     int
 	chatItemExpand     map[transcriptItemKey]bool
 	chatItemExpandAll  bool
 	chatItemRendered   map[transcriptRenderKey]string
 	chatItemLineRanges map[transcriptLineKey]lineRange
+	compactToolGroups  bool
+	compactToolNotice  string
 
 	// renderer renders text blocks as markdown; chatRendered caches the output
 	// keyed by block (glamour re-parses whole documents, so re-rendering on every
@@ -442,6 +445,7 @@ const (
 	transcriptItemToolExchange
 	transcriptItemToolResult
 	transcriptItemReadGroup
+	transcriptItemToolGroup
 	transcriptItemSystem
 	transcriptItemUnsupported
 )
@@ -503,6 +507,12 @@ type transcriptItem struct {
 	// drives the FR-10.4 pulse label; every other thinking item always
 	// renders the plain, non-animated label (FR-10.7).
 	running bool
+}
+
+type transcriptCursorTarget struct {
+	key         transcriptItemKey
+	itemIndex   int
+	memberIndex int
 }
 
 // transcriptRenderKey separates markdown, detail, card, and diff
@@ -622,7 +632,9 @@ func New(runID string) Model {
 // the in-memory default (simple ON).
 func (m Model) WithPrefs(jigRoot string) Model {
 	m.jigRoot = jigRoot
-	m.simpleMode = prefs.Load(jigRoot).SimpleMode
+	p := prefs.Load(jigRoot)
+	m.simpleMode = p.SimpleMode
+	m.compactToolGroups = p.CompactToolGroups
 	return m
 }
 
@@ -640,8 +652,15 @@ func (m Model) SimpleMode() bool { return m.simpleMode }
 // ToggleSimpleMode flips simple/advanced and persists to .jig/tui.json.
 func (m Model) ToggleSimpleMode() Model {
 	m.simpleMode = !m.simpleMode
-	_ = prefs.Save(m.jigRoot, prefs.Prefs{SimpleMode: m.simpleMode})
+	m.savePrefs()
 	return m
+}
+
+func (m Model) savePrefs() {
+	_ = prefs.Save(m.jigRoot, prefs.Prefs{
+		SimpleMode:        m.simpleMode,
+		CompactToolGroups: m.compactToolGroups,
+	})
 }
 
 // SetRun wires the live engine handle so the help agent can read run state and
@@ -848,6 +867,12 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 			pageNewer.SetEnabled(m.chatPage.HasLater)
 			clearView := m.keys.ClearView
 			clearView.SetEnabled(m.searchQuery != "" || m.filters.active())
+			compactTools := m.keys.CompactTools
+			if m.compactToolGroups {
+				compactTools.SetHelp("c", "compact tools: on")
+			} else {
+				compactTools.SetHelp("c", "compact tools: off")
+			}
 			copyItem := m.keys.CopyItem
 			copyItem.SetHelp("y", contextualItemCopyLabel(m))
 			copyItem.SetEnabled(len(m.chatVisibleItems) > 0)
@@ -865,7 +890,7 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 				bindings = []keybind.Binding{
 					m.keys.Scroll, m.keys.Follow, blockNav, m.keys.Toggle, m.keys.ScrollFast,
 					m.keys.GotoTop, pageOlder, pageNewer,
-					m.keys.Search, m.keys.Filters, clearView, m.keys.ExpandAll,
+					m.keys.Search, m.keys.Filters, clearView, compactTools, m.keys.ExpandAll,
 					copyItem, copyAll,
 					m.keys.TransToSteps, m.keys.TransLeave,
 				}
@@ -946,13 +971,15 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 // contextualItemCopyLabel names what y will copy given the current selection.
 // The label mirrors what shared.FormatClipboardNotice will emit.
 func contextualItemCopyLabel(m Model) string {
-	if n := len(m.chatVisibleItems); n == 0 || m.chatItemCursor < 0 || m.chatItemCursor >= n {
+	item, ok := m.selectedTranscriptItem()
+	if !ok {
 		return "copy"
 	}
-	item := m.chatVisibleItems[m.chatItemCursor]
 	switch item.kind {
 	case transcriptItemToolExchange, transcriptItemToolResult:
 		return "copy exchange"
+	case transcriptItemToolGroup:
+		return "copy group"
 	case transcriptItemThinking:
 		return "copy thinking"
 	default:

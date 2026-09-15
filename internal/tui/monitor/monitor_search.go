@@ -155,6 +155,10 @@ func (m *Model) toggleCurrentFilter() {
 	case 7:
 		m.filters.result = !m.filters.result
 	}
+	if m.filterCursor == 2 && m.compactToolGroups {
+		m.setChatPage(m.chatPage)
+		return
+	}
 	m.rebuildTranscriptItemState(m.selectedTranscriptItemKey())
 	m.rerunSearch()
 }
@@ -193,12 +197,16 @@ func (m Model) filterSummary() string {
 }
 
 func (m *Model) clearTranscriptView() {
+	regroup := m.compactToolGroups && m.filters.reasoning
 	m.searchOpen = false
 	m.searchQuery = ""
 	m.searchHits = nil
 	m.searchHitCursor = 0
 	m.filterOpen = false
 	m.filters = transcriptFilters{}
+	if regroup {
+		m.setChatPage(m.chatPage)
+	}
 	m.rebuildTranscriptItemState(transcriptItemKey{})
 }
 
@@ -213,6 +221,18 @@ func (m *Model) rerunSearch() {
 
 	needle := strings.ToLower(query)
 	for _, item := range m.chatVisibleItems {
+		if item.kind == transcriptItemToolGroup {
+			for _, member := range item.groupMembers {
+				for _, ref := range itemMembers(member) {
+					text := searchableBlockText(m.chatEntries[ref.entryIdx].Blocks[ref.blockIdx])
+					if strings.Contains(strings.ToLower(text), needle) {
+						m.searchHits = append(m.searchHits, searchHit{key: ref.key, preview: searchPreview(text, needle)})
+						break
+					}
+				}
+			}
+			continue
+		}
 		for _, ref := range itemMembers(item) {
 			text := searchableBlockText(m.chatEntries[ref.entryIdx].Blocks[ref.blockIdx])
 			if strings.Contains(strings.ToLower(text), needle) {
@@ -290,15 +310,27 @@ func (m *Model) applyCurrentSearchHit() {
 	if !found {
 		return
 	}
-	for i, item := range m.chatVisibleItems {
+	for _, item := range m.chatVisibleItems {
+		if item.kind == transcriptItemToolGroup {
+			for _, member := range item.groupMembers {
+				if itemContainsBlock(member, hit.key) {
+					m.chatItemExpand[item.key] = true
+					m.rebuildTranscriptCursorTargets()
+					m.chatItemCursor = m.cursorTargetIndex(member.key)
+					goto selected
+				}
+			}
+		}
 		for _, ref := range itemMembers(item) {
 			if ref.key == hit.key {
-				m.chatItemCursor = i
+				m.chatItemCursor = m.cursorTargetIndex(item.key)
 				m.chatItemExpand[item.key] = true
-				break
+				goto selected
 			}
 		}
 	}
+
+selected:
 	m.chatAutoScroll = false
 	m.refreshPanels()
 	m.ensureCurrentSearchHitVisible()
@@ -323,6 +355,17 @@ func (m *Model) ensureCurrentSearchHitVisible() {
 	var rng lineRange
 	var ok bool
 	for _, item := range m.chatVisibleItems {
+		if item.kind == transcriptItemToolGroup {
+			for _, member := range item.groupMembers {
+				if itemContainsBlock(member, hit.key) {
+					rng, ok = m.chatItemLineRanges[transcriptLineKey{itemKey: member.key}]
+					break
+				}
+			}
+			if ok {
+				break
+			}
+		}
 		for _, ref := range itemMembers(item) {
 			if ref.key == hit.key {
 				rng, ok = m.chatItemLineRanges[transcriptLineKey{itemKey: item.key}]
@@ -337,10 +380,19 @@ func (m *Model) ensureCurrentSearchHitVisible() {
 }
 
 func (m Model) selectedTranscriptItemKey() transcriptItemKey {
-	if m.chatItemCursor >= 0 && m.chatItemCursor < len(m.chatVisibleItems) {
-		return m.chatVisibleItems[m.chatItemCursor].key
+	if target, ok := m.selectedTranscriptTarget(); ok {
+		return target.key
 	}
 	return transcriptItemKey{}
+}
+
+func itemContainsBlock(item transcriptItem, key blockKey) bool {
+	for _, ref := range itemMembers(item) {
+		if ref.key == key {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Model) searchStatus() string {

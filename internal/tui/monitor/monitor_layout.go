@@ -340,10 +340,11 @@ func (m Model) stepRowRanges() []stepLineRange {
 }
 
 func (m *Model) ensureTranscriptItemCursorVisible() {
-	if m.chatItemCursor < 0 || m.chatItemCursor >= len(m.chatVisibleItems) {
+	target, ok := m.selectedTranscriptTarget()
+	if !ok {
 		return
 	}
-	rng, ok := m.chatItemLineRanges[transcriptLineKey{itemKey: m.chatVisibleItems[m.chatItemCursor].key}]
+	rng, ok := m.chatItemLineRanges[transcriptLineKey{itemKey: target.key}]
 	if ok {
 		m.ensureTranscriptRangeVisible(rng)
 	}

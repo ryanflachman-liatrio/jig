@@ -9,8 +9,12 @@ import (
 )
 
 func TestDefaultSimpleModeOn(t *testing.T) {
-	if !prefs.Default().SimpleMode {
+	p := prefs.Default()
+	if !p.SimpleMode {
 		t.Fatal("default simple_mode should be true (C5)")
+	}
+	if p.CompactToolGroups {
+		t.Fatal("default compact_tool_groups should be false")
 	}
 }
 
@@ -31,7 +35,7 @@ func TestLoadEmptyRootDefaultsOn(t *testing.T) {
 
 func TestSaveRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	if err := prefs.Save(dir, prefs.Prefs{SimpleMode: false}); err != nil {
+	if err := prefs.Save(dir, prefs.Prefs{SimpleMode: false, CompactToolGroups: true}); err != nil {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, prefs.FileName)
@@ -41,6 +45,9 @@ func TestSaveRoundTrip(t *testing.T) {
 	got := prefs.Load(dir)
 	if got.SimpleMode {
 		t.Fatalf("round-trip SimpleMode=%v, want false", got.SimpleMode)
+	}
+	if !got.CompactToolGroups {
+		t.Fatalf("round-trip CompactToolGroups=%v, want true", got.CompactToolGroups)
 	}
 }
 

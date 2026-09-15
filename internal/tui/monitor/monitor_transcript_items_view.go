@@ -39,11 +39,19 @@ import (
 func (m *Model) itemTranscriptBody() string {
 	var b strings.Builder
 	m.chatItemLineRanges = make(map[transcriptLineKey]lineRange)
+	selectedKey := m.selectedTranscriptItemKey()
 	line := 0
 	lastRenderedIdx := -1
 	for i, item := range m.chatVisibleItems {
 		var scratch strings.Builder
-		m.writeTranscriptItem(&scratch, item, i == m.chatItemCursor)
+		var relativeRanges map[transcriptItemKey]lineRange
+		if item.kind == transcriptItemToolGroup {
+			rendered := m.renderCompactToolGroup(item, selectedKey)
+			scratch.WriteString(rendered.body)
+			relativeRanges = rendered.ranges
+		} else {
+			m.writeTranscriptItem(&scratch, item, selectedKey == item.key)
+		}
 		body := trimStructuralBlankEdges(scratch.String())
 		if body == "" {
 			continue
@@ -73,7 +81,7 @@ func (m *Model) itemTranscriptBody() string {
 					line += strings.Count(banner, "\n") + 1
 				}
 				if row != "" || banner != "" {
-					key := transcriptLineKey{itemKey: prev.key}
+					key := transcriptLineKey{itemKey: m.renderedEndItemKey(prev)}
 					rng := m.chatItemLineRanges[key]
 					rng.end = line - 1
 					m.chatItemLineRanges[key] = rng
@@ -104,7 +112,13 @@ func (m *Model) itemTranscriptBody() string {
 		b.WriteString(body)
 		b.WriteString("\n")
 		line += strings.Count(body, "\n") + 1
-		m.chatItemLineRanges[transcriptLineKey{itemKey: item.key}] = lineRange{start: start, end: line - 1}
+		if len(relativeRanges) == 0 {
+			m.chatItemLineRanges[transcriptLineKey{itemKey: item.key}] = lineRange{start: start, end: line - 1}
+		} else {
+			for key, rng := range relativeRanges {
+				m.chatItemLineRanges[transcriptLineKey{itemKey: key}] = lineRange{start: start + rng.start, end: start + rng.end}
+			}
+		}
 		lastRenderedIdx = i
 	}
 	// Step-end metadata row: emit below the last rendered item when the
@@ -120,7 +134,7 @@ func (m *Model) itemTranscriptBody() string {
 				b.WriteString(row)
 				b.WriteString("\n")
 				line += strings.Count(row, "\n") + 1
-				key := transcriptLineKey{itemKey: prev.key}
+				key := transcriptLineKey{itemKey: m.renderedEndItemKey(prev)}
 				rng := m.chatItemLineRanges[key]
 				rng.end = line - 1
 				m.chatItemLineRanges[key] = rng

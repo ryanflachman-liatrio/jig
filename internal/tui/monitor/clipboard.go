@@ -313,10 +313,11 @@ func (m Model) copyReadGroupItemRequest(item transcriptItem) tea.Cmd {
 }
 
 func (m Model) selectedTranscriptItem() (transcriptItem, bool) {
-	if n := len(m.chatVisibleItems); n == 0 || m.chatItemCursor < 0 || m.chatItemCursor >= n {
+	target, ok := m.selectedTranscriptTarget()
+	if !ok {
 		return transcriptItem{}, false
 	}
-	return m.chatVisibleItems[m.chatItemCursor], true
+	return m.itemForCursorTarget(target)
 }
 
 // copyTranscriptItemRequest builds a request whose payload is the concatenated
@@ -403,6 +404,8 @@ func describeTranscriptItem(item transcriptItem) string {
 		return "tool exchange"
 	case transcriptItemReadGroup:
 		return "read group"
+	case transcriptItemToolGroup:
+		return "tool group"
 	case transcriptItemToolResult:
 		return "tool result"
 	case transcriptItemSystem:

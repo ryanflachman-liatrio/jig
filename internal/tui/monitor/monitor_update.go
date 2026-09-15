@@ -460,6 +460,7 @@ func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 // the block cursor, enter/space toggle the cursored block, o toggles all, and
 // h/esc return focus to the Steps panel. Remaining viewport keys scroll.
 func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	m.compactToolNotice = ""
 	if m.searchOpen {
 		switch {
 		case msg.String() == "esc":
@@ -549,6 +550,12 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.clearTranscriptView()
 		m.refreshPanels()
 		return m, nil
+	case keybind.Matches(msg, m.keys.CompactTools):
+		m.toggleCompactToolGroups()
+		m.chatAutoScroll = false
+		m.refreshPanels()
+		m.ensureTranscriptItemCursorVisible()
+		return m, nil
 	case keybind.Matches(msg, m.keys.PageOlder):
 		m.loadOlderChat()
 		return m, nil
@@ -594,7 +601,7 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if n := len(m.chatVisibleItems); n > 0 {
+		if n := len(m.chatCursorTargets); n > 0 {
 			if msg.String() == "n" {
 				m.chatItemCursor = min(m.chatItemCursor+1, n-1)
 			} else {
@@ -606,16 +613,22 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 	case keybind.Matches(msg, m.keys.Toggle):
-		if n := len(m.chatVisibleItems); n > 0 && m.chatItemCursor < n {
-			item := m.chatVisibleItems[m.chatItemCursor]
+		if target, ok := m.selectedTranscriptTarget(); ok {
+			item, ok := m.itemForCursorTarget(target)
+			if !ok {
+				return m, nil
+			}
 			m.chatItemExpand[item.key] = !m.chatItemExpand[item.key]
+			m.rebuildTranscriptItemState(item.key)
 			m.chatAutoScroll = false
 			m.refreshPanels()
 			m.ensureTranscriptItemCursorVisible()
 		}
 		return m, nil
 	case keybind.Matches(msg, m.keys.ExpandAll):
+		saved := m.selectedTranscriptItemKey()
 		m.chatItemExpandAll = !m.chatItemExpandAll
+		m.rebuildTranscriptItemState(saved)
 		m.chatAutoScroll = false
 		m.refreshPanels()
 		m.ensureTranscriptItemCursorVisible()

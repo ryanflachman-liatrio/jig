@@ -26,7 +26,23 @@ render-plan implementation was removed as unreachable by Slice 00.
 - Keep grouping isolated as a pure pass after `buildTranscriptItems` and before
   filtering; do not create another transcript scheduler or render-plan pipeline.
 - Limit the initial allowlist to canonical `read` exchanges so tools with
-  meaningful result bodies remain ordinary transcript items.
+  meaningful result bodies remain ordinary transcript items by default; the
+  later opt-in extension below does not change automatic read grouping.
+
+### Opt-in non-read extension
+
+The implemented follow-up in
+[`compact-tool-groups.md`](../../plans/compact-tool-groups.md) adds the
+default-off `compact_tool_groups` preference. When enabled, adjacent settled,
+successful exchanges of the same registered canonical non-read kind and the
+same execution coordinate form a separate `transcriptItemToolGroup`. Its
+expanded children are independently navigable bordered cards. For this
+extension, settled reasoning hidden by the default view does not interrupt
+adjacency; enabling the reasoning filter restores those boundaries. Execution
+transitions, live reasoning, and items hidden only by search or other filters
+remain boundaries. This extension
+does not alter `transcriptItemReadGroup`: reads remain automatic, retain their
+special selector-merging renderer, and remain one cursor stop when expanded.
 
 ## User Stories
 
@@ -62,10 +78,11 @@ group items while preserving existing exchange correlation and honest boundaries
   tool-use activity canonically classified as `read` and a non-empty local-file
   target extracted from `file_path` or `path`. Targetless reads and URI-like
   targets shall remain full standalone exchanges so resolved or otherwise
-  informative content stays visible. Result-only items, unknown tools, `glob`,
-  `grep`, edits, writes, shell calls, web calls, agent calls, and every other tool
-  kind shall remain ungrouped. Eligibility shall not be inferred from a title
-  substring when the canonical activity kind identifies another tool.
+  informative content stays visible. Result-only items and unknown tools shall
+  remain ungrouped. With `compact_tool_groups` disabled, `glob`, `grep`, edits,
+  writes, shell calls, web calls, agent calls, and every other tool kind shall
+  also remain ungrouped. Eligibility shall not be inferred from a title substring
+  when the canonical activity kind identifies another tool.
 - **FR-08.3:** Eligible exchanges shall group only while they are adjacent in the
   normalized item sequence and have identical generation, iteration, and attempt
   values. Tool-use IDs remain member identity and shall not affect adjacency.
@@ -216,9 +233,10 @@ per-member evidence while preserving search/filter and scroll-to-item behavior.
 
 ## Non-Goals (Out of Scope)
 
-1. **Grouping tools other than canonical `read`:** `glob`, `grep`, shell, edit,
-   write, web, task, todo, and unknown tools remain standalone until a later spec
-   demonstrates that their result bodies are low-information.
+1. **Automatic grouping tools other than canonical `read`:** non-read groups
+   require the explicit `compact_tool_groups` preference. Unknown, malformed,
+   targetless, failed, running, incomplete, and `askuserquestion` exchanges
+   remain standalone even when it is enabled.
 2. **Displacement:** repeated poll or snapshot calls will not remove an earlier
    transcript item; the durable transcript remains append-only presentation input.
 3. **Wire-format or harness changes:** this feature does not modify
@@ -228,8 +246,9 @@ per-member evidence while preserving search/filter and scroll-to-item behavior.
    other tool kinds remain hard boundaries.
 5. **Per-tool bespoke previews:** grouped reads reveal the existing member detail
    rendering; they do not add OMP's optional read-content preview renderer.
-6. **Member-level navigation:** expansion reveals evidence but does not turn
-   member rows into additional `n`/`N` stops.
+6. **Read member-level navigation:** expanding a read group reveals evidence but
+   does not turn read member rows into additional `n`/`N` stops. The opt-in
+   non-read extension deliberately exposes its bordered child cards as stops.
 7. **Reintroducing the removed render-plan design:** no `chatRenderPlan`,
    `chatGroupHeaders`, count-only `writeGroupHeader`, or parallel expand-state
    model shall return.

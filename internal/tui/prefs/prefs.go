@@ -16,7 +16,8 @@ const FileName = "tui.json"
 type Prefs struct {
 	// SimpleMode hides advanced transcript affordances from footer/help until
 	// toggled. Default true for new installs when the file is missing (C5).
-	SimpleMode bool `json:"simple_mode"`
+	SimpleMode        bool `json:"simple_mode"`
+	CompactToolGroups bool `json:"compact_tool_groups"`
 }
 
 // Default returns preferences for a missing config file.

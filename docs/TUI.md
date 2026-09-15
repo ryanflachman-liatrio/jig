@@ -128,6 +128,29 @@ retains every distinct loaded target, and a search or filter match on any member
 retains the complete group. Expansion and selected-item copy use only the
 members present on the loaded page, so grouping never implies off-page evidence.
 
+Other recognized tools can use opt-in compact groups. Press `c` in Transcript
+or choose the command-palette action to toggle `compact_tool_groups`; the
+default is off and the preference is stored in `.jig/tui.json`. Eligible groups
+contain at least two adjacent, settled, successful calls of the same canonical
+kind and execution coordinate. Failures, running or incomplete calls, malformed
+or targetless calls, unknown tools, and `askuserquestion` remain standalone and
+split a run.
+
+Compact non-read groups ignore settled reasoning hidden by the default view.
+Enabling the reasoning filter restores those items and splits groups at their
+original positions. Live reasoning and execution-coordinate changes still split
+groups. Search and other filters run after grouping, so hiding prose, failures,
+or targetless calls with a filter cannot join calls across those boundaries.
+
+A collapsed non-read group shows at most the first three calls, an omitted-count
+row, and the final call. Expanding the group with `enter` or space reveals every
+member as its existing bordered summary card. The group header and visible child
+cards are independent `n`/`N` stops; `enter` or space on a child toggles its
+existing detail, and `o` applies global expansion. Search and filters inspect
+members but retain the complete group, while copying a child copies that exchange
+and copying the group header copies every loaded member. Press `x` to clear the
+current transcript search and filters.
+
 Keep render caches local to their owner and include all inputs that affect
 rendering in invalidation decisions (width, content/version, expansion, and
 presentation mode as applicable). Shared map storage under a value receiver

@@ -149,7 +149,7 @@ func visibleExecutionBoundaries(items []transcriptItem) []transcriptBoundary {
 }
 
 func itemMembers(item transcriptItem) []transcriptBlockRef {
-	if item.kind == transcriptItemReadGroup {
+	if item.kind == transcriptItemReadGroup || item.kind == transcriptItemToolGroup {
 		members := make([]transcriptBlockRef, 0, len(item.groupMembers)*2)
 		for _, member := range item.groupMembers {
 			members = append(members, itemMembers(member)...)

@@ -29,10 +29,7 @@ func readTargetForActivity(activity *toolcall.Activity) (readTarget, bool) {
 	if activity == nil {
 		return readTarget{}, false
 	}
-	kind := strings.ToLower(strings.TrimSpace(activity.Kind))
-	if kind == "" {
-		kind = canonicalToolName(activity.Title)
-	}
+	kind := canonicalActivityKind(activity)
 	if kind != "read" {
 		return readTarget{}, false
 	}

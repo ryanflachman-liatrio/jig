@@ -132,6 +132,7 @@ func (m *Model) restoreGateContext() {
 	m.rerunSearch()
 	m.chatItemExpand = cloneTranscriptItemState(snapshot.chatItemExpand)
 	m.chatItemExpandAll = snapshot.chatExpandAll
+	m.rebuildTranscriptItemState(snapshot.chatItem)
 	m.chatAutoScroll = snapshot.chatAutoScroll
 	m.chatSeenSeq = snapshot.chatSeenSeq
 	if m.hasGate() {

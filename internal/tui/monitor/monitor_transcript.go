@@ -67,6 +67,7 @@ func (m *Model) reloadTranscript() {
 	m.chatStep = stepID
 	m.chatItems = nil
 	m.chatVisibleItems = nil
+	m.chatCursorTargets = nil
 	m.chatItemCursor = 0
 	m.chatItemExpand = make(map[transcriptItemKey]bool)
 	m.chatItemExpandAll = false
@@ -79,6 +80,7 @@ func (m *Model) reloadTranscript() {
 	m.searchHitCursor = 0
 	m.filterOpen = false
 	m.filters = transcriptFilters{}
+	m.compactToolNotice = ""
 	// blockKey is (seq, block) and seq restarts per step-file, so cached renders
 	// from the previous step would collide with the new step's same-seq blocks.
 	// Reset the render cache along with the other per-step view state.
@@ -163,13 +165,10 @@ func (m *Model) setChatPage(page transcript.Page) {
 	// A replacement may retain item keys while changing the terminal activity or
 	// result. Header cards therefore cannot survive a page replacement.
 	m.chatItemRendered = make(map[transcriptRenderKey]string)
-	var savedItem transcriptItemKey
-	if len(m.chatVisibleItems) > 0 && m.chatItemCursor >= 0 && m.chatItemCursor < len(m.chatVisibleItems) {
-		savedItem = m.chatVisibleItems[m.chatItemCursor].key
-	}
+	savedItem := m.selectedTranscriptItemKey()
 	m.chatPage = page
 	m.chatEntries = page.Entries
-	m.chatItems = groupReadTranscriptItems(buildTranscriptItems(page.Entries, m.currentChatStepRunning()), page.Entries)
+	m.chatItems = m.buildChatItems()
 	m.defaultExpandEditCodeItems()
 	m.chatVisibleItems = nil
 	m.prunePageState()
@@ -177,11 +176,86 @@ func (m *Model) setChatPage(page transcript.Page) {
 	m.rerunSearch()
 }
 
+// buildChatItems applies compact grouping after the default reasoning
+// declutter, but before search or other filters can hide real group boundaries.
+// chatEntries retains the complete page so showing reasoning can reconstruct
+// the original order without reading the transcript again.
+func (m Model) buildChatItems() []transcriptItem {
+	items := groupReadTranscriptItems(buildTranscriptItems(m.chatEntries, m.currentChatStepRunning()), m.chatEntries)
+	if !m.compactToolGroups {
+		return items
+	}
+	if !m.filters.reasoning {
+		visible := make([]transcriptItem, 0, len(items))
+		for i, item := range items {
+			if item.kind == transcriptItemThinking && !item.running {
+				// Even hidden reasoning must not erase an execution transition.
+				sameBefore := i == 0 || sameExecutionCoordinate(items[i-1].coord, item.coord)
+				sameAfter := i == len(items)-1 || sameExecutionCoordinate(item.coord, items[i+1].coord)
+				if sameBefore && sameAfter {
+					continue
+				}
+			}
+			visible = append(visible, item)
+		}
+		items = visible
+	}
+	return groupCompactToolTranscriptItems(items, m.chatEntries)
+}
+
+func (m *Model) toggleCompactToolGroups() {
+	saved := m.selectedTranscriptItemKey()
+	groupedMembers := make(map[transcriptItemKey]struct{})
+	for _, item := range m.chatItems {
+		if item.kind != transcriptItemToolGroup {
+			continue
+		}
+		for _, member := range item.groupMembers {
+			groupedMembers[member.key] = struct{}{}
+		}
+	}
+	if item, ok := m.selectedTranscriptItem(); ok && item.kind == transcriptItemToolGroup && len(item.groupMembers) > 0 {
+		saved = item.groupMembers[0].key
+	}
+	m.compactToolGroups = !m.compactToolGroups
+	m.savePrefs()
+	m.chatItemRendered = make(map[transcriptRenderKey]string)
+	m.chatItems = m.buildChatItems()
+	if m.compactToolGroups {
+		for _, item := range m.chatItems {
+			if item.kind != transcriptItemToolGroup {
+				continue
+			}
+			for _, member := range item.groupMembers {
+				m.chatItemExpand[member.key] = false
+			}
+		}
+	} else {
+		for _, item := range m.chatItems {
+			if _, wasGrouped := groupedMembers[item.key]; wasGrouped && itemHasStructuredDiff(m.chatEntries, item) {
+				delete(m.chatItemExpand, item.key)
+			}
+		}
+	}
+	m.defaultExpandEditCodeItems()
+	m.prunePageState()
+	m.rebuildTranscriptItemState(saved)
+	m.rerunSearch()
+	state := "off"
+	if m.compactToolGroups {
+		state = "on"
+	}
+	m.compactToolNotice = "compact tool groups: " + state
+}
+
 // defaultExpandEditCodeItems opens structured edits until an operator explicitly
 // folds one. The map retains a false value after that action, so transcript
 // reloads do not override the operator's choice.
 func (m *Model) defaultExpandEditCodeItems() {
 	for _, item := range m.chatItems {
+		if item.kind == transcriptItemToolGroup {
+			continue
+		}
 		if _, configured := m.chatItemExpand[item.key]; configured || !itemHasStructuredDiff(m.chatEntries, item) {
 			continue
 		}
@@ -209,17 +283,77 @@ func itemHasStructuredDiff(entries []transcript.Entry, item transcriptItem) bool
 // retaining this same stable-key restoration behavior.
 func (m *Model) rebuildTranscriptItemState(saved transcriptItemKey) {
 	m.chatVisibleItems = m.filteredTranscriptItems()
-	if len(m.chatVisibleItems) == 0 {
+	m.rebuildTranscriptCursorTargets()
+	if len(m.chatCursorTargets) == 0 {
 		m.chatItemCursor = 0
 		return
 	}
 	m.chatItemCursor = 0
-	for i, item := range m.chatVisibleItems {
-		if item.key == saved {
+	for i, target := range m.chatCursorTargets {
+		if target.key == saved || (saved.kind == transcriptItemToolGroup && target.key.anchor == saved.anchor) {
 			m.chatItemCursor = i
 			return
 		}
 	}
+	for _, item := range m.chatVisibleItems {
+		if item.kind != transcriptItemToolGroup {
+			continue
+		}
+		for _, member := range item.groupMembers {
+			if member.key == saved {
+				m.chatItemCursor = m.cursorTargetIndex(item.key)
+				return
+			}
+		}
+	}
+}
+
+func (m *Model) rebuildTranscriptCursorTargets() {
+	targets := make([]transcriptCursorTarget, 0, len(m.chatVisibleItems))
+	for itemIndex, item := range m.chatVisibleItems {
+		targets = append(targets, transcriptCursorTarget{key: item.key, itemIndex: itemIndex, memberIndex: -1})
+		if item.kind != transcriptItemToolGroup || !(m.chatItemExpandAll || m.chatItemExpand[item.key]) {
+			continue
+		}
+		for memberIndex, member := range item.groupMembers {
+			targets = append(targets, transcriptCursorTarget{key: member.key, itemIndex: itemIndex, memberIndex: memberIndex})
+		}
+	}
+	m.chatCursorTargets = targets
+}
+
+func (m Model) cursorTargetIndex(key transcriptItemKey) int {
+	for i, target := range m.chatCursorTargets {
+		if target.key == key {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m Model) selectedTranscriptTarget() (transcriptCursorTarget, bool) {
+	if len(m.chatCursorTargets) == 0 && m.chatItemCursor >= 0 && m.chatItemCursor < len(m.chatVisibleItems) {
+		item := m.chatVisibleItems[m.chatItemCursor]
+		return transcriptCursorTarget{key: item.key, itemIndex: m.chatItemCursor, memberIndex: -1}, true
+	}
+	if m.chatItemCursor < 0 || m.chatItemCursor >= len(m.chatCursorTargets) {
+		return transcriptCursorTarget{}, false
+	}
+	return m.chatCursorTargets[m.chatItemCursor], true
+}
+
+func (m Model) itemForCursorTarget(target transcriptCursorTarget) (transcriptItem, bool) {
+	if target.itemIndex < 0 || target.itemIndex >= len(m.chatVisibleItems) {
+		return transcriptItem{}, false
+	}
+	item := m.chatVisibleItems[target.itemIndex]
+	if target.memberIndex < 0 {
+		return item, true
+	}
+	if item.kind != transcriptItemToolGroup || target.memberIndex >= len(item.groupMembers) {
+		return transcriptItem{}, false
+	}
+	return item.groupMembers[target.memberIndex], true
 }
 
 // filteredTranscriptItems retains a complete conversation unit whenever one
@@ -387,6 +521,11 @@ func (m *Model) prunePageState() {
 	loadedItems := make(map[transcriptItemKey]struct{}, len(m.chatItems))
 	for _, item := range m.chatItems {
 		loadedItems[item.key] = struct{}{}
+		if item.kind == transcriptItemToolGroup {
+			for _, member := range item.groupMembers {
+				loadedItems[member.key] = struct{}{}
+			}
+		}
 	}
 	for key := range m.chatItemExpand {
 		if _, ok := loadedItems[key]; !ok {
@@ -414,6 +553,9 @@ func (m *Model) chatBody() string {
 	}
 	if len(m.chatItems) > 0 {
 		body := m.itemTranscriptBody()
+		if m.compactToolNotice != "" {
+			body = "  " + shared.Theme.Chat.Hint.Render(m.compactToolNotice) + "\n\n" + body
+		}
 		if i, ok := m.index[m.chatStep]; ok {
 			s := m.steps[i]
 			if s.status == step.StatusFailed && s.err != "" {

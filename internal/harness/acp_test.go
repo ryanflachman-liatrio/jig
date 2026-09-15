@@ -339,6 +339,15 @@ func TestOnEvent_TerminalUpdateCarriesReplacementDiff(t *testing.T) {
 	}
 }
 
+func TestOnEventCanonicalizesACPExecuteKind(t *testing.T) {
+	s := newTestSession()
+	s.onEvent(acp.Event{Kind: acp.EventToolCall, ToolID: "exec-1", Title: "go test ./...", ToolKind: "execute", HasTitle: true, HasKind: true})
+	got := drainEvents(s.events)
+	if len(got) < 1 || got[0].Tool == nil || got[0].Tool.Kind != "bash" {
+		t.Fatalf("initial events = %+v, want canonical bash activity", got)
+	}
+}
+
 func TestOnEvent_FullTurnSequence(t *testing.T) {
 	// Text chunks → tool call (with title streaming) → tool result → final text.
 	s := newTestSession()

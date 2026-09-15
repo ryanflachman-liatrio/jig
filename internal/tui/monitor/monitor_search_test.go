@@ -377,9 +377,9 @@ func TestSearchInputAndContextualNavigation(t *testing.T) {
 		}
 	}
 	m.filterOpen = false
-	m, _ = m.Update(key("c"))
+	m, _ = m.Update(key("x"))
 	if m.searchQuery != "" || m.filters.active() {
-		t.Fatal("c did not clear transcript view state")
+		t.Fatal("x did not clear transcript view state")
 	}
 	if body := ansiStrip(m.chatBody()); !strings.Contains(body, "hidden prose") {
 		t.Fatalf("clearing search did not restore loaded transcript:\n%s", body)

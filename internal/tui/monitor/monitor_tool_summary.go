@@ -47,10 +47,7 @@ func summarizeActivity(activity *toolcall.Activity, width int) toolCallSummary {
 		return toolSummary(shared.IconToolCall, "Tool", "", "")
 	}
 	args := decodeToolArgs(activity.Input)
-	kind := strings.ToLower(strings.TrimSpace(activity.Kind))
-	if kind == "" {
-		kind = canonicalToolName(activity.Title)
-	}
+	kind := canonicalActivityKind(activity)
 	if kind == "edit" {
 		for _, content := range activity.Content {
 			if content.Diff != nil {
@@ -63,10 +60,6 @@ func summarizeActivity(activity *toolcall.Activity, width int) toolCallSummary {
 			}
 		}
 	}
-	if kind == "" {
-		kind = inferToolKind(args)
-	}
-
 	switch kind {
 	case "read":
 		return toolSummary(shared.IconToolRead, "Read", shortFile(stringArg(args, "file_path", "path")), kind)
@@ -85,7 +78,7 @@ func summarizeActivity(activity *toolcall.Activity, width int) toolCallSummary {
 	case "bash":
 		return toolSummary(shared.IconToolShell, "Run", stringArg(args, "command"), kind)
 	case "websearch":
-		return toolSummary(shared.IconToolWeb, "Search web", stringArg(args, "query", "search_term"), kind)
+		return toolSummary(shared.IconToolWeb, "Search web", webSearchDetail(args), kind)
 	case "webfetch":
 		return toolSummary(shared.IconToolWeb, "Fetch", shortHost(stringArg(args, "url")), kind)
 	case "task":
@@ -105,6 +98,87 @@ func summarizeActivity(activity *toolcall.Activity, width int) toolCallSummary {
 		name = "Tool"
 	}
 	return toolSummary(shared.IconToolCall, name, formatArgsInline(args, width), kind)
+}
+
+func canonicalActivityKind(activity *toolcall.Activity) string {
+	if activity == nil {
+		return ""
+	}
+	args := decodeToolArgs(activity.Input)
+	kind := strings.ToLower(strings.TrimSpace(activity.Kind))
+	switch kind {
+	case "execute":
+		return "bash"
+	case "fetch":
+		if named := canonicalToolName(activity.Title); named != "" {
+			return named
+		}
+		return "webfetch"
+	case "search":
+		if named := canonicalToolName(activity.Title); named != "" {
+			return named
+		}
+		switch {
+		case hasWebSearchAction(args):
+			return "websearch"
+		case hasArg(args, "glob_pattern"):
+			return "glob"
+		case hasArg(args, "pattern") || (hasArg(args, "query") && hasArg(args, "path")):
+			return "grep"
+		case hasArg(args, "query", "search_term"):
+			return "websearch"
+		default:
+			return ""
+		}
+	case "":
+		if named := canonicalToolName(activity.Title); named != "" {
+			return named
+		}
+		return inferToolKind(args)
+	default:
+		return kind
+	}
+}
+
+func hasWebSearchAction(args map[string]json.RawMessage) bool {
+	var action map[string]json.RawMessage
+	if raw, ok := args["action"]; !ok || json.Unmarshal(raw, &action) != nil {
+		return false
+	}
+	switch strings.ToLower(stringArg(action, "type")) {
+	case "search", "openpage", "findinpage", "other":
+		return true
+	default:
+		return false
+	}
+}
+
+func webSearchDetail(args map[string]json.RawMessage) string {
+	if detail := stringArg(args, "query", "search_term"); detail != "" {
+		return detail
+	}
+	var action map[string]json.RawMessage
+	if raw, ok := args["action"]; !ok || json.Unmarshal(raw, &action) != nil {
+		return ""
+	}
+	if detail := stringArg(action, "query"); detail != "" {
+		return detail
+	}
+	if raw, ok := action["queries"]; ok {
+		var queries []string
+		if json.Unmarshal(raw, &queries) == nil {
+			for i := range queries {
+				queries[i] = strings.Join(strings.Fields(queries[i]), " ")
+			}
+			if detail := strings.Join(queries, ", "); detail != "" {
+				return detail
+			}
+		}
+	}
+	if detail := stringArg(action, "url"); detail != "" {
+		return detail
+	}
+	return stringArg(action, "pattern")
 }
 
 // grepMetaArgs renders grep's secondary arguments (scope beyond the curated

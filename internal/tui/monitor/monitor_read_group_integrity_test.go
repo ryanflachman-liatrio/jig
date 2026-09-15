@@ -243,7 +243,7 @@ func TestReadGroupTerminalSmoke(t *testing.T) {
 	}
 	m, _ = m.Update(key("enter"))
 	fmt.Fprintf(&proof, "\n## Search for third-member-only token\n\nVisible items: %d; selected kind: %d; expanded: %v\n", len(m.chatVisibleItems), m.chatVisibleItems[m.chatItemCursor].kind, m.chatItemExpand[m.chatVisibleItems[m.chatItemCursor].key])
-	m, _ = m.Update(key("c"))
+	m, _ = m.Update(key("x"))
 	m, _ = m.Update(key("F"))
 	m, _ = m.Update(key(" "))
 	m, _ = m.Update(key("enter"))
