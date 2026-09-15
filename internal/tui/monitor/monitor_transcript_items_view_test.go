@@ -313,10 +313,14 @@ func TestOrphanAndNonExchangeItemsStayFlat(t *testing.T) {
 	if strings.ContainsAny(plain, "╭╰") {
 		t.Fatalf("non-exchange item acquired a card frame:\n%s", plain)
 	}
-	for _, want := range []string{"assistant prose", "system prose", "reasoning", "Unsupported future", "Result (unknown origin)", shared.IconStatusError} {
+	for _, want := range []string{"assistant prose", "system prose", "Unsupported future", "Result (unknown origin)", shared.IconStatusError} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("flat output missing %q:\n%s", want, plain)
 		}
+	}
+	// FR-10.7: a settled (non-running) thinking item is dropped entirely.
+	if strings.Contains(plain, "reasoning") {
+		t.Fatalf("settled thinking item must not render:\n%s", plain)
 	}
 	// FR-02.16 orphan path: uses RenderStatusLine, so it carries state via
 	// the icon; the old " failed" suffix must not reappear.

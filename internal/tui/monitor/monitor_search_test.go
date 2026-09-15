@@ -148,12 +148,16 @@ func TestTranscriptSearchFindsFilteredLoadedBlocks(t *testing.T) {
 	m.RunDir = runDir
 	m = enterChatStep(t, m, "a")
 
+	// FR-10.7: the settled thinking block is decluttered from the default
+	// view, so a plain search only surfaces the other two blocks.
 	m.searchQuery = "ALPHA"
 	m.rerunSearch()
-	if len(m.searchHits) != 3 {
-		t.Fatalf("search hits = %d, want 3", len(m.searchHits))
+	if len(m.searchHits) != 2 {
+		t.Fatalf("search hits = %d, want 2", len(m.searchHits))
 	}
 
+	// Explicitly enabling the reasoning filter opts back into settled
+	// reasoning, surfacing the thinking block search missed above.
 	m.filters.reasoning = true
 	m.rebuildTranscriptItemState(m.selectedTranscriptItemKey())
 	m.rerunSearch()
@@ -324,8 +328,8 @@ func TestToolFilterPreservesHiddenBlockGroupBoundaries(t *testing.T) {
 func TestSearchInputAndContextualNavigation(t *testing.T) {
 	runDir := writeTranscript(t, "a", []transcript.Entry{
 		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{
-			{Type: transcript.BlockThinking, Text: "needle one"},
-			{Type: transcript.BlockThinking, Text: "needle two"},
+			{Type: transcript.BlockText, Text: "needle one"},
+			{Type: transcript.BlockText, Text: "needle two"},
 			{Type: transcript.BlockText, Text: "hidden prose"},
 		}},
 	})

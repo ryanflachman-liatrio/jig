@@ -244,6 +244,9 @@ func TestClipboardItemPayloads(t *testing.T) {
 		{Seq: 3, Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "t1", Title: "Read", Input: json.RawMessage(`{"path":"x"}`)}}}},
 		{Seq: 4, Role: transcript.RoleUser, Blocks: []transcript.Block{{Type: transcript.BlockToolResult, Tool: &toolcall.Activity{ID: "t1", Title: "Read", Status: "completed", Content: []toolcall.Content{{Type: "text", Text: "file body"}}}}}},
 	}
+	// buildTranscriptItems itself does not drop settled thinking items —
+	// that display-only filtering (FR-10.7) happens later, in setChatPage,
+	// so grouping decisions upstream still see the full item sequence.
 	items := buildTranscriptItems(entries, false)
 	if len(items) != 3 {
 		t.Fatalf("items = %d, want text+thinking+exchange = 3", len(items))

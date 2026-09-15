@@ -17,6 +17,8 @@ import (
 func TestThinkingUnderThresholdRendersFullyExpanded(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	m.transcriptInnerW = 60
+	m.chatStep = "a"
+	m.steps[m.index["a"]].status = step.StatusRunning
 	m.setChatPage(transcript.Page{Entries: []transcript.Entry{
 		{Seq: 1, Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockThinking, Text: "**considering** the options"}}},
 	}})
@@ -42,6 +44,8 @@ func TestThinkingUnderThresholdRendersFullyExpanded(t *testing.T) {
 func TestThinkingRendersItalicMutedStyling(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	m.transcriptInnerW = 60
+	m.chatStep = "a"
+	m.steps[m.index["a"]].status = step.StatusRunning
 	m.setChatPage(transcript.Page{Entries: []transcript.Entry{
 		{Seq: 1, Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockThinking, Text: "quiet reasoning prose"}}},
 	}})
@@ -66,6 +70,8 @@ func TestThinkingOversizedCollapseExpandPersistsAcrossReload(t *testing.T) {
 	}
 	m := newMonitorWithSteps(t)
 	m.transcriptInnerW = 60
+	m.chatStep = "a"
+	m.steps[m.index["a"]].status = step.StatusRunning
 	m.setChatPage(transcript.Page{Entries: entries})
 	if !m.chatItems[0].oversized {
 		t.Fatalf("expected thinking item over %d bytes to be flagged oversized", chatTextCollapseBytes)
@@ -153,8 +159,8 @@ func TestThinkingPulseAnimatesForRunningTrailingItem(t *testing.T) {
 }
 
 // FR-10.7: a settled thinking item (step not running, or not the trailing
-// item) always renders the plain, non-animated ◇ reasoning label — never a
-// pulse frame — across repeated ticks, and does not cause TickMsg to dirty
+// item) is dropped from the built transcript item sequence entirely — it
+// never renders, animated or otherwise, and never causes TickMsg to dirty
 // the Transcript panel.
 func TestThinkingSettledItemNeverAnimates(t *testing.T) {
 	runDir := writeTranscript(t, "a", []transcript.Entry{{
@@ -165,9 +171,10 @@ func TestThinkingSettledItemNeverAnimates(t *testing.T) {
 	m.RunDir = runDir
 	m = enterChatStep(t, m, "a")
 
-	last := m.chatItems[len(m.chatItems)-1]
-	if last.running {
-		t.Fatalf("settled step's trailing thinking item must not be marked running")
+	for _, item := range m.chatVisibleItems {
+		if item.kind == transcriptItemThinking {
+			t.Fatalf("settled thinking item must not appear in the default visible transcript items: %+v", item)
+		}
 	}
 	if m.hasActiveThinkingPulse() {
 		t.Fatalf("expected hasActiveThinkingPulse to report false for a settled step")
@@ -186,7 +193,7 @@ func TestThinkingSettledItemNeverAnimates(t *testing.T) {
 	if first != second {
 		t.Fatalf("settled thinking item's rendering changed across ticks:\nframe1:\n%s\nframe2:\n%s", first, second)
 	}
-	if !strings.Contains(first, shared.IconThinking+" reasoning") {
-		t.Fatalf("settled thinking item missing the plain %q label:\n%s", shared.IconThinking+" reasoning", first)
+	if strings.Contains(first, shared.IconThinking+" reasoning") {
+		t.Fatalf("settled thinking item must not render, got %q label:\n%s", shared.IconThinking+" reasoning", first)
 	}
 }

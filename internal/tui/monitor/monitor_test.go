@@ -474,7 +474,7 @@ func assertChatCursorVisible(t *testing.T, m Model) {
 func TestMonitorItemNavigationKeepsCursorVisible(t *testing.T) {
 	blocks := make([]transcript.Block, 18)
 	for i := range blocks {
-		blocks[i] = transcript.Block{Type: transcript.BlockThinking, Text: fmt.Sprintf("reasoning %02d", i+1)}
+		blocks[i] = transcript.Block{Type: transcript.BlockText, Text: fmt.Sprintf("content %02d", i+1)}
 	}
 	runDir := writeTranscript(t, "a", []transcript.Entry{{
 		Role:   transcript.RoleAssistant,
@@ -536,8 +536,8 @@ func TestMonitorTallExpandedBlockKeepsHeaderVisible(t *testing.T) {
 	runDir := writeTranscript(t, "a", []transcript.Entry{{
 		Role: transcript.RoleAssistant,
 		Blocks: []transcript.Block{
-			{Type: transcript.BlockThinking, Text: strings.Repeat("expanded reasoning\n", 30)},
-			{Type: transcript.BlockThinking, Text: "next"},
+			{Type: transcript.BlockText, Text: strings.Repeat("expanded content\n", 30)},
+			{Type: transcript.BlockText, Text: "next"},
 		},
 	}})
 	m := newMonitorWithSteps(t)
@@ -561,7 +561,7 @@ func TestMonitorTallExpandedBlockKeepsHeaderVisible(t *testing.T) {
 func TestMonitorStreamingPreservesBlockNavigationPosition(t *testing.T) {
 	blocks := make([]transcript.Block, 18)
 	for i := range blocks {
-		blocks[i] = transcript.Block{Type: transcript.BlockThinking, Text: fmt.Sprintf("reasoning %02d", i+1)}
+		blocks[i] = transcript.Block{Type: transcript.BlockText, Text: fmt.Sprintf("content %02d", i+1)}
 	}
 	runDir := writeTranscript(t, "a", []transcript.Entry{{
 		Role:   transcript.RoleAssistant,

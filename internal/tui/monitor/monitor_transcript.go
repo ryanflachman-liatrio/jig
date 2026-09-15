@@ -225,13 +225,39 @@ func (m *Model) rebuildTranscriptItemState(saved transcriptItemKey) {
 // filteredTranscriptItems retains a complete conversation unit whenever one
 // of its members matches. In particular, a tool input or output hit never
 // splits the exchange into two independently visible rows.
+//
+// A settled thinking item (any thinking block that is not the running step's
+// trailing item) is also dropped by default — reasoning is a live-progress
+// signal, not part of the durable conversation record, and just clutters the
+// transcript once a step has moved past it (FR-10.7). The operator can still
+// inspect settled reasoning by explicitly enabling the "reasoning" filter,
+// which surfaces it like any other filtered content. When nothing needs
+// dropping, this returns m.chatItems itself rather than a copy, preserving
+// the existing aliasing callers rely on to mutate an item in place.
 func (m Model) filteredTranscriptItems() []transcriptItem {
 	query := strings.TrimSpace(strings.ToLower(m.searchQuery))
-	if query == "" && !m.filters.active() {
+	declutterThinking := !m.filters.reasoning
+	hasSettledThinking := false
+	if declutterThinking {
+		for _, item := range m.chatItems {
+			if item.kind == transcriptItemThinking && !item.running {
+				hasSettledThinking = true
+				break
+			}
+		}
+	}
+	if query == "" && !m.filters.active() && !hasSettledThinking {
 		return m.chatItems
 	}
 	visible := make([]transcriptItem, 0, len(m.chatItems))
 	for _, item := range m.chatItems {
+		if declutterThinking && item.kind == transcriptItemThinking && !item.running {
+			continue
+		}
+		if query == "" && !m.filters.active() {
+			visible = append(visible, item)
+			continue
+		}
 		for _, ref := range itemMembers(item) {
 			entry := m.chatEntries[ref.entryIdx]
 			block := entry.Blocks[ref.blockIdx]

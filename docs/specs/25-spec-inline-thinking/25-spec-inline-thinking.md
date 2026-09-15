@@ -124,10 +124,18 @@ to the existing 100 ms frame loop with no second ticker.
   (`reasoning`) alongside the glyph, so the running state stays legible on a
   non-animating terminal or for a screen reader, independent of glyph
   animation.
-- **FR-10.7:** The pulse shall stop the moment the step is no longer running:
-  a settled thinking item (any thinking block that is not the running step's
-  trailing item) shall always render the plain, non-animated `◇ reasoning`
-  label from Unit 1, never a pulse frame.
+- **FR-10.7:** A thinking item is visible in the transcript's default view
+  only while it is the running step's active trailing block. The moment a
+  step advances past it (any thinking block that is not the running step's
+  trailing item), the block is dropped from the default display list
+  (`filteredTranscriptItems`) entirely — it does not persist with a settled,
+  non-animated label. Reasoning is a live-progress signal, not part of the
+  durable conversation record. The operator can still opt into settled
+  reasoning by enabling the existing `reasoning` transcript filter
+  (`internal/tui/monitor/monitor_search.go`), which surfaces it like any
+  other filtered content; the drop is a display-only default, not a change to
+  the underlying transcript item sequence that read-exchange grouping and
+  search operate over.
 - **FR-10.8:** The pulse shall render a single-cell ASCII fallback glyph set
   under the repository's existing ASCII-fallback configuration, matching the
   qualification already used for other glyph pairs pending Slice 14's preset
@@ -143,9 +151,9 @@ to the existing 100 ms frame loop with no second ticker.
   deterministic function of that timestamp (no package-level counter or
   second ticker), demonstrating quantization to the existing 100 ms frame
   loop.
-- Test: a non-running step's trailing thinking item renders the plain
-  `◇ reasoning` label with no pulse frame and no animation-driving state,
-  demonstrating FR-10.7.
+- Test: a thinking item that is no longer the running step's trailing item
+  does not appear in the default visible transcript items, and does not
+  render at all, demonstrating FR-10.7.
 - Test: the ASCII-fallback configuration produces a non-empty, single-cell
   glyph for every pulse frame, demonstrating FR-10.8.
 

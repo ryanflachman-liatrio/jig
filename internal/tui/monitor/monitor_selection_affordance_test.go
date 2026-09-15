@@ -87,12 +87,12 @@ func TestSelectionAffordancePrefixesEqualTwoCells(t *testing.T) {
 		m.transcriptInnerW = width
 		m.setChatPage(selectionSyntheticPage())
 
-		for cursor := 0; cursor < len(m.chatItems); cursor++ {
+		for cursor := 0; cursor < len(m.chatVisibleItems); cursor++ {
 			m.chatItemCursor = cursor
 			body := m.itemTranscriptBody()
 			lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
 
-			for idx, itm := range m.chatItems {
+			for idx, itm := range m.chatVisibleItems {
 				rng, ok := m.chatItemLineRanges[transcriptLineKey{itemKey: itm.key}]
 				if !ok || rng.start >= len(lines) {
 					t.Fatalf("width=%d cursor=%d item %d missing line range: %+v", width, cursor, idx, rng)
