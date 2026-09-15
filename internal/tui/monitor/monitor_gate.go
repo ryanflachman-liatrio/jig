@@ -110,20 +110,20 @@ func (m *Model) loadActiveTextarea() {
 	entry := &m.inputQueue[m.activeInputIdx]
 	switch entry.kind {
 	case inputKindRequest:
-		ta := shared.NewInputTextarea("Message to agent…", m.gateInnerWidth(), gateTextareaRows, shared.WithoutBorder())
+		ta := shared.NewInputTextarea("Message to agent"+shared.EllipsisGlyph, m.gateInnerWidth(), gateTextareaRows, shared.WithoutBorder())
 		ta.SetValue(entry.draft)
 		m.promptTextarea = ta
 	case inputKindPrompt:
 		label := entry.prompt.Label
 		if label == "" {
-			label = "Input…"
+			label = "Input" + shared.EllipsisGlyph
 		}
 		ta := shared.NewInputTextarea(label, m.gateInnerWidth(), gateTextareaRows, shared.WithoutBorder())
 		ta.SetValue(entry.draft)
 		m.promptTextarea = ta
 	case inputKindRecovery:
 		if entry.composing {
-			ta := shared.NewInputTextarea("Guidance for the retry (optional)…", m.gateInnerWidth(), gateTextareaRows, shared.WithoutBorder())
+			ta := shared.NewInputTextarea("Guidance for the retry (optional)"+shared.EllipsisGlyph, m.gateInnerWidth(), gateTextareaRows, shared.WithoutBorder())
 			ta.SetValue(entry.draft)
 			m.promptTextarea = ta
 		} else {

@@ -109,7 +109,7 @@ func (m Model) securityView(height int) string {
 	}
 	if overflow && height > 1 {
 		remaining := len(m.secFindings) - visible
-		more := fmt.Sprintf("… %d more finding", remaining)
+		more := fmt.Sprintf("%s %d more finding", shared.EllipsisGlyph, remaining)
 		if remaining != 1 {
 			more += "s"
 		}
@@ -306,7 +306,7 @@ func truncateStatusLine(line string, width int) string {
 	}
 	parts := strings.Split(strings.TrimLeft(line, " "), " · ")
 	if len(parts) == 0 {
-		return ansi.Truncate(line, width, "…")
+		return ansi.Truncate(line, width, shared.EllipsisGlyph)
 	}
 	dropCost := func(p []string) []string {
 		out := make([]string, 0, len(p))
@@ -344,7 +344,7 @@ func truncateStatusLine(line string, width int) string {
 		// Prefer dropping LIVE/N new, then rightmost identity fields after run id.
 		parts = parts[:len(parts)-1]
 	}
-	return ansi.Truncate(rebuild(parts), width, "…")
+	return ansi.Truncate(rebuild(parts), width, shared.EllipsisGlyph)
 }
 
 type contentKind uint8
@@ -516,7 +516,7 @@ func (m Model) reviewPanelBody() string {
 func (m Model) View() string {
 	if !m.ready {
 		return shared.RenderEmptyState(shared.EmptyState{
-			Title: "Loading run…",
+			Title: "Loading run" + shared.EllipsisGlyph,
 			Body:  "Waiting for the run monitor to finish sizing.",
 		})
 	}

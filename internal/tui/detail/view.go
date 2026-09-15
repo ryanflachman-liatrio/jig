@@ -14,7 +14,7 @@ import (
 
 func (m Model) View() string {
 	if !m.Ready {
-		return "\n  Loading…\n"
+		return "\n  Loading" + shared.EllipsisGlyph + "\n"
 	}
 	footer := m.footerView()
 	body := shared.Panel(m.titleText(), m.vp.View(), m.width, m.height-lipgloss.Height(footer), true)
@@ -49,7 +49,7 @@ func (m Model) titleText() string {
 // body renders the header and step list into the viewport's content.
 func (m Model) body() string {
 	if !m.Loaded {
-		return "\n  Loading…\n"
+		return "\n  Loading" + shared.EllipsisGlyph + "\n"
 	}
 
 	// The panel title carries the workflow name, so the body opens with the
@@ -141,14 +141,14 @@ func stepMarkers(s workflow.Step) []string {
 		}
 	}
 	for _, route := range s.Routes {
-		m := fmt.Sprintf("↺ route→%s", route.Goto)
+		m := fmt.Sprintf("%s route→%s", shared.LoopGlyph, route.Goto)
 		if route.MaxIterations > 0 {
 			m += fmt.Sprintf(" (max %d)", route.MaxIterations)
 		}
 		out = append(out, m)
 	}
 	if s.Validate != nil {
-		out = append(out, "⇢ gate")
+		out = append(out, shared.GateGlyph+" gate")
 	}
 	if s.When != "" {
 		out = append(out, "when "+s.When)

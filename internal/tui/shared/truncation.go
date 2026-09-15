@@ -21,15 +21,16 @@ import (
 
 // MoreItems renders "… <n> more <word>" using singular when n == 1 and
 // plural otherwise. Intended for head-anchored windows where the notice
-// is appended below the last visible row.
+// is appended below the last visible row. The leading ellipsis flows
+// through the vocabulary so it degrades to "..." under PresetASCII.
 func MoreItems(n int, singular, plural string) string {
-	return "… " + strconv.Itoa(n) + " more " + pluralWord(n, singular, plural)
+	return EllipsisGlyph + " " + strconv.Itoa(n) + " more " + pluralWord(n, singular, plural)
 }
 
 // EarlierItems renders "… <n> earlier <word>" for tail-anchored windows
 // where the notice is prepended above the newest visible row.
 func EarlierItems(n int, singular, plural string) string {
-	return "… " + strconv.Itoa(n) + " earlier " + pluralWord(n, singular, plural)
+	return EllipsisGlyph + " " + strconv.Itoa(n) + " earlier " + pluralWord(n, singular, plural)
 }
 
 // ExpandHint renders the bracketed expand-key hint "[<key>: Expand]" or
@@ -70,7 +71,7 @@ func HintLine(more, hint string) string {
 // lets the retirement grep-lock and every consumer share one source of
 // truth even though there is no quantitative field to format.
 func CaptureTruncatedHint() string {
-	return "… capture truncated at write"
+	return EllipsisGlyph + " capture truncated at write"
 }
 
 // DiffClampedHint returns the fixed wording the Monitor emits above a
@@ -79,7 +80,7 @@ func CaptureTruncatedHint() string {
 // existing capture-truncated hint, and any future consumer share one
 // canonical source of truth.
 func DiffClampedHint() string {
-	return "… content clamped at write; diff may be incomplete"
+	return EllipsisGlyph + " content clamped at write; diff may be incomplete"
 }
 
 // DiffUnavailableHint returns the fixed wording used when diff
@@ -88,7 +89,7 @@ func DiffClampedHint() string {
 // DiffClampedHint so the whole diff-fallback vocabulary lives in one
 // place (slice 07 FR-07.15).
 func DiffUnavailableHint() string {
-	return "… diff unavailable; showing resulting source"
+	return EllipsisGlyph + " diff unavailable; showing resulting source"
 }
 
 func pluralWord(n int, singular, plural string) string {

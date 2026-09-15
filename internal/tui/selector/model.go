@@ -119,7 +119,7 @@ func (m Model) PaneBody(width, height int) string {
 	m = m.SetPaneSize(width, height)
 	switch {
 	case m.loading:
-		return "  Scanning " + workflowsDir + "…"
+		return "  Scanning " + workflowsDir + shared.EllipsisGlyph
 	case m.err != nil:
 		return "  Failed to scan: " + m.err.Error()
 	case len(m.list.Items()) == 0:

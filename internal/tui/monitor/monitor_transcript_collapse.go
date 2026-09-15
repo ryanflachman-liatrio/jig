@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
+
+	"jig/internal/tui/shared"
 )
 
 // collapseSummaryLabel derives an oversized user-role text block's summary
@@ -64,5 +66,5 @@ func buildCollapseSummary(text string, width int) string {
 	if width < 1 {
 		width = 1
 	}
-	return ansi.Truncate(summary, width, "…")
+	return ansi.Truncate(summary, width, shared.EllipsisGlyph)
 }

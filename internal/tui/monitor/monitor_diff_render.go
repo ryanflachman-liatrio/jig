@@ -175,7 +175,7 @@ func formatDiffGutter(marker byte, lineNo string, hasLineNo bool, width int) str
 	if pad := width - len(token); pad > 0 {
 		token = strings.Repeat(" ", pad) + token
 	}
-	return token + "│"
+	return token + shared.DiffGutter
 }
 
 // formatLineToken returns the row's preferred line-number text. Add
@@ -553,7 +553,7 @@ func wrapDiffRow(row string, gutterWidth, contentWidth int) []string {
 	wrapped := ansi.Hardwrap(row, frame+contentWidth, true)
 	segments := strings.Split(wrapped, "\n")
 	out := make([]string, 0, len(segments))
-	blankGutter := shared.Theme.Diff.Gutter.Render(strings.Repeat(" ", gutterWidth) + "│")
+	blankGutter := shared.Theme.Diff.Gutter.Render(strings.Repeat(" ", gutterWidth) + shared.DiffGutter)
 	for i, seg := range segments {
 		if i == 0 {
 			out = append(out, seg+sgrRowTerminator)
@@ -575,7 +575,7 @@ func buildCollapseFooter(hiddenHunks, hiddenLines int, expanded bool, expandKey 
 	if hiddenLines > 0 {
 		linePhrase = shared.MoreItems(hiddenLines, "line", "lines")
 		if hunkPhrase != "" {
-			linePhrase = strings.TrimPrefix(linePhrase, "… ")
+			linePhrase = strings.TrimPrefix(linePhrase, shared.EllipsisGlyph+" ")
 		}
 	}
 	var count string

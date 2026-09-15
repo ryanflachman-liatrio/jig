@@ -443,7 +443,7 @@ func (m *Model) writeItemDetail(b *strings.Builder, label, content string, ancho
 		b.WriteString("      " + shared.Theme.Chat.Hint.Render(line) + "\n")
 	}
 	for _, row := range strings.Split(shown, "\n") {
-		b.WriteString("      " + shared.Theme.Chat.TranscriptDetail.Render("│ "+row) + "\n")
+		b.WriteString("      " + shared.Theme.Chat.TranscriptDetail.Render(shared.BoxVertical+" "+row) + "\n")
 	}
 	if hidden > 0 && anchor != detailAnchorTail {
 		line := shared.HintLine(shared.MoreItems(hidden, "line", "lines"), hint)

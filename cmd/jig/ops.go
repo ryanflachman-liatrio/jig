@@ -275,7 +275,14 @@ func printHelp() {
 }
 
 func printHelpTo(w io.Writer) {
-	fmt.Fprintln(w, `usage: jig <command> [arguments]
+	fmt.Fprintln(w, `usage: jig [--ascii] <command> [arguments]
+
+Global flags:
+  --ascii                   render every glyph in the ASCII preset,
+                            substituting ASCII forms for icons, box
+                            drawing, arrows, and separators. Use on
+                            terminals without Nerd Font / Unicode
+                            support (TERM=linux, ancient telnet, etc.).
 
 Commands:
   init                      scaffold a valid workflow

@@ -146,5 +146,5 @@ func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
-	return s[:max-1] + "…"
+	return s[:max-1] + shared.EllipsisGlyph
 }
