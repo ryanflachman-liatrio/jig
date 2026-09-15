@@ -240,10 +240,14 @@ func TestTranscriptConsecutiveTextItemsSameRoleNoGap(t *testing.T) {
 	}
 }
 
-// TestTranscriptExecutionCoordinateGapPreserved locks FR-04.12: two items
-// whose generation/iteration/attempt differs render with exactly two blank
-// lines between them, because slice 12's boundary banner will render
-// inside that gap and depends on its width remaining stable.
+// TestTranscriptExecutionCoordinateGapPreserved locks FR-04.12 as
+// updated by slice 12: the two-line coord gap now hosts a boundary
+// banner. The banner folds into the closing item's line range, so the
+// blank count *after* first.end drops from 2 to 1 while the total gap
+// composition remains `<blank> <banner> <blank>` (plan §Layout matrix,
+// "absent metadata + present banner" case). itemSpacingBefore itself
+// stays at 2 because slice 12 slots inside that budget without
+// expanding it.
 func TestTranscriptExecutionCoordinateGapPreserved(t *testing.T) {
 	entries := []transcript.Entry{
 		{Seq: 1, Generation: 0, Iteration: 0, Attempt: 0, Role: transcript.RoleUser,
@@ -254,7 +258,7 @@ func TestTranscriptExecutionCoordinateGapPreserved(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	m.transcriptInnerW = 60
 	m.setChatPage(transcript.Page{Entries: entries})
-	_ = m.itemTranscriptBody()
+	body := m.itemTranscriptBody()
 
 	if got, want := itemSpacingBefore(m.chatItems[0], m.chatItems[1]), 2; got != want {
 		t.Fatalf("itemSpacingBefore across coord change = %d, want %d", got, want)
@@ -262,10 +266,12 @@ func TestTranscriptExecutionCoordinateGapPreserved(t *testing.T) {
 
 	first := m.chatItemLineRanges[transcriptLineKey{itemKey: m.chatItems[0].key}]
 	second := m.chatItemLineRanges[transcriptLineKey{itemKey: m.chatItems[1].key}]
-	gap := second.start - first.end - 1
-	if gap != 2 {
-		t.Fatalf("gap across execution-coordinate change = %d blank lines, want 2\nfirst=%+v second=%+v",
-			gap, first, second)
+	if gap := second.start - first.end - 1; gap != 1 {
+		t.Fatalf("post-fold gap = %d, want 1 (banner absorbed into first.end, one trailing blank)\nfirst=%+v second=%+v\nbody:\n%s",
+			gap, first, second, stripANSI(body))
+	}
+	if !strings.Contains(stripANSI(body), "iteration 2") {
+		t.Fatalf("boundary banner missing from body:\n%s", stripANSI(body))
 	}
 }
 

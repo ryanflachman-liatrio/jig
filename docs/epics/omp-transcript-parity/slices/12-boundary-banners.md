@@ -196,3 +196,31 @@ None identified. Labels are engine-derived integers and static text.
 - **Q-12.3** Do minor boundaries warrant the left-anchored short-rule variant, or
   is one centered form enough? *Suggest one form until there is a second kind of
   boundary.*
+
+## Resolutions (implementation)
+
+- **Q-12.1 → resolved:** Generation now renders as `reset N`, matching the
+  workflow schema's `Run.Reset` trigger and the Steps-panel Reset confirmation
+  gate. `re-run` was retired render-plan jargon; the change is regression-tested
+  by `TestBoundaryLabelNeverUsesRetiredReRun`. Iteration and attempt keep their
+  existing display conventions (iteration = raw+1 = 1-indexed pass number;
+  attempt = raw = 1-indexed retry count — these anchor different semantics on
+  purpose and an in-code comment on `boundaryLabel` documents the invariant so
+  a future "fix" cannot silently normalize them).
+- **Q-12.2 → resolved:** No. Failure reasons stay on the tool card. A retry
+  banner announces the transition; the failing step's card already renders the
+  reason and scanning the banner would duplicate the same string one row up.
+- **Q-12.3 → resolved (for now):** One centered form ships. `shared.Rule`
+  accepts a `RuleOption` variadic so the left-anchored short-rule variant can
+  be added by a later slice without a breaking API change; no consumer inside
+  the epic needs it today.
+
+## Delivery evidence
+
+- Rule primitive: [`internal/tui/shared/rule.go`](../../../../internal/tui/shared/rule.go)
+  with tests in [`internal/tui/shared/rule_test.go`](../../../../internal/tui/shared/rule_test.go).
+- Banner label + row: [`internal/tui/monitor/monitor_transcript_banner.go`](../../../../internal/tui/monitor/monitor_transcript_banner.go)
+  with unit tests in [`internal/tui/monitor/monitor_transcript_banner_test.go`](../../../../internal/tui/monitor/monitor_transcript_banner_test.go).
+- Loop integration: [`internal/tui/monitor/monitor_transcript_items_view.go`](../../../../internal/tui/monitor/monitor_transcript_items_view.go)
+  with view-level tests in [`internal/tui/monitor/monitor_transcript_banner_view_test.go`](../../../../internal/tui/monitor/monitor_transcript_banner_view_test.go).
+- Plan document: [`docs/plans/omp-slice-12-boundary-banners.md`](../../../plans/omp-slice-12-boundary-banners.md).

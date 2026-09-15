@@ -85,8 +85,9 @@ func TestTurnMetadataRowFoldedIntoPreviousItemLineRange(t *testing.T) {
 	rows := strings.Split(strings.TrimRight(body, "\n"), "\n")
 
 	// The last turn-0 item is chatItems[1] (assistant prose). Its
-	// lineRange.end must now include the metadata row so n/N stays on
-	// items.
+	// lineRange must now include both the slice-11 metadata row and
+	// the slice-12 boundary banner so n/N navigation still lands on
+	// items rather than on this trailing chrome.
 	prev := m.chatItems[1]
 	rng, ok := m.chatItemLineRanges[transcriptLineKey{itemKey: prev.key}]
 	if !ok {
@@ -95,10 +96,22 @@ func TestTurnMetadataRowFoldedIntoPreviousItemLineRange(t *testing.T) {
 	if rng.end >= len(rows) {
 		t.Fatalf("range end %d out of bounds for %d rows", rng.end, len(rows))
 	}
+	// The metadata row and the banner both live inside the folded
+	// range; the banner sits after the metadata row so rng.end covers
+	// the banner (slice 12), not the metadata row.
 	wantTime := time.Date(2026, 9, 14, 10, 0, 4, 0, time.UTC).Local().Format("15:04:05")
-	if !strings.Contains(stripANSI(rows[rng.end]), wantTime) {
-		t.Fatalf("range end row does not contain metadata row time %q; row=%q\nfull body:\n%s",
-			wantTime, rows[rng.end], stripANSI(body))
+	rangePlain := stripANSI(strings.Join(rows[rng.start:rng.end+1], "\n"))
+	if !strings.Contains(rangePlain, wantTime) {
+		t.Fatalf("folded range missing metadata row time %q; range:\n%s\nfull body:\n%s",
+			wantTime, rangePlain, stripANSI(body))
+	}
+	if !strings.Contains(rangePlain, "iteration 2") {
+		t.Fatalf("folded range missing boundary banner label; range:\n%s\nfull body:\n%s",
+			rangePlain, stripANSI(body))
+	}
+	if got := stripANSI(rows[rng.end]); !strings.Contains(got, "iteration 2") {
+		t.Fatalf("range end row = %q, want banner row (slice 12 sits after slice 11's row)\nfull body:\n%s",
+			got, stripANSI(body))
 	}
 }
 
@@ -183,11 +196,14 @@ func TestTurnMetadataRowSkippedForRunningStep(t *testing.T) {
 }
 
 func TestTurnMetadataRowSkippedWhenAllFieldsAbsent(t *testing.T) {
-	// Slice-04 fixtures have empty Ts and coord.iteration = 0 for the
-	// left turn — the row must be omitted entirely so the vertical
-	// rhythm matches slice 04 byte-for-byte. This locks the "row
-	// contributes no bytes" fallback path and documents how the row
-	// degrades under persistence-off / synthetic fixtures.
+	// Slice-11 invariant: when the row's fields are all absent, no
+	// dim Δ row is emitted. Slice 12 adds a second occupant of the
+	// coord gap — the boundary banner — which does render on every
+	// coordinate transition regardless of timestamp availability, so
+	// the gap is no longer byte-identical to slice 04. This test now
+	// locks the composition: no metadata Δ row, banner present, and
+	// the banner folded into the closing item's line range per plan
+	// §Layout matrix.
 	m := newMonitorWithSteps(t)
 	m.chatStep = "a"
 	m.transcriptInnerW = 60
@@ -198,19 +214,20 @@ func TestTurnMetadataRowSkippedWhenAllFieldsAbsent(t *testing.T) {
 			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "no ts right"}}},
 	}})
 	body := stripANSI(m.itemTranscriptBody())
-	// The left turn has iter=0 attempt=0 and no parseable Ts, so no
-	// row is emitted. The right turn has iter=1 but the row is keyed
-	// on the *previous* turn's coord, so the interior row is empty.
 	if strings.Contains(body, "Δ ") {
-		t.Fatalf("row rendered under all-fields-absent input:\n%s", body)
+		t.Fatalf("metadata Δ row rendered under all-fields-absent input:\n%s", body)
 	}
-	// Slice-04 baseline: gap between the two items must be exactly 2
-	// blank lines. Measure it via chatItemLineRanges so the test
-	// counts the true item edges rather than an internal glamour row.
+	if !strings.Contains(body, "iteration 2") {
+		t.Fatalf("slice-12 boundary banner missing from body:\n%s", body)
+	}
+	// The banner folds into the first item's line range; the trailing
+	// blank between the banner and the next item accounts for the "1"
+	// here. See docs/plans/omp-slice-12-boundary-banners.md
+	// §Layout matrix ("absent metadata + present banner" case).
 	first := m.chatItemLineRanges[transcriptLineKey{itemKey: m.chatItems[0].key}]
 	second := m.chatItemLineRanges[transcriptLineKey{itemKey: m.chatItems[1].key}]
-	if gap := second.start - first.end - 1; gap != 2 {
-		t.Fatalf("empty-row gap = %d blank lines, want 2 (slice-04 baseline)\nfirst=%+v second=%+v\n%s",
+	if gap := second.start - first.end - 1; gap != 1 {
+		t.Fatalf("post-fold gap = %d, want 1 (banner absorbed, one trailing blank)\nfirst=%+v second=%+v\n%s",
 			gap, first, second, body)
 	}
 }
