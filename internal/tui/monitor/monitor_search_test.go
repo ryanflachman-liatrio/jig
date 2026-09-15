@@ -269,6 +269,11 @@ func TestErrorFilterKeepsAtomicToolContext(t *testing.T) {
 		}},
 	})
 	m := newMonitorWithSteps(t)
+	// Wide enough that the curated `Read: broken.go` detail (epic slice 15
+	// now restores the tool-use's Input for a settled exchange, where it
+	// previously summarized an empty-Input result activity) doesn't compete
+	// with the full "permission denied" error hint for space.
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 160, Height: 24})
 	m.RunDir = runDir
 	m = enterChatStep(t, m, "a")
 	m.filters.errors = true

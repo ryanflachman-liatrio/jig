@@ -190,7 +190,28 @@ func (m *Model) writeTranscriptItem(b *strings.Builder, item transcriptItem, sel
 				}
 			}
 		}
-		s := summarizeActivity(activity)
+		// summarizeActivity needs the tool-use's Input to format arguments
+		// (epic slice 15): when a settled result's activity carries its own
+		// Title/Kind/Locations/Output, `activity` above was swapped to that
+		// result activity, which normally has no Input of its own. Restore
+		// Input from the original use activity on a scoped copy so the
+		// summary keeps seeing the request's arguments without mutating
+		// `detailActivity` (still used verbatim for the expanded view below).
+		summaryActivity := activity
+		if summaryActivity != nil && len(summaryActivity.Input) == 0 {
+			if orig := use.Activity(); orig != nil && len(orig.Input) > 0 {
+				clone := *summaryActivity
+				clone.Input = orig.Input
+				summaryActivity = &clone
+			}
+		}
+		// The fair-share formatter (epic slice 15) budgets against the full
+		// panel content width rather than the narrower space actually left
+		// after the icon/title/separator, since RenderStatusLine never
+		// truncates internally (status_line.go) and the composed row is
+		// clipped to its real on-screen space downstream by the card frame;
+		// this keeps the budget an upper bound rather than a pixel-exact fit.
+		s := summarizeActivity(summaryActivity, m.transcriptInnerW)
 		header := composeToolHeader(m, item, s, selected)
 		row := marker + " " + header
 		if item.kind == transcriptItemToolExchange {
@@ -276,7 +297,10 @@ func (m *Model) renderToolExchangeCard(item transcriptItem, prefix, header strin
 // visible on collapsed rows without occupying the title (FR-02.17). Slice
 // 07 additionally emits a `+N/-M` badge in Meta on expanded non-error
 // edit exchanges whose diff computes cleanly (FR-07.18). The error hint
-// wins the slot when both would be present.
+// wins the slot when both would be present. Slice 15 adds a third Meta
+// source — a known kind's secondary arguments (`s.meta`, e.g. grep's
+// `path`/`case`) — appended only on non-error rows so an error row still
+// shows only its hint, never a stale argument preview alongside it.
 func composeToolHeader(m *Model, item transcriptItem, s toolCallSummary, selected bool) string {
 	title := s.action
 	kind := s.kind
@@ -297,10 +321,13 @@ func composeToolHeader(m *Model, item transcriptItem, s toolCallSummary, selecte
 		if hint := toolErrorHint(m, item); hint != "" {
 			meta = append(meta, hint)
 		}
-	} else if item.kind == transcriptItemToolExchange && (m.chatItemExpandAll || m.chatItemExpand[item.key]) {
-		if badge := diffStatsBadge(m, item); badge != "" {
-			meta = append(meta, badge)
+	} else {
+		if item.kind == transcriptItemToolExchange && (m.chatItemExpandAll || m.chatItemExpand[item.key]) {
+			if badge := diffStatsBadge(m, item); badge != "" {
+				meta = append(meta, badge)
+			}
 		}
+		meta = append(meta, s.meta...)
 	}
 
 	return shared.RenderStatusLine(shared.StatusLine{

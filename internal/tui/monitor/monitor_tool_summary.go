@@ -1,11 +1,16 @@
 package monitor
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
+
+	"charm.land/lipgloss/v2"
 
 	"jig/internal/toolcall"
 	"jig/internal/transcript"
@@ -17,19 +22,27 @@ import (
 // want a per-kind glyph; the Monitor header uses `kind` with
 // shared.ToolStatusIcon and does not read this field for the icon slot.
 // `kind` is the canonical name (`read`, `edit`, ...); empty when the
-// activity could not be classified.
+// activity could not be classified. `meta` carries known-kind secondary
+// arguments (epic slice 15, e.g. grep's `path`/`case`/`gitignore`) destined
+// for the status line's Meta slot; it stays nil for every kind that has no
+// such secondary detail, so existing rows render byte-for-byte unchanged.
 type toolCallSummary struct {
 	icon   string
 	action string
 	detail string
 	kind   string
+	meta   []string
 }
 
-func summarizeToolCall(blk transcript.Block) toolCallSummary {
-	return summarizeActivity(blk.Activity())
+func summarizeToolCall(blk transcript.Block, width int) toolCallSummary {
+	return summarizeActivity(blk.Activity(), width)
 }
 
-func summarizeActivity(activity *toolcall.Activity) toolCallSummary {
+// summarizeActivity classifies a tool activity into a toolCallSummary. width
+// is the panel content width available for the fallback preview and any
+// Meta-slot secondary arguments; both are budgeted with formatArgsInline
+// rather than clipped after composing the row (epic slice 15, FR-15.2).
+func summarizeActivity(activity *toolcall.Activity, width int) toolCallSummary {
 	if activity == nil {
 		return toolSummary(shared.IconToolCall, "Tool", "", "")
 	}
@@ -66,7 +79,9 @@ func summarizeActivity(activity *toolcall.Activity) toolCallSummary {
 	case "glob":
 		return toolSummary(shared.IconToolSearch, "Find", stringArg(args, "pattern", "glob_pattern"), kind)
 	case "grep":
-		return toolSummary(shared.IconToolSearch, "Search", stringArg(args, "pattern", "query"), kind)
+		s := toolSummary(shared.IconToolSearch, "Search", stringArg(args, "pattern", "query"), kind)
+		s.meta = grepMetaArgs(args, width)
+		return s
 	case "bash":
 		return toolSummary(shared.IconToolShell, "Run", stringArg(args, "command"), kind)
 	case "websearch":
@@ -89,7 +104,24 @@ func summarizeActivity(activity *toolcall.Activity) toolCallSummary {
 	if name == "" {
 		name = "Tool"
 	}
-	return toolSummary(shared.IconToolCall, name, primaryToolArg(args), kind)
+	return toolSummary(shared.IconToolCall, name, formatArgsInline(args, width), kind)
+}
+
+// grepMetaArgs renders grep's secondary arguments (scope beyond the curated
+// pattern/query detail already in Description) as a single Meta-slot entry,
+// or nil when none of them are present.
+func grepMetaArgs(args map[string]json.RawMessage, width int) []string {
+	secondary := make(map[string]json.RawMessage, 3)
+	for _, key := range []string{"path", "case", "gitignore"} {
+		if raw, ok := args[key]; ok {
+			secondary[key] = raw
+		}
+	}
+	preview := formatArgsInline(secondary, width)
+	if preview == "" {
+		return nil
+	}
+	return []string{sanitizeToolSummary(preview)}
 }
 
 // toolSummary sanitizes each slot so agent-controlled tool arguments cannot
@@ -296,18 +328,156 @@ func shortHost(rawURL string) string {
 	return rawURL
 }
 
-func primaryToolArg(args map[string]json.RawMessage) string {
-	for _, key := range []string{"description", "title", "query", "search_term", "pattern", "command", "file_path", "path", "url", "skill"} {
-		if value := stringArg(args, key); value != "" {
-			switch key {
-			case "file_path", "path":
-				return shortFile(value)
-			case "url":
-				return shortHost(value)
-			default:
-				return value
-			}
+// argKeyPriority orders the keys formatArgsInline is most likely to find
+// informative first; every other key present follows in lexicographic order.
+// Go map iteration order is randomized, so this ordering — not map
+// iteration — is what keeps the rendered preview stable across renders
+// (epic slice 15, jig-side addition since omp relies on JS object insertion
+// order, which Go's map cannot reproduce).
+var argKeyPriority = []string{"path", "file_path", "command", "pattern", "query", "url"}
+
+// secretArgKeyWords are matched case-insensitively as substrings of an
+// argument key name. A matching key's value is never rendered, regardless
+// of remaining width budget, because the key name alone suggests a
+// credential. This is a formatter-local heuristic distinct from
+// internal/runner's redactSecrets, which replaces known configured secret
+// string values wherever they occur in text; it has no concept of argument
+// key names and would not catch a secret-shaped value it was never
+// configured to know about.
+var secretArgKeyWords = []string{"token", "key", "password", "secret"}
+
+func isHiddenArgKey(key string) bool {
+	return strings.HasPrefix(key, "__")
+}
+
+func isSecretArgKey(key string) bool {
+	lower := strings.ToLower(key)
+	for _, word := range secretArgKeyWords {
+		if strings.Contains(lower, word) {
+			return true
 		}
 	}
-	return ""
+	return false
+}
+
+// orderArgKeys returns args' keys in a deterministic order: the priority
+// list first (for whichever of those keys are present), then every
+// remaining non-hidden key sorted lexicographically.
+func orderArgKeys(args map[string]json.RawMessage) []string {
+	seen := make(map[string]bool, len(args))
+	ordered := make([]string, 0, len(args))
+	for _, key := range argKeyPriority {
+		if _, ok := args[key]; ok && !isHiddenArgKey(key) {
+			ordered = append(ordered, key)
+			seen[key] = true
+		}
+	}
+	rest := make([]string, 0, len(args))
+	for key := range args {
+		if seen[key] || isHiddenArgKey(key) {
+			continue
+		}
+		rest = append(rest, key)
+	}
+	sort.Strings(rest)
+	return append(ordered, rest...)
+}
+
+// formatArgsInline renders tool arguments as a "key=value, key=value"
+// preview that never exceeds maxWidth. Before spending width on a key it
+// reserves the minimal footprint of every key still pending (separator +
+// key name + "=" + a short value stand-in), so one long value cannot starve
+// the keys that follow it — the fair-share budget from the omp reference
+// (docs/epics/omp-transcript-parity/slices/15-inline-arg-formatting.md,
+// tools/json-tree.ts:53-92), adapted to use orderArgKeys instead of object
+// insertion order. When the budget runs out before every key is placed, the
+// result ends in an ellipsis; shared.TruncateTitle is the final safety net
+// so the width invariant holds even at pathologically narrow widths.
+func formatArgsInline(args map[string]json.RawMessage, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	keys := orderArgKeys(args)
+	if len(keys) == 0 {
+		return ""
+	}
+
+	pieces := make([]string, 0, len(keys))
+	width := 0
+	for i, key := range keys {
+		sepWidth := 0
+		if i > 0 {
+			sepWidth = 2 // ", "
+		}
+		tailReserve := 0
+		for _, pending := range keys[i+1:] {
+			tailReserve += 2 + lipgloss.Width(pending) + 1 + 4
+		}
+		pieceBudget := maxWidth - width - sepWidth - tailReserve
+
+		exhausted := pieceBudget < 1
+		var piece string
+		if !exhausted {
+			if isSecretArgKey(key) {
+				piece = key + "=<redacted>"
+			} else {
+				valueMaxLen := pieceBudget - lipgloss.Width(key) - 1 // "="
+				if valueMaxLen < 1 {
+					valueMaxLen = 1
+				}
+				piece = key + "=" + formatScalarArg(args[key], valueMaxLen)
+			}
+			exhausted = lipgloss.Width(piece) > pieceBudget
+		}
+
+		if exhausted {
+			joined := strings.Join(pieces, ", ") + shared.EllipsisGlyph
+			return shared.TruncateTitle(joined, maxWidth)
+		}
+
+		pieces = append(pieces, piece)
+		width += sepWidth + lipgloss.Width(piece)
+	}
+	return strings.Join(pieces, ", ")
+}
+
+// formatScalarArg renders one argument value within valueMaxLen display
+// cells. It inspects the raw JSON's leading byte rather than unmarshaling
+// into a generic interface{}, so an array or object value is summarized by
+// its shallow element/key count without decoding (and therefore fully
+// allocating) large nested content such as a big `content` payload.
+func formatScalarArg(raw json.RawMessage, valueMaxLen int) string {
+	if valueMaxLen < 1 {
+		valueMaxLen = 1
+	}
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return shared.TruncateTitle(`""`, valueMaxLen)
+	}
+	switch trimmed[0] {
+	case '"':
+		var s string
+		if json.Unmarshal(trimmed, &s) != nil {
+			return shared.TruncateTitle(string(trimmed), valueMaxLen)
+		}
+		escaped := strings.NewReplacer("\n", "\\n", "\t", "\\t").Replace(s)
+		return shared.TruncateTitle(`"`+escaped+`"`, valueMaxLen)
+	case '[':
+		var items []json.RawMessage
+		if json.Unmarshal(trimmed, &items) != nil {
+			return shared.TruncateTitle("[items]", valueMaxLen)
+		}
+		return shared.TruncateTitle(fmt.Sprintf("[%d items]", len(items)), valueMaxLen)
+	case '{':
+		var obj map[string]json.RawMessage
+		if json.Unmarshal(trimmed, &obj) != nil {
+			return shared.TruncateTitle("{keys}", valueMaxLen)
+		}
+		return shared.TruncateTitle(fmt.Sprintf("{%d keys}", len(obj)), valueMaxLen)
+	case 'n':
+		return shared.TruncateTitle("null", valueMaxLen)
+	default:
+		// true, false, and numbers all round-trip as their own literal text.
+		return shared.TruncateTitle(string(trimmed), valueMaxLen)
+	}
 }

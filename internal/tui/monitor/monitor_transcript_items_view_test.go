@@ -216,6 +216,38 @@ func TestToolExchangeHeaderErrorHintInMeta(t *testing.T) {
 	}
 }
 
+// TestToolExchangeHeaderGrepMetaAlongsideCuratedPattern demonstrates epic
+// slice 15's second proof artifact: grep's curated `pattern` detail stays in
+// the Description slot unchanged, while its secondary `path`/`case`
+// arguments render in the Meta slot via the fair-share formatter.
+func TestToolExchangeHeaderGrepMetaAlongsideCuratedPattern(t *testing.T) {
+	entries := []transcript.Entry{
+		{Seq: 1, Role: transcript.RoleAssistant, Blocks: []transcript.Block{{
+			Type: transcript.BlockToolUse,
+			Tool: &toolcall.Activity{ID: "grep1", Kind: "grep", Title: "Grep", Input: []byte(`{"pattern":"TODO","path":"internal/tui","case":true}`)},
+		}}},
+		{Seq: 2, Role: transcript.RoleUser, Blocks: []transcript.Block{{
+			Type: transcript.BlockToolResult,
+			Tool: &toolcall.Activity{ID: "grep1", Kind: "grep", Status: "completed"},
+		}}},
+	}
+	m := newMonitorWithSteps(t)
+	m.transcriptInnerW = 96
+	m.setChatPage(transcript.Page{Entries: entries})
+	raw := m.itemTranscriptBody()
+	plain := stripANSI(raw)
+
+	// The curated title/description pair (`Search: TODO`) stays adjacent and
+	// unchanged; grep's secondary arguments follow as Meta, not folded into
+	// the pattern detail itself.
+	if !strings.Contains(plain, "Search: TODO") {
+		t.Fatalf("title/description did not keep the curated `Search: TODO` pair:\n%s", plain)
+	}
+	if !strings.Contains(plain, "path=") || !strings.Contains(plain, "case=") {
+		t.Fatalf("meta slot missing grep secondary arguments:\n%s", plain)
+	}
+}
+
 // FR-02.12: state prose has left every Monitor header code path. This is
 // a broad grep-based regression that covers success/error/running/incomplete
 // side-by-side. Any future accidental reintroduction (e.g. from a helper
