@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	keybind "charm.land/bubbles/v2/key"
 	"charm.land/lipgloss/v2"
@@ -256,7 +257,7 @@ func (m Model) statusLineView() string {
 	if m.showsTranscriptFollow() {
 		switch {
 		case m.chatAutoScroll:
-			parts = append(parts, "LIVE")
+			parts = append(parts, m.liveCrumb(time.Now()))
 		case m.unseenChatEntries() > 0:
 			parts = append(parts, fmt.Sprintf("%d new", m.unseenChatEntries()))
 		}
@@ -468,7 +469,7 @@ func (m Model) transcriptPanelTitleParts() []string {
 	parts = append(parts, leaf)
 	// LIVE only when it fits after the badge (optional trailing crumb).
 	if content.kind == contentTranscript && m.showsTranscriptFollow() && m.chatAutoScroll {
-		candidate := append(append([]string{}, parts...), "LIVE")
+		candidate := append(append([]string{}, parts...), m.liveCrumb(time.Now()))
 		titleW := shared.PanelTitleBudget(m.transcriptOuterWidth())
 		if lipgloss.Width(shared.BreadcrumbTitle(candidate, titleW)) <= titleW {
 			parts = candidate
