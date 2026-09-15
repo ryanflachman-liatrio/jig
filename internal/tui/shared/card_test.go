@@ -14,6 +14,19 @@ import (
 
 func intptr(v int) *int { return &v }
 
+// tintParams returns the SGR parameter body (e.g. "48;2;32;31;38") of a tint
+// style's background, so tint assertions track Theme.Card.Tint* rather than a
+// hex literal copied out of the palette.
+func tintParams(t *testing.T, style lipgloss.Style) string {
+	t.Helper()
+	sequence := StyleBackground(style)
+	params := strings.TrimSuffix(strings.TrimPrefix(sequence, "\x1b["), "m")
+	if params == "" || params == sequence {
+		t.Fatalf("tint style has no background SGR: %q", sequence)
+	}
+	return params
+}
+
 func assertCardWidth(t *testing.T, out string, width int) {
 	t.Helper()
 	for n, row := range strings.Split(out, "\n") {
@@ -208,8 +221,8 @@ func TestRenderCardTintRestoresAfterContentReset(t *testing.T) {
 		state CardState
 		base  string
 	}{
-		{name: "neutral", state: CardSuccess, base: "48;2;26;25;31"},
-		{name: "error", state: CardError, base: "48;2;42;26;30"},
+		{name: "neutral", state: CardSuccess, base: tintParams(t, Theme.Card.TintNeutral)},
+		{name: "error", state: CardError, base: tintParams(t, Theme.Card.TintError)},
 	}
 	content := "plain\x1b[mfull\x1b[1;0;31mcombined\x1b[48;2;0;80;0minner\x1b[49mback\x1b[38;2;255;0;0mred"
 	for _, tt := range tests {
@@ -325,7 +338,7 @@ func TestRenderCardContentWrappingAndStyledCode(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			out := RenderCard(Card{Width: tt.width, State: CardSuccess, Tint: true, Sections: []CardSection{{Lines: tt.content}}})
 			assertCardWidth(t, out, tt.width)
-			assertTintCoverage(t, out, "48;2;26;25;31")
+			assertTintCoverage(t, out, tintParams(t, Theme.Card.TintNeutral))
 			plain := ansi.Strip(out)
 			if strings.Contains(plain, "spaces   \n") {
 				t.Fatal("trailing whitespace survived wrapping")
@@ -359,9 +372,9 @@ func TestRenderCardStyledGallery(t *testing.T) {
 			},
 		})
 		assertCardWidth(t, out, 60)
-		base := "48;2;26;25;31"
+		base := tintParams(t, Theme.Card.TintNeutral)
 		if state == CardError {
-			base = "48;2;42;26;30"
+			base = tintParams(t, Theme.Card.TintError)
 		}
 		assertTintCoverage(t, out, base)
 		t.Logf("state=%v width=60 rows=%d background-audit=PASS\n%s", state, lipgloss.Height(out), ansi.Strip(out))

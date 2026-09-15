@@ -112,13 +112,23 @@ func cardLabel(s string) string {
 	return b.String()
 }
 
-func (c Card) finishRow(row string) string {
+// tint returns the SGR background every row of c is wrapped in, or "" when the
+// card is untinted. Sourcing it from Theme.Card.Tint* (rather than a duplicated
+// hex literal) keeps the card fill on the same palette as the rest of the TUI,
+// so a theme change moves the card with it.
+func (c Card) tint() string {
 	if !c.Tint {
-		return row
+		return ""
 	}
-	background := "\x1b[48;2;26;25;31m"
 	if c.State == CardError {
-		background = "\x1b[48;2;42;26;30m"
+		return StyleBackground(Theme.Card.TintError)
+	}
+	return StyleBackground(Theme.Card.TintNeutral)
+}
+
+func finishRow(row, background string) string {
+	if background == "" {
+		return row
 	}
 	return TintRow(row, background)
 }
@@ -139,12 +149,13 @@ func RenderCard(c Card) string {
 		}
 		label += c.HeaderMeta
 	}
-	rows := []string{c.finishRow(composeBorderBar(c.Width, BoxCornerTL, BoxCornerTR, 3, cardLabel(label), border))}
+	background := c.tint()
+	rows := []string{finishRow(composeBorderBar(c.Width, BoxCornerTL, BoxCornerTR, 3, cardLabel(label), border), background)}
 	pl, pr := cardPadding(c.Width, c.PadLeft, c.PadRight)
 	contentWidth := CardContentWidth(c.Width, c.PadLeft, c.PadRight)
 	for i, section := range c.Sections {
 		if section.Label != "" || (section.Rule && i > 0) {
-			rows = append(rows, c.finishRow(composeBorderBar(c.Width, BoxTeeL, BoxTeeR, 3, cardLabel(section.Label), border)))
+			rows = append(rows, finishRow(composeBorderBar(c.Width, BoxTeeL, BoxTeeR, 3, cardLabel(section.Label), border), background))
 		}
 		for _, logical := range section.Lines {
 			for _, line := range strings.Split(logical, "\n") {
@@ -153,11 +164,11 @@ func RenderCard(c Card) string {
 				for _, body := range strings.Split(wrapped, "\n") {
 					fill := max(contentWidth-lipgloss.Width(body), 0)
 					row := border.Render(BoxVertical) + strings.Repeat(" ", pl) + body + strings.Repeat(" ", fill+pr) + border.Render(BoxVertical)
-					rows = append(rows, c.finishRow(row))
+					rows = append(rows, finishRow(row, background))
 				}
 			}
 		}
 	}
-	rows = append(rows, c.finishRow(composeBorderBar(c.Width, BoxCornerBL, BoxCornerBR, 3, "", border)))
+	rows = append(rows, finishRow(composeBorderBar(c.Width, BoxCornerBL, BoxCornerBR, 3, "", border), background))
 	return strings.Join(rows, "\n")
 }

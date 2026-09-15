@@ -23,6 +23,7 @@ import (
 	"jig/internal/step"
 	"jig/internal/toolcall"
 	"jig/internal/transcript"
+	"jig/internal/tui/shared"
 )
 
 // verticalRhythmPage returns a fabricated multi-kind page whose items
@@ -121,14 +122,21 @@ func TestTranscriptTrimsStructuralEdgeBlanksBetweenItems(t *testing.T) {
 	}
 }
 
+// tintedPaddingRow builds a synthetic card padding row from the same theme
+// token shared/card.go tints with, so the fixture stays byte-identical to real
+// card output when the palette moves.
+func tintedPaddingRow() string {
+	return shared.TintRow(strings.Repeat(" ", 20), shared.StyleBackground(shared.Theme.Card.TintNeutral))
+}
+
 // TestTranscriptPreservesTintedPaddingRow locks FR-04.3 at the loop level:
 // a synthetic verbatim item whose content contains bytes shaped like the
 // shared card's tinted padding row must survive the per-item edge trim
 // byte-for-byte, because slice-09's user-message bubble will emit tinted
-// padding through the same code path. The exact SGR sequences are the
-// ones hard-coded in shared/card.go finishRow.
+// padding through the same code path. The SGR sequences come from the same
+// Theme.Card.TintNeutral token shared/card.go tints rows with.
 func TestTranscriptPreservesTintedPaddingRow(t *testing.T) {
-	tintedPadding := "\x1b[48;2;26;25;31m" + strings.Repeat(" ", 20) + "\x1b[49m"
+	tintedPadding := tintedPaddingRow()
 	entries := []transcript.Entry{
 		{Seq: 1, Role: transcript.RoleUser,
 			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "before synthetic bubble"}}},
@@ -168,7 +176,7 @@ func TestTranscriptPreservesTintedPaddingRow(t *testing.T) {
 // line-range tests so both verify the same bytes through the production item
 // loop without adding a test-only rendering branch.
 func structuralEdgesPage() transcript.Page {
-	tintedPadding := "\x1b[48;2;26;25;31m" + strings.Repeat(" ", 20) + "\x1b[49m"
+	tintedPadding := tintedPaddingRow()
 	return transcript.Page{Entries: []transcript.Entry{
 		{Seq: 1, Role: transcript.RoleUser,
 			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "narrow first visible"}}},
@@ -187,7 +195,7 @@ func structuralEdgesPage() transcript.Page {
 // discipline at transcriptInnerW=24, where wrapping and short card rows make
 // line-accounting mistakes easiest to expose.
 func TestTranscriptStructuralEdgesAtNarrowWidth(t *testing.T) {
-	tintedPadding := "\x1b[48;2;26;25;31m" + strings.Repeat(" ", 20) + "\x1b[49m"
+	tintedPadding := tintedPaddingRow()
 	m := newMonitorWithSteps(t)
 	m.transcriptInnerW = 24
 	m.setChatPage(structuralEdgesPage())

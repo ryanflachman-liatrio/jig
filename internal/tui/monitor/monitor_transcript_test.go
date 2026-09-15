@@ -201,7 +201,7 @@ func TestBuildTranscriptItemsPairsFixtureToolsByScopedFIFO(t *testing.T) {
 // exclusively ASCII whitespace, so a tinted card padding row (whose bytes
 // include SGR escapes) is treated as content while a bare " " line is not.
 func TestIsStructuralBlankRawBytesSemantics(t *testing.T) {
-	tintedPadding := "\x1b[48;2;26;25;31m" + strings.Repeat(" ", 20) + "\x1b[49m"
+	tintedPadding := tintedPaddingRow()
 	tests := []struct {
 		name string
 		in   string
@@ -235,7 +235,7 @@ func TestIsStructuralBlankRawBytesSemantics(t *testing.T) {
 // padding row byte-for-byte so slice-09's user-message bubble can rely on
 // the same trimmer without a card-side padding marker.
 func TestTrimStructuralBlankEdges(t *testing.T) {
-	tintedPadding := "\x1b[48;2;26;25;31m" + strings.Repeat(" ", 20) + "\x1b[49m"
+	tintedPadding := tintedPaddingRow()
 	tests := []struct {
 		name string
 		in   string

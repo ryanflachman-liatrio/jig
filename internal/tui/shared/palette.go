@@ -34,7 +34,11 @@ const (
 	hexMalibu   = "#00A4FF" // info
 	hexCitron   = "#E8FF27" // busy
 
-	// jig-local recessed tool-card backgrounds; these are not Charmtone tokens.
-	hexToolNeutralBg = "#1A191F"
+	// jig-local tool-card backgrounds; these are not Charmtone tokens. The
+	// neutral card sits flush with the app canvas (bgBase) so a bordered tool
+	// exchange reads as part of the transcript surface instead of a black well
+	// punched into it. The error card keeps its own recessed red wash so a
+	// failed exchange stays distinguishable by fill.
+	hexToolNeutralBg = hexPepper
 	hexToolErrorBg   = "#2A1A1E"
 )
