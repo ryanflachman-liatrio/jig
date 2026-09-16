@@ -83,3 +83,16 @@ func (m *Model) renderBoundaryBanner(prev, curr toolCorrelationKey) string {
 	}
 	return bannerPrefix() + shared.Rule(width, label)
 }
+
+// renderResponseRule returns the unlabeled full-width rule that separates
+// one assistant response (and its tool calls) from the next within the same
+// execution coordinate. It shares the boundary banner's width and gutter so
+// the two separators align, but carries no label: unlike a reset/retry/
+// iteration transition, a response boundary has no event to name.
+func (m *Model) renderResponseRule() string {
+	width := m.bannerWidth()
+	if width < 1 {
+		return ""
+	}
+	return bannerPrefix() + shared.Rule(width, "")
+}

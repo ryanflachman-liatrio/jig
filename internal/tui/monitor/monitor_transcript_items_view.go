@@ -90,6 +90,23 @@ func (m *Model) itemTranscriptBody() string {
 					b.WriteString("\n")
 					line++
 				}
+			} else if isResponseStart(prev, item) {
+				// Response-boundary rule: no coordinate change occurred (that
+				// case is handled above via the labeled boundary banner), but
+				// a new assistant response is starting after something other
+				// than a continuing assistant text item. Sits in the same
+				// blank-rule-blank shape as the banner, minus the label and
+				// minus the metadata row (interior response boundaries carry
+				// no per-turn cost/tokens worth showing).
+				b.WriteString("\n")
+				line++
+				if rule := m.renderResponseRule(); rule != "" {
+					b.WriteString(rule)
+					b.WriteString("\n")
+					line += strings.Count(rule, "\n") + 1
+				}
+				b.WriteString("\n")
+				line++
 			} else {
 				for range spacing {
 					b.WriteString("\n")

@@ -190,6 +190,20 @@ func itemSpacingBefore(previous, current transcriptItem) int {
 	return 1
 }
 
+// isResponseStart reports whether current begins a new assistant response
+// within the same execution coordinate: an assistant text item arriving
+// after something other than a continuing assistant text item (thinking, a
+// tool call/group, or a different role). A coordinate change is handled by
+// the boundary banner instead, so callers only consult this once
+// itemSpacingBefore has already ruled that out. It never fires on the first
+// visible item (there is no prior response to separate from).
+func isResponseStart(previous, current transcriptItem) bool {
+	if current.kind != transcriptItemText || current.role != transcript.RoleAssistant {
+		return false
+	}
+	return !(previous.kind == transcriptItemText && previous.role == current.role)
+}
+
 // itemOversized reports whether a text or thinking item exceeds
 // chatTextCollapseBytes and so collapses to the shared summary row (FR-09.4,
 // FR-10.3). User-role text collapses only when authored by the operator;
