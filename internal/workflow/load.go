@@ -199,16 +199,6 @@ func (wf *Workflow) applyDefaults() {
 		if s.Backend == "" {
 			s.Backend = BackendClaude
 		}
-		if s.Transport == "" {
-			s.Transport = wf.Defaults.Transport
-		}
-		if s.Transport == "" {
-			if s.Backend == BackendCursor || s.Backend == BackendCodex {
-				s.Transport = TransportACP
-			} else {
-				s.Transport = TransportSDK
-			}
-		}
 
 		// inject_context resolves to a plain bool: an explicit per-step value
 		// wins, else the [defaults] value, else true. The raw *bool is left

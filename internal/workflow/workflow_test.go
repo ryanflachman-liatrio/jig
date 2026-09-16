@@ -98,14 +98,11 @@ func TestDecodeValid(t *testing.T) {
 	if fix := wf.Steps[wf.index["fix"]]; fix.Inputs[0].Ref != "triage" {
 		t.Errorf("fix input[0].Ref = %q, want triage", fix.Inputs[0].Ref)
 	}
-	// Backend/transport default to claude/sdk when unset.
+	// Backend defaults to claude when unset.
 	for _, id := range []string{"triage", "fix"} {
 		s := wf.Steps[wf.index[id]]
 		if s.Backend != BackendClaude {
 			t.Errorf("%s Backend = %q, want %q", id, s.Backend, BackendClaude)
-		}
-		if s.Transport != TransportSDK {
-			t.Errorf("%s Transport = %q, want %q", id, s.Transport, TransportSDK)
 		}
 	}
 }
@@ -952,7 +949,7 @@ label = "Approval"`,
 	}
 }
 
-func TestDecodeBackendTransport(t *testing.T) {
+func TestDecodeBackend(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteSkill(t, filepath.Join(dir, "skills/a", "SKILL.md"), "# Skill")
 
@@ -963,7 +960,6 @@ name = "x"
 version = "1"
 [defaults]
 backend = "claude"
-transport = "sdk"
 [[step]]
 id = "a"
 type = "agent"
@@ -974,7 +970,7 @@ id = "b"
 type = "agent"
 skill = "skills/a"
 depends_on = ["a"]
-transport = "acp"
+backend = "cursor"
 allowed_tools = ["Read"]
 `
 		wf, err := Decode(toml, dir)
@@ -982,61 +978,16 @@ allowed_tools = ["Read"]
 			t.Fatalf("Decode: %v", err)
 		}
 		a := wf.Steps[wf.index["a"]]
-		if a.Backend != BackendClaude || a.Transport != TransportSDK {
-			t.Errorf("a = %s/%s, want claude/sdk", a.Backend, a.Transport)
+		if a.Backend != BackendClaude {
+			t.Errorf("a.Backend = %s, want claude", a.Backend)
 		}
 		b := wf.Steps[wf.index["b"]]
-		if b.Backend != BackendClaude || b.Transport != TransportACP {
-			t.Errorf("b = %s/%s, want claude/acp", b.Backend, b.Transport)
+		if b.Backend != BackendCursor {
+			t.Errorf("b.Backend = %s, want cursor", b.Backend)
 		}
 	})
 
-	t.Run("cursor acp backend", func(t *testing.T) {
-		toml := `
-[workflow]
-name = "x"
-version = "1"
-[[step]]
-id = "a"
-type = "agent"
-skill = "skills/a"
-backend = "cursor"
-transport = "acp"
-allowed_tools = ["Read"]
-`
-		wf, err := Decode(toml, dir)
-		if err != nil {
-			t.Fatalf("Decode: %v", err)
-		}
-		a := wf.Steps[wf.index["a"]]
-		if a.Backend != BackendCursor || a.Transport != TransportACP {
-			t.Errorf("a = %s/%s, want cursor/acp", a.Backend, a.Transport)
-		}
-	})
-
-	t.Run("codex defaults to acp", func(t *testing.T) {
-		toml := `
-[workflow]
-name = "x"
-version = "1"
-[[step]]
-id = "a"
-type = "agent"
-skill = "skills/a"
-backend = "codex"
-allowed_tools = ["Read"]
-`
-		wf, err := Decode(toml, dir)
-		if err != nil {
-			t.Fatalf("Decode: %v", err)
-		}
-		a := wf.Steps[wf.index["a"]]
-		if a.Backend != BackendCodex || a.Transport != TransportACP {
-			t.Errorf("a = %s/%s, want codex/acp", a.Backend, a.Transport)
-		}
-	})
-
-	t.Run("cursor defaults to acp", func(t *testing.T) {
+	t.Run("cursor backend", func(t *testing.T) {
 		toml := `
 [workflow]
 name = "x"
@@ -1053,12 +1004,12 @@ allowed_tools = ["Read"]
 			t.Fatalf("Decode: %v", err)
 		}
 		a := wf.Steps[wf.index["a"]]
-		if a.Backend != BackendCursor || a.Transport != TransportACP {
-			t.Errorf("a = %s/%s, want cursor/acp", a.Backend, a.Transport)
+		if a.Backend != BackendCursor {
+			t.Errorf("a.Backend = %s, want cursor", a.Backend)
 		}
 	})
 
-	t.Run("codex sdk transport is invalid", func(t *testing.T) {
+	t.Run("codex backend", func(t *testing.T) {
 		toml := `
 [workflow]
 name = "x"
@@ -1068,12 +1019,15 @@ id = "a"
 type = "agent"
 skill = "skills/a"
 backend = "codex"
-transport = "sdk"
 allowed_tools = ["Read"]
 `
-		_, err := Decode(toml, dir)
-		if err == nil || !strings.Contains(err.Error(), "requires transport") {
-			t.Fatalf("error = %v, want invalid Codex transport", err)
+		wf, err := Decode(toml, dir)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+		a := wf.Steps[wf.index["a"]]
+		if a.Backend != BackendCodex {
+			t.Errorf("a.Backend = %s, want codex", a.Backend)
 		}
 	})
 
@@ -1095,7 +1049,7 @@ allowed_tools = ["Read"]
 		}
 	})
 
-	t.Run("unknown transport", func(t *testing.T) {
+	t.Run("unknown transport key is rejected", func(t *testing.T) {
 		toml := `
 [workflow]
 name = "x"
@@ -1104,12 +1058,12 @@ version = "1"
 id = "a"
 type = "agent"
 skill = "skills/a"
-transport = "grpc"
+transport = "acp"
 allowed_tools = ["Read"]
 `
 		_, err := Decode(toml, dir)
-		if err == nil || !strings.Contains(err.Error(), "invalid transport") {
-			t.Fatalf("error = %v, want invalid transport", err)
+		if err == nil || !strings.Contains(err.Error(), "unknown key") {
+			t.Fatalf("error = %v, want unknown key error for removed transport field", err)
 		}
 	})
 }

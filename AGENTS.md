@@ -57,28 +57,26 @@ Keep skill input/output contracts aligned with their invoking TOML when edited.
 
 ## Backend selection
 
-Selection is TOML-only: resolved step fields go to
-`harness.For(backend, transport)`. Do not use or reintroduce `JIG_HARNESS` or
+Selection is TOML-only: the resolved step `backend` field goes to
+`harness.For(backend)`. Every backend is ACP-backed; there is no other
+transport to select. Do not use or reintroduce `JIG_HARNESS` or
 `harness.FromEnv`.
 
-| Backend | Supported transport | Harness |
-|---|---|---|
-| `claude` | `sdk` | `ClaudeHarness` |
-| `claude` | `acp` | `AcpHarness`, using Zed's Claude ACP adapter |
-| `cursor` | `acp` | `CursorHarness`, native `cursor-agent acp` |
-| `codex` | `acp` | `CodexHarness`, using `@agentclientprotocol/codex-acp` |
+| Backend | Harness |
+|---|---|
+| `claude` | `AcpHarness`, using Zed's Claude ACP adapter |
+| `cursor` | `CursorHarness`, native `cursor-agent acp` |
+| `codex` | `CodexHarness`, using `@agentclientprotocol/codex-acp` |
 
-`backend` resolves step → `[defaults]` → `claude`. `transport` resolves
-step → `[defaults]` → the backend default (`sdk` for Claude, `acp` for
-Cursor/Codex). An explicitly inherited incompatible pair is rejected at load
-time. Verify resolution in `internal/workflow/load.go` and supported pairs in
+`backend` resolves step → `[defaults]` → `claude`. Verify resolution in
+`internal/workflow/load.go` and supported backends in
 `internal/harness/select.go` when changing this area.
 
-ACP is a transport, not a backend. Gemini is not implemented. The Codex ACP
-adapter drives the App Server using the operator's existing login; do not
-replace it with `codex exec`, an MCP server, or workflow API-key fields.
-Adapter pins belong in implementation/dependency sources, not copied into
-agent instructions. Required harness capabilities must fail closed.
+Gemini is not implemented. The Codex ACP adapter drives the App Server using
+the operator's existing login; do not replace it with `codex exec`, an MCP
+server, or workflow API-key fields. Adapter pins belong in
+implementation/dependency sources, not copied into agent instructions.
+Required harness capabilities must fail closed.
 
 ## Commands and completion
 

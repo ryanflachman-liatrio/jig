@@ -272,12 +272,12 @@ func (m *MetricMux) Execute(ctx context.Context, req engine.StepRequest, rep eng
 // SupportsSessionResume forwards CapSessionResume probes to the inner
 // executor when it implements engine.SessionResumeSupport. The metric mux is
 // otherwise transparent to backend feature detection.
-func (m *MetricMux) SupportsSessionResume(backend, transport string) bool {
+func (m *MetricMux) SupportsSessionResume(backend string) bool {
 	sr, ok := m.inner.(engine.SessionResumeSupport)
 	if !ok {
 		return false
 	}
-	return sr.SupportsSessionResume(backend, transport)
+	return sr.SupportsSessionResume(backend)
 }
 
 // stepID extracts the step id from a StepRequest without a nil dereference

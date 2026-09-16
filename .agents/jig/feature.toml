@@ -27,7 +27,6 @@ model           = "claude-opus-4-8"
 max_turns       = 120
 permission_mode = "acceptEdits"
 backend         = "claude"
-transport       = "sdk"
 max_parallel    = 3
 artifacts_dir   = ".jig/artifacts"
 

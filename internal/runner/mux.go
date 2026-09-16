@@ -45,7 +45,7 @@ func (m *Mux) Execute(ctx context.Context, req engine.StepRequest, rep engine.Re
 
 // SupportsSessionResume forwards CapSessionResume probes to the registered
 // agent executor when it implements engine.SessionResumeSupport.
-func (m *Mux) SupportsSessionResume(backend, transport string) bool {
+func (m *Mux) SupportsSessionResume(backend string) bool {
 	e, ok := m.executors[workflow.StepAgent]
 	if !ok {
 		return false
@@ -54,5 +54,5 @@ func (m *Mux) SupportsSessionResume(backend, transport string) bool {
 	if !ok {
 		return false
 	}
-	return support.SupportsSessionResume(backend, transport)
+	return support.SupportsSessionResume(backend)
 }

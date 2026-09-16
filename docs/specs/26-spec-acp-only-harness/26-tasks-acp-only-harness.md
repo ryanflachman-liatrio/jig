@@ -1,0 +1,374 @@
+# 26-tasks-acp-only-harness.md
+
+## Relevant Files
+
+| File | Why It Is Relevant |
+| --- | --- |
+| `internal/harness/claude.go` | `ClaudeHarness` implementation; deleted in Unit 1. |
+| `internal/harness/claude_test.go` | Tests for `ClaudeHarness`; deleted in Unit 1. |
+| `internal/harness/select.go` | `For(backend, transport)`; drops the `sdk` branch and the `transport` parameter in Unit 1. |
+| `internal/harness/select_test.go` | Table-driven tests for `For`; updated for the single-argument signature and dropped `sdk` cases. |
+| `internal/runner/agent.go` | `AgentExecutor.forHarness` field/type, `Execute`, `SupportsSessionResume`, `persistSessionID` all take `(backend, transport)`; collapse to `backend`-only in Unit 1. |
+| `internal/runner/agent_test.go` | Exercises `ClaudeHarness`'s wider `Cap*` set vs. `AcpHarness`'s; reconcile per Unit 1's functional requirement. |
+| `internal/runner/fake.go` | `NewAgentExecutorFixed`/test doubles wired to the two-argument `forHarness` signature. |
+| `internal/ops/control.go` | Line ~149 calls `harness.For(wfStep.Backend, wfStep.Transport)`; updates to single-argument `For`. |
+| `internal/datastore/session.go` | `SessionInfo.Transport` field persisted alongside `Backend`; removed once `Transport` is gone. |
+| `internal/datastore/session_test.go` | Asserts `SessionInfo.Transport`; updated to drop the field. |
+| `internal/workflow/schema.go` | `TransportSDK`/`TransportACP` constants, `validTransport`, `Step.Transport`, `Defaults.Transport` (lines ~94-111, 378-381, 454-458); `Transport` removed entirely. |
+| `internal/workflow/load.go` | Transport-resolution branch (lines ~202-210: step → defaults → backend default); removed. |
+| `internal/workflow/validate.go` | Transport-validity checks (lines ~229-233); removed along with the `Transport` field. |
+| `internal/workflow/*_test.go` (schema/load/validate) | Fixtures and assertions referencing `transport = "sdk"`/`"acp"`; updated to drop the field. |
+| `internal/harness/security_integration_test.go` | Builds `workflow.Step{..., Transport: "acp", ...}`; updated to drop the field. |
+| `internal/tui/chat/*` | Confirmed dead code, unreferenced by any live package; deleted wholesale in Unit 1. |
+| `docs/ARCHITECTURE.md` | Line ~32 lists "Claude SDK, Claude ACP, Cursor ACP, and Codex ACP" adapters; drops the SDK row (Unit 1) and is fully ACP-only by Unit 5. |
+| `CONTEXT.md` | "Harness and backend" section (lines ~136-141) defines `Transport` and lists `ClaudeHarness`; updated in Unit 1, `Transport` vocabulary dropped entirely in Unit 5. |
+| `AGENTS.md` | "Backend selection" section's backend/transport table (lines ~58-81) drops the `sdk` row in Unit 1 and the `transport` concept in Unit 5. |
+| `internal/runner/monitor.go` | `MonitorAdapter.Dispatch`, `monitorOptions`, `decodeMonitorVerdict`, `drainMonitorChannel`; rewritten onto an ACP-backed session in Unit 2. |
+| `internal/runner/monitor_test.go` | `fakeMonitorClient` and decode-path tests; replaced/extended with ACP-backed fakes and the tolerant-decoder + retry-then-fail-open tests in Unit 2. |
+| `internal/harness/acp.go` | `appendSchemaPrompt`, `extractJSONFromText`, `acpMaxStructuredAttempts`; the prompt-injected schema mechanism `MonitorAdapter` reuses in Unit 2; `Open`/`NewSession` call site extended to accept `SessionSpec.MCPServers` in Unit 4. |
+| `internal/harness/capability.go` | `SessionSpec` struct; gains an `MCPServers` field (capability-gated or otherwise) in Unit 4. |
+| `internal/sentinel/supervisor.go` | Lines ~289-304: existing fail-open handling (`disableMonitor`, `ActionObserved`) that every `Dispatch` error already gets; Unit 2 must not special-case decode failures outside this path. Read-only reference, not expected to change. |
+| `internal/sentinel/finding.go` | `ActionObserved`/`ActionBlocked` semantics referenced by Unit 2's proof artifact. Read-only reference. |
+| `internal/sentinel/supervisor_test.go`, `internal/sentinel/supervisor_a6_test.go` | Existing fail-open coverage; extend if `MonitorAdapter`'s new error shape needs an assertion here too. |
+| `cmd/jig/main.go` | Switch-based subcommand dispatch (lines ~33-55); gains a hidden `mcp-serve` case in Unit 3. |
+| `cmd/jig/mcp_serve.go` (new) | New hidden `jig mcp-serve` subcommand: stdio MCP server to the agent, TCP client back to the main jig process. |
+| `cmd/jig/mcp_serve_test.go` (new) | Standalone tests: 10-tool dispatch, `ask_user`/`final_merge` rendezvous, auth rejection, crash handling. |
+| `internal/helpchat/tools.go` | `BuildMcpServer`, the 10 `claudecode.McpTool` builders (`buildWorkflowSnapshot` … `buildAskUser`), `okResult`/`errResult`; rewritten as MCP tool handlers on the TCP server side of Unit 3/4's contract. |
+| `internal/helpchat/cmds.go` | `connectCmd`/`queryCmd` build `claudecode.NewClient` with `WithSdkMcpServer`; rewritten to open an `AcpHarness` session with `SessionSpec.MCPServers` naming `jig mcp-serve` in Unit 4. |
+| `internal/helpchat/model.go` | `Model.client`/`msgChan` typed as `claudecode.Client`/`claudecode.Message`; retyped onto `harness.Session`/`harness.Event` in Unit 4. |
+| `internal/helpchat/msgs.go` | `claudecode.Client`/`claudecode.Message`-typed message structs; retyped in Unit 4. |
+| `internal/helpchat/actions.go`, `internal/helpchat/gate_view.go`, `internal/helpchat/prompt.go` | Consumers of the above types/dispatch mechanism; updated only as needed to compile against the new types. |
+| `internal/helpchat/helpchat_test.go` | Exercises the SDK-backed flow end-to-end; rewritten against `AcpHarness` + a scripted local MCP server in Unit 4. |
+| `internal/tui/monitor/monitor_model.go`, `internal/tui/monitor/monitor_update.go` | Import `internal/helpchat` directly; expected to need only MCP-server lifecycle wiring, not redesign (spec's Design Considerations). |
+| `internal/tui/monitor/monitor_test.go` | Existing help-chat wiring coverage in the monitor package; extended if lifecycle hookup needs assertions here. |
+| `go.mod`, `go.sum` | Line 18: `github.com/severity1/claude-agent-sdk-go v0.6.22`; removed entirely in Unit 5. |
+| `docs/specs/12-spec-acp-claude-harness/12-spec-acp-claude-harness.md` | Non-Goal 5 marked resolved/closed, pointing at this spec, in Unit 5. |
+| `docs/plans/open-goals.md` | A6 entry ("isolated direct-SDK classifier") marked resolved/closed in Unit 5. |
+| `README.md` | "Status" section's "Claude SDK/ACP, Cursor ACP, and Codex ACP are supported" line; updated to drop the SDK/ACP split in Unit 5. |
+
+### Notes
+
+- Unit tests live alongside the code they test (`monitor.go`/`monitor_test.go`, `select.go`/`select_test.go`, etc.), matching this repo's existing convention.
+- Use `go test ./...`, `go vet ./...`, and `(cd harness/acp && go test ./... && go vet ./...)` per [AGENTS.md](../../../AGENTS.md)'s Commands section; the nested ACP module is not covered by root `go test ./...`.
+- Format changed Go files with `gofmt -w <files>`; do not reformat unrelated files.
+- `go test -race ./internal/tui/... ./internal/helpchat` and `go test -race ./internal/engine ./internal/runner ./internal/harness` per [docs/TESTING.md](../../TESTING.md) are the relevant focused race-detector invocations for Units 1, 2, and 4.
+- Use synthetic fixtures for all monitor/help-chat proof artifacts; never copy real run data, prompts, or credentials into tests or docs, per AGENTS.md's "Sensitive local state" constraint.
+
+## Tasks
+
+### [x] 1.0 Delete `ClaudeHarness`; `AcpHarness` becomes the only Claude path
+
+#### 1.0 Proof Artifact(s)
+
+- Grep: `grep -rn "claudecode\|claude-agent-sdk-go" internal/harness/` returns
+  nothing, demonstrates the SDK is gone from the harness seam.
+- CLI: `go build ./... && go vet ./... && go test ./...` passes with zero
+  `ClaudeHarness` references anywhere in the tree, demonstrates the deletion
+  is load-bearing-clean.
+- Manual: a real workflow run with `backend = "claude"` (no `transport` set)
+  produces a normal transcript via `AcpHarness`, demonstrates no regression
+  in step execution or the TUI.
+
+#### 1.0 Tasks
+
+- [x] 1.1 Delete `internal/harness/claude.go` and `internal/harness/claude_test.go`.
+- [x] 1.2 Delete `internal/tui/chat/*` (confirmed dead code, unreferenced by
+      any live package); run `go build ./...` to confirm nothing broke.
+- [x] 1.3 Collapse `internal/harness/select.go`'s `For(backend, transport)`
+      to `For(backend string) (Harness, error)`: `backend == "claude"`/`""`
+      resolves directly to `NewAcpHarness()`; drop the `sdk`/`""` transport
+      branch and the now-dead transport-validity error paths for
+      `cursor`/`codex`. Update `internal/harness/select_test.go`'s table to
+      drop `transport` from test cases and the `sdk` cases entirely.
+- [x] 1.4 Update every caller of the two-argument `For`/`forHarness`:
+      `internal/runner/agent.go` (`AgentExecutor.forHarness` field type,
+      `NewAgentExecutor`, `NewAgentExecutorFixed`, `Execute`,
+      `SupportsSessionResume`), `internal/runner/integration_resolver.go`,
+      `internal/runner/mux.go`, `internal/telemetry/reporter.go`, and
+      `internal/ops/control.go:149`, to the single-argument signature.
+      Scope grew beyond the two named files: the `backend, transport`
+      signature also threaded through `engine.SessionResumeSupport`,
+      `runner.Mux.SupportsSessionResume`, and `telemetry.MetricMux` — all
+      updated to single-argument.
+- [x] 1.5 Remove `Transport` from `internal/workflow/schema.go`
+      (`TransportSDK`/`TransportACP` constants, `validTransport`,
+      `Step.Transport`, `Defaults.Transport`), the transport-resolution
+      branch in `internal/workflow/load.go` (~202-210), and the
+      transport-validity checks in `internal/workflow/validate.go`
+      (~229-233). Updated `workflow_test.go`'s fixtures/assertions
+      (renamed `TestDecodeBackendTransport` → `TestDecodeBackend`).
+      Scope grew beyond `internal/workflow`: `Transport` was also a field on
+      `manifest.StepTerminal`/`provenanceJSON`, `runexport.RunSummary`/
+      `StepSummary`, and `telemetry.stepLabels`, and was read in
+      `internal/ops/doctor.go` and `internal/tui/detail/view.go` — all
+      updated, plus every workflow TOML under `.agents/jig/` and
+      `examples/` that set `transport = "..."` (the field is rejected as an
+      unknown key once removed from the schema). Deleted
+      `.agents/jig/mixed-transport.toml` (its entire purpose — demonstrating
+      SDK+ACP mixing — is obsolete).
+- [x] 1.6 Remove `Transport` from `internal/datastore/session.go`'s
+      `SessionInfo` and `internal/runner/agent.go`'s `persistSessionID`;
+      updated `internal/datastore/session_test.go` and
+      `internal/engine/resume_test.go`/`handlers.go`/`engine.go`, which also
+      read/wrote it.
+- [x] 1.7 Update `internal/harness/security_integration_test.go`'s
+      `workflow.Step{..., Transport: "acp", ...}` fixtures to drop the field
+      (7 occurrences across inline TOML fixtures and struct literals).
+- [x] 1.8 Reconciled by closing the gap on `AcpHarness`: discovered during
+      implementation that `ClaudeHarness` advertised `CapSessionResume` but
+      `AcpHarness` did not, and `AcpHarness.Open` unconditionally rejected
+      `spec.Resume` — a real regression (`.agents/jig/feature.toml` uses
+      `block_on` on `backend = "claude"` steps today). `CursorHarness`/
+      `CodexHarness` already wire `spec.Resume` through `conn.LoadSession`;
+      applied the identical pattern to `AcpHarness.Open` and added
+      `CapSessionResume` to its advertised capabilities. Also fixed a real
+      bug this surfaced: `harness/acp/conn.go`'s `Connect` (the Zed/Claude
+      adapter path) never populated `Conn.SupportsLoadSession` from the
+      Initialize response, unlike `ConnectCursor`/`ConnectCodex` — fixed to
+      match. Updated `internal/harness/security_integration_test.go`'s
+      three live-ACP resume tests (previously hardcoding `claude-acp` as the
+      one backend that could NOT resume) to expect resume parity across all
+      three backends; all now pass against real (fixture) ACP round trips.
+- [x] 1.9 Updated `docs/ARCHITECTURE.md` (package table), `CONTEXT.md`
+      ("Harness and backend" section — dropped `ClaudeHarness` from the
+      Harness list; full `Transport` vocabulary removal stays Unit 5's job
+      per this task list), and `AGENTS.md` ("Backend selection" section —
+      rewrote to a single-column backend table and `harness.For(backend)`).
+      Also updated `docs/workflow-schema.md` (schema authoring reference),
+      `docs/observability.md` and `docs/operations.md` (dropped the
+      `transport` telemetry label), and `docs/workflow-parsing-pipeline.md`
+      (mermaid diagrams) — all live, current-behavior docs that would have
+      been actively wrong otherwise. Left historical/dated documents
+      (`docs/agent-guidance-review.md`, `docs/cursor-acp-research.md`,
+      `docs/plan-*.md`) untouched.
+- [x] 1.10 Ran `gofmt -w` on all changed files, then
+      `go build ./... && go vet ./... && go test ./...` (root) and
+      `(cd harness/acp && go build ./... && go vet ./... && go test ./...)`
+      (nested module) — all pass. Also ran the `-race` invocations from
+      docs/TESTING.md for the affected packages. Manually ran a real
+      `backend = "claude"` (no `transport`) workflow end-to-end via
+      `jig run`: step succeeded through `AcpHarness`, transcript captured
+      normally (see proof artifact for full output).
+
+### [ ] 2.0 Migrate `MonitorAdapter` to ACP
+
+#### 2.0 Proof Artifact(s)
+
+- Grep: `grep -rn "claudecode" internal/runner/monitor.go` returns nothing,
+  demonstrates the sentinel classifier no longer uses the SDK.
+- Test: `TestDecodeMonitorVerdict_TolerantOfSurroundingProse` (or equivalent)
+  in `internal/runner/monitor_test.go` passes, demonstrates the relaxed
+  decoder still extracts a valid verdict.
+- Test: `TestMonitorAdapter_DecodeRetryThenFailOpen` (or equivalent) in
+  `internal/runner/monitor_test.go` passes, demonstrates a two-failures-in-a-row
+  decode surfaces as a normal `Dispatch` error, not a panic or a new
+  fail-closed branch.
+- CLI: `go test ./internal/runner/... ./internal/sentinel/...` passes,
+  demonstrates the sentinel fleet's fail-open handling is unchanged.
+
+#### 2.0 Tasks
+
+- [ ] 2.1 Design `MonitorAdapter`'s ACP-backed session boundary: decide
+      whether `Dispatch` opens an `AcpHarness` session directly via
+      `harness.Harness`/`SessionSpec`, or a narrower ACP-backed classifier
+      session type, per the "consumer-defined interfaces" repository
+      standard (`MonitorAdapter` depends on `harness.Harness`, not ACP wire
+      types).
+- [ ] 2.2 Replace `monitorOptions`' empty/deny-all tool surface
+      (`Tools`/`AllowedTools`/`DisallowedTools`/`SettingSources` plus
+      `WithCanUseTool`) with the `SessionSpec` equivalent: `AllowedTools=[]`
+      plus a `PermissionFn` that unconditionally denies.
+- [ ] 2.3 Replace `claudecode.WithJSONSchema(monitorJSONSchema)` with
+      `SessionSpec.Schema` so `AcpHarness`'s `appendSchemaPrompt` injects the
+      same schema into the prompt.
+- [ ] 2.4 Rewrite `decodeMonitorVerdict` to tolerate prose surrounding the
+      JSON block (reuse or mirror `internal/harness/acp.go`'s
+      `extractJSONFromText`) instead of `json.Decoder.DisallowUnknownFields`
+      against a guaranteed-shaped value. Add a comment explaining why
+      enforcement is now advisory, not wire-guaranteed, and why that is
+      still acceptable (Tier-1 rules remain the fail-closed layer).
+- [ ] 2.5 Implement the single-retry rule in `Dispatch`: on a decode
+      failure, re-issue the same classification prompt on a fresh ACP
+      session exactly once; if the retry also fails to decode, return a
+      normal error (no new fail-closed branch). Ensure both attempts fit
+      inside the existing ~30s `MonitorAdapter.timeout`/
+      `sentinel.Supervisor.DispatchTimeout` budget. Connection/timeout-level
+      errors keep today's single-attempt semantics (no retry).
+- [ ] 2.6 Preserve single-shot dispatch semantics: each `Dispatch` call opens
+      and closes its own session, no session reuse across calls.
+- [ ] 2.7 Replace `internal/runner/monitor_test.go`'s `fakeMonitorClient`
+      with (or extend it alongside) fakes appropriate to the ACP-backed
+      path: a tolerant-decode test with prose around the JSON block, and a
+      test asserting exactly one decode-retry followed by a normal
+      `Dispatch` error on a second decode failure.
+- [ ] 2.8 Confirm cost/usage stays nil/zero on the ACP-backed
+      `MonitorAdapter` path, matching spec 12's existing convention for the
+      ACP step-execution path — no new cost/usage tracking added (resolves
+      Open Question 2).
+- [ ] 2.9 Run `gofmt -w` on changed files, then
+      `go test ./internal/runner/... ./internal/sentinel/...` and confirm
+      `internal/sentinel/supervisor.go`'s existing fail-open path
+      (`disableMonitor`, `ActionObserved`) handles the new `Dispatch` error
+      shape with no changes needed there.
+
+### [ ] 3.0 Out-of-process MCP server for `helpchat`'s tool surface
+
+#### 3.0 Proof Artifact(s)
+
+- Test: a standalone `jig mcp-serve` test dispatching all 10 tools
+  (`workflow_snapshot` through `ask_user`) against a scripted MCP client and
+  scripted TCP counterparty passes, demonstrates the server works
+  independent of `helpchat`/`AcpHarness`.
+- Test: a scripted `ask_user`/`final_merge` rendezvous (request sent,
+  response delayed, response delivered) completes correctly with no lost or
+  duplicated replies, demonstrates the cross-process blocking contract
+  matches today's in-process channel semantics.
+- Test: an unauthenticated or wrong-token TCP connection attempt is rejected,
+  demonstrates the auth-token trust boundary holds.
+- Test: killing `jig mcp-serve` mid-request surfaces a clear error to the
+  caller rather than hanging, demonstrates crash handling is explicit.
+
+#### 3.0 Tasks
+
+- [ ] 3.1 **Spike first, before building the rest of this unit:** check
+      whether the real agent binary (Claude Code CLI at minimum) enforces
+      its own MCP tool-call timeout on a deliberately slow tool response.
+      Record the finding in this task's notes; if the binary kills a slow
+      `ask_user` call, stop and revisit the blocking-rendezvous design
+      before continuing 3.2+ (per the spec's flagged Unit 3 risk and Open
+      Question 1).
+- [ ] 3.2 Define the request/response wire contract for the loopback TCP
+      side: message framing, the 10 tool names/argument shapes mirrored
+      from `internal/helpchat/tools.go`'s existing `claudecode.McpTool`
+      definitions, and the auth handshake (per-session random token sent as
+      the connection's first message).
+- [ ] 3.3 Implement `cmd/jig/mcp_serve.go`: a hidden `jig mcp-serve`
+      subcommand wired into `cmd/jig/main.go`'s switch dispatch, speaking
+      real MCP JSON-RPC over its own stdio (the 10 tools as MCP tool
+      definitions) and forwarding each tool call as a request over a TCP
+      connection to the port/token supplied via environment variables.
+- [ ] 3.4 Implement the blocking rendezvous contract for `resolve_review`'s
+      `final_merge` decision and `ask_user`: the tool handler blocks on a
+      reply from the TCP connection exactly as today's channel-based
+      handler blocks on a Go channel.
+- [ ] 3.5 Implement lifecycle: ready-to-accept-connections signal, clean
+      shutdown when the session ends, and explicit crash handling (a
+      request in flight when the process is killed surfaces a clear error,
+      not a hang).
+- [ ] 3.6 Implement auth: reject connections that send no token or the
+      wrong token, closing the connection.
+- [ ] 3.7 Write `cmd/jig/mcp_serve_test.go`: standalone tests using a
+      scripted MCP client and a scripted TCP counterparty (standing in for
+      the main jig process) covering all 10 tools, the `ask_user`/
+      `final_merge` rendezvous (request → delayed response → delivery, no
+      lost/duplicated replies), wrong-token rejection, and mid-request crash
+      handling. No TUI or `AcpHarness` involvement in this unit's tests.
+- [ ] 3.8 Run `gofmt -w` on changed files, then
+      `go test ./cmd/jig/... -run TestMcpServe` (or the equivalent focused
+      invocation) and `go vet ./...`.
+
+### [ ] 4.0 Wire `helpchat` onto `AcpHarness` + Unit 3's MCP server
+
+#### 4.0 Proof Artifact(s)
+
+- Manual/scripted: a help-chat session in the TUI exercises at least one
+  tool call per registered tool (`workflow_snapshot` through `ask_user`),
+  demonstrates identical TUI state transitions to today's SDK-backed path.
+- Grep: `grep -rn "claudecode" internal/helpchat/` returns nothing,
+  demonstrates the third and last SDK surface is closed.
+- CLI: `go test ./internal/helpchat/... ./internal/tui/monitor/...` passes,
+  demonstrates no regression in help-chat or the run monitor.
+- Test: killing `jig mcp-serve` mid-conversation during a live help-chat
+  session surfaces a clear, recoverable error in the TUI rather than a
+  hang, demonstrates the process-boundary failure mode the spec flags as
+  highest-risk is verified against the real integration, not only Unit 3's
+  standalone harness.
+
+#### 4.0 Tasks
+
+- [ ] 4.1 Add an `MCPServers` field to `internal/harness/capability.go`'s
+      `SessionSpec` (a list of `McpServerStdio`-shaped entries: command,
+      args, env, name) and extend `internal/harness/acp.go`'s `Open` to
+      forward a non-empty list to `harness/acp/conn.go`'s
+      `NewSession`/`LoadSession` (today always `McpServers:
+      []acpsdk.McpServer{}`). Test the previously-untested non-empty path.
+- [ ] 4.2 In `internal/helpchat/cmds.go`'s `connectCmd`/`queryCmd`: before
+      opening the session, bind a loopback TCP listener, generate a
+      per-session auth token, and populate `SessionSpec.MCPServers` with one
+      entry naming `command: "jig"`, `args: ["mcp-serve"]`, `env` carrying
+      the port and token.
+- [ ] 4.3 Replace `claudecode.NewClient(...)` in `cmds.go` with an
+      `AcpHarness.Open(ctx, spec)` call; retype `internal/helpchat/model.go`'s
+      `Model.client`/`msgChan` and `internal/helpchat/msgs.go`'s message
+      structs from `claudecode.Client`/`claudecode.Message` to
+      `harness.Session`/`harness.Event`.
+- [ ] 4.4 Implement the TCP server side in `helpchat`: accept the
+      authenticated connection from the spawned `jig mcp-serve` process and
+      dispatch its forwarded tool-call requests against live `*engine.Run`
+      state and the existing `tea.Msg` dispatch mechanism (the counterpart
+      to Unit 3's client-side contract), replying over the same connection.
+      Rework `internal/helpchat/tools.go`'s 10 tool-builder functions into
+      handlers on this side (dropping the `claudecode.McpTool`/
+      `CreateSDKMcpServer` framing).
+- [ ] 4.5 Update `internal/helpchat/actions.go`, `gate_view.go`, `prompt.go`
+      as needed to compile against the retyped session/message types; no
+      behavior change intended.
+- [ ] 4.6 Confirm `internal/tui/monitor/monitor_model.go`/`monitor_update.go`
+      need only MCP-server lifecycle wiring (spawn/teardown hookup), not a
+      TUI redesign; if a TUI-visible "connecting to help-chat tools" state
+      turns out to be required, treat that as a signal to revisit before
+      continuing (per the spec's Design Considerations).
+- [ ] 4.7 Rewrite `internal/helpchat/helpchat_test.go` against `AcpHarness` +
+      a scripted local MCP server exercising all 10 tools end to end,
+      including the `ask_user`/`final_merge` rendezvous through the new
+      process boundary.
+- [ ] 4.8 Add a test (in `helpchat_test.go` or `internal/tui/monitor`) that
+      kills the spawned `jig mcp-serve` process mid-conversation during a
+      live `AcpHarness`-backed help-chat session and asserts the TUI
+      surfaces a clear, recoverable error rather than hanging — the
+      live-integration counterpart to Unit 3's standalone crash-handling
+      test (task 3.5/3.7).
+- [ ] 4.9 Confirm cost/usage stays nil/zero on the ACP-backed help-chat path,
+      matching spec 12's existing convention for the ACP step-execution
+      path — no new cost/usage tracking added (resolves Open Question 2).
+- [ ] 4.10 Run `gofmt -w` on changed files, then
+      `go test ./internal/helpchat/... ./internal/tui/monitor/...` and, if
+      feasible, a manual TUI walkthrough of a help-chat session exercising
+      each tool.
+
+### [ ] 5.0 Remove the SDK dependency; final grep-clean closeout
+
+#### 5.0 Proof Artifact(s)
+
+- Grep: `grep -rn "claudecode\|claude-agent-sdk-go" --include="*.go" .`
+  (excluding this spec's directory) returns nothing, demonstrates the
+  migration is complete repo-wide.
+- CLI: `go build ./... && go vet ./... && go test ./...` passes with
+  `github.com/severity1/claude-agent-sdk-go` removed from `go.mod`,
+  demonstrates the dependency removal is safe.
+- CLI: `go mod tidy` produces no diff, demonstrates nothing transitively
+  still needs the dependency.
+- Diff: `docs/ARCHITECTURE.md`, `CONTEXT.md`, and `AGENTS.md` updated to
+  describe ACP as the only transport, demonstrates docs no longer imply a
+  transport choice.
+
+#### 5.0 Tasks
+
+- [ ] 5.1 Run `grep -rn "claudecode\|claude-agent-sdk-go" --include="*.go" .`
+      (excluding this spec's directory) and confirm zero matches; fix any
+      stragglers found.
+- [ ] 5.2 Remove `github.com/severity1/claude-agent-sdk-go` from `go.mod`;
+      run `go mod tidy` and confirm no diff beyond the removal itself.
+- [ ] 5.3 Update `docs/ARCHITECTURE.md` and `AGENTS.md` to describe ACP as
+      the only transport (drop any remaining SDK/ACP split language).
+- [ ] 5.4 Update `CONTEXT.md`'s "Harness and backend" section to drop the
+      `Transport` vocabulary term entirely (already removed as a field in
+      Unit 1).
+- [ ] 5.5 Update `README.md`'s "Status" section line about "Claude SDK/ACP,
+      Cursor ACP, and Codex ACP are supported" to drop the SDK/ACP split.
+- [ ] 5.6 Mark `docs/specs/12-spec-acp-claude-harness/12-spec-acp-claude-harness.md`'s
+      Non-Goal 5 and `docs/plans/open-goals.md`'s A6 entry as
+      resolved/closed, pointing at this spec.
+- [ ] 5.7 Run `gofmt -w` on any changed files, then
+      `go build ./... && go vet ./... && go test ./...` and
+      `(cd harness/acp && go test ./... && go vet ./...)`.

@@ -67,7 +67,6 @@ type StepTerminal struct {
 	Result            *step.Result
 	Backend           string
 	Model             string
-	Transport         string
 	ToolPolicy        []string
 	IntegrationCommit string
 	DiffSHA256        string
@@ -137,7 +136,7 @@ func (w *Writer) writeResult(t *StepTerminal) {
 		TotalCostUSD: t.TotalCostUSD,
 		Result:       t.Result,
 		Provenance: provenanceJSON{
-			Backend: t.Backend, Model: t.Model, Transport: t.Transport,
+			Backend: t.Backend, Model: t.Model,
 			ToolPolicy: t.ToolPolicy, IntegrationCommit: t.IntegrationCommit,
 			DiffSHA256:     t.DiffSHA256,
 			OutputSHA256:   digestPath(resultOutputPath(t.Result)),
@@ -164,7 +163,6 @@ type stepResultJSON struct {
 type provenanceJSON struct {
 	Backend           string            `json:"backend,omitempty"`
 	Model             string            `json:"model,omitempty"`
-	Transport         string            `json:"transport,omitempty"`
 	ToolPolicy        []string          `json:"tool_policy,omitempty"`
 	IntegrationCommit string            `json:"integration_commit,omitempty"`
 	DiffSHA256        string            `json:"diff_sha256,omitempty"`

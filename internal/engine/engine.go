@@ -3585,7 +3585,6 @@ func (s *scheduler) terminalManifest(e Event) *manifest.StepTerminal {
 	if wfStep := s.stepByID(ss.StepID); wfStep != nil {
 		term.Backend = wfStep.Backend
 		term.Model = wfStep.Model
-		term.Transport = wfStep.Transport
 		term.ToolPolicy = append(append([]string{}, wfStep.AllowedTools...), wfStep.DisallowedTools...)
 	}
 	term.IntegrationCommit = s.stepCommits[ss.StepID]

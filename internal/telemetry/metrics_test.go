@@ -435,7 +435,7 @@ func TestExporterForgetsRunAfterFinish(t *testing.T) {
 func TestExporterUnknownStepDegradesGracefully(t *testing.T) {
 	ex, reader, _ := newTestExporter(t)
 	// Do NOT register a workflow. Events should still record with empty
-	// step_type / backend / transport / model.
+	// step_type / backend / model.
 	ex.handle(context.Background(), engine.StepStatus{
 		RunID: "r1", StepID: "unknown", From: step.StatusPending, To: step.StatusRunning,
 	})

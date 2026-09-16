@@ -29,7 +29,7 @@ Dependency versions live in the two `go.mod` files, not this map.
 | `internal/workflow` | TOML loading, authoring files, profiles/defaults, module expansion, typed conditions and output contracts, graph validation. No agent execution. |
 | `internal/engine` | Manager and per-run scheduler, readiness, budgets, retries/routes, fan-out, parks, review/integration, reset/reopen, journal event vocabulary. Defines `Executor` and `Reporter`. |
 | `internal/runner` | Concrete agent, command, and check execution, input delivery, validation, artifact capture, transcript writes. Uses the harness seam for agents. |
-| `internal/harness` | Claude SDK, Claude ACP, Cursor ACP, and Codex ACP lifecycle/capability adapters; normalizes vendor output. |
+| `internal/harness` | Claude ACP, Cursor ACP, and Codex ACP lifecycle/capability adapters; normalizes vendor output. |
 | `harness/acp` | ACP process, connection, protocol, diagnostics, and platform-specific transport support. |
 | `internal/step` | Shared step status/state/result data. Keep it independent of orchestration and presentation. |
 | `internal/datastore` | Run paths, snapshots, artifacts, fan-out manifests, session/review storage, retention, and file operations. |

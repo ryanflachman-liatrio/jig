@@ -138,7 +138,7 @@ separate from dynamic fan-out, which multiplies runtime step instances.
 **Backend:** the vendor/CLI being driven: Claude, Cursor, or Codex today.
 **Transport:** the protocol used to reach it: SDK or ACP as supported.
 **Harness:** jig's Go implementation of the transport/lifecycle seam:
-`ClaudeHarness`, `AcpHarness`, `CursorHarness`, or `CodexHarness`.
+`AcpHarness`, `CursorHarness`, or `CodexHarness`.
 Supported pairs and defaulting are in [AGENTS.md](AGENTS.md).
 
 **Session:** the live value returned by `Harness.Open` for one executor call.

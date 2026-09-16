@@ -134,7 +134,7 @@ func writeJSONLFile(t *testing.T, path string, lines [][]byte) {
 func fixtureWorkflowSteps() []workflow.Step {
 	return []workflow.Step{
 		{ID: "fetch", Type: workflow.StepCommand},
-		{ID: "agent-1", Type: workflow.StepAgent, Backend: workflow.BackendClaude, Transport: workflow.TransportSDK, DependsOn: []string{"fetch"}},
+		{ID: "agent-1", Type: workflow.StepAgent, Backend: workflow.BackendClaude, DependsOn: []string{"fetch"}},
 		{ID: "review-1", Type: workflow.StepReview, When: "false"},
 	}
 }

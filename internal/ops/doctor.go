@@ -95,7 +95,7 @@ func Doctor(opts DoctorOptions) DoctorReport {
 			needsWorktree = true
 		}
 		if s.Type == workflow.StepAgent {
-			backends[s.Backend+"\x00"+s.Transport] = true
+			backends[s.Backend] = true
 		}
 		if s.Findings != nil {
 			for _, tool := range s.Findings.RequiredTools {
@@ -120,10 +120,8 @@ func Doctor(opts DoctorOptions) DoctorReport {
 			}
 		}
 	}
-	keys := sortedKeys(backends)
-	for _, key := range keys {
-		parts := strings.SplitN(key, "\x00", 2)
-		checks = append(checks, backendChecks(parts[0], parts[1], true, opts.LookPath)...)
+	for _, backend := range sortedKeys(backends) {
+		checks = append(checks, backendChecks(backend, true, opts.LookPath)...)
 	}
 	for _, tool := range sortedKeys(requiredTools) {
 		checks = append(checks, binaryCheck("check.required_tool", tool, tool, true, opts.LookPath, fmt.Sprintf("install %s and ensure it is on PATH", tool)))
@@ -218,27 +216,25 @@ func checkStoredRuns(root string) Check {
 
 func optionalBackendChecks(lookPath func(string) (string, error)) []Check {
 	var checks []Check
-	for _, pair := range [][2]string{{"claude", "sdk"}, {"claude", "acp"}, {"cursor", "acp"}, {"codex", "acp"}} {
-		checks = append(checks, backendChecks(pair[0], pair[1], false, lookPath)...)
+	for _, backend := range []string{"claude", "cursor", "codex"} {
+		checks = append(checks, backendChecks(backend, false, lookPath)...)
 	}
 	return checks
 }
 
-func backendChecks(backend, transport string, required bool, lookPath func(string) (string, error)) []Check {
-	id := "backend." + backend + "." + transport
+func backendChecks(backend string, required bool, lookPath func(string) (string, error)) []Check {
+	id := "backend." + backend
 	tools := []string{}
 	login := ""
-	switch backend + "/" + transport {
-	case "claude/sdk":
-		tools, login = []string{"claude"}, "claude"
-	case "claude/acp":
+	switch backend {
+	case "claude":
 		tools, login = []string{"npx", "claude"}, "claude"
-	case "cursor/acp":
+	case "cursor":
 		tools, login = []string{"cursor-agent"}, "cursor-agent login"
-	case "codex/acp":
+	case "codex":
 		tools, login = []string{"npx", "codex"}, "codex login"
 	default:
-		return []Check{{ID: id, Status: CheckFail, Scope: backend + "/" + transport, Message: "unsupported backend/transport"}}
+		return []Check{{ID: id, Status: CheckFail, Scope: backend, Message: "unsupported backend"}}
 	}
 	missing := []string{}
 	for _, tool := range tools {
@@ -251,13 +247,13 @@ func backendChecks(backend, transport string, required bool, lookPath func(strin
 		if required {
 			status = CheckFail
 		}
-		return []Check{{ID: id, Status: status, Scope: backend + "/" + transport, Message: "missing executable(s): " + strings.Join(missing, ", "), Remediation: "install prerequisites and ensure they are on PATH"}}
+		return []Check{{ID: id, Status: status, Scope: backend, Message: "missing executable(s): " + strings.Join(missing, ", "), Remediation: "install prerequisites and ensure they are on PATH"}}
 	}
 	message := "local executables available; login validity unverified (run `" + login + "`)"
-	if transport == "acp" && (backend == "claude" || backend == "codex") {
+	if backend == "claude" || backend == "codex" {
 		message += "; pinned npx adapter may require network or a populated cache"
 	}
-	return []Check{{ID: id, Status: CheckWarn, Scope: backend + "/" + transport, Message: message}}
+	return []Check{{ID: id, Status: CheckWarn, Scope: backend, Message: message}}
 }
 
 func binaryCheck(id, binary, scope string, required bool, lookPath func(string) (string, error), remediation string) Check {

@@ -361,7 +361,6 @@ func buildRunSummary(runID string, report ops.RunReport, wf *workflow.Workflow, 
 		if st, ok := wfByID[lookupID]; ok {
 			summary.Type = string(st.Type)
 			summary.Backend = st.Backend
-			summary.Transport = st.Transport
 			for _, dep := range st.DependsOn {
 				if depAlias := aliases.stepAlias(dep); depAlias != "" {
 					summary.DependsOn = append(summary.DependsOn, depAlias)

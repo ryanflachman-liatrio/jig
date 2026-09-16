@@ -158,7 +158,6 @@ fleet_budget_usd = 1
 id = "worker"
 type = "agent"
 backend = %q
-transport = "acp"
 skill = "fixture-skill"
 isolation = "none"
 `, backend), repo)
@@ -264,7 +263,6 @@ fleet_budget_usd = 1
 id = "worker"
 type = "agent"
 backend = %q
-transport = "acp"
 skill = "fixture-skill"
 isolation = "none"
 `, tc.backend), repo)
@@ -337,7 +335,7 @@ isolation = "none"
 	}
 }
 
-func TestACPResumePathsRejectOrLoadExplicitly(t *testing.T) {
+func TestACPResumePathsLoadExplicitly(t *testing.T) {
 	binDir := t.TempDir()
 	argsLog := filepath.Join(binDir, "args.log")
 	rpcLog := filepath.Join(binDir, "rpc.log")
@@ -352,11 +350,10 @@ func TestACPResumePathsRejectOrLoadExplicitly(t *testing.T) {
 
 	for _, tc := range []struct {
 		name, backend string
-		canResume     bool
 	}{
-		{"claude-acp", "claude", false},
-		{"cursor-acp", "cursor", true},
-		{"codex-acp", "codex", true},
+		{"claude-acp", "claude"},
+		{"cursor-acp", "cursor"},
+		{"codex-acp", "codex"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := os.WriteFile(rpcLog, nil, 0o600); err != nil {
@@ -365,7 +362,7 @@ func TestACPResumePathsRejectOrLoadExplicitly(t *testing.T) {
 			stepDir := t.TempDir()
 			executor := runner.NewAgentExecutor(harness.For)
 			result, err := executor.Execute(context.Background(), engine.StepRequest{
-				Step:            &workflow.Step{ID: "worker", Type: workflow.StepAgent, Backend: tc.backend, Transport: "acp", Isolation: workflow.IsolationNone},
+				Step:            &workflow.Step{ID: "worker", Type: workflow.StepAgent, Backend: tc.backend, Isolation: workflow.IsolationNone},
 				TranscriptPath:  filepath.Join(stepDir, "transcript.jsonl"),
 				ExecutionDir:    stepDir,
 				ResumeSessionID: "fixture-session",
@@ -379,15 +376,6 @@ func TestACPResumePathsRejectOrLoadExplicitly(t *testing.T) {
 				t.Fatal(err)
 			}
 			logText := string(logData)
-			if !tc.canResume {
-				if result.Status != step.StatusFailed || !strings.Contains(result.Err, "CapSessionResume") {
-					t.Fatalf("unsupported continuation result = %+v", result)
-				}
-				if logText != "" {
-					t.Fatalf("unsupported continuation launched ACP calls: %q", logText)
-				}
-				return
-			}
 			if result.Status != step.StatusSucceeded || !strings.Contains(logText, "load-session") || strings.Contains(logText, "new-session") {
 				t.Fatalf("resume result=%+v rpc log=%q", result, logText)
 			}
@@ -417,11 +405,10 @@ func TestTier2ACPLiveStopResumeUsesBackendCapability(t *testing.T) {
 
 	for _, tc := range []struct {
 		name, backend, resumedRPC string
-		needsFreshRecovery        bool
 	}{
-		{"claude-acp", "claude", "new-session", true},
-		{"cursor-acp", "cursor", "load-session", false},
-		{"codex-acp", "codex", "load-session", false},
+		{"claude-acp", "claude", "load-session"},
+		{"cursor-acp", "cursor", "load-session"},
+		{"codex-acp", "codex", "load-session"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := os.WriteFile(rpcLog, nil, 0o600); err != nil {
@@ -451,7 +438,6 @@ fleet_budget_usd = 1
 id = "worker"
 type = "agent"
 backend = %q
-transport = "acp"
 skill = "fixture-skill"
 isolation = "none"
 `, tc.backend), repo)
@@ -477,21 +463,6 @@ isolation = "none"
 				t.Fatal(err)
 			}
 			run.Resume("worker", "continue")
-			if tc.needsFreshRecovery {
-				waitFor(t, 4*time.Second, func() bool {
-					for _, state := range run.Snapshot().Steps {
-						if state.ID == "worker" {
-							return state.Status == step.StatusAwaitingRecovery
-						}
-					}
-					return false
-				}, "unsupported continuation recovery gate")
-				data, _ := os.ReadFile(rpcLog)
-				if len(data) != 0 {
-					t.Fatalf("Claude ACP silently launched a continuation: %q", data)
-				}
-				run.Recover("worker", engine.RecoverRetry, "")
-			}
 			waitFor(t, 4*time.Second, func() bool {
 				data, _ := os.ReadFile(rpcLog)
 				return strings.Contains(string(data), tc.resumedRPC)
@@ -526,7 +497,7 @@ func TestTier2PersistedReopenAcrossEveryACPHarness(t *testing.T) {
 		resumeAction              string
 		wantCanResume             bool
 	}{
-		{"claude-acp", "claude", "new-session", engine.RecoverRetry, false},
+		{"claude-acp", "claude", "load-session", engine.RecoverResume, true},
 		{"cursor-acp", "cursor", "load-session", engine.RecoverResume, true},
 		{"codex-acp", "codex", "load-session", engine.RecoverResume, true},
 	} {
@@ -665,14 +636,12 @@ fleet_budget_usd = 1
 id = "claude-worker"
 type = "agent"
 backend = "claude"
-transport = "acp"
 skill = "fixture-skill"
 isolation = "none"
 [[step]]
 id = "cursor-opted-out"
 type = "agent"
 backend = "cursor"
-transport = "acp"
 skill = "fixture-skill"
 isolation = "none"
   [step.security]
@@ -681,7 +650,6 @@ isolation = "none"
 id = "codex-worker"
 type = "agent"
 backend = "codex"
-transport = "acp"
 skill = "fixture-skill"
 isolation = "none"
 `, repo)
@@ -756,7 +724,7 @@ func TestTier2PolicyParityAcrossEveryACPHarness(t *testing.T) {
 					}
 					if !policy.persistence {
 						result, err := runner.NewAgentExecutor(harness.For).Execute(context.Background(), engine.StepRequest{
-							Step:     &workflow.Step{ID: "worker", Type: workflow.StepAgent, Backend: backend, Transport: "acp", Isolation: workflow.IsolationNone},
+							Step:     &workflow.Step{ID: "worker", Type: workflow.StepAgent, Backend: backend, Isolation: workflow.IsolationNone},
 							RepoRoot: repo,
 						}, noopReporter{})
 						if err != nil || result.Status != step.StatusSucceeded {
@@ -791,7 +759,6 @@ debounce_ms = 10
 id = "worker"
 type = "agent"
 backend = %q
-transport = "acp"
 skill = "fixture-skill"
 isolation = "none"%s
 `, policy.defaults, backend, stepSecurity), repo)

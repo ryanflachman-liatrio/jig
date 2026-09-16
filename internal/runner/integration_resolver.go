@@ -15,7 +15,7 @@ import (
 // committing, so the resolver is instructed to leave a reviewable worktree.
 type IntegrationResolver struct{ agent *AgentExecutor }
 
-func NewIntegrationResolver(forHarness func(backend, transport string) (harness.Harness, error)) *IntegrationResolver {
+func NewIntegrationResolver(forHarness func(backend string) (harness.Harness, error)) *IntegrationResolver {
 	return &IntegrationResolver{agent: NewAgentExecutor(forHarness)}
 }
 

@@ -393,6 +393,38 @@ func TestCompactEditChildrenStartCollapsedAndRestoreStandaloneDefault(t *testing
 	}
 }
 
+// TestSingletonEditGroupOpensByDefault covers the regression from 79498d1:
+// wrapping every eligible call in a group, even a run of one, must not hide
+// a lone edit's diff behind an extra collapsed group header when compact
+// tool groups are already enabled at page load — a singleton group is the
+// wrapper around what would otherwise be a standalone exchange, and it must
+// open the same way that exchange always has.
+func TestSingletonEditGroupOpensByDefault(t *testing.T) {
+	old := "before\n"
+	entries := diffExchangeEntries("a", "a.go", &old, "after a\n")
+	m := newMonitorWithSteps(t)
+	m.focus = focusTranscript
+	m.chatStep = "a"
+	m.compactToolGroups = true
+	m.setChatPage(transcript.Page{Entries: entries})
+	if len(m.chatItems) != 1 || m.chatItems[0].kind != transcriptItemToolGroup {
+		t.Fatalf("items=%+v, want a single edit group", m.chatItems)
+	}
+	group := m.chatItems[0]
+	if len(group.groupMembers) != 1 {
+		t.Fatalf("group members=%+v, want exactly one", group.groupMembers)
+	}
+	if !m.chatItemExpand[group.key] {
+		t.Fatalf("singleton edit group %v did not receive default expansion", group.key)
+	}
+	if !m.chatItemExpand[group.groupMembers[0].key] {
+		t.Fatalf("singleton edit group child %v did not receive default expansion", group.groupMembers[0].key)
+	}
+	if !strings.Contains(m.itemTranscriptBody(), "Diff · a.go") {
+		t.Fatalf("rendered body missing diff section:\n%s", m.itemTranscriptBody())
+	}
+}
+
 func TestCompactToolGroupCopyIncludesEveryMember(t *testing.T) {
 	entries := toolGroupEntries(
 		toolExchange("a", "bash", map[string]any{"command": "first-command"}, 0, 0, 0, false),

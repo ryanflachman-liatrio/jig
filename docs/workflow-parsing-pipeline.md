@@ -46,7 +46,7 @@ flowchart TD
         ApplyProfiles["applyProfiles()<br/>Explicit step/agent-file values win<br/>Profile fills unset fields<br/>AskUserQuestion is additive"]:::transform
 
         Defaults["applyDefaults()"]:::transform
-        DefaultDetails["Workflow defaults:<br/>max_parallel = 4<br/>artifacts_dir = .jig/artifacts<br/><br/>Step resolution:<br/>failure policy, retry count, output kind,<br/>model tuning, backend, transport,<br/>inject-context, security, isolation<br/><br/>Build step ID index"]:::transform
+        DefaultDetails["Workflow defaults:<br/>max_parallel = 4<br/>artifacts_dir = .jig/artifacts<br/><br/>Step resolution:<br/>failure policy, retry count, output kind,<br/>model tuning, backend,<br/>inject-context, security, isolation<br/><br/>Build step ID index"]:::transform
 
         Prepared["Prepared Workflow<br/>Not yet fully validated"]:::result
 
@@ -117,7 +117,7 @@ flowchart TD
         C3["Identity checks<br/>valid and unique step IDs"]
         C4["Per-step type checks<br/>agent, command, review, check<br/>reject cross-type fields"]
         C5["Reference and contract checks<br/>depends_on, inputs, fields, artifacts,<br/>profiles, schemas, conditions"]
-        C6["Execution-policy checks<br/>timeouts, retry/idempotence, mutation paths,<br/>backend/transport, failure policy"]
+        C6["Execution-policy checks<br/>timeouts, retry/idempotence, mutation paths,<br/>backend, failure policy"]
         C7["Gate and loop checks<br/>validate blocks, applicability,<br/>routes, fallbacks, bounded back-edges"]
         C8["Graph check<br/>DFS over depends_on must be acyclic<br/>bounded route back-edges are excluded"]
 
@@ -180,8 +180,8 @@ Notable exceptions and details:
   from an omitted value.
 - Agent steps using mutating tools default to `worktree` isolation. Other steps
   default to `none`.
-- Cursor and Codex default to the ACP transport. Claude defaults to the SDK
-  transport unless configured otherwise.
+- Every backend (Claude, Cursor, Codex) is reached over ACP; there is no
+  other transport to select.
 
 ## Entry-point behavior
 

@@ -31,7 +31,7 @@ type EventExporter struct {
 
 	mu sync.Mutex
 	// workflows caches per-run workflow metadata so StepStatus events can be
-	// enriched with backend/transport/model/step_type labels. RegisterWorkflow
+	// enriched with backend/model/step_type labels. RegisterWorkflow
 	// populates it at run start; the exporter never queries the manager.
 	workflows map[string]workflowLookup
 	// stepStarts remembers the timestamp of the most recent StepStatus{To:
@@ -55,10 +55,9 @@ type workflowLookup struct {
 // stepLabels is the fixed label set derived from a workflow.Step. Every
 // metric that names a step carries these labels (plus workflow / outcome).
 type stepLabels struct {
-	stepType  string
-	backend   string
-	transport string
-	model     string
+	stepType string
+	backend  string
+	model    string
 }
 
 // stepKey uniquely identifies one step-attempt-iteration-generation tuple.
@@ -95,13 +94,13 @@ func NewEventExporter(p *Provider) (*EventExporter, error) {
 }
 
 // RegisterWorkflow caches per-run workflow metadata so subsequent step-scoped
-// events can be enriched with step_type / backend / transport / model labels
+// events can be enriched with step_type / backend / model labels
 // without reaching into the manager. Called at run start by cmd/jig and the
 // headless supervisor.
 //
 // Passing a nil workflow (or a workflow with no steps) is a no-op: the
 // exporter still receives events, but step-scoped labels degrade to
-// step_type="" and backend/transport/model="".
+// step_type="" and backend/model="".
 func (e *EventExporter) RegisterWorkflow(runID string, wf *workflow.Workflow) {
 	if e == nil || runID == "" {
 		return
@@ -111,10 +110,9 @@ func (e *EventExporter) RegisterWorkflow(runID string, wf *workflow.Workflow) {
 		lookup.workflow = wf.Meta.Name
 		for _, s := range wf.Steps {
 			lookup.steps[s.ID] = stepLabels{
-				stepType:  string(s.Type),
-				backend:   s.Backend,
-				transport: s.Transport,
-				model:     s.Model,
+				stepType: string(s.Type),
+				backend:  s.Backend,
+				model:    s.Model,
 			}
 		}
 	}
@@ -404,8 +402,8 @@ func (e *EventExporter) StepLabelsFor(runID, stepID string) []attribute.KeyValue
 }
 
 // stepLabelsFor returns the fixed step-scoped label set: workflow, step,
-// step_type, backend, transport, model. Every attribute is recorded even
-// when empty so downstream aggregation shapes are stable.
+// step_type, backend, model. Every attribute is recorded even when empty so
+// downstream aggregation shapes are stable.
 //
 // The returned slice is a copy each call so append(base, ...) at call sites
 // never mutates a cached value.
@@ -426,7 +424,6 @@ func (e *EventExporter) stepLabelsFor(runID, stepID string) []attribute.KeyValue
 		attribute.String("step", stepID),
 		attribute.String("step_type", labels.stepType),
 		attribute.String("backend", labels.backend),
-		attribute.String("transport", labels.transport),
 		attribute.String("model", labels.model),
 	}
 }

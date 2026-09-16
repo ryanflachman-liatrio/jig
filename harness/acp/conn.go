@@ -81,7 +81,7 @@ func Connect(ctx context.Context, decide Decider, onUpdate func(Event), elicit E
 		return nil, fmt.Errorf("initialize: %w", err)
 	}
 
-	return &Conn{cmd: cmd, rpc: rpc, client: client, ProtocolVersion: int(initResp.ProtocolVersion)}, nil
+	return &Conn{cmd: cmd, rpc: rpc, client: client, ProtocolVersion: int(initResp.ProtocolVersion), SupportsLoadSession: initResp.AgentCapabilities.LoadSession}, nil
 }
 
 // ConnectCodex spawns the Codex ACP adapter and performs the ACP Initialize

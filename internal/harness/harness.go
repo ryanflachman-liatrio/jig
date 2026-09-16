@@ -1,6 +1,6 @@
 // Package harness defines jig's own seam between AgentExecutor and whatever
-// agent backend actually runs a step. A Harness (ClaudeHarness, AcpHarness)
-// names jig's Go type; a backend (Claude, Cursor, Gemini) names the
+// agent backend actually runs a step. A Harness (AcpHarness, CursorHarness,
+// CodexHarness) names jig's Go type; a backend (Claude, Cursor, Gemini) names the
 // vendor/model/CLI it targets — the two are not synonyms, since one Harness
 // could in principle target more than one backend. This file and
 // capability.go define the seam only: no SDK import of any kind, so

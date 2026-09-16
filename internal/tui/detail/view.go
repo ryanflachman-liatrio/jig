@@ -131,12 +131,10 @@ func (m Model) stepsView() string {
 func stepMarkers(s workflow.Step) []string {
 	var out []string
 	if s.Type == workflow.StepAgent {
-		// Resolved backend/transport (applyDefaults fills these before Load
-		// returns). Show when non-default so mixed-transport workflows are
-		// visible before Run.
-		if s.Transport != "" && s.Transport != workflow.TransportSDK {
-			out = append(out, fmt.Sprintf("%s/%s", s.Backend, s.Transport))
-		} else if s.Backend != "" && s.Backend != workflow.BackendClaude {
+		// Resolved backend (applyDefaults fills this before Load returns).
+		// Show when non-default so mixed-backend workflows are visible
+		// before Run.
+		if s.Backend != "" && s.Backend != workflow.BackendClaude {
 			out = append(out, s.Backend)
 		}
 	}

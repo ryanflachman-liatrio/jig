@@ -18,19 +18,11 @@ func TestCursorHarnessCapabilities(t *testing.T) {
 }
 
 func TestFor_CursorRoutes(t *testing.T) {
-	h, err := For("cursor", "")
+	h, err := For("cursor")
 	if err != nil {
-		t.Fatalf("For(cursor, ) error = %v", err)
+		t.Fatalf("For(cursor) error = %v", err)
 	}
 	if h.Name() != "cursor" {
-		t.Errorf("For(cursor, ).Name() = %q, want %q", h.Name(), "cursor")
-	}
-
-	h, err = For("cursor", "acp")
-	if err != nil {
-		t.Fatalf("For(cursor, acp) error = %v", err)
-	}
-	if h.Name() != "cursor" {
-		t.Errorf("For(cursor, acp).Name() = %q, want %q", h.Name(), "cursor")
+		t.Errorf("For(cursor).Name() = %q, want %q", h.Name(), "cursor")
 	}
 }

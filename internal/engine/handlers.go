@@ -94,7 +94,6 @@ func phRunValidateGate(s *scheduler, m stepDoneMsg, wfStep *workflow.Step) postE
 		if err := datastore.WriteSession(s.runDir, m.stepID, datastore.SessionInfo{
 			SessionID:  res.SessionID,
 			Backend:    wfStep.Backend,
-			Transport:  wfStep.Transport,
 			Attempt:    s.states[m.stepID].Attempt,
 			Iteration:  s.states[m.stepID].Iteration,
 			Generation: s.states[m.stepID].Generation,

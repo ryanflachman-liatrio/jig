@@ -80,7 +80,6 @@ type RunSummary struct {
 	State              string        `json:"state"`
 	StateAuthoritative bool          `json:"state_authoritative"`
 	Backend            string        `json:"backend,omitempty"`
-	Transport          string        `json:"transport,omitempty"`
 	StartedAtMS        *int64        `json:"started_at_ms"`
 	UpdatedAtMS        *int64        `json:"updated_at_ms"`
 	FinishedAtMS       *int64        `json:"finished_at_ms"`
@@ -94,7 +93,6 @@ type StepSummary struct {
 	Alias       string   `json:"alias"`
 	Type        string   `json:"type,omitempty"`
 	Backend     string   `json:"backend,omitempty"`
-	Transport   string   `json:"transport,omitempty"`
 	Status      string   `json:"status"`
 	Attempt     int      `json:"attempt"`
 	Iteration   int      `json:"iteration"`

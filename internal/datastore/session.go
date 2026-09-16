@@ -14,7 +14,6 @@ import (
 type SessionInfo struct {
 	SessionID  string `json:"session_id"`
 	Backend    string `json:"backend,omitempty"`
-	Transport  string `json:"transport,omitempty"`
 	Attempt    int    `json:"attempt"`
 	Iteration  int    `json:"iteration"`
 	Generation int    `json:"generation"`

@@ -146,7 +146,7 @@ func interruptedCanResume(preflight ControlPreflight, stepID string) bool {
 	if wfStep == nil || wfStep.Type != workflow.StepAgent {
 		return false
 	}
-	h, err := harness.For(wfStep.Backend, wfStep.Transport)
+	h, err := harness.For(wfStep.Backend)
 	if err != nil || !h.Capabilities().Has(harness.CapSessionResume) {
 		return false
 	}

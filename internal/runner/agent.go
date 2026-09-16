@@ -21,23 +21,23 @@ import (
 )
 
 // AgentExecutor runs agent steps via a harness.Harness backend. Each Execute
-// call resolves the step's backend/transport to a Harness and opens a fresh
-// session so runs are independent and the executor itself holds no mutable
-// session state.
+// call resolves the step's backend to a Harness and opens a fresh session so
+// runs are independent and the executor itself holds no mutable session
+// state.
 type AgentExecutor struct {
-	forHarness func(backend, transport string) (harness.Harness, error)
+	forHarness func(backend string) (harness.Harness, error)
 }
 
 // NewAgentExecutor returns an AgentExecutor that resolves harnesses via
 // forHarness (typically harness.For).
-func NewAgentExecutor(forHarness func(backend, transport string) (harness.Harness, error)) *AgentExecutor {
+func NewAgentExecutor(forHarness func(backend string) (harness.Harness, error)) *AgentExecutor {
 	return &AgentExecutor{forHarness: forHarness}
 }
 
 // NewAgentExecutorFixed returns an AgentExecutor that always uses h, ignoring
-// the step's backend/transport. Intended for tests that inject a FakeHarness.
+// the step's backend. Intended for tests that inject a FakeHarness.
 func NewAgentExecutorFixed(h harness.Harness) *AgentExecutor {
-	return NewAgentExecutor(func(string, string) (harness.Harness, error) { return h, nil })
+	return NewAgentExecutor(func(string) (harness.Harness, error) { return h, nil })
 }
 
 // Execute runs one agent step. It:
@@ -50,7 +50,7 @@ func NewAgentExecutorFixed(h harness.Harness) *AgentExecutor {
 //  4. Returns a Result that summarises the outcome.
 func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep engine.Reporter) (*step.Result, error) {
 	start := time.Now()
-	h, err := e.forHarness(req.Step.Backend, req.Step.Transport)
+	h, err := e.forHarness(req.Step.Backend)
 	if err != nil {
 		return failResult(fmt.Sprintf("harness: %v", err), start), nil
 	}
@@ -147,10 +147,10 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 	return captureStream(sess.Messages(), req, rep, start, initialMsg)
 }
 
-// SupportsSessionResume reports whether the step's backend/transport honors
+// SupportsSessionResume reports whether the step's backend honors
 // ResumeSessionID (CapSessionResume). Used by the engine for honest CanResume.
-func (e *AgentExecutor) SupportsSessionResume(backend, transport string) bool {
-	h, err := e.forHarness(backend, transport)
+func (e *AgentExecutor) SupportsSessionResume(backend string) bool {
+	h, err := e.forHarness(backend)
 	if err != nil {
 		return false
 	}
@@ -172,7 +172,6 @@ func persistSessionID(req engine.StepRequest, sessionID string) error {
 	return datastore.WriteSession(sessionRunDir(req), req.Step.ID, datastore.SessionInfo{
 		SessionID:  sessionID,
 		Backend:    req.Step.Backend,
-		Transport:  req.Step.Transport,
 		Attempt:    req.Attempt,
 		Iteration:  req.Iteration,
 		Generation: req.Generation,

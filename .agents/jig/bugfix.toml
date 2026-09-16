@@ -4,7 +4,6 @@ version = "1"
 
 [defaults]
 backend         = "claude"
-transport       = "sdk"
 permission_mode = "acceptEdits"
 
 [[step]]

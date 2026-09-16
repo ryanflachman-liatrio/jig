@@ -256,9 +256,28 @@ func (m *Model) toggleCompactToolGroups() {
 // defaultExpandEditCodeItems opens structured edits until an operator explicitly
 // folds one. The map retains a false value after that action, so transcript
 // reloads do not override the operator's choice.
+//
+// A singleton tool group (exactly one member) is the compact-grouping pass's
+// wrapper around what would otherwise be a standalone exchange (79498d1); it
+// must open by default exactly like one, so its sole member's diff is not
+// hidden behind an extra collapsed group header. Multi-member groups keep
+// compact grouping's own collapsed-by-default behavior.
 func (m *Model) defaultExpandEditCodeItems() {
 	for _, item := range m.chatItems {
 		if item.kind == transcriptItemToolGroup {
+			if len(item.groupMembers) != 1 {
+				continue
+			}
+			member := item.groupMembers[0]
+			if !itemHasStructuredDiff(m.chatEntries, member) {
+				continue
+			}
+			if _, configured := m.chatItemExpand[item.key]; !configured {
+				m.chatItemExpand[item.key] = true
+			}
+			if _, configured := m.chatItemExpand[member.key]; !configured {
+				m.chatItemExpand[member.key] = true
+			}
 			continue
 		}
 		if _, configured := m.chatItemExpand[item.key]; configured || !itemHasStructuredDiff(m.chatEntries, item) {

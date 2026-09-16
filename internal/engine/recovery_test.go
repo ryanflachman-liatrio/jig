@@ -28,7 +28,7 @@ type recoveringExec struct {
 	reqs  []StepRequest
 }
 
-func (e *recoveringExec) SupportsSessionResume(_, _ string) bool { return true }
+func (e *recoveringExec) SupportsSessionResume(_ string) bool { return true }
 
 func (e *recoveringExec) Execute(ctx context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
 	if req.Step.ID != e.stepID {

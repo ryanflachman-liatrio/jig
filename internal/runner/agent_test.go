@@ -811,9 +811,8 @@ func TestSessionIDPersistedToSessionJSON(t *testing.T) {
 	tPath := datastore.TranscriptPath(runDir, "agent")
 	req := engine.StepRequest{
 		Step: &workflow.Step{
-			ID:        "agent",
-			Backend:   "claude",
-			Transport: "sdk",
+			ID:      "agent",
+			Backend: "claude",
 		},
 		TranscriptPath: tPath,
 		Attempt:        1,
@@ -831,7 +830,7 @@ func TestSessionIDPersistedToSessionJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.SessionID != "sess-disk" || info.Backend != "claude" || info.Transport != "sdk" {
+	if info.SessionID != "sess-disk" || info.Backend != "claude" {
 		t.Fatalf("session.json = %+v", info)
 	}
 }
@@ -856,7 +855,7 @@ func TestSessionIDPersistenceFailureFailsAttempt(t *testing.T) {
 	res, err := captureStream(scriptChan(
 		harness.Event{Type: harness.EventSessionID, SessionID: "sess-disk"},
 	), engine.StepRequest{
-		Step:           &workflow.Step{ID: "agent", Backend: "claude", Transport: "sdk"},
+		Step:           &workflow.Step{ID: "agent", Backend: "claude"},
 		TranscriptPath: datastore.TranscriptPath(runDir, "agent"),
 	}, &captureReporter{}, time.Now(), "")
 	if err != nil {
@@ -1371,8 +1370,8 @@ func TestExecute_GuardSemantics(t *testing.T) {
 		}
 		// Drive the wired callback directly, standing in for AcpHarness invoking
 		// it mid-turn during the real session/request_permission round-trip
-		// (Unit 4's acpSession.run) — proves the same PermissionFn wiring that
-		// ClaudeHarness uses also reaches AcpHarness's Open call unmodified.
+		// (acpSession.run) — proves AgentExecutor's PermissionFn wiring reaches
+		// AcpHarness's Open call unmodified.
 		if h.OpenSpec.Permission == nil {
 			t.Fatal("SessionSpec.Permission not set")
 		}
@@ -1458,42 +1457,42 @@ func TestExecute_BlockOnRequiresSessionResume(t *testing.T) {
 }
 
 // TestExecute_SelectsHarnessPerStep proves AgentExecutor looks up the harness
-// from the step's Backend/Transport on each Execute, so one executor can drive
-// both SDK and ACP steps.
+// from the step's Backend on each Execute, so one executor can drive steps
+// targeting different backends.
 func TestExecute_SelectsHarnessPerStep(t *testing.T) {
-	sdkSess := harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}})
-	acpSess := harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}})
-	sdkH := &harness.FakeHarness{NameVal: "claude", Caps: harness.NewCapabilitySet(), Sess: sdkSess}
-	acpH := &harness.FakeHarness{NameVal: "acp", Caps: harness.NewCapabilitySet(), Sess: acpSess}
+	claudeSess := harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}})
+	cursorSess := harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}})
+	claudeH := &harness.FakeHarness{NameVal: "acp", Caps: harness.NewCapabilitySet(), Sess: claudeSess}
+	cursorH := &harness.FakeHarness{NameVal: "cursor", Caps: harness.NewCapabilitySet(), Sess: cursorSess}
 
 	var got []string
-	e := NewAgentExecutor(func(backend, transport string) (harness.Harness, error) {
-		got = append(got, backend+"/"+transport)
-		switch transport {
-		case "acp":
-			return acpH, nil
+	e := NewAgentExecutor(func(backend string) (harness.Harness, error) {
+		got = append(got, backend)
+		switch backend {
+		case "cursor":
+			return cursorH, nil
 		default:
-			return sdkH, nil
+			return claudeH, nil
 		}
 	})
 
-	reqSDK := engine.StepRequest{Step: &workflow.Step{Backend: "claude", Transport: "sdk"}}
-	if _, err := e.Execute(context.Background(), reqSDK, &captureReporter{}); err != nil {
-		t.Fatalf("sdk Execute: %v", err)
+	reqClaude := engine.StepRequest{Step: &workflow.Step{Backend: "claude"}}
+	if _, err := e.Execute(context.Background(), reqClaude, &captureReporter{}); err != nil {
+		t.Fatalf("claude Execute: %v", err)
 	}
-	reqACP := engine.StepRequest{Step: &workflow.Step{Backend: "claude", Transport: "acp"}}
-	if _, err := e.Execute(context.Background(), reqACP, &captureReporter{}); err != nil {
-		t.Fatalf("acp Execute: %v", err)
+	reqCursor := engine.StepRequest{Step: &workflow.Step{Backend: "cursor"}}
+	if _, err := e.Execute(context.Background(), reqCursor, &captureReporter{}); err != nil {
+		t.Fatalf("cursor Execute: %v", err)
 	}
 
-	if len(got) != 2 || got[0] != "claude/sdk" || got[1] != "claude/acp" {
-		t.Errorf("lookups = %v, want [claude/sdk claude/acp]", got)
+	if len(got) != 2 || got[0] != "claude" || got[1] != "cursor" {
+		t.Errorf("lookups = %v, want [claude cursor]", got)
 	}
-	if !sdkSess.Closed {
-		t.Error("sdk session not closed — Open/Execute did not run against sdk harness")
+	if !claudeSess.Closed {
+		t.Error("claude session not closed — Open/Execute did not run against claude harness")
 	}
-	if !acpSess.Closed {
-		t.Error("acp session not closed — Open/Execute did not run against acp harness")
+	if !cursorSess.Closed {
+		t.Error("cursor session not closed — Open/Execute did not run against cursor harness")
 	}
 }
 
@@ -1538,14 +1537,9 @@ func TestExecute_AcpProfile(t *testing.T) {
 	t.Run("real NewAcpHarness() advertises expected capabilities", func(t *testing.T) {
 		h := harness.NewAcpHarness()
 		caps := h.Capabilities()
-		for _, want := range []harness.Capability{harness.CapPermissionCallback, harness.CapUserQuestion, harness.CapPartialStreaming, harness.CapStructuredOutput} {
+		for _, want := range []harness.Capability{harness.CapPermissionCallback, harness.CapUserQuestion, harness.CapPartialStreaming, harness.CapStructuredOutput, harness.CapSessionResume} {
 			if !caps.Has(want) {
 				t.Errorf("AcpHarness.Capabilities() missing %v", want)
-			}
-		}
-		for _, reject := range []harness.Capability{harness.CapSessionResume} {
-			if caps.Has(reject) {
-				t.Errorf("AcpHarness.Capabilities() unexpectedly has %v", reject)
 			}
 		}
 	})

@@ -951,7 +951,7 @@ func (s *scheduler) stepCanResume(stepID, sessionID string) bool {
 		return false
 	}
 	support, ok := s.exec.(SessionResumeSupport)
-	if !ok || !support.SupportsSessionResume(st.Backend, st.Transport) {
+	if !ok || !support.SupportsSessionResume(st.Backend) {
 		return false
 	}
 	if st.Isolation == workflow.IsolationWorktree {

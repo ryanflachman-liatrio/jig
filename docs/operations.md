@@ -191,8 +191,8 @@ fields:
 `corrupt_source`, `torn_record`, `oversized_record`, `malformed_record`,
 `unsupported_semantics`, `invalid_field`, `export_truncated`) plus a source
 category and optional step alias/line count — never a raw path or parser
-message. A missing/corrupt `workflow.json` does not block export (backend,
-transport, and step type fall back to `unknown`); a torn or malformed journal
+message. A missing/corrupt `workflow.json` does not block export (backend
+and step type fall back to `unknown`); a torn or malformed journal
 tail keeps its valid prefix and reports the cut. `run.json`'s
 `state_authoritative` is `false` whenever the accepted journal is incomplete
 or has no `RunStarted` record — in that case totals are `null`, not a

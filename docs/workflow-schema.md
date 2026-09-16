@@ -48,8 +48,7 @@ max_thinking_tokens = 8000
 max_budget_usd      = 5.0            # per-step cost ceiling
 cwd                 = "."
 permission_mode     = "acceptEdits"
-backend             = "claude"       # agent vendor: claude | cursor | codex
-transport           = "sdk"          # sdk | acp (how jig reaches the backend)
+backend             = "claude"       # agent vendor: claude | cursor | codex (always reached over ACP)
 max_parallel        = 4
 resource_limits     = { research = 4, mutation = 1, checks = 2 } # optional per-class caps
 max_read_only       = 6                # optional capacity for isolation = "none"
@@ -62,7 +61,7 @@ inject_context      = true               # engine-assembled step-context preambl
 ```
 
 Backend selection is **TOML-only** (never an environment variable). See
-[Agent backend](#agent-backend-backend--transport).
+[Agent backend](#agent-backend-backend).
 
 ---
 
@@ -272,7 +271,7 @@ Claude agent file** (exactly one of `skill` / `agent_file`).
 | `inject_context`       | bool     | Opt out of the engine-assembled step-context preamble (default `true`; overrides `[defaults]`). Agent-only. See "Step context". |
 | `[step.context]`       | table    | Author-supplied `purpose` / `notes` that *supplement* the preamble. See "Step context". |
 | `model` / `fallback_model` / `effort` / `max_turns` / `max_thinking_tokens` / `max_budget_usd` / `permission_mode` | | Override `[defaults]`. |
-| `backend` / `transport` | string   | Override `[defaults]`. See [Agent backend](#agent-backend-backend--transport). |
+| `backend`              | string   | Override `[defaults]`. See [Agent backend](#agent-backend-backend). |
 
 **`SKILL.md` contract.** Agent Skills convention: YAML frontmatter (`name`,
 `description`, `disable-model-invocation: true`) + instruction body. The
@@ -292,20 +291,20 @@ them unset** (explicit step fields win), and uses the body as the agent's system
 prompt. Everything else — `inputs`, schema, `validate`, `loop`, worktree
 isolation — behaves exactly as for a skill-driven step.
 
-### Agent backend (`backend` / `transport`)
+### Agent backend (`backend`)
 
-Each agent step names which **backend** (vendor) and **transport** (wire
-protocol) run it. Selection is TOML-only — there is no process-wide env var.
+Each agent step names which **backend** (vendor) runs it, always reached over
+ACP — there is no other transport to select. Selection is TOML-only — there
+is no process-wide env var.
 
 | Field | Default | Values today | Notes |
 |---|---|---|---|
-| `backend` | `claude` | `claude` \| `cursor` \| `codex` | Vendor. Gemini is not implemented yet. |
-| `transport` | backend-aware | `sdk` \| `acp` | Claude defaults to `sdk` and supports `sdk` or `acp`; Cursor and Codex use `acp`. ACP reaches Claude through `@agentclientprotocol/claude-agent-acp@0.70.0`, Cursor through native `cursor-agent acp`, and Codex through `@agentclientprotocol/codex-acp@1.6.2`. |
+| `backend` | `claude` | `claude` \| `cursor` \| `codex` | Vendor. Gemini is not implemented yet. ACP reaches Claude through `@agentclientprotocol/claude-agent-acp@0.70.0`, Cursor through native `cursor-agent acp`, and Codex through `@agentclientprotocol/codex-acp@1.6.2`. |
 
-Inheritance matches `model` / `effort`: step → `[defaults]` → a backend-aware
-default (`claude` → `sdk`, `cursor` / `codex` → `acp`). Unknown values and invalid
-backend/transport pairs fail at `jig validate`. Capability mismatches (e.g.
-`transport = "acp"` with `[step.schema]`) fail closed at execute time.
+Inheritance matches `model` / `effort`: step → `[defaults]` → `claude`.
+Unknown values fail at `jig validate`. Capability mismatches (e.g.
+`[step.schema]` on a harness that does not advertise structured output) fail
+closed at execute time.
 
 Codex's CLI has no native ACP server. `backend = "codex"` starts the
 `@agentclientprotocol/codex-acp` stdio adapter, which drives the Codex App
@@ -330,20 +329,7 @@ decision and are never rendered as user questions.
 
 ```toml
 [defaults]
-backend   = "claude"
-transport = "sdk"
-
-[[step]]
-id        = "acp-spike"
-type      = "agent"
-transport = "acp"      # ACP→Claude for this step only
-skill     = "skills/…"
-```
-
-```toml
-[defaults]
-backend   = "codex"
-transport = "acp"
+backend = "codex"
 ```
 
 ### Command step

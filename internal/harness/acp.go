@@ -36,10 +36,12 @@ func (*AcpHarness) Name() string { return "acp" }
 //   - CapPartialStreaming — EventText emitted for each text chunk.
 //   - CapStructuredOutput — schema injected into the prompt; JSON extracted
 //     from the agent's response with an automatic retry loop on parse failure.
-//
-// Session resume is not implemented and is omitted rather than stubbed true.
+//   - CapSessionResume — spec.Resume restores a prior session via ACP's
+//     session/load, gated at runtime on the connected adapter advertising
+//     that capability during Initialize (Conn.SupportsLoadSession), the same
+//     pattern CursorHarness/CodexHarness already use.
 func (*AcpHarness) Capabilities() CapabilitySet {
-	return NewCapabilitySet(CapPermissionCallback, CapUserQuestion, CapPartialStreaming, CapStructuredOutput)
+	return NewCapabilitySet(CapPermissionCallback, CapUserQuestion, CapPartialStreaming, CapStructuredOutput, CapSessionResume)
 }
 
 func (*AcpHarness) PreviewPrompt(spec SessionSpec) string {
@@ -51,10 +53,6 @@ func (*AcpHarness) PreviewPrompt(spec SessionSpec) string {
 // immediately. It rejects any capability-gated SessionSpec field this
 // harness does not advertise, rather than silently ignoring it.
 func (h *AcpHarness) Open(ctx context.Context, spec SessionSpec) (Session, error) {
-	if spec.Resume != "" {
-		return nil, fmt.Errorf("acp: session resume not supported (CapSessionResume not advertised)")
-	}
-
 	events := make(chan Event, 32)
 	sess := &acpSession{events: events, hasSchema: spec.Schema != nil, schema: spec.Schema, partial: spec.Partial}
 
@@ -77,7 +75,16 @@ func (h *AcpHarness) Open(ctx context.Context, spec SessionSpec) (Session, error
 	}
 	sess.conn = conn
 
-	sessionID, err := conn.NewSession(ctx, spec.Cwd)
+	var sessionID string
+	if spec.Resume != "" {
+		if err := conn.LoadSession(ctx, spec.Cwd, spec.Resume); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("acp: %w", err)
+		}
+		sessionID = spec.Resume
+	} else {
+		sessionID, err = conn.NewSession(ctx, spec.Cwd)
+	}
 	if err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("acp: %w", err)
@@ -339,8 +346,8 @@ func encodeACPQuestionResponse(
 //
 // Event translation is stateful: text chunks accumulate until a natural
 // boundary (first new tool call or end of turn), at which point a single
-// EventAssistantEnd is emitted — mirroring how ClaudeHarness groups all blocks
-// in one AssistantMessage into one transcript entry. Tool calls are buffered by
+// EventAssistantEnd is emitted — grouping all blocks from one assistant turn
+// into one transcript entry. Tool calls are buffered by
 // ID and emitted once via EventToolUse (which carries the final title),
 // eliminating duplicate entries from the ACP adapter's streaming title updates.
 //
@@ -376,7 +383,7 @@ func (s *acpSession) Messages() <-chan Event { return s.events }
 
 // Send is a no-op: ACP's Prompt already blocks for the whole turn (including
 // any permission round-trips), so there is no mid-session injection point
-// analogous to ClaudeHarness's AskUserQuestion tool-result channel.
+// for a tool-result channel.
 func (s *acpSession) Send(_ context.Context, _ ToolResult) error {
 	return fmt.Errorf("acp: mid-session Send not supported")
 }
@@ -592,8 +599,8 @@ func (s *acpSession) closeEvents() {
 //     with the final title, then AssistantEnd, then the result and UserEnd.
 //   - After Prompt returns, run() calls flushText() to close the final turn.
 //
-// This mirrors ClaudeHarness.pump, which groups all blocks within one SDK
-// AssistantMessage into a single transcript entry via a single AssistantEnd.
+// This groups all blocks within one assistant turn into a single transcript
+// entry via a single AssistantEnd.
 func (s *acpSession) onEvent(ev acp.Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

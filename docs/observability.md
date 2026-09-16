@@ -174,7 +174,6 @@ Every metric carries the same fixed label set unless noted:
 | `step` | declared step ID | Never a runtime fan-out child ID. |
 | `step_type` | `agent` / `command` / `check` / `review` | Empty for non-step metrics. |
 | `backend` | resolved backend (`claude`, `cursor`, …) | Empty when unknown. |
-| `transport` | `sdk` / `acp` | Empty for non-agent steps. |
 | `model` | resolved model | Empty when unknown. |
 | `outcome` | terminal metrics only | `succeeded` / `failed` / `skipped`. |
 

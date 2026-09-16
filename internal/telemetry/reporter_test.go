@@ -54,7 +54,7 @@ func (s scriptedExec) Execute(ctx context.Context, req engine.StepRequest, rep e
 }
 
 // SupportsSessionResume opts out; used to verify MetricMux delegates.
-func (s scriptedExec) SupportsSessionResume(backend, transport string) bool { return true }
+func (s scriptedExec) SupportsSessionResume(backend string) bool { return true }
 
 func newTracingProvider(t *testing.T) (*Provider, *tracetest.InMemoryExporter, *sdkmetric.ManualReader) {
 	t.Helper()
@@ -74,7 +74,6 @@ func TestTelemetryReporterPassThroughAndToolCounter(t *testing.T) {
 		attribute.String("step", "collect"),
 		attribute.String("step_type", "command"),
 		attribute.String("backend", "claude"),
-		attribute.String("transport", "sdk"),
 		attribute.String("model", ""),
 	}
 	tr := NewTelemetryReporter(inner, p, base)
@@ -153,7 +152,6 @@ func TestMetricMuxRecordsStepSpanAndDuration(t *testing.T) {
 			attribute.String("step", stepID),
 			attribute.String("step_type", "command"),
 			attribute.String("backend", "claude"),
-			attribute.String("transport", "sdk"),
 			attribute.String("model", ""),
 		}
 	}
@@ -322,14 +320,14 @@ run = "true"
 func TestMetricMuxForwardsSessionResume(t *testing.T) {
 	p, _, _ := newTracingProvider(t)
 	mm := NewMetricMux(scriptedExec{tool: "Bash"}, p, nil)
-	if !mm.SupportsSessionResume("claude", "sdk") {
+	if !mm.SupportsSessionResume("claude") {
 		t.Error("MetricMux did not forward SupportsSessionResume")
 	}
 	// Executor without SessionResumeSupport returns false.
 	mm2 := NewMetricMux(engineExecFn(func(context.Context, engine.StepRequest, engine.Reporter) (*step.Result, error) {
 		return &step.Result{Status: step.StatusSucceeded}, nil
 	}), p, nil)
-	if mm2.SupportsSessionResume("claude", "sdk") {
+	if mm2.SupportsSessionResume("claude") {
 		t.Error("MetricMux forwarded SessionResume to non-supporting executor")
 	}
 }

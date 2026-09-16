@@ -5,7 +5,6 @@ description = "A producer (structured output) + downstream branching example."
 
 [defaults]
 backend         = "claude"
-transport       = "sdk"
 permission_mode = "acceptEdits"
 
 # Producer: schema-enforced structured output via an inline [step.schema].

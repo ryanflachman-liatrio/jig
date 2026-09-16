@@ -25,7 +25,6 @@ func TestWriteReadClearSession(t *testing.T) {
 	info := SessionInfo{
 		SessionID:  "sess-1",
 		Backend:    "claude",
-		Transport:  "sdk",
 		Attempt:    2,
 		Iteration:  1,
 		Generation: 0,
@@ -37,7 +36,7 @@ func TestWriteReadClearSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadSession: %v", err)
 	}
-	if got.SessionID != "sess-1" || got.Backend != "claude" || got.Transport != "sdk" {
+	if got.SessionID != "sess-1" || got.Backend != "claude" {
 		t.Fatalf("ReadSession = %+v", got)
 	}
 	if got.Attempt != 2 || got.Iteration != 1 || got.UpdatedAt == "" {

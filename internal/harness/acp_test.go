@@ -19,14 +19,9 @@ func TestAcpHarnessCapabilities(t *testing.T) {
 		t.Fatalf("Name() = %q, want %q", h.Name(), "acp")
 	}
 	caps := h.Capabilities()
-	for _, c := range []Capability{CapPermissionCallback, CapUserQuestion, CapPartialStreaming, CapStructuredOutput} {
+	for _, c := range []Capability{CapPermissionCallback, CapUserQuestion, CapPartialStreaming, CapStructuredOutput, CapSessionResume} {
 		if !caps.Has(c) {
 			t.Errorf("Capabilities() missing %v", c)
-		}
-	}
-	for _, c := range []Capability{CapSessionResume} {
-		if caps.Has(c) {
-			t.Errorf("Capabilities() advertises unimplemented capability %v", c)
 		}
 	}
 }

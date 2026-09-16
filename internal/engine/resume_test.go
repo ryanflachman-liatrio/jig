@@ -320,7 +320,7 @@ skill = "agent"
 		t.Fatal(err)
 	}
 	if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{
-		SessionID: "sess-crash", Backend: "claude", Transport: "sdk",
+		SessionID: "sess-crash", Backend: "claude",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1450,7 +1450,7 @@ func (e *crashRecordingExec) Execute(_ context.Context, req StepRequest, _ Repor
 	return &copy, nil
 }
 
-func (e *crashRecordingExec) SupportsSessionResume(_, _ string) bool { return true }
+func (e *crashRecordingExec) SupportsSessionResume(_ string) bool { return true }
 
 type capAwareExec struct {
 	canResume bool
@@ -1464,7 +1464,7 @@ type deadSessionExec struct {
 	calls int
 }
 
-func (e *deadSessionExec) SupportsSessionResume(_, _ string) bool { return true }
+func (e *deadSessionExec) SupportsSessionResume(_ string) bool { return true }
 
 func (e *deadSessionExec) Execute(_ context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
 	e.mu.Lock()
@@ -1495,7 +1495,7 @@ func newWorktreeProbeExec() *worktreeProbeExec {
 	return &worktreeProbeExec{probes: make(chan worktreeProbe, 1)}
 }
 
-func (e *worktreeProbeExec) SupportsSessionResume(_, _ string) bool { return true }
+func (e *worktreeProbeExec) SupportsSessionResume(_ string) bool { return true }
 
 func (e *worktreeProbeExec) Execute(ctx context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
 	e.probes <- worktreeProbe{req: req, dirty: fileExists(filepath.Join(req.ExecutionDir, "dirty.txt"))}
@@ -1503,7 +1503,7 @@ func (e *worktreeProbeExec) Execute(ctx context.Context, req StepRequest, _ Repo
 	return nil, ctx.Err()
 }
 
-func (e *capAwareExec) SupportsSessionResume(_, _ string) bool { return e.canResume }
+func (e *capAwareExec) SupportsSessionResume(_ string) bool { return e.canResume }
 
 func (e *capAwareExec) Execute(_ context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
 	e.mu.Lock()

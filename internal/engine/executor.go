@@ -17,10 +17,10 @@ type Executor interface {
 }
 
 // SessionResumeSupport reports whether an Executor can honor a resumed backend
-// session for a backend/transport pair. Executors that do not implement it are
+// session for a given backend. Executors that do not implement it are
 // treated as unable to resume sessions.
 type SessionResumeSupport interface {
-	SupportsSessionResume(backend, transport string) bool
+	SupportsSessionResume(backend string) bool
 }
 
 // IntegrationResolver is an optional, operator-invoked agent that prepares a
