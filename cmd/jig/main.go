@@ -52,6 +52,10 @@ func main() {
 			os.Exit(runReset(os.Args[2:]))
 		case "export":
 			os.Exit(runExport(os.Args[2:]))
+		case "mcp-serve":
+			// Hidden: spawned by internal/helpchat as an AcpHarness MCP
+			// server subprocess, never invoked directly by a user.
+			os.Exit(runMcpServe(os.Args[2:]))
 		case "help", "-h", "--help":
 			printHelp()
 			return

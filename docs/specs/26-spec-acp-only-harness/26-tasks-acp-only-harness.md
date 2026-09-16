@@ -248,7 +248,7 @@
       `internal/tui/monitor`) is pre-existing and unrelated, reproduced
       identically on `main` before this unit's changes.
 
-### [ ] 3.0 Out-of-process MCP server for `helpchat`'s tool surface
+### [x] 3.0 Out-of-process MCP server for `helpchat`'s tool surface
 
 #### 3.0 Proof Artifact(s)
 
@@ -267,42 +267,111 @@
 
 #### 3.0 Tasks
 
-- [ ] 3.1 **Spike first, before building the rest of this unit:** check
+- [x] 3.1 **Spike first, before building the rest of this unit:** check
       whether the real agent binary (Claude Code CLI at minimum) enforces
       its own MCP tool-call timeout on a deliberately slow tool response.
       Record the finding in this task's notes; if the binary kills a slow
       `ask_user` call, stop and revisit the blocking-rendezvous design
       before continuing 3.2+ (per the spec's flagged Unit 3 risk and Open
-      Question 1).
-- [ ] 3.2 Define the request/response wire contract for the loopback TCP
+      Question 1). **Finding:** an empirical local run (a scripted stdio MCP
+      server with a deliberately slow tool, driven against the real `claude`
+      CLI) was blocked by this session's own auto-mode classifier as a
+      nested-agent-spawn action, so verification instead used Claude Code's
+      public documentation/changelog (via web search, September 2026):
+      `MCP_TOOL_TIMEOUT` (the wall-clock tool-execution timeout) defaults to
+      ~100,000,000ms (~28 hours) — nowhere near killing a multi-minute
+      operator wait. The only real enforcement is a separate *idle* timeout
+      (no response and no progress notification) defaulting to 30 minutes
+      for stdio MCP servers, tunable via `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`
+      (0 disables it) and resettable by progress notifications — both far
+      more generous than the blocking-rendezvous design needs. Conclusion:
+      the real agent binary does not kill a slow `ask_user`/`final_merge`
+      call under normal conditions; the blocking-rendezvous design proceeds
+      as specified without revision. If an operator's response time ever
+      threatens the 30-minute stdio idle window in practice, `mcp-serve` can
+      send MCP progress notifications while blocked to reset it — noted here
+      for awareness, not implemented in this unit (no proof artifact
+      requires it, per the spec's Non-Goal 8).
+- [x] 3.2 Define the request/response wire contract for the loopback TCP
       side: message framing, the 10 tool names/argument shapes mirrored
       from `internal/helpchat/tools.go`'s existing `claudecode.McpTool`
       definitions, and the auth handshake (per-session random token sent as
-      the connection's first message).
-- [ ] 3.3 Implement `cmd/jig/mcp_serve.go`: a hidden `jig mcp-serve`
+      the connection's first message). Documented as a package-doc comment
+      at the top of `cmd/jig/mcp_serve.go`: agent-facing stdio is real MCP
+      JSON-RPC 2.0, newline-delimited (one JSON message per line — verified
+      via the MCP spec's transport docs that this is *not* LSP-style
+      Content-Length framing, which the initial design draft mistakenly
+      assumed); the jig-facing loopback TCP side is jig-owned
+      newline-delimited JSON (`authMessage`/`authAck` for the handshake,
+      `forwardRequest`/`forwardResponse` correlated by `id` for tool calls,
+      chosen over Content-Length framing for symmetry with the agent-facing
+      side and because `encoding/json` never emits raw newlines inside an
+      encoded value, so line-delimiting is safe for arbitrary tool
+      arguments/results).
+- [x] 3.3 Implement `cmd/jig/mcp_serve.go`: a hidden `jig mcp-serve`
       subcommand wired into `cmd/jig/main.go`'s switch dispatch, speaking
       real MCP JSON-RPC over its own stdio (the 10 tools as MCP tool
       definitions) and forwarding each tool call as a request over a TCP
       connection to the port/token supplied via environment variables.
-- [ ] 3.4 Implement the blocking rendezvous contract for `resolve_review`'s
+      `mcp-serve` is the TCP *client* (dials out), matching Unit 4's design
+      that the main jig process binds the listener before spawning this
+      subcommand.
+- [x] 3.4 Implement the blocking rendezvous contract for `resolve_review`'s
       `final_merge` decision and `ask_user`: the tool handler blocks on a
       reply from the TCP connection exactly as today's channel-based
-      handler blocks on a Go channel.
-- [ ] 3.5 Implement lifecycle: ready-to-accept-connections signal, clean
+      handler blocks on a Go channel. `handleToolCall`'s `select` on the
+      per-request response channel has no timeout by design, matching
+      task 3.1's spike finding that the real agent binary does not enforce
+      a tool-call timeout in the range this needs.
+- [x] 3.5 Implement lifecycle: ready-to-accept-connections signal, clean
       shutdown when the session ends, and explicit crash handling (a
       request in flight when the process is killed surfaces a clear error,
-      not a hang).
-- [ ] 3.6 Implement auth: reject connections that send no token or the
-      wrong token, closing the connection.
-- [ ] 3.7 Write `cmd/jig/mcp_serve_test.go`: standalone tests using a
+      not a hang). "Ready to accept" is implicit in the auth handshake
+      itself (agent-facing stdio only starts once `authenticate` returns);
+      clean shutdown is stdin EOF (agent ended the session) draining
+      in-flight goroutines via a `sync.WaitGroup` before closing the TCP
+      connection; crash handling covers both directions — a dropped TCP
+      connection fails every still-pending tools/call with a clear error
+      (`failAllPending`) instead of hanging the agent, and
+      `TestMcpServeSubprocessKillMidRequest` confirms that killing the real
+      `mcp-serve` process itself while a call is in flight closes its
+      stdout promptly rather than hanging its caller.
+- [x] 3.6 Implement auth: reject connections that send no token or the
+      wrong token, closing the connection. The rejection itself is the main
+      jig process's responsibility (Unit 4 implements that server side);
+      Unit 3's job is the client half (`authenticate` sending the token as
+      the first message and failing clearly if no ack arrives) plus the
+      test-side scripted counterparty
+      (`startRejectingFakeJigServer`/`fakeJigServer.acceptLoop`'s
+      token-mismatch branch) that stands in for that future server logic to
+      prove the client half handles rejection correctly, per this unit's
+      "standalone, no `AcpHarness`" scope.
+- [x] 3.7 Write `cmd/jig/mcp_serve_test.go`: standalone tests using a
       scripted MCP client and a scripted TCP counterparty (standing in for
       the main jig process) covering all 10 tools, the `ask_user`/
       `final_merge` rendezvous (request → delayed response → delivery, no
       lost/duplicated replies), wrong-token rejection, and mid-request crash
       handling. No TUI or `AcpHarness` involvement in this unit's tests.
-- [ ] 3.8 Run `gofmt -w` on changed files, then
+      Implemented as `TestMcpServeAllTenToolsDispatch` (table-driven, all 10
+      tools plus a `tools/list` name/order check),
+      `TestMcpServeAskUserFinalMergeRendezvous`, `TestMcpServeAuthRejection`
+      (wrong token / no token / always-rejecting counterparty subtests), and
+      `TestMcpServeSubprocessKillMidRequest` — the last one re-executes this
+      test binary as a real OS subprocess via
+      `exec.Command(os.Args[0], "-test.run=^TestMcpServeSubprocessHelper$")`,
+      mirroring the `JIG_ACP_FIXTURE`/`TestACPFixtureProcess` subprocess
+      pattern already used in
+      `internal/harness/security_integration_test.go`, so the kill is a real
+      `SIGKILL` on a real process, not a simulated cancellation.
+- [x] 3.8 Run `gofmt -w` on changed files, then
       `go test ./cmd/jig/... -run TestMcpServe` (or the equivalent focused
-      invocation) and `go vet ./...`.
+      invocation) and `go vet ./...`. Also ran `go test -race
+      ./cmd/jig/... -run TestMcpServe`, `go test ./cmd/jig/...` (full
+      package), and a full root `go build ./... && go vet ./... && go test
+      ./...` — all pass; the one failure in the full suite
+      (`TestBoundaryBannerFoldsIntoClosingItemLineRange` in
+      `internal/tui/monitor`) is the same pre-existing, unrelated failure
+      already documented in Unit 2's proof artifact.
 
 ### [ ] 4.0 Wire `helpchat` onto `AcpHarness` + Unit 3's MCP server
 
