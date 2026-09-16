@@ -15,7 +15,6 @@ require (
 	github.com/coder/acp-go-sdk v0.13.5
 	github.com/hexops/gotextdiff v1.0.3
 	github.com/prometheus/client_golang v1.24.1
-	github.com/severity1/claude-agent-sdk-go v0.6.22
 	github.com/yuin/goldmark v1.7.13
 	go.opentelemetry.io/otel v1.46.0
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.46.0

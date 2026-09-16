@@ -28,7 +28,7 @@ Early, but the core loop runs end to end. What works today:
   workflows and runs, with a backend-agnostic transcript and document review.
 - **Workflow composition and recovery** — subworkflow modules, dynamic fan-out,
   typed checks, retry/resource policies, run snapshots, and crash reopen.
-  Claude SDK/ACP, Cursor ACP, and Codex ACP are supported.
+  Claude ACP, Cursor ACP, and Codex ACP are supported.
 
 ## Install & run
 

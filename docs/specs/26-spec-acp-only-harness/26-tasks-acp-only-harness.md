@@ -502,7 +502,7 @@
       environment); the scripted end-to-end tests above exercise the same
       code paths a manual walkthrough would.
 
-### [ ] 5.0 Remove the SDK dependency; final grep-clean closeout
+### [x] 5.0 Remove the SDK dependency; final grep-clean closeout
 
 #### 5.0 Proof Artifact(s)
 
@@ -520,21 +520,35 @@
 
 #### 5.0 Tasks
 
-- [ ] 5.1 Run `grep -rn "claudecode\|claude-agent-sdk-go" --include="*.go" .`
-      (excluding this spec's directory) and confirm zero matches; fix any
-      stragglers found.
-- [ ] 5.2 Remove `github.com/severity1/claude-agent-sdk-go` from `go.mod`;
-      run `go mod tidy` and confirm no diff beyond the removal itself.
-- [ ] 5.3 Update `docs/ARCHITECTURE.md` and `AGENTS.md` to describe ACP as
-      the only transport (drop any remaining SDK/ACP split language).
-- [ ] 5.4 Update `CONTEXT.md`'s "Harness and backend" section to drop the
-      `Transport` vocabulary term entirely (already removed as a field in
-      Unit 1).
-- [ ] 5.5 Update `README.md`'s "Status" section line about "Claude SDK/ACP,
-      Cursor ACP, and Codex ACP are supported" to drop the SDK/ACP split.
-- [ ] 5.6 Mark `docs/specs/12-spec-acp-claude-harness/12-spec-acp-claude-harness.md`'s
-      Non-Goal 5 and `docs/plans/open-goals.md`'s A6 entry as
-      resolved/closed, pointing at this spec.
-- [ ] 5.7 Run `gofmt -w` on any changed files, then
-      `go build ./... && go vet ./... && go test ./...` and
-      `(cd harness/acp && go test ./... && go vet ./...)`.
+- [x] 5.1 Ran `grep -rn "claudecode\|claude-agent-sdk-go" --include="*.go" .`
+      (excluding this spec's directory) — zero matches; no stragglers found
+      (Units 1, 2, and 4 already closed every `.go` surface).
+- [x] 5.2 Removed `github.com/severity1/claude-agent-sdk-go` from `go.mod`;
+      ran `go mod tidy` — diff was exactly the two `go.mod`/`go.sum` removal
+      lines, nothing else, confirming no transitive dependency remained.
+- [x] 5.3 Confirmed `docs/ARCHITECTURE.md` and `AGENTS.md` already describe
+      ACP as the only transport (updated in Unit 1's task 1.9 — package
+      table lists "Claude ACP, Cursor ACP, and Codex ACP" with no SDK row,
+      and `AGENTS.md`'s backend table is single-column); no further edit
+      needed here, verified by grep rather than re-editing blind.
+- [x] 5.4 Updated `CONTEXT.md`'s "Harness and backend" section: dropped the
+      `**Transport:**` vocabulary line entirely and reworded `**Harness:**`
+      to "ACP lifecycle/capability seam" with an explicit "ACP is the only
+      transport" note.
+- [x] 5.5 Updated `README.md`'s "Status" section: "Claude SDK/ACP, Cursor
+      ACP, and Codex ACP are supported" → "Claude ACP, Cursor ACP, and Codex
+      ACP are supported."
+- [x] 5.6 Marked `docs/specs/12-spec-acp-claude-harness/12-spec-acp-claude-harness.md`'s
+      Non-Goal 5 resolved, pointing at this spec's Units 1/2/5. Updated
+      `docs/plans/open-goals.md`'s A6 entry: dropped "isolated direct-SDK
+      classifiers" from its "Done" summary (no longer true) and added a note
+      that this spec closed that gap, rather than deleting the historical
+      "Done" record outright.
+- [x] 5.7 Ran `gofmt -l .` (no unformatted files — no doc/proof edits needed
+      `gofmt`, and no other `.go` files changed in this unit beyond
+      `go.mod`/`go.sum`), then `go build ./... && go vet ./... && go test
+      ./...` (root) and `(cd harness/acp && go build ./... && go vet ./...
+      && go test ./...)` (nested module) — all pass except the same
+      pre-existing, already-documented `TestBoundaryBannerFoldsIntoClosingItemLineRange`
+      failure in `internal/tui/monitor` (unrelated to this spec, first
+      logged in Unit 2's proof artifact).

@@ -332,6 +332,9 @@ harnesses, and tested — not implicit in each harness's own behavior.
    repo is a future option, not required here.
 5. **Migrating the Tier-2 `MonitorAdapter`** (`internal/runner/monitor.go`)
    or the dead `tui` chat off the SDK. Both stay on their direct-SDK path.
+   **Resolved:** `docs/specs/26-spec-acp-only-harness/` migrated
+   `MonitorAdapter` to ACP (Unit 2), deleted the dead `tui/chat` (Unit 1), and
+   removed the SDK dependency entirely (Unit 5); this non-goal is closed.
 6. **A remote/HTTP ACP transport.** Only the local subprocess + stdio
    transport (what `coder/acp-go-sdk` and the Claude adapter actually support)
    is in scope.
