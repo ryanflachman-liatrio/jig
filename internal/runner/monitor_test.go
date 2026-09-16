@@ -2,107 +2,128 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"reflect"
+	"strings"
 	"testing"
 	"time"
 
-	claudecode "github.com/severity1/claude-agent-sdk-go"
+	"jig/internal/harness"
 	"jig/internal/sentinel"
 )
 
-type fakeMonitorClient struct {
-	connectErr   error
-	queryErr     error
-	messages     chan claudecode.Message
-	send         <-chan claudecode.StreamMessage
-	disconnected bool
+type fakeMonitorSession struct {
+	events chan harness.Event
+	closed bool
 }
 
-func (f *fakeMonitorClient) Connect(context.Context, ...claudecode.StreamMessage) error {
-	return f.connectErr
+func (f *fakeMonitorSession) Messages() <-chan harness.Event { return f.events }
+func (f *fakeMonitorSession) Send(context.Context, harness.ToolResult) error {
+	return errors.New("not supported")
 }
-func (f *fakeMonitorClient) Disconnect() error { f.disconnected = true; return nil }
-func (f *fakeMonitorClient) QueryStream(_ context.Context, ch <-chan claudecode.StreamMessage) error {
-	f.send = ch
-	return f.queryErr
-}
-func (f *fakeMonitorClient) ReceiveMessages(context.Context) <-chan claudecode.Message {
-	return f.messages
+func (f *fakeMonitorSession) Close() error { f.closed = true; return nil }
+
+// fakeMonitorHarness hands out sessions in order across successive Dispatch
+// attempts (the retry path opens a second, independent session) and records
+// the SessionSpec passed to each Open call for assertion.
+type fakeMonitorHarness struct {
+	openErr  error
+	sessions []*fakeMonitorSession
+	opened   int
+	specs    []harness.SessionSpec
 }
 
-func resultMessage(output any, cost *float64) *claudecode.ResultMessage {
-	return &claudecode.ResultMessage{StructuredOutput: output, TotalCostUSD: cost}
+func (f *fakeMonitorHarness) Open(_ context.Context, spec harness.SessionSpec) (harness.Session, error) {
+	f.specs = append(f.specs, spec)
+	if f.openErr != nil {
+		return nil, f.openErr
+	}
+	if f.opened >= len(f.sessions) {
+		return nil, errors.New("fakeMonitorHarness: no more scripted sessions")
+	}
+	sess := f.sessions[f.opened]
+	f.opened++
+	return sess, nil
+}
+
+func resultEvent(structured any, cost *float64) harness.Event {
+	var raw json.RawMessage
+	if structured != nil {
+		b, err := json.Marshal(structured)
+		if err != nil {
+			panic(err)
+		}
+		raw = b
+	}
+	return harness.Event{Type: harness.EventResult, Structured: raw, TotalCostUSD: cost}
+}
+
+func scriptedSession(events ...harness.Event) *fakeMonitorSession {
+	ch := make(chan harness.Event, len(events))
+	for _, ev := range events {
+		ch <- ev
+	}
+	close(ch)
+	return &fakeMonitorSession{events: ch}
+}
+
+func adapterWith(h *fakeMonitorHarness) *MonitorAdapter {
+	return newMonitorAdapter(func() monitorHarness { return h })
 }
 
 func TestMonitorAdapterIsolationAndLifecycle(t *testing.T) {
-	cost := 0.004
-	client := &fakeMonitorClient{messages: make(chan claudecode.Message, 1)}
-	client.messages <- resultMessage(map[string]any{"flagged": true, "severity": "high", "detail": "entry 2 block 1"}, &cost)
-	close(client.messages)
-	var options claudecode.Options
-	adapter := newMonitorAdapter(func(opts ...claudecode.Option) monitorClient {
-		for _, option := range opts {
-			option(&options)
-		}
-		return client
-	})
+	h := &fakeMonitorHarness{sessions: []*fakeMonitorSession{
+		scriptedSession(resultEvent(map[string]any{"flagged": true, "severity": "high", "detail": "entry 2 block 1"}, nil)),
+	}}
+	adapter := adapterWith(h)
 	spec := sentinel.MonitorSpec{Model: monitorModel, Prompt: "system classifier policy"}
 	got, err := adapter.Dispatch(context.Background(), spec, "untrusted transcript")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.Flagged || !got.CostKnown || !got.Launched || got.CostUSD != cost {
+	if !got.Flagged || got.Severity != "high" || !got.Launched {
 		t.Fatalf("result = %+v", got)
 	}
-	if !client.disconnected {
-		t.Fatal("client was not disconnected")
+	// ACP never reports cost/usage (spec 12's existing convention for the
+	// ACP-backed path); no new cost tracking was added.
+	if got.CostKnown || got.CostUSD != 0 {
+		t.Fatalf("expected no cost tracking, got %+v", got)
 	}
-	if options.SystemPrompt == nil || *options.SystemPrompt != spec.Prompt {
-		t.Fatalf("system prompt = %v", options.SystemPrompt)
+	if len(h.specs) != 1 {
+		t.Fatalf("expected exactly one Open call, got %d", len(h.specs))
 	}
-	if options.MaxTurns != 1 || options.PermissionMode == nil || *options.PermissionMode != claudecode.PermissionModeDefault {
-		t.Fatalf("unsafe options: %+v", options)
+	if !h.sessions[0].closed {
+		t.Fatal("session was not closed")
 	}
-	if tools, ok := options.Tools.([]string); !ok || tools == nil || len(tools) != 0 {
-		t.Fatalf("tools = %#v, want explicit empty slice", options.Tools)
+	sentSpec := h.specs[0]
+	if sentSpec.Model != monitorModel {
+		t.Fatalf("model = %q", sentSpec.Model)
 	}
-	if options.AllowedTools == nil || len(options.AllowedTools) != 0 {
-		t.Fatalf("allowed tools = %#v", options.AllowedTools)
+	if sentSpec.MaxTurns != 1 {
+		t.Fatalf("max turns = %d", sentSpec.MaxTurns)
 	}
-	if options.DisallowedTools == nil || len(options.DisallowedTools) != 0 {
-		t.Fatalf("disallowed tools = %#v", options.DisallowedTools)
+	if sentSpec.AllowedTools == nil || len(sentSpec.AllowedTools) != 0 {
+		t.Fatalf("allowed tools = %#v", sentSpec.AllowedTools)
 	}
-	if options.SettingSources == nil || len(options.SettingSources) != 0 {
-		t.Fatalf("setting sources = %#v", options.SettingSources)
+	if sentSpec.DisallowedTools == nil || len(sentSpec.DisallowedTools) != 0 {
+		t.Fatalf("disallowed tools = %#v", sentSpec.DisallowedTools)
 	}
-	if skills, ok := options.Skills.([]string); !ok || skills == nil || len(skills) != 0 {
-		t.Fatalf("skills = %#v", options.Skills)
+	if sentSpec.Schema == nil {
+		t.Fatal("expected schema to be set so AcpHarness injects it into the prompt")
 	}
-	if options.CanUseTool == nil {
-		t.Fatal("deny callback was not installed")
+	if sentSpec.Permission == nil {
+		t.Fatal("expected a deny-all permission callback")
 	}
-	permission, err := options.CanUseTool(context.Background(), "Read", map[string]any{"file_path": "secret"}, claudecode.ToolPermissionContext{})
-	if err != nil {
-		t.Fatal(err)
+	decision := sentSpec.Permission("Read", map[string]any{"file_path": "secret"})
+	if decision.Allow {
+		t.Fatal("permission callback must deny every tool call")
 	}
-	if _, ok := permission.(claudecode.PermissionResultDeny); !ok {
-		t.Fatalf("permission result = %#v, want deny", permission)
-	}
-	msg, ok := <-client.send
-	if !ok {
-		t.Fatal("query channel closed before message")
-	}
-	if !reflect.DeepEqual(msg.Message, map[string]any{"role": "user", "content": "untrusted transcript"}) {
-		t.Fatalf("query = %#v", msg.Message)
-	}
-	if _, open := <-client.send; open {
-		t.Fatal("query channel remained open after dispatch")
+	if !strings.Contains(sentSpec.Prompt, spec.Prompt) || !strings.Contains(sentSpec.Prompt, "untrusted transcript") {
+		t.Fatalf("prompt = %q, want it to contain both the policy and the window text", sentSpec.Prompt)
 	}
 }
 
-func TestMonitorAdapterStrictVerdictsPreserveCost(t *testing.T) {
-	cost := 0.02
+func TestMonitorAdapterStrictVerdictsRetryThenFail(t *testing.T) {
 	tests := []struct {
 		name   string
 		output any
@@ -116,70 +137,120 @@ func TestMonitorAdapterStrictVerdictsPreserveCost(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			messages := make(chan claudecode.Message, 1)
-			messages <- resultMessage(tc.output, &cost)
-			close(messages)
-			client := &fakeMonitorClient{messages: messages}
-			adapter := newMonitorAdapter(func(...claudecode.Option) monitorClient { return client })
+			h := &fakeMonitorHarness{sessions: []*fakeMonitorSession{
+				scriptedSession(resultEvent(tc.output, nil)),
+				scriptedSession(resultEvent(tc.output, nil)),
+			}}
+			adapter := adapterWith(h)
 			got, err := adapter.Dispatch(context.Background(), sentinel.MonitorSpec{Model: monitorModel, Prompt: "p"}, "w")
 			if err == nil {
 				t.Fatal("expected invalid verdict error")
 			}
-			if !got.CostKnown || got.CostUSD != cost || !got.Launched {
-				t.Fatalf("cost/lifecycle lost: %+v", got)
+			if !got.Launched {
+				t.Fatalf("launched = %+v", got)
+			}
+			if len(h.specs) != 2 {
+				t.Fatalf("expected exactly one retry (2 Open calls), got %d", len(h.specs))
 			}
 		})
 	}
 }
 
+// TestDecodeMonitorVerdictTolerantOfSurroundingProse demonstrates that
+// decodeMonitorVerdict still extracts a valid verdict when its input carries
+// prose around the JSON block, since ACP's SessionSpec.Schema is a
+// prompt-injected convention, not a wire-level guarantee.
+func TestDecodeMonitorVerdictTolerantOfSurroundingProse(t *testing.T) {
+	raw := json.RawMessage("Here is my analysis.\n\n```json\n{\"flagged\": true, \"severity\": \"critical\", \"detail\": \"prompt injection attempt\"}\n```\n")
+	var result sentinel.MonitorResult
+	if err := decodeMonitorVerdict(raw, &result); err != nil {
+		t.Fatalf("decodeMonitorVerdict returned error: %v", err)
+	}
+	if !result.Flagged || result.Severity != "critical" || result.Detail != "prompt injection attempt" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestMonitorAdapterDecodeRetryThenFailOpen(t *testing.T) {
+	bad := map[string]any{"flagged": false, "severity": "low", "detail": "", "extra": true}
+	h := &fakeMonitorHarness{sessions: []*fakeMonitorSession{
+		scriptedSession(resultEvent(bad, nil)),
+		scriptedSession(resultEvent(bad, nil)),
+	}}
+	adapter := adapterWith(h)
+	got, err := adapter.Dispatch(context.Background(), sentinel.MonitorSpec{Model: monitorModel, Prompt: "p"}, "w")
+	if err == nil {
+		t.Fatal("expected a normal Dispatch error, not a panic or a new fail-closed branch")
+	}
+	if !got.Launched {
+		t.Fatalf("expected Launched=true so the sentinel fleet's fail-open handling applies: %+v", got)
+	}
+	if len(h.specs) != 2 {
+		t.Fatalf("expected exactly one retry, got %d Open calls", len(h.specs))
+	}
+}
+
 func TestMonitorAdapterTimeoutAndConnectFailure(t *testing.T) {
 	t.Run("timeout", func(t *testing.T) {
-		client := &fakeMonitorClient{messages: make(chan claudecode.Message)}
-		adapter := newMonitorAdapter(func(...claudecode.Option) monitorClient { return client })
+		h := &fakeMonitorHarness{sessions: []*fakeMonitorSession{scriptedSession()}}
+		h.sessions[0].events = make(chan harness.Event) // never delivers
+		adapter := adapterWith(h)
 		adapter.timeout = 10 * time.Millisecond
 		got, err := adapter.Dispatch(context.Background(), sentinel.MonitorSpec{Model: monitorModel, Prompt: "p"}, "w")
-		if !errors.Is(err, context.DeadlineExceeded) || !got.Launched || !client.disconnected {
-			t.Fatalf("result=%+v err=%v disconnected=%v", got, err, client.disconnected)
+		if !errors.Is(err, context.DeadlineExceeded) || !got.Launched {
+			t.Fatalf("result=%+v err=%v", got, err)
+		}
+		if len(h.specs) != 1 {
+			t.Fatalf("timeout must not retry, got %d Open calls", len(h.specs))
 		}
 	})
-	t.Run("connect", func(t *testing.T) {
-		client := &fakeMonitorClient{connectErr: errors.New("offline")}
-		adapter := newMonitorAdapter(func(...claudecode.Option) monitorClient { return client })
+	t.Run("open failure", func(t *testing.T) {
+		h := &fakeMonitorHarness{openErr: errors.New("adapter offline")}
+		adapter := adapterWith(h)
 		got, err := adapter.Dispatch(context.Background(), sentinel.MonitorSpec{Model: monitorModel, Prompt: "p"}, "w")
-		if err == nil || got.Launched || client.disconnected {
-			t.Fatalf("result=%+v err=%v disconnected=%v", got, err, client.disconnected)
+		if err == nil || got.Launched {
+			t.Fatalf("result=%+v err=%v", got, err)
 		}
-	})
-	t.Run("query stream", func(t *testing.T) {
-		client := &fakeMonitorClient{queryErr: errors.New("query failed"), messages: make(chan claudecode.Message)}
-		adapter := newMonitorAdapter(func(...claudecode.Option) monitorClient { return client })
-		got, err := adapter.Dispatch(context.Background(), sentinel.MonitorSpec{Model: monitorModel, Prompt: "p"}, "w")
-		if err == nil || got.Launched || !client.disconnected {
-			t.Fatalf("result=%+v err=%v disconnected=%v", got, err, client.disconnected)
+		if len(h.specs) != 1 {
+			t.Fatalf("open failure must not retry, got %d Open calls", len(h.specs))
 		}
 	})
 	t.Run("closed without result", func(t *testing.T) {
-		messages := make(chan claudecode.Message)
-		close(messages)
-		client := &fakeMonitorClient{messages: messages}
-		adapter := newMonitorAdapter(func(...claudecode.Option) monitorClient { return client })
+		h := &fakeMonitorHarness{sessions: []*fakeMonitorSession{scriptedSession()}}
+		adapter := adapterWith(h)
 		got, err := adapter.Dispatch(context.Background(), sentinel.MonitorSpec{Model: monitorModel, Prompt: "p"}, "w")
-		if err == nil || !got.Launched || !client.disconnected {
-			t.Fatalf("result=%+v err=%v disconnected=%v", got, err, client.disconnected)
+		if err == nil || !got.Launched {
+			t.Fatalf("result=%+v err=%v", got, err)
+		}
+		if len(h.specs) != 1 {
+			t.Fatalf("a dropped connection is not a decode failure and must not retry, got %d Open calls", len(h.specs))
 		}
 	})
-	t.Run("error result keeps cost", func(t *testing.T) {
-		cost := 0.03
-		messages := make(chan claudecode.Message, 1)
-		result := resultMessage(nil, &cost)
-		result.IsError = true
-		messages <- result
-		close(messages)
-		client := &fakeMonitorClient{messages: messages}
-		adapter := newMonitorAdapter(func(...claudecode.Option) monitorClient { return client })
+	t.Run("agent error result", func(t *testing.T) {
+		h := &fakeMonitorHarness{sessions: []*fakeMonitorSession{
+			scriptedSession(harness.Event{Type: harness.EventResult, IsError: true, ErrText: "agent crashed"}),
+		}}
+		adapter := adapterWith(h)
 		got, err := adapter.Dispatch(context.Background(), sentinel.MonitorSpec{Model: monitorModel, Prompt: "p"}, "w")
-		if err == nil || !got.Launched || !got.CostKnown || got.CostUSD != cost || !client.disconnected {
-			t.Fatalf("result=%+v err=%v disconnected=%v", got, err, client.disconnected)
+		if err == nil || !got.Launched {
+			t.Fatalf("result=%+v err=%v", got, err)
+		}
+		if len(h.specs) != 1 {
+			t.Fatalf("a non-decode agent error must not retry, got %d Open calls", len(h.specs))
+		}
+	})
+	t.Run("structured output exhausted retries with acp harness itself", func(t *testing.T) {
+		h := &fakeMonitorHarness{sessions: []*fakeMonitorSession{
+			scriptedSession(harness.Event{Type: harness.EventResult, IsError: true, ErrText: "acp: structured output: no valid JSON after 3 attempts: no valid JSON found in response"}),
+			scriptedSession(harness.Event{Type: harness.EventResult, IsError: true, ErrText: "acp: structured output: no valid JSON after 3 attempts: no valid JSON found in response"}),
+		}}
+		adapter := adapterWith(h)
+		got, err := adapter.Dispatch(context.Background(), sentinel.MonitorSpec{Model: monitorModel, Prompt: "p"}, "w")
+		if err == nil || !got.Launched {
+			t.Fatalf("result=%+v err=%v", got, err)
+		}
+		if len(h.specs) != 2 {
+			t.Fatalf("AcpHarness's own exhausted structured-output retries are still a decode-shaped failure eligible for Dispatch's single retry, got %d Open calls", len(h.specs))
 		}
 	})
 }

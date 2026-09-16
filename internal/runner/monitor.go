@@ -5,12 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"sync"
+	"strings"
 	"time"
 
-	claudecode "github.com/severity1/claude-agent-sdk-go"
-
+	"jig/internal/harness"
 	"jig/internal/sentinel"
 )
 
@@ -25,49 +23,52 @@ var monitorJSONSchema = map[string]any{
 	"additionalProperties": false,
 }
 
-type monitorClient interface {
-	Connect(context.Context, ...claudecode.StreamMessage) error
-	Disconnect() error
-	QueryStream(context.Context, <-chan claudecode.StreamMessage) error
-	ReceiveMessages(context.Context) <-chan claudecode.Message
+// monitorHarness is the narrow seam MonitorAdapter needs from harness.Harness
+// (open one session, read its events) so this file depends on jig's own
+// harness.SessionSpec/harness.Session types rather than any ACP wire type.
+// *harness.AcpHarness satisfies this directly.
+type monitorHarness interface {
+	Open(ctx context.Context, spec harness.SessionSpec) (harness.Session, error)
 }
 
-type monitorClientFactory func(...claudecode.Option) monitorClient
-
 type MonitorAdapter struct {
-	newClient monitorClientFactory
-	timeout   time.Duration
+	newHarness func() monitorHarness
+	timeout    time.Duration
 }
 
 func NewMonitorAdapter() *MonitorAdapter {
-	return &MonitorAdapter{newClient: func(opts ...claudecode.Option) monitorClient {
-		return claudecode.NewClient(opts...)
-	}, timeout: 30 * time.Second}
-}
-
-func newMonitorAdapter(factory monitorClientFactory) *MonitorAdapter {
-	return &MonitorAdapter{newClient: factory, timeout: 30 * time.Second}
-}
-
-func monitorOptions(spec sentinel.MonitorSpec) []claudecode.Option {
-	emptySurface := func(o *claudecode.Options) {
-		o.Tools = []string{}
-		o.AllowedTools = []string{}
-		o.DisallowedTools = []string{}
-		o.SettingSources = []claudecode.SettingSource{}
+	return &MonitorAdapter{
+		newHarness: func() monitorHarness { return harness.NewAcpHarness() },
+		timeout:    30 * time.Second,
 	}
-	denyTools := claudecode.WithCanUseTool(func(context.Context, string, map[string]any, claudecode.ToolPermissionContext) (claudecode.PermissionResult, error) {
-		return claudecode.NewPermissionResultDeny("security classifiers cannot invoke tools"), nil
-	})
-	return []claudecode.Option{
-		emptySurface,
-		claudecode.WithSkillsDisabled(),
-		claudecode.WithModel(spec.Model),
-		claudecode.WithSystemPrompt(spec.Prompt),
-		claudecode.WithJSONSchema(monitorJSONSchema),
-		claudecode.WithPermissionMode(claudecode.PermissionModeDefault),
-		claudecode.WithMaxTurns(1),
-		denyTools,
+}
+
+func newMonitorAdapter(factory func() monitorHarness) *MonitorAdapter {
+	return &MonitorAdapter{newHarness: factory, timeout: 30 * time.Second}
+}
+
+// monitorSessionSpec builds the SessionSpec for one classification turn. ACP
+// has no separate system-prompt channel (see buildAgentPrompt's convention),
+// so the classifier policy and the untrusted transcript window are combined
+// into a single prompt, clearly delimited; the deny-all Permission callback
+// is the actual enforcement boundary (Tier-1 rules remain the fail-closed
+// layer regardless of what a classifier's prompt claims).
+func monitorSessionSpec(spec sentinel.MonitorSpec, windowText string) harness.SessionSpec {
+	denyAll := func(toolName string, input map[string]any) harness.Decision {
+		return harness.Decision{Allow: false, Reason: "security classifiers cannot invoke tools"}
+	}
+	var prompt strings.Builder
+	prompt.WriteString(spec.Prompt)
+	prompt.WriteString("\n\n## Untrusted Transcript Window\n\n")
+	prompt.WriteString(windowText)
+	return harness.SessionSpec{
+		Prompt:          prompt.String(),
+		Model:           spec.Model,
+		MaxTurns:        1,
+		AllowedTools:    []string{},
+		DisallowedTools: []string{},
+		Schema:          monitorJSONSchema,
+		Permission:      denyAll,
 	}
 }
 
@@ -81,77 +82,97 @@ func (a *MonitorAdapter) Dispatch(ctx context.Context, spec sentinel.MonitorSpec
 	}
 	dispatchCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	client := a.newClient(monitorOptions(spec)...)
-	if err := client.Connect(dispatchCtx); err != nil {
-		return sentinel.MonitorResult{}, fmt.Errorf("monitor connect: %w", err)
-	}
-	defer client.Disconnect()
 
-	messages := client.ReceiveMessages(dispatchCtx)
-	sendCh := make(chan claudecode.StreamMessage, 1)
-	var closeOnce sync.Once
-	closeSend := func() { closeOnce.Do(func() { close(sendCh) }) }
-	defer closeSend()
-	if err := client.QueryStream(dispatchCtx, sendCh); err != nil {
-		return sentinel.MonitorResult{}, fmt.Errorf("monitor query stream: %w", err)
+	result, launched, retryable, err := a.attempt(dispatchCtx, spec, windowText)
+	everLaunched := launched
+	if err != nil && launched && retryable {
+		// Single retry on a fresh session: a decode failure is treated as
+		// classifier flakiness, not a connection/timeout problem, so it gets
+		// exactly one more try inside the same dispatch timeout budget.
+		result, launched, _, err = a.attempt(dispatchCtx, spec, windowText)
+		everLaunched = everLaunched || launched
 	}
-	sendCh <- claudecode.StreamMessage{
-		Type:    "user",
-		Message: map[string]any{"role": "user", "content": windowText},
-	}
-	result, err := drainMonitorChannel(dispatchCtx, messages)
-	result.Launched = true
+	result.Launched = everLaunched
 	return result, err
 }
 
-func drainMonitorChannel(ctx context.Context, messages <-chan claudecode.Message) (sentinel.MonitorResult, error) {
+// attempt opens one fresh session and drains it to a terminal result.
+// launched reports whether the session was opened at all (mirrors the old
+// SDK-backed Connect+QueryStream success signal); retryable reports whether
+// a non-nil err is a decode-shaped failure eligible for Dispatch's single
+// retry, as opposed to a connection/timeout failure.
+func (a *MonitorAdapter) attempt(ctx context.Context, spec sentinel.MonitorSpec, windowText string) (result sentinel.MonitorResult, launched, retryable bool, err error) {
+	h := a.newHarness()
+	sess, err := h.Open(ctx, monitorSessionSpec(spec, windowText))
+	if err != nil {
+		return sentinel.MonitorResult{}, false, false, fmt.Errorf("monitor open: %w", err)
+	}
+	defer sess.Close()
+	result, retryable, err = drainMonitorEvents(ctx, sess.Messages())
+	return result, true, retryable, err
+}
+
+func drainMonitorEvents(ctx context.Context, events <-chan harness.Event) (sentinel.MonitorResult, bool, error) {
 	var result sentinel.MonitorResult
 	for {
 		select {
 		case <-ctx.Done():
-			return result, ctx.Err()
-		case msg, ok := <-messages:
+			return result, false, ctx.Err()
+		case ev, ok := <-events:
 			if !ok {
-				return result, fmt.Errorf("monitor channel closed without ResultMessage")
+				return result, false, fmt.Errorf("monitor session closed without result event")
 			}
-			rm, ok := msg.(*claudecode.ResultMessage)
-			if !ok {
+			if ev.Type != harness.EventResult {
 				continue
 			}
-			if rm.TotalCostUSD != nil {
-				result.CostUSD, result.CostKnown = *rm.TotalCostUSD, true
+			if ev.TotalCostUSD != nil {
+				result.CostUSD, result.CostKnown = *ev.TotalCostUSD, true
 			}
-			if rm.IsError {
-				return result, fmt.Errorf("monitor agent returned an error result")
+			if ev.IsError {
+				// AcpHarness itself retries the schema-extraction loop
+				// internally (acpMaxStructuredAttempts); exhausting that
+				// loop surfaces here as an IsError result whose ErrText
+				// names "structured output" — that is still a decode-shaped
+				// failure eligible for Dispatch's own retry. Any other
+				// IsError (agent/connection failure) is not.
+				retryable := strings.Contains(ev.ErrText, "structured output")
+				return result, retryable, fmt.Errorf("monitor agent returned an error result: %s", ev.ErrText)
 			}
-			if rm.StructuredOutput == nil {
-				return result, fmt.Errorf("monitor returned no structured output")
+			if len(ev.Structured) == 0 {
+				return result, true, fmt.Errorf("monitor returned no structured output")
 			}
-			if err := decodeMonitorVerdict(rm.StructuredOutput, &result); err != nil {
-				return result, err
+			if err := decodeMonitorVerdict(ev.Structured, &result); err != nil {
+				return result, true, err
 			}
-			return result, nil
+			return result, false, nil
 		}
 	}
 }
 
-func decodeMonitorVerdict(value any, result *sentinel.MonitorResult) error {
-	raw, err := json.Marshal(value)
+// decodeMonitorVerdict parses raw into a MonitorResult. ACP's SessionSpec.Schema
+// is advisory (prompt-injected instructions, not a wire-level grammar
+// constraint the old Claude SDK enforced), so raw is no longer a
+// guaranteed-shaped value: it is passed through extractMonitorJSON first to
+// tolerate any surrounding prose, mirroring internal/harness/acp.go's
+// extractJSONFromText. The strict field-shape check below (DisallowUnknownFields
+// plus the flagged/severity/detail invariants) is still enforced — Tier-1
+// deterministic rules remain the actual fail-closed layer regardless of what
+// a classifier's output looks like, but MonitorResult itself still needs a
+// well-formed verdict to act on.
+func decodeMonitorVerdict(raw json.RawMessage, result *sentinel.MonitorResult) error {
+	extracted, err := extractMonitorJSON(string(raw))
 	if err != nil {
-		return fmt.Errorf("marshal monitor output: %w", err)
+		return fmt.Errorf("parse monitor output: %w", err)
 	}
 	var verdict struct {
 		Flagged  *bool   `json:"flagged"`
 		Severity *string `json:"severity"`
 		Detail   *string `json:"detail"`
 	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec := json.NewDecoder(bytes.NewReader(extracted))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&verdict); err != nil {
 		return fmt.Errorf("parse monitor output: %w", err)
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("parse monitor output: trailing data")
 	}
 	if verdict.Flagged == nil || verdict.Severity == nil || verdict.Detail == nil {
 		return fmt.Errorf("monitor output is missing required fields")
@@ -166,4 +187,35 @@ func decodeMonitorVerdict(value any, result *sentinel.MonitorResult) error {
 	}
 	result.Flagged, result.Severity, result.Detail = *verdict.Flagged, *verdict.Severity, sentinel.RedactText(*verdict.Detail)
 	return nil
+}
+
+// extractMonitorJSON mirrors internal/harness/acp.go's extractJSONFromText:
+// it locates the last ```json fenced block in text and parses its content,
+// falling back to parsing the whole trimmed text as bare JSON. Kept as a
+// small local copy rather than an import since the harness version is
+// unexported and this is the only caller runner-side.
+func extractMonitorJSON(text string) (json.RawMessage, error) {
+	const opener = "```json"
+	const closer = "```"
+
+	if lastOpen := strings.LastIndex(text, opener); lastOpen >= 0 {
+		after := strings.TrimLeft(text[lastOpen+len(opener):], "\r\n")
+		if closeIdx := strings.Index(after, closer); closeIdx >= 0 {
+			candidate := strings.TrimSpace(after[:closeIdx])
+			var raw json.RawMessage
+			if err := json.Unmarshal([]byte(candidate), &raw); err == nil {
+				return raw, nil
+			}
+		}
+	}
+
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return nil, fmt.Errorf("response was empty")
+	}
+	var raw json.RawMessage
+	if err := json.Unmarshal([]byte(trimmed), &raw); err != nil {
+		return nil, fmt.Errorf("no valid JSON found in response: %w", err)
+	}
+	return raw, nil
 }

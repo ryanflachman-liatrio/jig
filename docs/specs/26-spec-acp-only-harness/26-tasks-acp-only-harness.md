@@ -150,7 +150,7 @@
       `jig run`: step succeeded through `AcpHarness`, transcript captured
       normally (see proof artifact for full output).
 
-### [ ] 2.0 Migrate `MonitorAdapter` to ACP
+### [x] 2.0 Migrate `MonitorAdapter` to ACP
 
 #### 2.0 Proof Artifact(s)
 
@@ -168,48 +168,85 @@
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Design `MonitorAdapter`'s ACP-backed session boundary: decide
+- [x] 2.1 Design `MonitorAdapter`'s ACP-backed session boundary: decide
       whether `Dispatch` opens an `AcpHarness` session directly via
       `harness.Harness`/`SessionSpec`, or a narrower ACP-backed classifier
       session type, per the "consumer-defined interfaces" repository
       standard (`MonitorAdapter` depends on `harness.Harness`, not ACP wire
-      types).
-- [ ] 2.2 Replace `monitorOptions`' empty/deny-all tool surface
+      types). Chose a narrow local `monitorHarness` interface (one `Open`
+      method matching `harness.Harness`'s signature) over the full
+      `harness.Harness` interface, mirroring the pre-existing `monitorClient`
+      pattern this file already used for the SDK client — `*harness.AcpHarness`
+      satisfies it with no adapter shim, and `MonitorAdapter` still depends
+      only on `harness.SessionSpec`/`harness.Session`/`harness.Event`, never
+      on ACP wire types.
+- [x] 2.2 Replace `monitorOptions`' empty/deny-all tool surface
       (`Tools`/`AllowedTools`/`DisallowedTools`/`SettingSources` plus
       `WithCanUseTool`) with the `SessionSpec` equivalent: `AllowedTools=[]`
       plus a `PermissionFn` that unconditionally denies.
-- [ ] 2.3 Replace `claudecode.WithJSONSchema(monitorJSONSchema)` with
+- [x] 2.3 Replace `claudecode.WithJSONSchema(monitorJSONSchema)` with
       `SessionSpec.Schema` so `AcpHarness`'s `appendSchemaPrompt` injects the
       same schema into the prompt.
-- [ ] 2.4 Rewrite `decodeMonitorVerdict` to tolerate prose surrounding the
+- [x] 2.4 Rewrite `decodeMonitorVerdict` to tolerate prose surrounding the
       JSON block (reuse or mirror `internal/harness/acp.go`'s
       `extractJSONFromText`) instead of `json.Decoder.DisallowUnknownFields`
       against a guaranteed-shaped value. Add a comment explaining why
       enforcement is now advisory, not wire-guaranteed, and why that is
-      still acceptable (Tier-1 rules remain the fail-closed layer).
-- [ ] 2.5 Implement the single-retry rule in `Dispatch`: on a decode
+      still acceptable (Tier-1 rules remain the fail-closed layer). Added a
+      local `extractMonitorJSON` mirroring `extractJSONFromText` (small
+      intentional duplication — the harness version is unexported and this
+      is runner's only caller); `decodeMonitorVerdict` runs input through it
+      before the still-strict `DisallowUnknownFields` verdict-shape check.
+- [x] 2.5 Implement the single-retry rule in `Dispatch`: on a decode
       failure, re-issue the same classification prompt on a fresh ACP
       session exactly once; if the retry also fails to decode, return a
       normal error (no new fail-closed branch). Ensure both attempts fit
       inside the existing ~30s `MonitorAdapter.timeout`/
       `sentinel.Supervisor.DispatchTimeout` budget. Connection/timeout-level
-      errors keep today's single-attempt semantics (no retry).
-- [ ] 2.6 Preserve single-shot dispatch semantics: each `Dispatch` call opens
-      and closes its own session, no session reuse across calls.
-- [ ] 2.7 Replace `internal/runner/monitor_test.go`'s `fakeMonitorClient`
+      errors keep today's single-attempt semantics (no retry). Implemented
+      via `attempt`'s `(launched, retryable, err)` return: a retry fires only
+      when the first attempt both launched (session opened) and failed with
+      a decode-shaped error (verdict-shape validation failure, empty
+      `Structured`, or an `AcpHarness`-internal "structured output" exhaustion
+      error); both attempts share the same `dispatchCtx` deadline so the
+      shared timeout budget is enforced for free.
+- [x] 2.6 Preserve single-shot dispatch semantics: each `Dispatch` call opens
+      and closes its own session, no session reuse across calls. `attempt`
+      always opens a fresh session via `a.newHarness()` and `defer
+      sess.Close()`s it, including on the retry path (a second, independent
+      `Open` call).
+- [x] 2.7 Replace `internal/runner/monitor_test.go`'s `fakeMonitorClient`
       with (or extend it alongside) fakes appropriate to the ACP-backed
       path: a tolerant-decode test with prose around the JSON block, and a
       test asserting exactly one decode-retry followed by a normal
-      `Dispatch` error on a second decode failure.
-- [ ] 2.8 Confirm cost/usage stays nil/zero on the ACP-backed
+      `Dispatch` error on a second decode failure. Replaced with
+      `fakeMonitorHarness`/`fakeMonitorSession`; added
+      `TestDecodeMonitorVerdictTolerantOfSurroundingProse` and
+      `TestMonitorAdapterDecodeRetryThenFailOpen`, plus retry-boundary
+      coverage in `TestMonitorAdapterTimeoutAndConnectFailure` for open
+      failure, timeout, a dropped connection, a non-decode agent error, and
+      `AcpHarness`'s own exhausted-structured-output error — asserting each
+      case's exact `Open`-call count (1 for non-decode failures, 2 for decode
+      failures).
+- [x] 2.8 Confirm cost/usage stays nil/zero on the ACP-backed
       `MonitorAdapter` path, matching spec 12's existing convention for the
       ACP step-execution path — no new cost/usage tracking added (resolves
-      Open Question 2).
-- [ ] 2.9 Run `gofmt -w` on changed files, then
+      Open Question 2). `drainMonitorEvents` still passes through
+      `Event.TotalCostUSD` if a harness ever reports one, but `AcpHarness`
+      never populates it, so `MonitorResult.CostKnown` is always `false` in
+      practice; asserted directly in
+      `TestMonitorAdapterIsolationAndLifecycle`.
+- [x] 2.9 Run `gofmt -w` on changed files, then
       `go test ./internal/runner/... ./internal/sentinel/...` and confirm
       `internal/sentinel/supervisor.go`'s existing fail-open path
       (`disableMonitor`, `ActionObserved`) handles the new `Dispatch` error
-      shape with no changes needed there.
+      shape with no changes needed there. Both packages pass with zero
+      changes to `internal/sentinel`; also ran the docs/TESTING.md `-race`
+      invocation (`go test -race ./internal/engine ./internal/runner
+      ./internal/harness`) and the full root `go test ./...` — the one
+      failure (`TestBoundaryBannerFoldsIntoClosingItemLineRange` in
+      `internal/tui/monitor`) is pre-existing and unrelated, reproduced
+      identically on `main` before this unit's changes.
 
 ### [ ] 3.0 Out-of-process MCP server for `helpchat`'s tool surface
 
