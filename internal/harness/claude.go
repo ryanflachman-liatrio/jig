@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 
@@ -63,10 +65,12 @@ func (h *ClaudeHarness) Open(ctx context.Context, spec SessionSpec) (Session, er
 	}
 
 	sess := &claudeSession{
-		client: client,
-		sendCh: sendCh,
-		events: make(chan Event, 16),
-		tools:  make(map[string]*toolcall.Activity),
+		client:  client,
+		sendCh:  sendCh,
+		events:  make(chan Event, 16),
+		tools:   make(map[string]*toolcall.Activity),
+		cwd:     spec.Cwd,
+		pending: make(map[string]pendingEditDiff),
 	}
 	go sess.pump(client.ReceiveMessages(ctx))
 	return sess, nil
@@ -325,6 +329,73 @@ type claudeSession struct {
 	sendCh chan claudecode.StreamMessage
 	events chan Event
 	tools  map[string]*toolcall.Activity
+
+	// cwd resolves a tool's relative file_path against the session's working
+	// directory when building an edit/write diff snapshot.
+	cwd string
+	// pending holds the pre-execution file snapshot for an in-flight
+	// Edit/MultiEdit/Write call, keyed by tool_use_id, so the matching
+	// tool_result can pair it with a post-execution read and attach a
+	// toolcall.Diff (pump is single-goroutine, so no lock is needed).
+	pending map[string]pendingEditDiff
+}
+
+// pendingEditDiff is the pre-execution snapshot captured when an
+// Edit/MultiEdit/Write ToolUseBlock arrives, kept until the paired
+// tool_result lets the session read the post-execution content.
+type pendingEditDiff struct {
+	path   string
+	before *string
+}
+
+// editDiffTools lists the built-in tool names whose file_path argument
+// identifies a file this harness can snapshot before and after execution to
+// synthesize a toolcall.Diff for the transcript's diff renderer.
+var editDiffTools = map[string]bool{
+	"Edit":      true,
+	"MultiEdit": true,
+	"Write":     true,
+}
+
+// snapshotEditDiff reads the current content of an Edit/MultiEdit/Write
+// call's target file before the SDK executes it. A missing file (Write
+// creating a new one) yields a nil before-text, matching toolcall.Diff's
+// file-creation convention; any other read failure or unrecognized tool
+// returns ok=false so the transcript falls back to raw input/output.
+func (s *claudeSession) snapshotEditDiff(name string, input map[string]any) (pendingEditDiff, bool) {
+	if !editDiffTools[name] {
+		return pendingEditDiff{}, false
+	}
+	path, _ := input["file_path"].(string)
+	if path == "" {
+		return pendingEditDiff{}, false
+	}
+	resolved := path
+	if !filepath.IsAbs(resolved) && s.cwd != "" {
+		resolved = filepath.Join(s.cwd, resolved)
+	}
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		return pendingEditDiff{path: path}, true
+	}
+	before := string(data)
+	return pendingEditDiff{path: path, before: &before}, true
+}
+
+// buildEditDiff re-reads the pending snapshot's file after execution and
+// pairs it with the pre-execution snapshot to produce a toolcall.Diff. It
+// returns nil when the post-execution read fails, leaving the transcript to
+// fall back to raw input/output for that exchange.
+func (s *claudeSession) buildEditDiff(pd pendingEditDiff) *toolcall.Diff {
+	resolved := pd.path
+	if !filepath.IsAbs(resolved) && s.cwd != "" {
+		resolved = filepath.Join(s.cwd, resolved)
+	}
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		return nil
+	}
+	return &toolcall.Diff{Path: pd.path, OldText: pd.before, NewText: string(data)}
 }
 
 func (s *claudeSession) Messages() <-chan Event { return s.events }
@@ -383,6 +454,9 @@ func (s *claudeSession) pump(msgChan <-chan claudecode.Message) {
 					}
 					tool := &toolcall.Activity{ID: b.ToolUseID, Title: b.Name, Input: input}
 					s.tools[b.ToolUseID] = tool.Clone()
+					if pd, ok := s.snapshotEditDiff(b.Name, b.Input); ok {
+						s.pending[b.ToolUseID] = pd
+					}
 					s.events <- Event{Type: EventToolUse, Tool: tool.Clone()}
 				}
 			}
@@ -407,6 +481,14 @@ func (s *claudeSession) pump(msgChan <-chan claudecode.Message) {
 						tool.Status = "failed"
 					}
 					tool.Content = []toolcall.Content{{Type: "text", Text: toolResultContent(tr.Content)}}
+					if pd, ok := s.pending[tr.ToolUseID]; ok {
+						delete(s.pending, tr.ToolUseID)
+						if !isError {
+							if diff := s.buildEditDiff(pd); diff != nil {
+								tool.Content = append(tool.Content, toolcall.Content{Diff: diff})
+							}
+						}
+					}
 					s.events <- Event{Type: EventToolResult, Tool: tool, IsError: isError}
 				}
 			}

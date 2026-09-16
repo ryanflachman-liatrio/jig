@@ -2,11 +2,14 @@ package harness
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	claudecode "github.com/severity1/claude-agent-sdk-go"
 
 	"jig/internal/interaction"
+	"jig/internal/toolcall"
 )
 
 func TestClaudeHarnessCapabilities(t *testing.T) {
@@ -246,5 +249,174 @@ func TestClaudeQuestionDeclineAndCancel(t *testing.T) {
 	})
 	if !isError || cancelled != "user cancelled the question" {
 		t.Fatalf("cancel = %q, error=%v", cancelled, isError)
+	}
+}
+
+// runClaudeSessionPumpBatch drives pump over one batch of messages against
+// an existing session and returns the Events it emitted. Each call gets its
+// own events channel (pump closes it on return) while s.tools/s.pending
+// persist across calls, letting a test interleave on-disk file mutations
+// between the ToolUseBlock batch and the ToolResultBlock batch the way the
+// CLI interleaves tool execution between those two streamed messages.
+func runClaudeSessionPumpBatch(t *testing.T, s *claudeSession, msgs []claudecode.Message) []Event {
+	t.Helper()
+	s.events = make(chan Event, 16)
+	msgChan := make(chan claudecode.Message, len(msgs))
+	for _, m := range msgs {
+		msgChan <- m
+	}
+	close(msgChan)
+	s.pump(msgChan)
+	var out []Event
+	for e := range s.events {
+		out = append(out, e)
+	}
+	return out
+}
+
+func findToolResultDiff(t *testing.T, events []Event) *toolcall.Diff {
+	t.Helper()
+	for _, e := range events {
+		if e.Type != EventToolResult || e.Tool == nil {
+			continue
+		}
+		for _, c := range e.Tool.Content {
+			if c.Diff != nil {
+				return c.Diff
+			}
+		}
+	}
+	return nil
+}
+
+func TestClaudeSessionPumpSynthesizesEditDiff(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file.go")
+	if err := os.WriteFile(path, []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	s := &claudeSession{tools: make(map[string]*toolcall.Activity), pending: make(map[string]pendingEditDiff)}
+	toolUse := runClaudeSessionPumpBatch(t, s, []claudecode.Message{
+		&claudecode.AssistantMessage{
+			Content: []claudecode.ContentBlock{&claudecode.ToolUseBlock{
+				ToolUseID: "t1",
+				Name:      "Edit",
+				Input: map[string]any{
+					"file_path":  path,
+					"old_string": "old",
+					"new_string": "new",
+				},
+			}},
+		},
+	})
+
+	// Simulate the CLI applying the edit between the streamed tool_use and
+	// tool_result messages.
+	if err := os.WriteFile(path, []byte("new\n"), 0o644); err != nil {
+		t.Fatalf("apply edit: %v", err)
+	}
+
+	toolResult := runClaudeSessionPumpBatch(t, s, []claudecode.Message{
+		&claudecode.UserMessage{
+			Content: []claudecode.ContentBlock{&claudecode.ToolResultBlock{
+				ToolUseID: "t1",
+				Content:   "OK",
+			}},
+		},
+	})
+
+	diff := findToolResultDiff(t, append(toolUse, toolResult...))
+	if diff == nil {
+		t.Fatalf("expected a synthesized Diff on the tool result")
+	}
+	if diff.Path != path {
+		t.Errorf("Diff.Path = %q, want %q", diff.Path, path)
+	}
+	if diff.OldText == nil || *diff.OldText != "old\n" {
+		t.Errorf("Diff.OldText = %v, want %q", diff.OldText, "old\n")
+	}
+	if diff.NewText != "new\n" {
+		t.Errorf("Diff.NewText = %q, want %q", diff.NewText, "new\n")
+	}
+}
+
+func TestClaudeSessionPumpSynthesizesWriteDiffAsFileCreation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "new_file.go")
+
+	s := &claudeSession{tools: make(map[string]*toolcall.Activity), pending: make(map[string]pendingEditDiff)}
+	toolUse := runClaudeSessionPumpBatch(t, s, []claudecode.Message{
+		&claudecode.AssistantMessage{
+			Content: []claudecode.ContentBlock{&claudecode.ToolUseBlock{
+				ToolUseID: "t1",
+				Name:      "Write",
+				Input: map[string]any{
+					"file_path": path,
+					"content":   "package foo\n",
+				},
+			}},
+		},
+	})
+
+	if err := os.WriteFile(path, []byte("package foo\n"), 0o644); err != nil {
+		t.Fatalf("apply write: %v", err)
+	}
+
+	toolResult := runClaudeSessionPumpBatch(t, s, []claudecode.Message{
+		&claudecode.UserMessage{
+			Content: []claudecode.ContentBlock{&claudecode.ToolResultBlock{
+				ToolUseID: "t1",
+				Content:   "OK",
+			}},
+		},
+	})
+
+	diff := findToolResultDiff(t, append(toolUse, toolResult...))
+	if diff == nil {
+		t.Fatalf("expected a synthesized Diff on the tool result")
+	}
+	if diff.OldText != nil {
+		t.Errorf("Diff.OldText = %v, want nil (file creation)", *diff.OldText)
+	}
+	if diff.NewText != "package foo\n" {
+		t.Errorf("Diff.NewText = %q, want %q", diff.NewText, "package foo\n")
+	}
+}
+
+func TestClaudeSessionPumpSkipsDiffOnToolError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file.go")
+	if err := os.WriteFile(path, []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("seed file: %v", err)
+	}
+
+	s := &claudeSession{tools: make(map[string]*toolcall.Activity), pending: make(map[string]pendingEditDiff)}
+	toolUse := runClaudeSessionPumpBatch(t, s, []claudecode.Message{
+		&claudecode.AssistantMessage{
+			Content: []claudecode.ContentBlock{&claudecode.ToolUseBlock{
+				ToolUseID: "t1",
+				Name:      "Edit",
+				Input: map[string]any{
+					"file_path":  path,
+					"old_string": "old",
+					"new_string": "new",
+				},
+			}},
+		},
+	})
+	isError := true
+	toolResult := runClaudeSessionPumpBatch(t, s, []claudecode.Message{
+		&claudecode.UserMessage{
+			Content: []claudecode.ContentBlock{&claudecode.ToolResultBlock{
+				ToolUseID: "t1",
+				Content:   "old_string not found",
+				IsError:   &isError,
+			}},
+		},
+	})
+
+	if diff := findToolResultDiff(t, append(toolUse, toolResult...)); diff != nil {
+		t.Errorf("expected no Diff on a failed tool call, got %+v", diff)
+	}
+	if _, pending := s.pending["t1"]; pending {
+		t.Errorf("expected pending snapshot for t1 to be cleared after the tool result")
 	}
 }

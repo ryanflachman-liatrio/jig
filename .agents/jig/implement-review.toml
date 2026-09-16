@@ -1,0 +1,58 @@
+# Minimal two-step workflow: an open-ended implementation step (a normal
+# interactive session — explore, ask questions, write/edit, run commands)
+# followed by a human review gate over its diff. "revise" sends the agent
+# back to the same implementation step with the reviewer's comments; the
+# original request is only asked once, even across revise loops.
+#
+# Validate:  go run ./cmd/jig validate .agents/jig/implement-review.toml
+# Run:       go run ./cmd/jig run .agents/jig/implement-review.toml
+#            (interactive — use bare `jig` to pick it up in the TUI instead)
+
+[workflow]
+name        = "implement-review"
+version     = "1"
+description = "Ask the user what to build, implement it like a normal session, then gate the result on human review."
+
+[defaults]
+permission_mode = "acceptEdits"
+max_turns        = 40
+
+# -----------------------------------------------------------------------------
+# 1. Implement — a normal open-ended agent session. The only input is the
+#    user's free-form request, collected once (`once = true` keeps it from
+#    being re-asked on a "revise" loop). The agent can read/search the repo,
+#    ask clarifying questions, and write or edit files — exactly like an
+#    interactive session, not a narrow single-purpose step.
+# -----------------------------------------------------------------------------
+[[step]]
+id            = "implement"
+type          = "agent"
+skill         = "../skills/implement-review-implement"
+allowed_tools = ["Read", "Grep", "Glob", "Edit", "Write", "Bash", "AskUserQuestion"]
+
+  [[step.inputs]]
+  from  = "user"
+  label = "Describe what you want implemented"
+  as    = "request"
+  once  = true
+
+# -----------------------------------------------------------------------------
+# 2. Review — a human reviews the implementation step's diff and either
+#    approves it (workflow succeeds) or sends it back with comments, which
+#    become an input to the next "implement" run via `feedback`.
+# -----------------------------------------------------------------------------
+[[step]]
+id          = "review"
+type        = "review"
+depends_on  = ["implement"]
+output_type = { enum = ["approve", "revise"] }
+
+  [[step.review]]
+  source = "diff"
+  label  = "Code changes"
+
+[[step.route]]
+when           = "review == 'revise'"
+goto           = "implement"
+max_iterations = 5
+feedback       = "@review"
