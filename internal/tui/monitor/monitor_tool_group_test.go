@@ -234,8 +234,8 @@ func TestCompactToolGroupsKeepNonReasoningBoundaries(t *testing.T) {
 			m.filters.tools = true
 			m.setChatPage(transcript.Page{Entries: entries})
 			for _, item := range m.chatVisibleItems {
-				if item.kind == transcriptItemToolGroup {
-					t.Fatal("compacting erased a real group boundary")
+				if item.kind == transcriptItemToolGroup && len(item.groupMembers) > 1 {
+					t.Fatalf("compacting erased a real group boundary: %+v", item)
 				}
 			}
 		})

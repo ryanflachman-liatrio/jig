@@ -69,21 +69,25 @@ func sameExecutionCoordinate(a, b toolCorrelationKey) bool {
 	return a.generation == b.generation && a.iteration == b.iteration && a.attempt == b.attempt
 }
 
-// groupReadTranscriptItems is a pure, page-local post-correlation pass. It
-// groups only uninterrupted runs of at least two eligible reads at the same
-// execution coordinate; singletons retain their original identity exactly.
+// groupReadTranscriptItems wraps every uninterrupted run of eligible reads at
+// the same execution coordinate in a read group, including singleton runs,
+// so a lone read still opens and collapses the same way a multi-read group
+// does. A run of a single failed read is the one exception: it stays a
+// standalone exchange so its full error detail keeps rendering inline
+// instead of collapsing behind a one-line group row.
 func groupReadTranscriptItems(items []transcriptItem, entries []transcript.Entry) []transcriptItem {
-	grouped := make([]transcriptItem, 0, len(items))
-	run := make([]transcriptItem, 0, 4)
-	flush := func() {
-		switch len(run) {
-		case 0:
-		case 1:
-			grouped = append(grouped, run[0])
-		default:
+	return groupTranscriptItemRuns(items, runGroupSpec{
+		eligible: func(item transcriptItem) (string, bool) {
+			_, ok := readTargetForItem(item, entries)
+			return "read", ok
+		},
+		skip: func(run []transcriptItem) bool {
+			return len(run) == 1 && run[0].displayState == toolDisplayError
+		},
+		build: func(run []transcriptItem) transcriptItem {
 			first := run[0]
 			members := append([]transcriptItem(nil), run...)
-			grouped = append(grouped, transcriptItem{
+			return transcriptItem{
 				key:          transcriptItemKey{anchor: first.primary.key, kind: transcriptItemReadGroup},
 				kind:         transcriptItemReadGroup,
 				role:         first.role,
@@ -91,24 +95,9 @@ func groupReadTranscriptItems(items []transcriptItem, entries []transcript.Entry
 				groupMembers: members,
 				displayState: aggregateReadGroupState(members),
 				coord:        first.coord,
-			})
-		}
-		run = run[:0]
-	}
-
-	for _, item := range items {
-		if _, eligible := readTargetForItem(item, entries); !eligible {
-			flush()
-			grouped = append(grouped, item)
-			continue
-		}
-		if len(run) > 0 && !sameExecutionCoordinate(run[0].coord, item.coord) {
-			flush()
-		}
-		run = append(run, item)
-	}
-	flush()
-	return grouped
+			}
+		},
+	})
 }
 
 func aggregateReadGroupState(members []transcriptItem) toolDisplayState {

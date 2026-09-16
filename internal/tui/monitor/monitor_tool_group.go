@@ -98,17 +98,14 @@ func compactToolActivity(item transcriptItem, entries []transcript.Entry) *toolc
 }
 
 func groupCompactToolTranscriptItems(items []transcriptItem, entries []transcript.Entry) []transcriptItem {
-	grouped := make([]transcriptItem, 0, len(items))
-	run := make([]transcriptItem, 0, 4)
-	var runPolicy toolGroupPolicy
-	flush := func() {
-		switch len(run) {
-		case 0:
-		case 1:
-			grouped = append(grouped, run[0])
-		default:
+	return groupTranscriptItemRuns(items, runGroupSpec{
+		eligible: func(item transcriptItem) (string, bool) {
+			policy, _, ok := compactToolGroupCandidate(item, entries)
+			return policy.kind, ok
+		},
+		build: func(run []transcriptItem) transcriptItem {
 			first := run[0]
-			grouped = append(grouped, transcriptItem{
+			return transcriptItem{
 				key:          transcriptItemKey{anchor: first.primary.key, kind: transcriptItemToolGroup},
 				kind:         transcriptItemToolGroup,
 				role:         first.role,
@@ -116,27 +113,9 @@ func groupCompactToolTranscriptItems(items []transcriptItem, entries []transcrip
 				groupMembers: append([]transcriptItem(nil), run...),
 				displayState: toolDisplaySuccess,
 				coord:        first.coord,
-			})
-		}
-		run = run[:0]
-		runPolicy = toolGroupPolicy{}
-	}
-
-	for _, item := range items {
-		policy, _, eligible := compactToolGroupCandidate(item, entries)
-		if !eligible {
-			flush()
-			grouped = append(grouped, item)
-			continue
-		}
-		if len(run) > 0 && (policy.kind != runPolicy.kind || !sameExecutionCoordinate(run[0].coord, item.coord)) {
-			flush()
-		}
-		runPolicy = policy
-		run = append(run, item)
-	}
-	flush()
-	return grouped
+			}
+		},
+	})
 }
 
 func compactToolGroupPolicy(item transcriptItem, entries []transcript.Entry) (toolGroupPolicy, bool) {

@@ -44,12 +44,15 @@ func TestGroupReadTranscriptItems(t *testing.T) {
 		}
 	})
 
-	t.Run("singleton identity is unchanged", func(t *testing.T) {
+	t.Run("singleton is wrapped in its own read group", func(t *testing.T) {
 		entries := readExchange("one", "internal/alpha.go", 0, 0, 0)
 		before := buildTranscriptItems(entries, false)
 		after := groupReadTranscriptItems(before, entries)
-		if !reflect.DeepEqual(after, before) {
-			t.Fatalf("singleton changed\nbefore=%+v\nafter=%+v", before, after)
+		if len(after) != 1 || after[0].kind != transcriptItemReadGroup || len(after[0].groupMembers) != 1 {
+			t.Fatalf("singleton not grouped\nbefore=%+v\nafter=%+v", before, after)
+		}
+		if !reflect.DeepEqual(after[0].groupMembers[0], before[0]) {
+			t.Fatalf("singleton member identity changed\nbefore=%+v\nmember=%+v", before[0], after[0].groupMembers[0])
 		}
 	})
 
@@ -78,9 +81,12 @@ func TestGroupReadTranscriptItems(t *testing.T) {
 		if len(got) != 3 || got[1].kind != transcriptItemToolResult {
 			t.Fatalf("result-only boundary items = %+v, want read/result-only/read", got)
 		}
-		for _, item := range got {
-			if item.kind == transcriptItemReadGroup {
-				t.Fatalf("result-only boundary incorrectly grouped reads: %+v", got)
+		for i, item := range got {
+			if i == 1 {
+				continue
+			}
+			if item.kind != transcriptItemReadGroup || len(item.groupMembers) != 1 {
+				t.Fatalf("result-only boundary should keep reads as separate singleton groups: %+v", got)
 			}
 		}
 	})
@@ -102,9 +108,12 @@ func TestGroupReadTranscriptItems(t *testing.T) {
 			right := renumberEntries(readExchange("right", "right.go", 0, 0, 0), 4)
 			entries := append(append(left, tt.middle), right...)
 			got := groupReadTranscriptItems(buildTranscriptItems(entries, false), entries)
-			for _, item := range got {
-				if item.kind == transcriptItemReadGroup {
-					t.Fatalf("interruption %s incorrectly grouped reads: %+v", tt.name, got)
+			for i, item := range got {
+				if item.kind != transcriptItemReadGroup {
+					continue
+				}
+				if len(item.groupMembers) != 1 {
+					t.Fatalf("interruption %s should keep reads as separate singleton groups (item %d): %+v", tt.name, i, got)
 				}
 			}
 		})
@@ -125,8 +134,11 @@ func TestGroupReadTranscriptItems(t *testing.T) {
 			right := renumberEntries(readExchange("right", "right.go", g, i, a), 3)
 			entries := append(left, right...)
 			got := groupReadTranscriptItems(buildTranscriptItems(entries, false), entries)
-			if len(got) != 2 || got[0].kind == transcriptItemReadGroup || got[1].kind == transcriptItemReadGroup {
-				t.Fatalf("%s boundary items = %+v, want two singletons", axis, got)
+			singleton := func(item transcriptItem) bool {
+				return item.kind == transcriptItemReadGroup && len(item.groupMembers) == 1
+			}
+			if len(got) != 2 || !singleton(got[0]) || !singleton(got[1]) {
+				t.Fatalf("%s boundary items = %+v, want two singleton read groups", axis, got)
 			}
 		})
 	}
@@ -165,6 +177,25 @@ func TestReadGroupResultFirst(t *testing.T) {
 	items := groupReadTranscriptItems(buildTranscriptItems(entries, false), entries)
 	if len(items) != 1 || items[0].kind != transcriptItemReadGroup || len(items[0].groupMembers) != 2 {
 		t.Fatalf("result-first items = %+v, want one two-member group", items)
+	}
+}
+
+func TestReadGroupsAcrossHiddenReasoning(t *testing.T) {
+	entries := append(
+		renumberEntries(readExchange("first", "first.go", 0, 0, 0), 1),
+		append(
+			[]transcript.Entry{{Seq: 3, Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockThinking, Text: "synthetic reasoning"}}}},
+			renumberEntries(readExchange("second", "second.go", 0, 0, 0), 4)...,
+		)...,
+	)
+	m := newMonitorWithSteps(t)
+	m.RunDir = t.TempDir()
+	m.focus = focusTranscript
+	m.chatStep = "a"
+	m.setChatPage(transcript.Page{Entries: entries})
+	m, _ = m.Update(key("c"))
+	if len(m.chatVisibleItems) != 1 || m.chatVisibleItems[0].kind != transcriptItemReadGroup || len(m.chatVisibleItems[0].groupMembers) != 2 {
+		t.Fatalf("hidden reasoning between two reads should not stop them merging: %+v", m.chatVisibleItems)
 	}
 }
 
