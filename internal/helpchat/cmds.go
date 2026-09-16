@@ -6,117 +6,130 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	claudecode "github.com/severity1/claude-agent-sdk-go"
 
 	"jig/internal/engine"
+	"jig/internal/harness"
 )
 
 const helpModelID = "claude-haiku-4-5-20251001"
 
-// connectCmd establishes the initial SDK connection for pre-flight error detection.
-// It does NOT send a query — the user's first message fires queryCmd which
-// reconnects with the full option set. Returns ConnectedMsg on success or
-// ConnectErrMsg when the SDK is unreachable (API key missing, etc.).
-func connectCmd(
+// helpchatHarness is the narrow seam helpchat needs from harness.Harness
+// (open one session, read its events), mirroring runner/monitor.go's
+// monitorHarness pattern so this package depends on jig's own
+// harness.SessionSpec/harness.Session types rather than any ACP wire type.
+// *harness.AcpHarness satisfies this directly.
+type helpchatHarness interface {
+	Open(ctx context.Context, spec harness.SessionSpec) (harness.Session, error)
+}
+
+func newDefaultHarness() helpchatHarness { return harness.NewAcpHarness() }
+
+// startServerCmd binds the local loopback tool server (BuildToolHandlers
+// dispatched against live *engine.Run state) and starts serving it in the
+// background for the lifetime of this help-chat session — the jig-facing
+// counterpart to each turn's spawned jig mcp-serve subprocess. Returns
+// ServerReadyMsg on success, or ConnectErrMsg if the local bind fails.
+func startServerCmd(
 	ctx context.Context,
 	run *engine.Run,
 	runDir string,
-	snap engine.RunSnapshot,
 	dispatch DispatchFunc,
 	gateReq chan<- struct{},
 	gateAns <-chan bool,
 ) tea.Cmd {
 	return func() tea.Msg {
-		mcpServer := BuildMcpServer(run, runDir, dispatch, gateReq, gateAns)
-		client := claudecode.NewClient(
-			claudecode.WithSdkMcpServer("jig-help", mcpServer),
-			claudecode.WithMaxTurns(200),
-			claudecode.WithModel(helpModelID),
-			claudecode.WithIncludePartialMessages(true),
-			buildCanUseTool(ctx, dispatch),
-		)
-		if err := client.Connect(ctx); err != nil {
-			return ConnectErrMsg{err: fmt.Errorf("help agent connect: %w", err)}
+		srv, err := newToolServer(BuildToolHandlers(run, runDir, dispatch, gateReq, gateAns))
+		if err != nil {
+			return ConnectErrMsg{err: fmt.Errorf("help agent: %w", err)}
 		}
-		msgChan := client.ReceiveMessages(ctx)
-		_ = snap // snap is used by BuildSystemPrompt at query time
-		return ConnectedMsg{client: client, msgChan: msgChan}
+		go func() {
+			// srv.Serve derives its own context from ctx, so it tears down
+			// on its own once the run's context is cancelled — no separate
+			// teardown call needed. A non-nil error here instead means the
+			// connection to jig mcp-serve dropped mid-conversation (or
+			// never came up) while ctx was still live — most likely a
+			// crashed subprocess. Routed through dispatch/DispatchedMsg like
+			// every other tool-triggered message so it reaches Update as a
+			// normal TurnErrorMsg, matching how any other turn failure
+			// surfaces.
+			if err := srv.Serve(ctx); err != nil {
+				dispatch(TurnErrorMsg{err: fmt.Errorf("help agent: local tool server: %w", err)})
+			}
+		}()
+		return ServerReadyMsg{srv: srv}
 	}
 }
 
-// queryCmd creates a fresh SDK client for each turn (following the same pattern
-// as runner/agent.go). When sessionID is set, it uses WithResume +
-// WithContinueConversation for conversation continuity across turns. Returns
-// ConnectedMsg{newClient, newMsgChan} so the model updates its stored connection.
+// queryCmd opens a fresh AcpHarness session for one turn (following the same
+// per-turn-fresh-session pattern runner/agent.go and MonitorAdapter already
+// use). When sessionID is set, SessionSpec.Resume carries conversation
+// continuity across turns (AcpHarness's CapSessionResume). MCPServers names
+// jig mcp-serve so the agent spawns it and forwards its jig-help tool calls
+// back to toolSrv over the loopback connection toolSrv is already serving.
 func queryCmd(
 	ctx context.Context,
-	run *engine.Run,
-	runDir string,
+	newHarness func() helpchatHarness,
+	toolSrv *toolServer,
 	dispatch DispatchFunc,
-	gateReq chan<- struct{},
-	gateAns <-chan bool,
 	sessionID string,
 	systemPrompt string,
 	userMsg string,
 ) tea.Cmd {
 	return func() tea.Msg {
-		mcpServer := BuildMcpServer(run, runDir, dispatch, gateReq, gateAns)
-		opts := []claudecode.Option{
-			claudecode.WithSdkMcpServer("jig-help", mcpServer),
-			claudecode.WithMaxTurns(200),
-			claudecode.WithModel(helpModelID),
-			claudecode.WithIncludePartialMessages(true),
-			buildCanUseTool(ctx, dispatch),
-		}
-		if sessionID != "" {
-			opts = append(opts,
-				claudecode.WithResume(sessionID),
-				claudecode.WithContinueConversation(true),
-			)
-		}
-
-		client := claudecode.NewClient(opts...)
-		if err := client.Connect(ctx); err != nil {
-			return TurnErrorMsg{err: fmt.Errorf("connect: %w", err)}
-		}
-		msgChan := client.ReceiveMessages(ctx)
-
 		prompt := userMsg
 		if sessionID == "" {
 			prompt = systemPrompt + "\n\n" + userMsg
 		}
-		if err := client.Query(ctx, prompt); err != nil {
-			_ = client.Disconnect()
-			return TurnErrorMsg{err: fmt.Errorf("query: %w", err)}
+		spec := harness.SessionSpec{
+			Prompt:     prompt,
+			Model:      helpModelID,
+			MaxTurns:   200,
+			Partial:    true,
+			Resume:     sessionID,
+			Permission: buildPermissionFn(dispatch),
+			MCPServers: []harness.McpServerStdio{{
+				Name:    "jig-help",
+				Command: "jig",
+				Args:    []string{"mcp-serve"},
+				Env: map[string]string{
+					"JIG_MCP_PORT":  toolSrv.Port(),
+					"JIG_MCP_TOKEN": toolSrv.Token(),
+				},
+			}},
 		}
-		return ConnectedMsg{client: client, msgChan: msgChan}
+		h := newHarness()
+		sess, err := h.Open(ctx, spec)
+		if err != nil {
+			return TurnErrorMsg{err: fmt.Errorf("connect: %w", err)}
+		}
+		return ConnectedMsg{session: sess}
 	}
 }
 
-// waitForMessageCmd reads one message from msgChan and returns the appropriate
+// waitForMessageCmd reads one event from msgChan and returns the appropriate
 // helpchat message type. The model re-queues this cmd after each delta until
 // TurnCompleteMsg or TurnErrorMsg signals end-of-turn.
-func waitForMessageCmd(msgChan <-chan claudecode.Message) tea.Cmd {
+func waitForMessageCmd(msgChan <-chan harness.Event) tea.Cmd {
 	return func() tea.Msg {
-		msg, ok := <-msgChan
+		ev, ok := <-msgChan
 		if !ok {
 			return TurnCompleteMsg{}
 		}
-		switch m := msg.(type) {
-		case *claudecode.StreamEvent:
-			if delta, ok := streamTextDelta(m); ok {
-				return DeltaMsg(delta)
+		switch ev.Type {
+		case harness.EventTextDelta:
+			return DeltaMsg(ev.Text)
+		case harness.EventResult:
+			if ev.IsError {
+				return TurnErrorMsg{err: fmt.Errorf("%s", resultErrText(ev))}
 			}
-			// Non-text delta (thinking, input_json) — keep draining.
-			return waitForMessageCmd(msgChan)()
-		case *claudecode.ResultMessage:
-			if m.IsError {
-				return TurnErrorMsg{err: fmt.Errorf("%s", resultErrText(m))}
-			}
-			return TurnCompleteMsg{sessionID: m.SessionID}
+			return TurnCompleteMsg{sessionID: ev.SessionID}
 		}
-		// SystemMessage, AssistantMessage, UserMessage, RateLimitEventMessage —
-		// skip and keep draining.
+		// EventText (the finalized duplicate of EventTextDelta's chunks —
+		// this modal only needs the live-typing preview), EventThinking,
+		// EventToolUse/EventToolResult, EventAssistantEnd/EventUserEnd, and
+		// EventSessionID all keep draining without producing a UI message,
+		// matching the pre-ACP path's handling of SystemMessage/
+		// AssistantMessage/UserMessage/RateLimitEventMessage.
 		return waitForMessageCmd(msgChan)()
 	}
 }
@@ -145,53 +158,27 @@ func waitForGateReqCmd(gateReq <-chan struct{}) tea.Cmd {
 	}
 }
 
-// streamTextDelta extracts a text delta from a content_block_delta StreamEvent.
-func streamTextDelta(ev *claudecode.StreamEvent) (string, bool) {
-	if ev.Event["type"] != claudecode.StreamEventTypeContentBlockDelta {
-		return "", false
-	}
-	delta, ok := ev.Event["delta"].(map[string]any)
-	if !ok || delta["type"] != "text_delta" {
-		return "", false
-	}
-	text, ok := delta["text"].(string)
-	return text, ok
-}
-
-func resultErrText(m *claudecode.ResultMessage) string {
-	if m.Result != nil && *m.Result != "" {
-		return *m.Result
-	}
-	if len(m.Errors) > 0 {
-		return m.Errors[0]
+func resultErrText(ev harness.Event) string {
+	if ev.ErrText != "" {
+		return ev.ErrText
 	}
 	return "unknown agent error"
 }
 
-// buildCanUseTool returns a WithCanUseTool option that intercepts tool permission
-// requests. Tools registered under the jig-help in-process MCP server are
-// pre-approved (they are trusted Go functions with no shell side-effects).
-// All other tools are surfaced to the operator via the chat modal gate.
-func buildCanUseTool(ctx context.Context, dispatch DispatchFunc) claudecode.Option {
-	return claudecode.WithCanUseTool(func(
-		_ context.Context,
-		toolName string,
-		input map[string]any,
-		_ claudecode.ToolPermissionContext,
-	) (claudecode.PermissionResult, error) {
+// buildPermissionFn returns a harness.PermissionFn that pre-approves jig-help
+// tools (trusted Go handlers with no shell side-effects, namespaced by the
+// "jig-help" MCP server name) and surfaces every other tool call to the
+// operator via the chat modal gate.
+func buildPermissionFn(dispatch DispatchFunc) harness.PermissionFn {
+	return func(toolName string, input map[string]any) harness.Decision {
 		if strings.HasPrefix(toolName, "mcp__jig-help__") {
-			return claudecode.NewPermissionResultAllow(), nil
+			return harness.Decision{Allow: true}
 		}
 		ansC := make(chan bool, 1)
 		dispatch(PermRequestMsg{ToolName: toolName, Input: input, AnsC: ansC})
-		select {
-		case allow := <-ansC:
-			if allow {
-				return claudecode.NewPermissionResultAllow(), nil
-			}
-			return claudecode.NewPermissionResultDeny("denied by operator"), nil
-		case <-ctx.Done():
-			return claudecode.NewPermissionResultDeny("context cancelled"), nil
+		if allow := <-ansC; allow {
+			return harness.Decision{Allow: true}
 		}
-	})
+		return harness.Decision{Allow: false, Reason: "denied by operator"}
+	}
 }

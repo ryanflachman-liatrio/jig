@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 
 	tea "charm.land/bubbletea/v2"
-	claudecode "github.com/severity1/claude-agent-sdk-go"
 
 	"jig/internal/datastore"
 	"jig/internal/engine"
@@ -21,393 +20,268 @@ import (
 // The monitor drains its dispatch channel and re-queues messages as tea.Cmd.
 type DispatchFunc func(tea.Msg)
 
-// BuildMcpServer registers all ten jig-help tools and returns the server config
-// for use with claudecode.WithSdkMcpServer("jig-help", ...).
+// ToolHandler executes one jig-help tool call and returns its result text and
+// whether the call failed. Tool names/descriptions/JSON schemas now live in
+// cmd/jig/mcp_serve.go's mcpToolDefs (the agent-facing MCP surface); this file
+// only implements the dispatch-side behavior, since jig mcp-serve forwards
+// tool calls by name, not by schema.
+type ToolHandler func(ctx context.Context, args map[string]any) (result string, isError bool)
+
+// BuildToolHandlers returns the ten jig-help tool handlers keyed by tool
+// name, for the TCP server side (helpchatServer) to dispatch forwarded
+// tools/call requests from the spawned jig mcp-serve subprocess against.
 //
 // gateReq/gateAns implement the rendezvous for the final-merge gate — the one
 // action that requires a structural TUI confirmation rather than fire-and-forget.
-// The tool handler writes to gateReq and blocks on gateAns; the monitor reads
+// The handler writes to gateReq and blocks on gateAns; the monitor reads
 // gateReq, shows a TUI prompt, and writes the operator's yes/no to gateAns.
-func BuildMcpServer(
+func BuildToolHandlers(
 	run *engine.Run,
 	runDir string,
 	dispatch DispatchFunc,
 	gateReq chan<- struct{},
 	gateAns <-chan bool,
-) *claudecode.McpSdkServerConfig {
-	return claudecode.CreateSDKMcpServer("jig-help", "1.0.0",
-		buildWorkflowSnapshot(run),
-		buildReadStepTranscript(run, runDir),
-		buildReadStepResult(run, runDir),
-		buildReadStepOutput(run, runDir),
-		buildRecoverStep(run, dispatch),
-		buildResetStep(run, dispatch),
-		buildStopStep(run, dispatch),
-		buildResumeStep(run, dispatch),
-		buildResolveReview(run, dispatch, gateReq, gateAns),
-		buildAskUser(dispatch),
-	)
+) map[string]ToolHandler {
+	return map[string]ToolHandler{
+		"workflow_snapshot":    buildWorkflowSnapshot(run),
+		"read_step_transcript": buildReadStepTranscript(run, runDir),
+		"read_step_result":     buildReadStepResult(run, runDir),
+		"read_step_output":     buildReadStepOutput(run, runDir),
+		"recover_step":         buildRecoverStep(run, dispatch),
+		"reset_step":           buildResetStep(run, dispatch),
+		"stop_step":            buildStopStep(run, dispatch),
+		"resume_step":          buildResumeStep(run, dispatch),
+		"resolve_review":       buildResolveReview(run, dispatch, gateReq, gateAns),
+		"ask_user":             buildAskUser(dispatch),
+	}
 }
 
 // ── read-only tools ───────────────────────────────────────────────────────────
 
-func buildWorkflowSnapshot(run *engine.Run) *claudecode.McpTool {
-	return claudecode.NewTool(
-		"workflow_snapshot",
-		"Return a JSON snapshot of all step IDs and their current statuses.",
-		map[string]any{
-			"type":       "object",
-			"properties": map[string]any{},
-		},
-		func(_ context.Context, _ map[string]any) (*claudecode.McpToolResult, error) {
-			snap := run.Snapshot()
-			raw, err := json.Marshal(snap)
-			if err != nil {
-				return errResult(fmt.Sprintf("marshal snapshot: %v", err)), nil
-			}
-			return okResult(string(raw)), nil
-		},
-	)
+func buildWorkflowSnapshot(run *engine.Run) ToolHandler {
+	return func(_ context.Context, _ map[string]any) (string, bool) {
+		snap := run.Snapshot()
+		raw, err := json.Marshal(snap)
+		if err != nil {
+			return fmt.Sprintf("marshal snapshot: %v", err), true
+		}
+		return string(raw), false
+	}
 }
 
-func buildReadStepTranscript(run *engine.Run, runDir string) *claudecode.McpTool {
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"step_id": map[string]any{"type": "string", "description": "Step ID to read transcript for"},
-			"last_n":  map[string]any{"type": "integer", "description": "Maximum number of entries to return (0 = all)"},
-		},
-		"required": []any{"step_id"},
+func buildReadStepTranscript(run *engine.Run, runDir string) ToolHandler {
+	return func(_ context.Context, args map[string]any) (string, bool) {
+		stepID, ok := args["step_id"].(string)
+		if !ok || stepID == "" {
+			return "step_id is required", true
+		}
+		n := 0
+		if v, ok := args["last_n"].(float64); ok {
+			n = int(v)
+		}
+		_ = run // ensure run is accessible for future validation
+		tPath := datastore.TranscriptPath(runDir, stepID)
+		r, err := transcript.Open(tPath)
+		if err != nil {
+			return fmt.Sprintf("open transcript: %v", err), true
+		}
+		var entries []transcript.Entry
+		if n > 0 {
+			entries, err = r.Tail(n)
+		} else {
+			entries, err = r.Window(0, 0)
+		}
+		if err != nil {
+			return fmt.Sprintf("read transcript: %v", err), true
+		}
+		raw, err := json.Marshal(entries)
+		if err != nil {
+			return fmt.Sprintf("marshal entries: %v", err), true
+		}
+		return string(raw), false
 	}
-	return claudecode.NewTool(
-		"read_step_transcript",
-		"Read the last N transcript entries for a step (agent conversation, tool calls, results).",
-		schema,
-		func(_ context.Context, args map[string]any) (*claudecode.McpToolResult, error) {
-			stepID, ok := args["step_id"].(string)
-			if !ok || stepID == "" {
-				return errResult("step_id is required"), nil
-			}
-			n := 0
-			if v, ok := args["last_n"].(float64); ok {
-				n = int(v)
-			}
-			_ = run // ensure run is accessible for future validation
-			tPath := datastore.TranscriptPath(runDir, stepID)
-			r, err := transcript.Open(tPath)
-			if err != nil {
-				return errResult(fmt.Sprintf("open transcript: %v", err)), nil
-			}
-			var entries []transcript.Entry
-			if n > 0 {
-				entries, err = r.Tail(n)
-			} else {
-				entries, err = r.Window(0, 0)
-			}
-			if err != nil {
-				return errResult(fmt.Sprintf("read transcript: %v", err)), nil
-			}
-			raw, err := json.Marshal(entries)
-			if err != nil {
-				return errResult(fmt.Sprintf("marshal entries: %v", err)), nil
-			}
-			return okResult(string(raw)), nil
-		},
-	)
 }
 
-func buildReadStepResult(run *engine.Run, runDir string) *claudecode.McpTool {
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"step_id": map[string]any{"type": "string", "description": "Step ID to read result for"},
-		},
-		"required": []any{"step_id"},
+func buildReadStepResult(run *engine.Run, runDir string) ToolHandler {
+	return func(_ context.Context, args map[string]any) (string, bool) {
+		stepID, ok := args["step_id"].(string)
+		if !ok || stepID == "" {
+			return "step_id is required", true
+		}
+		_ = run
+		path := datastore.ResultPath(runDir, stepID)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Sprintf("read result: %v", err), true
+		}
+		return string(data), false
 	}
-	return claudecode.NewTool(
-		"read_step_result",
-		"Read the result.json for a step (status, error, output path, cost).",
-		schema,
-		func(_ context.Context, args map[string]any) (*claudecode.McpToolResult, error) {
-			stepID, ok := args["step_id"].(string)
-			if !ok || stepID == "" {
-				return errResult("step_id is required"), nil
-			}
-			_ = run
-			path := datastore.ResultPath(runDir, stepID)
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return errResult(fmt.Sprintf("read result: %v", err)), nil
-			}
-			return okResult(string(data)), nil
-		},
-	)
 }
 
-func buildReadStepOutput(run *engine.Run, runDir string) *claudecode.McpTool {
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"step_id": map[string]any{"type": "string", "description": "Step ID to read output artifact for"},
-		},
-		"required": []any{"step_id"},
+func buildReadStepOutput(run *engine.Run, runDir string) ToolHandler {
+	return func(_ context.Context, args map[string]any) (string, bool) {
+		stepID, ok := args["step_id"].(string)
+		if !ok || stepID == "" {
+			return "step_id is required", true
+		}
+		_ = run
+		resultPath := datastore.ResultPath(runDir, stepID)
+		data, err := os.ReadFile(resultPath)
+		if err != nil {
+			return fmt.Sprintf("read result: %v", err), true
+		}
+		var result struct {
+			OutputPath string `json:"output_path"`
+		}
+		if err := json.Unmarshal(data, &result); err != nil {
+			return fmt.Sprintf("parse result: %v", err), true
+		}
+		if result.OutputPath == "" {
+			return "step has no output artifact", true
+		}
+		out, err := os.ReadFile(result.OutputPath)
+		if err != nil {
+			return fmt.Sprintf("read output: %v", err), true
+		}
+		return string(out), false
 	}
-	return claudecode.NewTool(
-		"read_step_output",
-		"Read the step's primary output artifact file (the agent's text response or command output).",
-		schema,
-		func(_ context.Context, args map[string]any) (*claudecode.McpToolResult, error) {
-			stepID, ok := args["step_id"].(string)
-			if !ok || stepID == "" {
-				return errResult("step_id is required"), nil
-			}
-			_ = run
-			resultPath := datastore.ResultPath(runDir, stepID)
-			data, err := os.ReadFile(resultPath)
-			if err != nil {
-				return errResult(fmt.Sprintf("read result: %v", err)), nil
-			}
-			var result struct {
-				OutputPath string `json:"output_path"`
-			}
-			if err := json.Unmarshal(data, &result); err != nil {
-				return errResult(fmt.Sprintf("parse result: %v", err)), nil
-			}
-			if result.OutputPath == "" {
-				return errResult("step has no output artifact"), nil
-			}
-			out, err := os.ReadFile(result.OutputPath)
-			if err != nil {
-				return errResult(fmt.Sprintf("read output: %v", err)), nil
-			}
-			return okResult(string(out)), nil
-		},
-	)
 }
 
 // ── action tools ─────────────────────────────────────────────────────────────
 
-func buildRecoverStep(run *engine.Run, dispatch DispatchFunc) *claudecode.McpTool {
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"step_id":  map[string]any{"type": "string", "description": "Step ID to recover"},
-			"action":   map[string]any{"type": "string", "enum": []any{"retry", "resume", "skip", "abort"}, "description": "Recovery action"},
-			"guidance": map[string]any{"type": "string", "description": "Optional guidance text for the resumed agent"},
-		},
-		"required": []any{"step_id", "action"},
+func buildRecoverStep(run *engine.Run, dispatch DispatchFunc) ToolHandler {
+	return func(_ context.Context, args map[string]any) (string, bool) {
+		stepID, _ := args["step_id"].(string)
+		action, _ := args["action"].(string)
+		guidance, _ := args["guidance"].(string)
+		if stepID == "" || action == "" {
+			return "step_id and action are required", true
+		}
+		dispatch(RecoverAction{StepID: stepID, Action: action, Text: guidance})
+		return fmt.Sprintf("recover action %q enqueued for step %q; call workflow_snapshot to verify transition", action, stepID), false
 	}
-	return claudecode.NewTool(
-		"recover_step",
-		"Retry, resume, skip, or abort a step in awaiting_recovery state.",
-		schema,
-		func(_ context.Context, args map[string]any) (*claudecode.McpToolResult, error) {
-			stepID, _ := args["step_id"].(string)
-			action, _ := args["action"].(string)
-			guidance, _ := args["guidance"].(string)
-			if stepID == "" || action == "" {
-				return errResult("step_id and action are required"), nil
-			}
-			dispatch(RecoverAction{StepID: stepID, Action: action, Text: guidance})
-			return okResult(fmt.Sprintf("recover action %q enqueued for step %q; call workflow_snapshot to verify transition", action, stepID)), nil
-		},
-	)
 }
 
-func buildResetStep(run *engine.Run, dispatch DispatchFunc) *claudecode.McpTool {
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"step_id": map[string]any{"type": "string", "description": "Step ID to reset"},
-		},
-		"required": []any{"step_id"},
+func buildResetStep(run *engine.Run, dispatch DispatchFunc) ToolHandler {
+	return func(_ context.Context, args map[string]any) (string, bool) {
+		stepID, _ := args["step_id"].(string)
+		if stepID == "" {
+			return "step_id is required", true
+		}
+		dispatch(ResetAction{StepID: stepID})
+		return fmt.Sprintf("reset enqueued for step %q and its dependents; call workflow_snapshot to verify", stepID), false
 	}
-	return claudecode.NewTool(
-		"reset_step",
-		"Reset a step and all its dependent steps back to pending. Destructive — confirm with the operator before calling.",
-		schema,
-		func(_ context.Context, args map[string]any) (*claudecode.McpToolResult, error) {
-			stepID, _ := args["step_id"].(string)
-			if stepID == "" {
-				return errResult("step_id is required"), nil
-			}
-			dispatch(ResetAction{StepID: stepID})
-			return okResult(fmt.Sprintf("reset enqueued for step %q and its dependents; call workflow_snapshot to verify", stepID)), nil
-		},
-	)
 }
 
-func buildStopStep(run *engine.Run, dispatch DispatchFunc) *claudecode.McpTool {
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"step_id": map[string]any{"type": "string", "description": "Step ID to stop"},
-		},
-		"required": []any{"step_id"},
+func buildStopStep(run *engine.Run, dispatch DispatchFunc) ToolHandler {
+	return func(_ context.Context, args map[string]any) (string, bool) {
+		stepID, _ := args["step_id"].(string)
+		if stepID == "" {
+			return "step_id is required", true
+		}
+		dispatch(StopAction{StepID: stepID})
+		return fmt.Sprintf("stop enqueued for step %q; call workflow_snapshot to verify", stepID), false
 	}
-	return claudecode.NewTool(
-		"stop_step",
-		"Stop a currently running step (parks it at stopped status).",
-		schema,
-		func(_ context.Context, args map[string]any) (*claudecode.McpToolResult, error) {
-			stepID, _ := args["step_id"].(string)
-			if stepID == "" {
-				return errResult("step_id is required"), nil
-			}
-			dispatch(StopAction{StepID: stepID})
-			return okResult(fmt.Sprintf("stop enqueued for step %q; call workflow_snapshot to verify", stepID)), nil
-		},
-	)
 }
 
-func buildResumeStep(run *engine.Run, dispatch DispatchFunc) *claudecode.McpTool {
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"step_id": map[string]any{"type": "string", "description": "Step ID to resume"},
-			"message": map[string]any{"type": "string", "description": "Optional message to pass to the resumed agent"},
-		},
-		"required": []any{"step_id"},
+func buildResumeStep(run *engine.Run, dispatch DispatchFunc) ToolHandler {
+	return func(_ context.Context, args map[string]any) (string, bool) {
+		stepID, _ := args["step_id"].(string)
+		message, _ := args["message"].(string)
+		if stepID == "" {
+			return "step_id is required", true
+		}
+		dispatch(ResumeAction{StepID: stepID, Message: message})
+		return fmt.Sprintf("resume enqueued for step %q; call workflow_snapshot to verify", stepID), false
 	}
-	return claudecode.NewTool(
-		"resume_step",
-		"Resume a stopped step.",
-		schema,
-		func(_ context.Context, args map[string]any) (*claudecode.McpToolResult, error) {
-			stepID, _ := args["step_id"].(string)
-			message, _ := args["message"].(string)
-			if stepID == "" {
-				return errResult("step_id is required"), nil
-			}
-			dispatch(ResumeAction{StepID: stepID, Message: message})
-			return okResult(fmt.Sprintf("resume enqueued for step %q; call workflow_snapshot to verify", stepID)), nil
-		},
-	)
 }
 
-func buildResolveReview(run *engine.Run, dispatch DispatchFunc, gateReq chan<- struct{}, gateAns <-chan bool) *claudecode.McpTool {
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"step_id": map[string]any{"type": "string", "description": "Step ID to resolve, or \"final_merge\" for the final merge gate"},
-			"verdict": map[string]any{"type": "string", "enum": []any{"approved", "rejected"}, "description": "Review verdict"},
-		},
-		"required": []any{"step_id", "verdict"},
-	}
-	return claudecode.NewTool(
-		"resolve_review",
-		"Resolve a review step with approved or rejected verdict. For the final merge gate, use step_id=\"final_merge\".",
-		schema,
-		func(_ context.Context, args map[string]any) (*claudecode.McpToolResult, error) {
-			stepID, _ := args["step_id"].(string)
-			verdict, _ := args["verdict"].(string)
-			if stepID == "" || verdict == "" {
-				return errResult("step_id and verdict are required"), nil
-			}
+func buildResolveReview(run *engine.Run, dispatch DispatchFunc, gateReq chan<- struct{}, gateAns <-chan bool) ToolHandler {
+	return func(ctx context.Context, args map[string]any) (string, bool) {
+		stepID, _ := args["step_id"].(string)
+		verdict, _ := args["verdict"].(string)
+		if stepID == "" || verdict == "" {
+			return "step_id and verdict are required", true
+		}
 
-			// Final-merge gate uses a rendezvous channel to block until the
-			// operator confirms in the TUI — the one truly irreversible action.
-			if strings.EqualFold(stepID, "final_merge") {
-				gateReq <- struct{}{}
-				approved := <-gateAns
+		// Final-merge gate uses a rendezvous channel to block until the
+		// operator confirms in the TUI — the one truly irreversible action.
+		// ctx.Done() is also honored here (unlike the pre-Unit-4 in-process
+		// version, which never needed it): ctx is cancelled if the local tool
+		// server's connection to jig mcp-serve drops mid-wait, so a crashed
+		// subprocess surfaces a clear error instead of blocking forever.
+		if strings.EqualFold(stepID, "final_merge") {
+			select {
+			case gateReq <- struct{}{}:
+			case <-ctx.Done():
+				return "operator did not respond (connection lost)", true
+			}
+			select {
+			case approved := <-gateAns:
 				if approved {
-					return okResult("final merge approved by operator"), nil
+					return "final merge approved by operator", false
 				}
-				return okResult("final merge discarded by operator"), nil
+				return "final merge discarded by operator", false
+			case <-ctx.Done():
+				return "operator did not respond (connection lost)", true
 			}
+		}
 
-			dispatch(ReviewVerdict{StepID: stepID, Verdict: verdict})
-			return okResult(fmt.Sprintf("verdict %q enqueued for step %q; call workflow_snapshot to verify", verdict, stepID)), nil
-		},
-	)
+		dispatch(ReviewVerdict{StepID: stepID, Verdict: verdict})
+		return fmt.Sprintf("verdict %q enqueued for step %q; call workflow_snapshot to verify", verdict, stepID), false
+	}
 }
 
 var helpQuestionSeq atomic.Uint64
 
-func buildAskUser(dispatch DispatchFunc) *claudecode.McpTool {
-	schema := map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"question": map[string]any{
-				"type":        "string",
-				"description": "The question to present to the operator.",
-			},
-			"options": map[string]any{
-				"type":        "array",
-				"items":       map[string]any{"type": "string"},
-				"description": "Optional list of choices. Omit for a free-text answer.",
-			},
-		},
-		"required": []any{"question"},
-	}
-	return claudecode.NewTool(
-		"ask_user",
-		"Present a question to the operator and wait for their answer. "+
-			"Provide options[] for a multiple-choice prompt; omit for free-text.",
-		schema,
-		func(ctx context.Context, args map[string]any) (*claudecode.McpToolResult, error) {
-			question, _ := args["question"].(string)
-			if question == "" {
-				return errResult("question is required"), nil
-			}
-			var options []string
-			if raw, ok := args["options"].([]any); ok {
-				for _, v := range raw {
-					if s, ok := v.(string); ok {
-						options = append(options, s)
-					}
+func buildAskUser(dispatch DispatchFunc) ToolHandler {
+	return func(ctx context.Context, args map[string]any) (string, bool) {
+		question, _ := args["question"].(string)
+		if question == "" {
+			return "question is required", true
+		}
+		var options []string
+		if raw, ok := args["options"].([]any); ok {
+			for _, v := range raw {
+				if s, ok := v.(string); ok {
+					options = append(options, s)
 				}
 			}
-			field := interaction.QuestionField{
-				ID:     "answer",
-				Prompt: question,
-				Kind:   interaction.FieldText,
+		}
+		field := interaction.QuestionField{
+			ID:     "answer",
+			Prompt: question,
+			Kind:   interaction.FieldText,
+		}
+		if len(options) > 0 {
+			field.Kind = interaction.FieldSingleSelect
+			field.AllowCustom = true
+			for _, option := range options {
+				field.Options = append(field.Options, interaction.QuestionOption{Value: option, Label: option})
 			}
-			if len(options) > 0 {
-				field.Kind = interaction.FieldSingleSelect
-				field.AllowCustom = true
-				for _, option := range options {
-					field.Options = append(field.Options, interaction.QuestionOption{Value: option, Label: option})
-				}
+		}
+		req := interaction.QuestionRequest{
+			ID:      fmt.Sprintf("help-question-%d", helpQuestionSeq.Add(1)),
+			Message: question,
+			Fields:  []interaction.QuestionField{field},
+		}
+		ansC := make(chan interaction.QuestionResponse, 1)
+		dispatch(QuestionRequestMsg{Request: req, AnsC: ansC})
+		select {
+		case response := <-ansC:
+			switch response.Action {
+			case interaction.ActionCancel:
+				return "operator cancelled the question", true
+			case interaction.ActionDecline:
+				return "operator declined to answer", false
 			}
-			req := interaction.QuestionRequest{
-				ID:      fmt.Sprintf("help-question-%d", helpQuestionSeq.Add(1)),
-				Message: question,
-				Fields:  []interaction.QuestionField{field},
+			answer := response.Answers["answer"]
+			if answer.Custom != "" {
+				return answer.Custom, false
 			}
-			ansC := make(chan interaction.QuestionResponse, 1)
-			dispatch(QuestionRequestMsg{Request: req, AnsC: ansC})
-			select {
-			case response := <-ansC:
-				switch response.Action {
-				case interaction.ActionCancel:
-					return errResult("operator cancelled the question"), nil
-				case interaction.ActionDecline:
-					return okResult("operator declined to answer"), nil
-				}
-				answer := response.Answers["answer"]
-				if answer.Custom != "" {
-					return okResult(answer.Custom), nil
-				}
-				return okResult(strings.Join(answer.Values, ", ")), nil
-			case <-ctx.Done():
-				return errResult("operator did not respond (context cancelled)"), nil
-			}
-		},
-	)
-}
-
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-func okResult(text string) *claudecode.McpToolResult {
-	return &claudecode.McpToolResult{
-		Content: []claudecode.McpContent{{Type: "text", Text: text}},
-	}
-}
-
-func errResult(text string) *claudecode.McpToolResult {
-	return &claudecode.McpToolResult{
-		IsError: true,
-		Content: []claudecode.McpContent{{Type: "text", Text: text}},
+			return strings.Join(answer.Values, ", "), false
+		case <-ctx.Done():
+			return "operator did not respond (context cancelled)", true
+		}
 	}
 }

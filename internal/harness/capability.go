@@ -65,6 +65,17 @@ type PermissionFn func(toolName string, input map[string]any) Decision
 
 type QuestionFn func(context.Context, interaction.QuestionRequest) interaction.QuestionResponse
 
+// McpServerStdio is jig's harness-owned description of a local MCP server the
+// agent process should spawn as its own child and speak MCP-over-stdio to —
+// mirroring coder/acp-go-sdk's McpServerStdio wire shape without leaking that
+// type into SessionSpec, so callers (helpchat) depend only on this package.
+type McpServerStdio struct {
+	Name    string
+	Command string
+	Args    []string
+	Env     map[string]string
+}
+
 // SessionSpec is the jig-owned set of session options, replacing the Claude
 // SDK's functional-option list so internal/harness has no SDK dependency.
 // Fields below the blank line are capability-gated: a harness that receives
@@ -96,6 +107,12 @@ type SessionSpec struct {
 	Schema map[string]any
 	// Partial (request incremental streaming) requires CapPartialStreaming.
 	Partial bool
+
+	// MCPServers lists local MCP servers the agent should spawn as its own
+	// stdio child (ACP's McpServer wire type is out-of-process only — no
+	// harness capability gate needed since every ACP agent must support the
+	// stdio transport universally).
+	MCPServers []McpServerStdio
 }
 
 // PromptPreviewer exposes the effective initial prompt for transports that

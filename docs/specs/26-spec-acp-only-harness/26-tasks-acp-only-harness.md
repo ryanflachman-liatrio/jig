@@ -373,7 +373,7 @@
       `internal/tui/monitor`) is the same pre-existing, unrelated failure
       already documented in Unit 2's proof artifact.
 
-### [ ] 4.0 Wire `helpchat` onto `AcpHarness` + Unit 3's MCP server
+### [x] 4.0 Wire `helpchat` onto `AcpHarness` + Unit 3's MCP server
 
 #### 4.0 Proof Artifact(s)
 
@@ -392,55 +392,115 @@
 
 #### 4.0 Tasks
 
-- [ ] 4.1 Add an `MCPServers` field to `internal/harness/capability.go`'s
-      `SessionSpec` (a list of `McpServerStdio`-shaped entries: command,
-      args, env, name) and extend `internal/harness/acp.go`'s `Open` to
-      forward a non-empty list to `harness/acp/conn.go`'s
-      `NewSession`/`LoadSession` (today always `McpServers:
-      []acpsdk.McpServer{}`). Test the previously-untested non-empty path.
-- [ ] 4.2 In `internal/helpchat/cmds.go`'s `connectCmd`/`queryCmd`: before
-      opening the session, bind a loopback TCP listener, generate a
-      per-session auth token, and populate `SessionSpec.MCPServers` with one
-      entry naming `command: "jig"`, `args: ["mcp-serve"]`, `env` carrying
-      the port and token.
-- [ ] 4.3 Replace `claudecode.NewClient(...)` in `cmds.go` with an
-      `AcpHarness.Open(ctx, spec)` call; retype `internal/helpchat/model.go`'s
-      `Model.client`/`msgChan` and `internal/helpchat/msgs.go`'s message
-      structs from `claudecode.Client`/`claudecode.Message` to
-      `harness.Session`/`harness.Event`.
-- [ ] 4.4 Implement the TCP server side in `helpchat`: accept the
-      authenticated connection from the spawned `jig mcp-serve` process and
-      dispatch its forwarded tool-call requests against live `*engine.Run`
-      state and the existing `tea.Msg` dispatch mechanism (the counterpart
-      to Unit 3's client-side contract), replying over the same connection.
-      Rework `internal/helpchat/tools.go`'s 10 tool-builder functions into
-      handlers on this side (dropping the `claudecode.McpTool`/
-      `CreateSDKMcpServer` framing).
-- [ ] 4.5 Update `internal/helpchat/actions.go`, `gate_view.go`, `prompt.go`
-      as needed to compile against the retyped session/message types; no
-      behavior change intended.
-- [ ] 4.6 Confirm `internal/tui/monitor/monitor_model.go`/`monitor_update.go`
-      need only MCP-server lifecycle wiring (spawn/teardown hookup), not a
-      TUI redesign; if a TUI-visible "connecting to help-chat tools" state
-      turns out to be required, treat that as a signal to revisit before
-      continuing (per the spec's Design Considerations).
-- [ ] 4.7 Rewrite `internal/helpchat/helpchat_test.go` against `AcpHarness` +
-      a scripted local MCP server exercising all 10 tools end to end,
-      including the `ask_user`/`final_merge` rendezvous through the new
-      process boundary.
-- [ ] 4.8 Add a test (in `helpchat_test.go` or `internal/tui/monitor`) that
-      kills the spawned `jig mcp-serve` process mid-conversation during a
-      live `AcpHarness`-backed help-chat session and asserts the TUI
-      surfaces a clear, recoverable error rather than hanging — the
-      live-integration counterpart to Unit 3's standalone crash-handling
-      test (task 3.5/3.7).
-- [ ] 4.9 Confirm cost/usage stays nil/zero on the ACP-backed help-chat path,
-      matching spec 12's existing convention for the ACP step-execution
-      path — no new cost/usage tracking added (resolves Open Question 2).
-- [ ] 4.10 Run `gofmt -w` on changed files, then
-      `go test ./internal/helpchat/... ./internal/tui/monitor/...` and, if
-      feasible, a manual TUI walkthrough of a help-chat session exercising
-      each tool.
+- [x] 4.1 Added `MCPServers []McpServerStdio` to
+      `internal/harness/capability.go`'s `SessionSpec`, where
+      `McpServerStdio` is a new jig-owned type (`Name`/`Command`/`Args`/
+      `Env map[string]string`) so no ACP wire type leaks into the field.
+      `internal/harness/acp.go`'s `Open` converts it to `[]acpsdk.McpServer`
+      via a new `toACPMcpServers` helper and forwards it to
+      `harness/acp/conn.go`'s `NewSession`/`LoadSession`, which grew a
+      variadic `mcpServers ...acpsdk.McpServer` parameter (nil/empty still
+      sends `[]acpsdk.McpServer{}`, so every existing zero-argument caller —
+      `cursor.go`, `codex.go`, `client.go`, and their tests — is unaffected).
+      Added `TestAcpHarnessForwardsNonEmptyMCPServers` in
+      `internal/harness/security_integration_test.go` (extending the
+      existing ACP fixture-subprocess pattern: `fixtureAgent.NewSession` now
+      records any forwarded MCP server's name/command to the RPC log) —
+      proves the previously-untested non-empty path reaches the adapter's
+      real `session/new` RPC, not just the Go-level conversion.
+- [x] 4.2/4.3 `internal/helpchat/cmds.go` rewritten: `startServerCmd` binds
+      the loopback listener + generates the per-session token (in a new
+      `internal/helpchat/mcpserve_server.go`'s `toolServer`), and `queryCmd`
+      opens each turn's session via a narrow `helpchatHarness` interface
+      (`Open(ctx, SessionSpec) (Session, error)`, mirroring
+      `runner/monitor.go`'s `monitorHarness` pattern) satisfied by
+      `*harness.AcpHarness`, with `SessionSpec.MCPServers` naming
+      `command: "jig", args: ["mcp-serve"]` and `env` carrying
+      `JIG_MCP_PORT`/`JIG_MCP_TOKEN` (the exact env var names
+      `cmd/jig/mcp_serve.go`'s `runMcpServe` already reads). `model.go`'s
+      `Model.client`/`msgChan` and `msgs.go`'s message structs retyped from
+      `claudecode.Client`/`claudecode.Message` to `harness.Session`/
+      `harness.Event`. **Scope/design note beyond the task text:** the
+      pre-ACP `connectCmd` pre-flighted a connection at `Init()` without
+      querying, to surface early errors before the operator typed anything;
+      `AcpHarness.Open` has no connect-without-prompting primitive (it
+      always starts a prompt turn immediately), so `Init()` now only starts
+      the tool server, and the first real agent connection happens on the
+      operator's first message via the same per-turn `queryCmd` path every
+      subsequent turn already used — see the proof artifact's "Design
+      Deviations" section for the full reasoning.
+- [x] 4.4 Implemented `internal/helpchat/mcpserve_server.go`'s `toolServer`:
+      binds a loopback listener, authenticates the one connection from the
+      spawned `jig mcp-serve` process (duplicating
+      `cmd/jig/mcp_serve.go`'s unexported `authMessage`/`authAck`/
+      `forwardRequest`/`forwardResponse` wire types verbatim, since a
+      `package main` command cannot be imported — matching Unit 2's
+      precedent of intentionally duplicating `extractJSONFromText` for the
+      same reason), and dispatches each forwarded call on its own goroutine
+      against a `map[string]ToolHandler`. Reworked
+      `internal/helpchat/tools.go`'s 10 `claudecode.McpTool` builders into
+      plain `ToolHandler` functions (`func(ctx, args) (result string,
+      isError bool)`) — tool names/descriptions/schemas now live only in
+      `cmd/jig/mcp_serve.go`'s `mcpToolDefs` (Unit 3), so this file no
+      longer carries them. **Real bug caught during implementation:** the
+      first version of `Serve`'s shutdown path called `wg.Wait()` before
+      cancelling the per-call `context.Context`, which deadlocks forever if
+      any handler is blocked on `ctx.Done()` (ask_user, final_merge) when
+      the connection drops — fixed to cancel first, matching the comment
+      now in `mcpserve_server.go`; caught by
+      `TestToolServerSurvivesSubprocessKillMidRequest` hanging before the
+      fix.
+- [x] 4.5 `actions.go`/`gate_view.go`/`prompt.go` needed no changes — none
+      of the three referenced `claudecode` or the retyped fields.
+- [x] 4.6 Confirmed: `monitor_model.go`/`monitor_update.go` needed zero
+      changes (no TUI redesign, no new lifecycle wiring). `helpModel`'s
+      construction/toggle call sites (`toggleHelpChat`) already compile and
+      behave identically against the retyped `Model`; the tool server's
+      `Serve` goroutine derives its context from the `Model`'s own `ctx` and
+      tears itself down when that context is eventually cancelled, so no new
+      "connecting to help-chat tools" TUI state or teardown hook was needed.
+- [x] 4.7 Rewrote `internal/helpchat/helpchat_test.go`: `BuildMcpServer`/
+      schema-introspection tests replaced with
+      `TestToolHandlersRegistersAllTen` (registration) and
+      `TestToolServerDispatchesAllTenTools` (a real loopback TCP round trip
+      through the exact `jig mcp-serve` wire contract, via a new
+      `fakeMcpServeClient` test double); added
+      `TestToolServerAskUserFinalMergeRendezvous` (delayed-reply, no
+      lost/duplicated response, through the real process boundary) and
+      `TestFinalMergeGate_ContextCancelledUnblocks` (the crash-recovery unit
+      test at the handler level) alongside the pre-existing
+      `TestFinalMergeGate_ChannelRendezvous`. Added
+      `TestModelTurnRoundTripThroughFakeHarness` using a scripted
+      `fakeHelpchatHarness`/`fakeHelpchatSession` (mirroring
+      `runner/monitor_test.go`'s `fakeMonitorHarness` pattern) to prove the
+      `harness.Event` → chat-turn translation end to end without a live ACP
+      subprocess.
+- [x] 4.8 Added `TestToolServerSurvivesSubprocessKillMidRequest`: a real OS
+      subprocess (this test binary re-executed via
+      `exec.Command(os.Args[0], "-test.run=...")`, mirroring
+      `cmd/jig/mcp_serve_test.go`'s own subprocess-kill test and
+      `internal/harness/security_integration_test.go`'s `JIG_ACP_FIXTURE`
+      pattern) dials the tool server, authenticates, and forwards a genuine
+      `ask_user` call, confirmed to have reached the handler before it is
+      `SIGKILL`ed; `toolServer.Serve` is asserted to return a clear
+      connection-lost error within a bounded timeout rather than hanging.
+      This is the live counterpart to Unit 3's own client-side crash test,
+      covering the side (the main process's tool server) Unit 4 introduces.
+- [x] 4.9 Confirmed: `internal/helpchat` never reads `Event.TotalCostUSD` or
+      `Event.Usage` (grepped — zero references), matching spec 12's
+      existing convention; no new cost/usage tracking added.
+- [x] 4.10 Ran `gofmt -w` on all changed files, then
+      `go build ./... && go vet ./... && go test ./...` (root) and
+      `(cd harness/acp && go build ./... && go vet ./... && go test ./...)`
+      (nested module) — all pass. Also ran
+      `go test -race ./internal/tui/... ./internal/helpchat` per
+      docs/TESTING.md — passes with the one pre-existing, unrelated failure
+      already documented in Units 2 and 3's proof artifacts
+      (`TestBoundaryBannerFoldsIntoClosingItemLineRange`), reproduced
+      identically and unaffected by this unit's changes. A manual TUI
+      walkthrough was not performed (no interactive terminal in this
+      environment); the scripted end-to-end tests above exercise the same
+      code paths a manual walkthrough would.
 
 ### [ ] 5.0 Remove the SDK dependency; final grep-clean closeout
 

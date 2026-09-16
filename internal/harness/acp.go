@@ -75,15 +75,16 @@ func (h *AcpHarness) Open(ctx context.Context, spec SessionSpec) (Session, error
 	}
 	sess.conn = conn
 
+	mcpServers := toACPMcpServers(spec.MCPServers)
 	var sessionID string
 	if spec.Resume != "" {
-		if err := conn.LoadSession(ctx, spec.Cwd, spec.Resume); err != nil {
+		if err := conn.LoadSession(ctx, spec.Cwd, spec.Resume, mcpServers...); err != nil {
 			_ = conn.Close()
 			return nil, fmt.Errorf("acp: %w", err)
 		}
 		sessionID = spec.Resume
 	} else {
-		sessionID, err = conn.NewSession(ctx, spec.Cwd)
+		sessionID, err = conn.NewSession(ctx, spec.Cwd, mcpServers...)
 	}
 	if err != nil {
 		_ = conn.Close()
@@ -93,6 +94,30 @@ func (h *AcpHarness) Open(ctx context.Context, spec SessionSpec) (Session, error
 
 	go sess.run(ctx, sessionID, spec.Prompt)
 	return sess, nil
+}
+
+// toACPMcpServers converts jig-owned McpServerStdio entries to the ACP wire
+// type. A nil/empty input yields nil, matching every other caller's existing
+// "no MCP servers" behavior.
+func toACPMcpServers(servers []McpServerStdio) []acpsdk.McpServer {
+	if len(servers) == 0 {
+		return nil
+	}
+	out := make([]acpsdk.McpServer, len(servers))
+	for i, s := range servers {
+		env := make([]acpsdk.EnvVariable, 0, len(s.Env))
+		for name, value := range s.Env {
+			env = append(env, acpsdk.EnvVariable{Name: name, Value: value})
+		}
+		sort.Slice(env, func(i, j int) bool { return env[i].Name < env[j].Name })
+		out[i] = acpsdk.McpServer{Stdio: &acpsdk.McpServerStdio{
+			Name:    s.Name,
+			Command: s.Command,
+			Args:    append([]string(nil), s.Args...),
+			Env:     env,
+		}}
+	}
+	return out
 }
 
 func newACPElicitor(ask QuestionFn) acp.Elicitor {

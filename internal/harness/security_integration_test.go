@@ -37,8 +37,13 @@ func (*fixtureAgent) Authenticate(context.Context, acpsdk.AuthenticateRequest) (
 	fixtureRecord("authenticate")
 	return acpsdk.AuthenticateResponse{}, nil
 }
-func (*fixtureAgent) NewSession(context.Context, acpsdk.NewSessionRequest) (acpsdk.NewSessionResponse, error) {
+func (*fixtureAgent) NewSession(_ context.Context, req acpsdk.NewSessionRequest) (acpsdk.NewSessionResponse, error) {
 	fixtureRecord("new-session")
+	for _, s := range req.McpServers {
+		if s.Stdio != nil {
+			fixtureRecord("mcp-server:" + s.Stdio.Name + ":" + s.Stdio.Command)
+		}
+	}
 	return acpsdk.NewSessionResponse{SessionId: "fixture-session"}, nil
 }
 func (a *fixtureAgent) LoadSession(ctx context.Context, req acpsdk.LoadSessionRequest) (acpsdk.LoadSessionResponse, error) {
@@ -332,6 +337,49 @@ isolation = "none"
 				t.Fatalf("launch args %q do not contain %q", args, tc.wantArg)
 			}
 		})
+	}
+}
+
+// TestAcpHarnessForwardsNonEmptyMCPServers exercises the previously-untested
+// non-empty SessionSpec.MCPServers path (Unit 4, spec 26): every other caller
+// of AcpHarness.Open sends none, so this is the first proof that a non-empty
+// list actually reaches the adapter's session/new call rather than being
+// silently dropped.
+func TestAcpHarnessForwardsNonEmptyMCPServers(t *testing.T) {
+	binDir := t.TempDir()
+	writeACPWrapper(t, filepath.Join(binDir, "npx"))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("JIG_ACP_FIXTURE", "1")
+	t.Setenv("JIG_ACP_FIXTURE_BIN", os.Args[0])
+	t.Setenv("JIG_ACP_ARGS_LOG", filepath.Join(binDir, "args.log"))
+	rpcLog := filepath.Join(binDir, "rpc.log")
+	t.Setenv("JIG_ACP_RPC_LOG", rpcLog)
+
+	repo := t.TempDir()
+	initFixtureRepo(t, repo)
+
+	h := harness.NewAcpHarness()
+	sess, err := h.Open(context.Background(), harness.SessionSpec{
+		Cwd:    repo,
+		Prompt: "hello",
+		MCPServers: []harness.McpServerStdio{
+			{Name: "jig-help", Command: "jig", Args: []string{"mcp-serve"}, Env: map[string]string{"JIG_MCP_PORT": "0"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	for range sess.Messages() {
+		// drain to completion
+	}
+	_ = sess.Close()
+
+	raw, err := os.ReadFile(rpcLog)
+	if err != nil {
+		t.Fatalf("read rpc log: %v", err)
+	}
+	if !strings.Contains(string(raw), "mcp-server:jig-help:jig") {
+		t.Fatalf("rpc log = %q, want it to record the forwarded MCP server", raw)
 	}
 }
 

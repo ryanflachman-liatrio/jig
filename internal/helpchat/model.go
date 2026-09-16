@@ -10,9 +10,9 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
-	claudecode "github.com/severity1/claude-agent-sdk-go"
 
 	"jig/internal/engine"
+	"jig/internal/harness"
 	"jig/internal/interaction"
 	questionpanel "jig/internal/tui/question"
 	"jig/internal/tui/shared"
@@ -55,10 +55,13 @@ type Model struct {
 	runDir string
 	ctx    context.Context
 
-	// SDK state — replaced on each queryCmd ConnectedMsg (one client per turn).
-	client    claudecode.Client
-	msgChan   <-chan claudecode.Message
-	sessionID string
+	// Harness state — replaced on each queryCmd ConnectedMsg (one session per
+	// turn, matching AcpHarness's one-Open()-per-turn convention).
+	newHarness func() helpchatHarness
+	toolSrv    *toolServer
+	session    harness.Session
+	msgChan    <-chan harness.Event
+	sessionID  string
 
 	// final-merge rendezvous: tool handlers write to gateReq, monitor reads it.
 	gateReq chan<- struct{}
@@ -95,6 +98,7 @@ func New(run *engine.Run, runDir string, snap engine.RunSnapshot) Model {
 		run:        run,
 		runDir:     runDir,
 		ctx:        context.Background(),
+		newHarness: newDefaultHarness,
 		dispatchCh: make(chan tea.Msg, 64),
 		focus:      focusInput,
 		snap:       snap,
@@ -135,13 +139,18 @@ func (m Model) dispatch(msg tea.Msg) {
 	m.dispatchCh <- msg
 }
 
-// Init fires connectCmd to pre-flight the SDK connection. If run is nil (a
+// Init starts the local loopback tool server (jig mcp-serve's counterpart)
+// for the lifetime of this help-chat session. It does not open an agent
+// session yet — unlike the pre-ACP SDK client, AcpHarness.Open always starts
+// a prompt turn immediately (there is no connect-without-querying
+// primitive), so the first real connection happens on the user's first
+// queryCmd instead of a separate pre-flight probe. If run is nil (a
 // journal-replayed run), it pre-populates an error turn and skips connecting.
 func (m Model) Init() tea.Cmd {
 	if m.run == nil {
 		return nil // monitor adds the "unavailable" turn before calling Init
 	}
-	return connectCmd(m.ctx, m.run, m.runDir, m.snap, m.dispatch, m.gateReq, m.gateAns)
+	return startServerCmd(m.ctx, m.run, m.runDir, m.dispatch, m.gateReq, m.gateAns)
 }
 
 // SizeMsg carries the modal's outer dimensions so Update can (re-)initialise
@@ -183,17 +192,22 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case ServerReadyMsg:
+		m.toolSrv = msg.srv
+
 	case ConnectedMsg:
-		// Disconnect the old client on subsequent-turn reconnects.
-		if m.client != nil && msg.client != m.client {
-			_ = m.client.Disconnect()
+		// Close the old session on subsequent-turn reconnects — each turn
+		// opens its own fresh AcpHarness session (no mid-session reuse).
+		if m.session != nil && msg.session != m.session {
+			_ = m.session.Close()
 		}
-		if msg.client != nil {
-			m.client = msg.client
-			m.msgChan = msg.msgChan
+		if msg.session != nil {
+			m.session = msg.session
+			m.msgChan = msg.session.Messages()
 		}
 		m.connected = true
-		// queryCmd returns ConnectedMsg after calling Query, so streaming is active.
+		// queryCmd returns ConnectedMsg after Open starts the prompt turn,
+		// so streaming is active.
 		if m.msgChan != nil {
 			cmds = append(cmds, waitForMessageCmd(m.msgChan))
 		}
@@ -281,7 +295,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 
 		case keybind.Matches(msg, keybind.NewBinding(keybind.WithKeys("enter"))):
-			if m.focus == focusInput && !m.streaming && m.ta.Value() != "" {
+			if m.focus == focusInput && !m.streaming && m.ta.Value() != "" && m.toolSrv != nil {
 				userMsg := m.ta.Value()
 				m.ta.Reset()
 				m.turns = append(m.turns, helpTurn{user: userMsg})
@@ -289,7 +303,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.updateViewport()
 				sysPrompt := BuildSystemPrompt(m.snap.Workflow, m.snap)
 				cmds = append(cmds, queryCmd(
-					m.ctx, m.run, m.runDir, m.dispatch, m.gateReq, m.gateAns,
+					m.ctx, m.newHarness, m.toolSrv, m.dispatch,
 					m.sessionID, sysPrompt, userMsg,
 				))
 			}

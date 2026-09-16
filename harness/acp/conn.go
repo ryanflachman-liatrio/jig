@@ -169,9 +169,14 @@ func clientCapabilities(elicit Elicitor) acpsdk.ClientCapabilities {
 }
 
 // NewSession creates a new ACP session rooted at cwd and returns its id.
-func (c *Conn) NewSession(ctx context.Context, cwd string) (string, error) {
+// mcpServers is optional; when empty it sends the same empty list every
+// caller has always sent (nil and []acpsdk.McpServer{} marshal identically).
+func (c *Conn) NewSession(ctx context.Context, cwd string, mcpServers ...acpsdk.McpServer) (string, error) {
+	if mcpServers == nil {
+		mcpServers = []acpsdk.McpServer{}
+	}
 	c.diagnostic("new_session_started", map[string]any{"cwd": cwd})
-	resp, err := c.rpc.NewSession(ctx, acpsdk.NewSessionRequest{Cwd: cwd, McpServers: []acpsdk.McpServer{}})
+	resp, err := c.rpc.NewSession(ctx, acpsdk.NewSessionRequest{Cwd: cwd, McpServers: mcpServers})
 	if err != nil {
 		c.diagnostic("new_session_failed", errorFields(err))
 		return "", fmt.Errorf("new session: %w", err)
@@ -183,15 +188,19 @@ func (c *Conn) NewSession(ctx context.Context, cwd string) (string, error) {
 }
 
 // LoadSession restores a previously-created ACP session into this connection.
-func (c *Conn) LoadSession(ctx context.Context, cwd, sessionID string) error {
+// mcpServers is optional; see NewSession's doc comment.
+func (c *Conn) LoadSession(ctx context.Context, cwd, sessionID string, mcpServers ...acpsdk.McpServer) error {
 	if !c.SupportsLoadSession {
 		return fmt.Errorf("adapter did not advertise session/load")
+	}
+	if mcpServers == nil {
+		mcpServers = []acpsdk.McpServer{}
 	}
 	c.client.setReplaying(true)
 	defer c.client.setReplaying(false)
 	resp, err := c.rpc.LoadSession(ctx, acpsdk.LoadSessionRequest{
 		Cwd:        cwd,
-		McpServers: []acpsdk.McpServer{},
+		McpServers: mcpServers,
 		SessionId:  acpsdk.SessionId(sessionID),
 	})
 	if err != nil {
