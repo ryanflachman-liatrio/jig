@@ -68,7 +68,18 @@ type SecretResolver func(name string) (string, error)
 
 // NewManager returns a Manager backed by exec. root is the .jig/ directory;
 // pass "" in tests or when file persistence is not yet wired (Phase 1).
+//
+// A non-empty root is resolved to an absolute path immediately: every
+// worktree and execution-view path the scheduler builds is derived from it
+// (see execution.go), and those paths are handed to the ACP harness as a
+// session's cwd, which the protocol requires to be absolute. Callers may
+// pass a relative root (e.g. the ".jig" default) without knowing this.
 func NewManager(exec Executor, root string) *Manager {
+	if root != "" {
+		if abs, err := filepath.Abs(root); err == nil {
+			root = abs
+		}
+	}
 	return &Manager{
 		runs: make(map[string]*Run),
 		exec: exec,
