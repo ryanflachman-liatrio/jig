@@ -8,6 +8,9 @@ package workflow
 var BaseSchema = &Schema{
 	Fields: []*Field{
 		{Name: "assumptions", Type: FieldList, Elem: &Field{Name: "assumptions[]", Type: FieldText}},
+		// block_reason is shown verbatim in the block_on input gate (see
+		// InputRequest.Reason); it is empty on any step that doesn't block.
+		{Name: "block_reason", Type: FieldText},
 		{Name: "confidence", Type: FieldEnum, Enum: []string{"high", "medium", "low"}},
 		{Name: "issues", Type: FieldList, Elem: &Field{Name: "issues[]", Type: FieldText}},
 		{Name: "status", Type: FieldEnum, Enum: []string{"succeeded", "partial", "failed", "blocked"}},

@@ -202,7 +202,7 @@ func phCheckBlockOn(s *scheduler, m stepDoneMsg, wfStep *workflow.Step) postExec
 	if s.evalBlockOn(m.stepID, wfStep) {
 		curFrom := s.states[m.stepID].Status
 		s.transition(m.stepID, curFrom, step.StatusNeedsInput)
-		s.emit(InputRequest{RunID: s.runID, StepID: m.stepID})
+		s.emit(InputRequest{RunID: s.runID, StepID: m.stepID, Reason: s.stepStringField(m.stepID, "block_reason")})
 		return decisionNeedsInput
 	}
 	return decisionContinue

@@ -38,12 +38,12 @@ artifacts_dir   = ".jig/artifacts"
 id            = "intake"
 type          = "agent"
 skill         = "../skills/intake"
+profile       = "@interactive"
 inputs        = [
   { from = "user", label = "Describe the feature you want to build:", as = "feature_request" },
   { path = "templates/context-assess.md", inline = true },
 ]
 allowed_tools = ["Read", "Grep", "Glob"]
-block_on      = "intake.status == 'blocked'"
 
   [step.schema]
   areas      = { list = "text" }

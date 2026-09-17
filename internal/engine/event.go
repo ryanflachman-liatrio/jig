@@ -162,10 +162,13 @@ type ReviewSubmitted struct {
 
 // InputRequest is emitted when an agent step's block_on condition evaluates to
 // true after it completes. The TUI surfaces a compose box so the human can
-// provide free-text input; the agent resumes its session and re-runs.
+// provide free-text input; the agent resumes its session and re-runs. Reason
+// is the step's own `block_reason` base-schema field (empty if the agent left
+// it blank), shown in the gate so the human isn't staring at a blank prompt.
 type InputRequest struct {
 	RunID  string
 	StepID string
+	Reason string
 }
 
 // RunError is an engine-level failure, not a step-level failure.

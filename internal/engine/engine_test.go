@@ -2677,10 +2677,12 @@ block_on = "mystep.status == 'blocked'"
 		t.Fatal(err)
 	}
 	s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, "", "", "", func(RunSnapshot) {})
+	sub := sub{live: make(chan Event, 4), ctrl: make(chan Event, 4)}
+	s.subs = append(s.subs, sub)
 	s.states["mystep"].Status = step.StatusRunning
 	s.states["mystep"].Result = &step.Result{
 		Status:     step.StatusSucceeded,
-		Structured: []byte(`{"status":"blocked"}`),
+		Structured: []byte(`{"status":"blocked","block_reason":"Need to know which auth flow to use."}`),
 	}
 
 	m := stepDoneMsg{stepID: "mystep", result: s.states["mystep"].Result}
@@ -2690,6 +2692,27 @@ block_on = "mystep.status == 'blocked'"
 	}
 	if s.states["mystep"].Status != step.StatusNeedsInput {
 		t.Errorf("want step status NeedsInput, got %v", s.states["mystep"].Status)
+	}
+
+	var req InputRequest
+	found := false
+drain:
+	for {
+		select {
+		case ev := <-sub.ctrl:
+			if r, ok := ev.(InputRequest); ok {
+				req = r
+				found = true
+			}
+		default:
+			break drain
+		}
+	}
+	if !found {
+		t.Fatal("no InputRequest emitted")
+	}
+	if req.Reason != "Need to know which auth flow to use." {
+		t.Errorf("Reason = %q, want the agent's block_reason", req.Reason)
 	}
 
 	_ = ctx

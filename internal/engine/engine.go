@@ -2734,6 +2734,25 @@ func (s *scheduler) resolveGuardValue(ref workflow.ConditionRef) (any, workflow.
 	return cur, field.Type, "", true
 }
 
+// stepStringField reads a top-level string field from stepID's own structured
+// output, populating the s.structured cache the same way resolveGuardValue
+// does. Used to surface the agent-authored `block_reason` base-schema field
+// in a block_on gate without requiring a workflow-authored field reference.
+func (s *scheduler) stepStringField(stepID, field string) string {
+	depState := s.states[stepID]
+	if depState == nil || depState.Result == nil {
+		return ""
+	}
+	m, ok := s.structured[stepID]
+	if !ok && len(depState.Result.Structured) > 0 {
+		if err := json.Unmarshal(depState.Result.Structured, &m); err == nil {
+			s.structured[stepID] = m
+		}
+	}
+	value, _ := m[field].(string)
+	return value
+}
+
 func runtimeSchemaField(schema *workflow.Schema, path []string) (*workflow.Field, bool) {
 	if schema == nil {
 		return nil, false

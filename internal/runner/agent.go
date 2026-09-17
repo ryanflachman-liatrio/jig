@@ -670,6 +670,10 @@ func buildAgentPrompt(req engine.StepRequest) string {
 		}
 	}
 
+	if req.Step.BlockOn != "" {
+		b.WriteString("## Blocking for input\n\nThis step can pause and wait for a human if `" + req.Step.BlockOn + "` is true. If you trip that condition, you must also set `block_reason` to one specific, human-readable sentence explaining what you need — it is shown directly to the person who unblocks you, so do not leave it blank or bury the question elsewhere.\n\n")
+	}
+
 	if body := req.Step.AgentPrompt(); body != "" {
 		b.WriteString(body)
 		b.WriteString("\n\n")

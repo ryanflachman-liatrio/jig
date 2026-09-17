@@ -13,19 +13,17 @@ Produce a `summary` that a research agent — with no other context — could re
 - What it should NOT do (scope boundaries)
 - What the user's top constraint is (correctness, speed, minimal diff, etc.)
 
-If you cannot write that summary from the current request, you must block.
+If you cannot write that summary from the current request, ask.
 
-## When to block
+## When to ask
 
-Set `status = 'blocked'` if any of the following are true:
+Call the `AskUserQuestion` tool if any of the following are true:
 - The request names a concept but not a behavior ("add caching" — caching of what? triggered how?)
 - The request has two or more mutually exclusive interpretations of comparable plausibility
 - The request assumes a capability that does not exist and the correct interpretation depends on which design direction to take
 - You cannot identify which internal packages need to change
 
-In your `summary`, write a single specific question for the user to answer. Do not list options or ask multiple things at once — pick the one ambiguity that, if resolved, unblocks everything else.
-
-When the engine re-runs you after the user answers (via the compose box), the previous answer will be in your context. Incorporate it and proceed.
+Ask a single specific question. Do not list options or ask multiple things at once — pick the one ambiguity that, if resolved, unblocks everything else. The tool call pauses this turn and returns the user's answer directly to you — incorporate it and keep going in the same turn; do not end your turn with `status = 'blocked'` or defer the question to `summary`. Only set `status = 'blocked'` if you asked and still cannot proceed (e.g. the user declined to answer).
 
 ## When to proceed
 
@@ -59,4 +57,5 @@ Use `Read`, `Grep`, and `Glob` to verify that the packages and files you name in
 - Do not offer multiple design options in your output — pick one and commit. Options belong in `issues`, not `summary`.
 - Do not restate the user's words as the summary — translate the request into a concrete behavior change.
 - Do not produce areas that downstream agents cannot act on (e.g., "the whole codebase", "architecture").
+- Do not write your clarifying question into `summary` or `issues` — ask it via `AskUserQuestion` instead.
 - Do not set `status = 'succeeded'` if you would need to ask the user a question to write the implementation plan.

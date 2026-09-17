@@ -173,6 +173,9 @@ func (m Model) gateOverlay() string {
 }
 
 func (m Model) renderGateRequest(b *strings.Builder, entry *pendingInputEntry) {
+	if entry.request != nil && strings.TrimSpace(entry.request.Reason) != "" {
+		b.WriteString("  " + shared.Theme.Question.Render(entry.request.Reason) + "\n\n")
+	}
 	b.WriteString(m.promptTextarea.View())
 }
 
