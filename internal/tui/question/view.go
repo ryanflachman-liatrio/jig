@@ -12,9 +12,11 @@ import (
 
 func (m Model) View() string {
 	var lines []string
-	switch m.phase {
-	case phaseReview:
+	switch {
+	case m.phase == phaseReview:
 		lines = m.reviewLines()
+	case m.stacked:
+		lines = m.stackedLines()
 	default:
 		lines = m.fieldLines()
 	}
@@ -68,11 +70,17 @@ func (m Model) fieldLines() []string {
 			description = option.Description
 			selected = m.selected[option.Value]
 		}
-		marker := "  "
-		if field.Kind == interaction.FieldMultiSelect && i < len(field.Options) {
+		marker := "   "
+		switch {
+		case field.Kind == interaction.FieldMultiSelect && i < len(field.Options):
 			marker = "[ ]"
 			if selected {
 				marker = "[x]"
+			}
+		case field.Kind == interaction.FieldSingleSelect && i < len(field.Options):
+			marker = "( )"
+			if i == m.optionCursor {
+				marker = "(*)"
 			}
 		}
 		line := fmt.Sprintf("%s %s", marker, label)
@@ -87,6 +95,46 @@ func (m Model) fieldLines() []string {
 	}
 	if end < count {
 		lines = append(lines, shared.Theme.Chat.Hint.Render("  "+shared.ArrowDownGlyph+" more"))
+	}
+	return lines
+}
+
+// stackedLines renders every field of a stacked-eligible request together as
+// one compact form (Option B), instead of paging through fields one at a
+// time. Only the focused field's cursor row is highlighted; tab/shift+tab
+// move focus between fields (updateStacked).
+func (m Model) stackedLines() []string {
+	lines := []string{shared.Theme.Chat.Hint.Render(
+		fmt.Sprintf("Answer all %d", len(m.request.Fields)),
+	)}
+	for i, field := range m.request.Fields {
+		focused := i == m.focusFieldIdx
+		promptPrefix := "  "
+		promptStyle := shared.Theme.Question
+		if focused {
+			promptPrefix = shared.SelectionMarker + " "
+			promptStyle = shared.Theme.SelectedLine
+		}
+		lines = append(lines, "", promptPrefix+promptStyle.Render(field.Prompt))
+
+		cursor := m.stackedCursor[field.ID]
+		for oi, option := range field.Options {
+			marker := "( )"
+			if field.Kind == interaction.FieldMultiSelect {
+				marker = "[ ]"
+				if m.stackedSelected[field.ID][option.Value] {
+					marker = "[x]"
+				}
+			} else if oi == cursor {
+				marker = "(*)"
+			}
+			line := fmt.Sprintf("%s %s", marker, option.Label)
+			if focused && oi == cursor {
+				lines = append(lines, "  "+shared.Theme.SelectedLine.Render(line))
+			} else {
+				lines = append(lines, "  "+line)
+			}
+		}
 	}
 	return lines
 }

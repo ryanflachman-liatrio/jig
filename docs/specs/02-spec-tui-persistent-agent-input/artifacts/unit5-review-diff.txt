@@ -7,13 +7,13 @@
 │      —                       ││   ○  Unified diff  Diff · 5 lines            │
 │                              ││                                              │
 │                              ││   Open this review from the Gate panel.      │
-│                              ││                                              │
 ╭─ [GATE] · awaiting review ───────────────────────────────────────────────────╮
 │ [1 / 1]  Step: a                                                             │
 │   Required: Review documents and submit feedback                             │
 │   0 / 2 documents reviewed · 0 comments                                      │
 │                                                                              │
 │     [enter] open review workspace                                            │
+│                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │

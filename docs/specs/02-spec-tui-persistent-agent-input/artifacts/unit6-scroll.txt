@@ -7,14 +7,14 @@
 │      —                       ││   Persistence is off for this run — nothing  │
 │                              ││                                              │
 │                              ││                                              │
-│                              ││                                              │
 ╭─ [GATE] · awaiting answer ───────────────────────────────────────────────────╮
 │ [1 / 1]  Step: a                                                             │
 │   Required: Choose or enter an answer  ·  [ctrl+o] view transcript           │
 │ Pick one                                                                     │
 │   ▲ more                                                                     │
-│      Option8                                                                 │
-│ ▶    Option9                                                                 │
+│   ( ) Option7                                                                │
+│   ( ) Option8                                                                │
+│ ▶ (*) Option9                                                                │
 │   ▼ more                                                                     │
 │                                                                              │
 │                                                                              │

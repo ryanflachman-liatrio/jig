@@ -257,6 +257,93 @@ func TestQuestionExplicitCancellationWhileTyping(t *testing.T) {
 	}
 }
 
+func stackedTestRequest() interaction.QuestionRequest {
+	return interaction.QuestionRequest{
+		ID: "req-stacked",
+		Fields: []interaction.QuestionField{
+			{
+				ID: "env", Prompt: "Environment", Kind: interaction.FieldSingleSelect,
+				Options: []interaction.QuestionOption{
+					{Value: "staging", Label: "staging"},
+					{Value: "prod", Label: "production"},
+				},
+			},
+			{
+				ID: "tests", Prompt: "Run which test suites?", Kind: interaction.FieldMultiSelect, Required: true,
+				Options: []interaction.QuestionOption{
+					{Value: "unit", Label: "unit"},
+					{Value: "e2e", Label: "e2e"},
+				},
+			},
+		},
+	}
+}
+
+func TestQuestionStackedEligibilityDependsOnHeight(t *testing.T) {
+	m := New(stackedTestRequest()).Resize(60, 20)
+	if !m.stacked {
+		t.Fatalf("expected stacked mode with ample height:\n%s", m.View())
+	}
+
+	m = New(stackedTestRequest()).Resize(60, 3)
+	if m.stacked {
+		t.Fatal("expected fallback to paginated mode when height is too small")
+	}
+	if !strings.Contains(m.View(), "Question 1 of 2") {
+		t.Fatalf("fallback view did not paginate:\n%s", m.View())
+	}
+}
+
+func TestQuestionStackedEligibilityExcludesTextAndCustomFields(t *testing.T) {
+	withText := stackedTestRequest()
+	withText.Fields = append(withText.Fields, interaction.QuestionField{
+		ID: "note", Prompt: "Anything else?", Kind: interaction.FieldText,
+	})
+	if New(withText).Resize(80, 40).stacked {
+		t.Fatal("a text field must not be shown in stacked mode")
+	}
+
+	withCustom := stackedTestRequest()
+	withCustom.Fields[0].AllowCustom = true
+	if New(withCustom).Resize(80, 40).stacked {
+		t.Fatal("AllowCustom fields must not be shown in stacked mode")
+	}
+}
+
+func TestQuestionStackedNavigationAndSubmit(t *testing.T) {
+	m := New(stackedTestRequest()).Resize(60, 20)
+	if !m.stacked {
+		t.Fatal("expected stacked mode")
+	}
+
+	// Enter with the required multi-select field unanswered must no-op.
+	m, _ = m.Update(press("enter"))
+	if _, done := m.Response(); done {
+		t.Fatal("submit succeeded with a required multi-select field unanswered")
+	}
+
+	// Move focus to the second field (tests), pick "e2e", then submit.
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = m.Update(press("down"))
+	m, _ = m.Update(press(" "))
+	m, _ = m.Update(press("enter"))
+
+	resp, ok := m.Response()
+	if !ok {
+		t.Fatal("submit did not produce a response")
+	}
+	if resp.Action != interaction.ActionAccept {
+		t.Fatalf("Action = %q, want accept", resp.Action)
+	}
+	// env defaults to the first option (staging) since its cursor was never moved.
+	if got := resp.Answers["env"].Values; len(got) != 1 || got[0] != "staging" {
+		t.Fatalf("env answer = %v, want [staging]", got)
+	}
+	if got := resp.Answers["tests"].Values; len(got) != 1 || got[0] != "e2e" {
+		t.Fatalf("tests answer = %v, want [e2e]", got)
+	}
+}
+
 func TestQuestionViewLeavesHelpToHost(t *testing.T) {
 	m := New(testRequest())
 	if view := m.View(); strings.Contains(view, "q cancel") || strings.Contains(view, "esc") {

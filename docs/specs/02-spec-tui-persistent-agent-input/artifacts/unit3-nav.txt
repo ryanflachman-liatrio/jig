@@ -13,7 +13,6 @@
 │                                      ││                                                                              │
 │                                      ││                                                                              │
 │                                      ││                                                                              │
-│                                      ││                                                                              │
 ╭─ [GATE] · awaiting agent input (2 pending) ──────────────────────────────────────────────────────────────────────────╮
 │ [1 / 2]  Step: a                                                                                                     │
 │   Required: Enter a message to continue  ·  [ctrl+o] view transcript                                                 │
@@ -21,6 +20,7 @@
 │ ┃                                                                                                                    │
 │ ┃                                                                                                                    │
 │ ┃                                                                                                                    │
+│                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
@@ -46,7 +46,6 @@
 │                                      ││                                                                              │
 │                                      ││                                                                              │
 │                                      ││                                                                              │
-│                                      ││                                                                              │
 ╭─ [GATE] · awaiting agent input (2 pending) ──────────────────────────────────────────────────────────────────────────╮
 │ [2 / 2]  Step: b                                                                                                     │
 │   Required: Enter a message to continue  ·  [ctrl+o] view transcript                                                 │
@@ -54,6 +53,7 @@
 │ ┃                                                                                                                    │
 │ ┃                                                                                                                    │
 │ ┃                                                                                                                    │
+│                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
@@ -79,7 +79,6 @@
 │                                      ││                                                                              │
 │                                      ││                                                                              │
 │                                      ││                                                                              │
-│                                      ││                                                                              │
 ╭─ [GATE] · awaiting agent input (2 pending) ──────────────────────────────────────────────────────────────────────────╮
 │ [1 / 2]  Step: a                                                                                                     │
 │   Required: Enter a message to continue  ·  [ctrl+o] view transcript                                                 │
@@ -87,6 +86,7 @@
 │ ┃                                                                                                                    │
 │ ┃                                                                                                                    │
 │ ┃                                                                                                                    │
+│                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │
 │                                                                                                                      │

@@ -394,6 +394,15 @@ const (
 	// panel height is validated against this bound in the unit5-review-diff.txt
 	// proof capture (task 5.4).
 	maxReviewChoices = 4
+
+	// maxQuestionOptions is the bounded number of option rows an
+	// AskUserQuestion field can render without scrolling. It sizes into the
+	// same gateBodyHeight() max() as maxReviewChoices so a typical question
+	// (2-6 options) gets a comfortably fitting box instead of the sparse or
+	// cramped look a size driven purely by the textarea/review cases would
+	// give it; longer option lists still scroll within this budget exactly
+	// as before (see question.Model.optionRows/ensureCursorVisible).
+	maxQuestionOptions = 6
 )
 
 const (

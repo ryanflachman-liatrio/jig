@@ -187,26 +187,37 @@ func (m Model) gateInnerWidth() int {
 }
 
 // gateBodyHeight returns the fixed body height inside the focused gate overlay.
-// It is the maximum of the two bounded per-kind natural body heights:
+// It is the maximum of three bounded per-kind natural body heights:
 //
 //   - textarea kinds (inputKindRequest/inputKindPrompt): gateHeaderRows + label
 //     row + gateTextareaRows content rows. The textarea is borderless (the panel
 //     owns the frame), so it adds no vertical frame of its own.
 //   - review kind (inputKindReview, non-composing): gateHeaderRows + spacer row
 //   - maxReviewChoices verdict lines + [m] affordance + diff-location hint.
+//   - question kind (inputKindQuestion): gateHeaderRows + prompt line +
+//     maxQuestionOptions option rows + scroll-hint row. Option lists beyond
+//     this bound still scroll within it rather than growing it further, so
+//     the panel — and therefore the transcript viewport above it — never
+//     resizes while paging through a question's fields (Unit 6).
 //
-// inputKindQuestion is the only unbounded kind; its option list scrolls within
-// this height (Unit 6) and is therefore excluded from the max.
+// The overlay's total height is shared by every gate kind so switching the
+// active entry (including between question fields) never resizes it.
 func (m Model) gateBodyHeight() int {
 	taVFrame := shared.Theme.Textarea.Borderless.GetVerticalFrameSize()
 	// Textarea case: contextual header + label + textarea content rows.
 	textareaCaseH := gateHeaderRows + 1 + gateTextareaRows + taVFrame
 	// Review case: contextual header + spacer + bounded choices + [m] + hint.
 	reviewCaseH := gateHeaderRows + 1 + maxReviewChoices + 1 + 1
-	if textareaCaseH > reviewCaseH {
-		return textareaCaseH
+	// Question case: contextual header + prompt + bounded options + scroll hint.
+	questionCaseH := gateHeaderRows + 1 + maxQuestionOptions + 1
+	h := textareaCaseH
+	if reviewCaseH > h {
+		h = reviewCaseH
 	}
-	return reviewCaseH
+	if questionCaseH > h {
+		h = questionCaseH
+	}
+	return h
 }
 
 // rebuildRenderer (re)constructs the markdown renderer for the *Transcript

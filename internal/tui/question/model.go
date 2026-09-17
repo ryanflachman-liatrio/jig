@@ -35,6 +35,14 @@ type Model struct {
 	width        int
 	height       int
 	response     *interaction.QuestionResponse
+
+	// stacked and its fields back Option B: when the whole request's fields
+	// fit the panel together, they're all shown at once instead of paged
+	// one-at-a-time (see stackedEligible, updateStacked, stackedLines).
+	stacked         bool
+	focusFieldIdx   int
+	stackedCursor   map[string]int
+	stackedSelected map[string]map[string]bool
 }
 
 func New(req interaction.QuestionRequest) Model {
@@ -61,11 +69,36 @@ func (m Model) Resize(width, height int) Model {
 	}
 	old := m.textarea.Value()
 	m.width, m.height = width, height
+	m.stacked = stackedEligible(m.request, height)
+	if m.stacked && m.stackedCursor == nil {
+		m.stackedCursor = make(map[string]int)
+		m.stackedSelected = make(map[string]map[string]bool)
+	}
 	if m.phase == phaseCustom || (m.phase == phaseField && m.currentField().Kind == interaction.FieldText) {
 		m.buildTextarea()
 		m.textarea.SetValue(old)
 	}
 	return m
+}
+
+// stackedEligible reports whether every field of req can be shown together
+// (Option B) within height rows: no free-text fields or "Other…" custom
+// answers (those need a full textarea/phase of their own), and the combined
+// prompt + option rows fit the height the host actually gave this panel —
+// so eligibility self-adjusts to whatever gateBodyHeight() budgets instead
+// of duplicating that constant here.
+func stackedEligible(req interaction.QuestionRequest, height int) bool {
+	if len(req.Fields) < 2 {
+		return false
+	}
+	rows := 1 // "Answer all N" header line
+	for _, field := range req.Fields {
+		if field.Kind == interaction.FieldText || field.AllowCustom || len(field.Options) == 0 {
+			return false
+		}
+		rows += 2 + len(field.Options) // blank spacer + prompt line + one row per option
+	}
+	return rows <= height
 }
 
 func (m Model) CapturesText() bool {
@@ -90,9 +123,11 @@ func (m Model) Update(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	if m.CapturesText() {
 		return m.updateText(msg)
 	}
-	switch m.phase {
-	case phaseReview:
+	switch {
+	case m.phase == phaseReview:
 		return m.updateReview(msg)
+	case m.stacked:
+		return m.updateStacked(msg)
 	default:
 		return m.updateSelect(msg)
 	}
@@ -193,6 +228,101 @@ func (m Model) updateSelect(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// updateStacked handles input while every field is shown together (Option
+// B). Arrow keys move the option cursor within the focused field; tab/
+// shift+tab move focus between fields; space toggles a multi-select option
+// under the cursor; enter validates and submits every field's answer at
+// once, derived from stackedCursor/stackedSelected by stackedAnswers.
+func (m Model) updateStacked(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	fields := m.request.Fields
+	field := fields[m.focusFieldIdx]
+	cursor := m.stackedCursor[field.ID]
+	switch msg.String() {
+	case "q":
+		return m.finish(interaction.ActionCancel), nil
+	case "esc":
+		return m, nil
+	case "d":
+		return m.finish(interaction.ActionDecline), nil
+	case "up", "k":
+		if cursor > 0 {
+			m.stackedCursor[field.ID] = cursor - 1
+		}
+	case "down", "j":
+		if cursor < len(field.Options)-1 {
+			m.stackedCursor[field.ID] = cursor + 1
+		}
+	case "tab":
+		m.focusFieldIdx = (m.focusFieldIdx + 1) % len(fields)
+	case "shift+tab":
+		m.focusFieldIdx = (m.focusFieldIdx - 1 + len(fields)) % len(fields)
+	case " ", "space":
+		if field.Kind == interaction.FieldMultiSelect {
+			if m.stackedSelected[field.ID] == nil {
+				m.stackedSelected[field.ID] = make(map[string]bool)
+			}
+			value := field.Options[cursor].Value
+			m.stackedSelected[field.ID][value] = !m.stackedSelected[field.ID][value]
+		}
+	case "enter":
+		if answers, ok := m.stackedAnswers(); ok {
+			m.answers = answers
+			return m.finish(interaction.ActionAccept), nil
+		}
+	}
+	return m, nil
+}
+
+// stackedAnswers derives the answer set for every field from the live
+// stacked cursor/selection state. A single-select field's answer is
+// whichever option its cursor currently sits on (defaulting to the first
+// option — there is no separate "committed" state in the stacked view,
+// unlike the paginated one-question-at-a-time flow). It reports ok=false if
+// a required field has no answer, mirroring updateSelect's enter no-op.
+func (m Model) stackedAnswers() (map[string]interaction.Answer, bool) {
+	answers := make(map[string]interaction.Answer, len(m.request.Fields))
+	for _, field := range m.request.Fields {
+		switch field.Kind {
+		case interaction.FieldSingleSelect:
+			idx := m.stackedCursor[field.ID]
+			if idx < 0 || idx >= len(field.Options) {
+				if field.Required {
+					return nil, false
+				}
+				continue
+			}
+			answers[field.ID] = interaction.Answer{Values: []string{field.Options[idx].Value}}
+		case interaction.FieldMultiSelect:
+			var values []string
+			for _, option := range field.Options {
+				if m.stackedSelected[field.ID][option.Value] {
+					values = append(values, option.Value)
+				}
+			}
+			if len(values) == 0 {
+				if field.Required {
+					return nil, false
+				}
+				continue
+			}
+			answers[field.ID] = interaction.Answer{Values: values}
+		}
+	}
+	return answers, true
+}
+
+// stackedHasMultiSelect reports whether the request has any multi-select
+// field, so HelpBindings only advertises "space toggle" when it does
+// something.
+func stackedHasMultiSelect(req interaction.QuestionRequest) bool {
+	for _, field := range req.Fields {
+		if field.Kind == interaction.FieldMultiSelect {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Model) updateReview(msg tea.KeyPressMsg) (Model, tea.Cmd) {
@@ -399,6 +529,17 @@ func (m Model) HelpBindings() []keybind.Binding {
 	previous := binding([]string{"b"}, "b", "previous")
 	decline := binding([]string{"d"}, "d", "decline")
 	cancel := binding([]string{"q"}, "q", "cancel")
+	if m.stacked {
+		bindings := []keybind.Binding{
+			binding([]string{"enter"}, "enter", "confirm all"),
+			binding([]string{"tab", "shift+tab"}, "tab", "next field"),
+			navigate,
+		}
+		if stackedHasMultiSelect(m.request) {
+			bindings = append(bindings, binding([]string{" ", "space"}, "space", "toggle"))
+		}
+		return append(bindings, decline, cancel)
+	}
 	if m.phase == phaseReview {
 		return []keybind.Binding{
 			binding([]string{"enter", "s"}, "enter/s", "submit"),

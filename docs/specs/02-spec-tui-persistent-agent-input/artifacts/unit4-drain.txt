@@ -7,7 +7,6 @@
 │      —                       ││   Persistence is off for this run — nothing  │
 │                              ││                                              │
 │                              ││                                              │
-│                              ││                                              │
 ╭─ [GATE] · awaiting agent input (2 pending) ──────────────────────────────────╮
 │ [1 / 2]  Step: a                                                             │
 │   Required: Enter a message to continue  ·  [ctrl+o] view transcript         │
@@ -15,6 +14,7 @@
 │ ┃                                                                            │
 │ ┃                                                                            │
 │ ┃                                                                            │
+│                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │
@@ -33,7 +33,6 @@
 │      —                       ││   Persistence is off for this run — nothing  │
 │                              ││                                              │
 │                              ││                                              │
-│                              ││                                              │
 ╭─ [GATE] · awaiting agent input ──────────────────────────────────────────────╮
 │ [1 / 1]  Step: b                                                             │
 │   Required: Enter a message to continue  ·  [ctrl+o] view transcript         │
@@ -41,6 +40,7 @@
 │ ┃                                                                            │
 │ ┃                                                                            │
 │ ┃                                                                            │
+│                                                                              │
 │                                                                              │
 │                                                                              │
 │                                                                              │
