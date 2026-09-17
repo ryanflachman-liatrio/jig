@@ -20,7 +20,7 @@ func NewCodexHarness() *CodexHarness { return &CodexHarness{} }
 func (*CodexHarness) Name() string { return "codex" }
 
 func (*CodexHarness) Capabilities() CapabilitySet {
-	return NewCapabilitySet(CapPermissionCallback, CapSessionResume, CapStructuredOutput, CapPartialStreaming)
+	return NewCapabilitySet(CapPermissionCallback, CapUserQuestion, CapSessionResume, CapStructuredOutput, CapPartialStreaming)
 }
 
 func (*CodexHarness) PreviewPrompt(spec SessionSpec) string {
@@ -38,9 +38,14 @@ func (h *CodexHarness) Open(ctx context.Context, spec SessionSpec) (Session, err
 		}
 	}
 
+	var elicit acp.Elicitor
+	if spec.Question != nil {
+		elicit = newACPElicitor(spec.Question)
+	}
+
 	conn, err := acp.ConnectCodexWithDiagnostics(ctx, decide, func(ev acp.Event) {
 		sess.onEvent(ev)
-	}, spec.DiagnosticsDir)
+	}, elicit, spec.DiagnosticsDir)
 	if err != nil {
 		return nil, fmt.Errorf("codex: %w", err)
 	}

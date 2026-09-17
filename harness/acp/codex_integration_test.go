@@ -17,7 +17,7 @@ func TestCodexACPIntegration(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	dir := t.TempDir()
-	conn, err := ConnectCodex(ctx, nil, nil)
+	conn, err := ConnectCodex(ctx, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ConnectCodex: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestCodexACPIntegration(t *testing.T) {
 		t.Fatalf("Close initial connection: %v", err)
 	}
 
-	conn, err = ConnectCodex(ctx, nil, nil)
+	conn, err = ConnectCodex(ctx, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("ReconnectCodex: %v", err)
 	}

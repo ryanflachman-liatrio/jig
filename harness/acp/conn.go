@@ -87,14 +87,14 @@ func Connect(ctx context.Context, decide Decider, onUpdate func(Event), elicit E
 // ConnectCodex spawns the Codex ACP adapter and performs the ACP Initialize
 // handshake. The adapter reads the operator's existing Codex CLI login; jig
 // deliberately does not provide credentials or select an authentication method.
-func ConnectCodex(ctx context.Context, decide Decider, onUpdate func(Event)) (*Conn, error) {
-	return ConnectCodexWithDiagnostics(ctx, decide, onUpdate, "")
+func ConnectCodex(ctx context.Context, decide Decider, onUpdate func(Event), elicit Elicitor) (*Conn, error) {
+	return ConnectCodexWithDiagnostics(ctx, decide, onUpdate, elicit, "")
 }
 
 // ConnectCodexWithDiagnostics is ConnectCodex with an optional artifact
 // directory. The artifacts live beside the step transcript so they survive an
 // ungraceful parent-process exit without polluting the TUI's alt screen.
-func ConnectCodexWithDiagnostics(ctx context.Context, decide Decider, onUpdate func(Event), diagnosticsDir string) (*Conn, error) {
+func ConnectCodexWithDiagnostics(ctx context.Context, decide Decider, onUpdate func(Event), elicit Elicitor, diagnosticsDir string) (*Conn, error) {
 	npxPath, err := exec.LookPath("npx")
 	if err != nil {
 		return nil, fmt.Errorf("npx not found on PATH: %w", err)
@@ -129,10 +129,11 @@ func ConnectCodexWithDiagnostics(ctx context.Context, decide Decider, onUpdate f
 	diagnostics.setRootPID(cmd.Process.Pid)
 	diagnostics.Event("adapter_started", nil)
 
-	client := &Client{Decide: decide, OnUpdate: onUpdate}
+	client := &Client{Decide: decide, OnUpdate: onUpdate, Elicit: elicit}
 	rpc := acpsdk.NewClientSideConnection(client, stdin, stdout)
 	initResp, err := rpc.Initialize(ctx, acpsdk.InitializeRequest{
-		ProtocolVersion: acpsdk.ProtocolVersionNumber,
+		ProtocolVersion:    acpsdk.ProtocolVersionNumber,
+		ClientCapabilities: clientCapabilities(elicit),
 	})
 	if err != nil {
 		_ = killProcess(cmd)

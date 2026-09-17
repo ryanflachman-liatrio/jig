@@ -45,7 +45,7 @@ func TestCodexACPParallelism(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			conn, err := ConnectCodexWithDiagnostics(ctx, nil, nil, filepath.Join(dir, fmt.Sprintf("research-%d", i)))
+			conn, err := ConnectCodexWithDiagnostics(ctx, nil, nil, nil, filepath.Join(dir, fmt.Sprintf("research-%d", i)))
 			if err != nil {
 				failed <- struct{}{}
 				return
@@ -69,7 +69,7 @@ func TestCodexACPParallelism(t *testing.T) {
 		return
 	}
 
-	conn, err := ConnectCodexWithDiagnostics(ctx, nil, nil, filepath.Join(dir, "synthesis"))
+	conn, err := ConnectCodexWithDiagnostics(ctx, nil, nil, nil, filepath.Join(dir, "synthesis"))
 	if err != nil {
 		t.FailNow()
 	}
