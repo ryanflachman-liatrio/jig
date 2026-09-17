@@ -43,9 +43,24 @@ type Model struct {
 	focusFieldIdx   int
 	stackedCursor   map[string]int
 	stackedSelected map[string]map[string]bool
+	// customFromStacked marks a phaseCustom detour started from the stacked
+	// view (updateStacked's "o" key) so its enter/esc return to the stacked
+	// view instead of advance()-ing to the next field like the paginated flow.
+	customFromStacked bool
 }
 
+// New builds a panel for req. Every select-kind field always lets the user
+// type an answer other than the presented options — the panel doesn't defer
+// to the request's AllowCustom flag, since a human should never be stuck
+// picking the closest-but-wrong option. req.Fields is copied before this
+// normalization so the caller's original request is left untouched.
 func New(req interaction.QuestionRequest) Model {
+	req.Fields = append([]interaction.QuestionField(nil), req.Fields...)
+	for i := range req.Fields {
+		if req.Fields[i].Kind != interaction.FieldText {
+			req.Fields[i].AllowCustom = true
+		}
+	}
 	m := Model{
 		request:      req,
 		answers:      make(map[string]interaction.Answer),
@@ -82,18 +97,20 @@ func (m Model) Resize(width, height int) Model {
 }
 
 // stackedEligible reports whether every field of req can be shown together
-// (Option B) within height rows: no free-text fields or "Other…" custom
-// answers (those need a full textarea/phase of their own), and the combined
-// prompt + option rows fit the height the host actually gave this panel —
-// so eligibility self-adjusts to whatever gateBodyHeight() budgets instead
-// of duplicating that constant here.
+// (Option B) within height rows: no free-text fields (those need a full
+// textarea/phase of their own — a custom answer for a select field instead
+// makes a temporary, self-returning detour into that same phase, see
+// updateStacked's "o" handling), and the combined prompt + option rows fit
+// the height the host actually gave this panel — so eligibility
+// self-adjusts to whatever gateBodyHeight() budgets instead of duplicating
+// that constant here.
 func stackedEligible(req interaction.QuestionRequest, height int) bool {
 	if len(req.Fields) < 2 {
 		return false
 	}
 	rows := 1 // "Answer all N" header line
 	for _, field := range req.Fields {
-		if field.Kind == interaction.FieldText || field.AllowCustom || len(field.Options) == 0 {
+		if field.Kind == interaction.FieldText || len(field.Options) == 0 {
 			return false
 		}
 		rows += 2 + len(field.Options) // blank spacer + prompt line + one row per option
@@ -139,6 +156,7 @@ func (m Model) updateText(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		if m.phase == phaseCustom {
 			m.customDrafts[m.currentField().ID] = m.textarea.Value()
 			m.phase = phaseField
+			m.customFromStacked = false
 			m.buildTextarea()
 		}
 		return m, nil
@@ -159,6 +177,11 @@ func (m Model) updateText(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			delete(m.customDrafts, field.ID)
 		} else {
 			m.answers[field.ID] = interaction.Answer{Values: []string{value}}
+		}
+		if m.customFromStacked {
+			m.customFromStacked = false
+			m.phase = phaseField
+			return m, nil
 		}
 		return m.advance(), nil
 	}
@@ -266,6 +289,14 @@ func (m Model) updateStacked(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			value := field.Options[cursor].Value
 			m.stackedSelected[field.ID][value] = !m.stackedSelected[field.ID][value]
 		}
+	case "o":
+		// Detour into a one-off custom-answer textarea for the focused field;
+		// enter/esc there return to this stacked view (see customFromStacked).
+		m.fieldIdx = m.focusFieldIdx
+		m.phase = phaseCustom
+		m.customFromStacked = true
+		m.buildTextarea()
+		return m, textarea.Blink
 	case "enter":
 		if answers, ok := m.stackedAnswers(); ok {
 			m.answers = answers
@@ -279,11 +310,17 @@ func (m Model) updateStacked(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 // stacked cursor/selection state. A single-select field's answer is
 // whichever option its cursor currently sits on (defaulting to the first
 // option — there is no separate "committed" state in the stacked view,
-// unlike the paginated one-question-at-a-time flow). It reports ok=false if
-// a required field has no answer, mirroring updateSelect's enter no-op.
+// unlike the paginated one-question-at-a-time flow), unless the field has a
+// recorded custom override (the "o" detour in updateStacked), which always
+// wins. It reports ok=false if a required field has no answer, mirroring
+// updateSelect's enter no-op.
 func (m Model) stackedAnswers() (map[string]interaction.Answer, bool) {
 	answers := make(map[string]interaction.Answer, len(m.request.Fields))
 	for _, field := range m.request.Fields {
+		if answer, ok := m.answers[field.ID]; ok && answer.Custom != "" {
+			answers[field.ID] = answer
+			continue
+		}
 		switch field.Kind {
 		case interaction.FieldSingleSelect:
 			idx := m.stackedCursor[field.ID]
@@ -534,6 +571,7 @@ func (m Model) HelpBindings() []keybind.Binding {
 			binding([]string{"enter"}, "enter", "confirm all"),
 			binding([]string{"tab", "shift+tab"}, "tab", "next field"),
 			navigate,
+			binding([]string{"o"}, "o", "type answer"),
 		}
 		if stackedHasMultiSelect(m.request) {
 			bindings = append(bindings, binding([]string{" ", "space"}, "space", "toggle"))

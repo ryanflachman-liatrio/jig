@@ -105,7 +105,7 @@ func (m Model) fieldLines() []string {
 // move focus between fields (updateStacked).
 func (m Model) stackedLines() []string {
 	lines := []string{shared.Theme.Chat.Hint.Render(
-		fmt.Sprintf("Answer all %d", len(m.request.Fields)),
+		fmt.Sprintf("Answer all %d  ·  o to type your own answer", len(m.request.Fields)),
 	)}
 	for i, field := range m.request.Fields {
 		focused := i == m.focusFieldIdx
@@ -116,6 +116,16 @@ func (m Model) stackedLines() []string {
 			promptStyle = shared.Theme.SelectedLine
 		}
 		lines = append(lines, "", promptPrefix+promptStyle.Render(field.Prompt))
+
+		if custom, ok := m.answers[field.ID]; ok && custom.Custom != "" {
+			line := "(*) " + custom.Custom + " (typed)"
+			if focused {
+				lines = append(lines, "  "+shared.Theme.SelectedLine.Render(line))
+			} else {
+				lines = append(lines, "  "+line)
+			}
+			continue
+		}
 
 		cursor := m.stackedCursor[field.ID]
 		for oi, option := range field.Options {

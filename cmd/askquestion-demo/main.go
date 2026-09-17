@@ -11,6 +11,12 @@
 //
 // Resize the terminal while it's running to see the gate panel re-fit; press
 // q to answer-cancel and exit, or ctrl+c to quit at any time.
+//
+// Every select field always lets you type your own answer instead of
+// picking an option, regardless of the field's AllowCustom flag: in the
+// paginated view (-mode=paginated or -mode=long), move the cursor down to
+// the "Other…" row and press enter; in the stacked view (-mode=stacked,
+// the default), press o to open a one-off textarea for the focused field.
 package main
 
 import (

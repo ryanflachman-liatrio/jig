@@ -48,7 +48,9 @@ func press(s string) tea.KeyPressMsg {
 }
 
 func TestQuestionPanelReviewAndSubmit(t *testing.T) {
-	m := New(testRequest()).Resize(60, 10)
+	// Height is deliberately too small for stacked eligibility (Option B) so
+	// this test exercises the one-at-a-time paginated flow it's named for.
+	m := New(testRequest()).Resize(60, 8)
 	m, _ = m.Update(press("down"))
 	m, _ = m.Update(press("enter"))
 	m, _ = m.Update(press(" "))
@@ -294,7 +296,7 @@ func TestQuestionStackedEligibilityDependsOnHeight(t *testing.T) {
 	}
 }
 
-func TestQuestionStackedEligibilityExcludesTextAndCustomFields(t *testing.T) {
+func TestQuestionStackedEligibilityExcludesTextFields(t *testing.T) {
 	withText := stackedTestRequest()
 	withText.Fields = append(withText.Fields, interaction.QuestionField{
 		ID: "note", Prompt: "Anything else?", Kind: interaction.FieldText,
@@ -302,11 +304,61 @@ func TestQuestionStackedEligibilityExcludesTextAndCustomFields(t *testing.T) {
 	if New(withText).Resize(80, 40).stacked {
 		t.Fatal("a text field must not be shown in stacked mode")
 	}
+}
 
-	withCustom := stackedTestRequest()
-	withCustom.Fields[0].AllowCustom = true
-	if New(withCustom).Resize(80, 40).stacked {
-		t.Fatal("AllowCustom fields must not be shown in stacked mode")
+// TestQuestionAllowCustomAlwaysOn verifies every select field can type a
+// custom answer regardless of what the request declared: New() normalizes
+// AllowCustom on, since a human should never be stuck picking the
+// closest-but-wrong option.
+func TestQuestionAllowCustomAlwaysOn(t *testing.T) {
+	req := stackedTestRequest()
+	req.Fields[0].AllowCustom = false
+	m := New(req)
+	if !m.currentField().AllowCustom {
+		t.Fatal("New() must force AllowCustom on for select fields")
+	}
+	if req.Fields[0].AllowCustom {
+		t.Fatal("New() must not mutate the caller's original request")
+	}
+}
+
+func TestQuestionStackedCustomAnswerDetourReturnsToStackedView(t *testing.T) {
+	m := New(stackedTestRequest()).Resize(60, 20)
+	if !m.stacked {
+		t.Fatal("expected stacked mode")
+	}
+
+	// "o" on the focused (first) field opens a one-off custom textarea.
+	m, _ = m.Update(press("o"))
+	if !m.CapturesText() {
+		t.Fatal("o did not open a custom-answer textarea")
+	}
+	for _, r := range "on-prem" {
+		m, _ = m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	m, _ = m.Update(press("enter"))
+
+	if m.CapturesText() {
+		t.Fatal("submitting the custom answer did not return to the stacked view")
+	}
+	if !m.stacked {
+		t.Fatal("submitting the custom answer left stacked mode")
+	}
+	if view := m.View(); !strings.Contains(view, "on-prem") {
+		t.Fatalf("stacked view did not reflect the custom answer:\n%s", view)
+	}
+
+	// Answer the remaining required field and submit the whole form.
+	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	m, _ = m.Update(press(" "))
+	m, _ = m.Update(press("enter"))
+
+	resp, ok := m.Response()
+	if !ok {
+		t.Fatal("submit did not produce a response")
+	}
+	if got := resp.Answers["env"].Custom; got != "on-prem" {
+		t.Fatalf("env answer = %q, want custom \"on-prem\"", got)
 	}
 }
 
