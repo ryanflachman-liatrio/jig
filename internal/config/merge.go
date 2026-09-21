@@ -54,7 +54,14 @@ func mergeUI(base, overlay UIConfig) UIConfig {
 }
 
 func mergeTUI(base, overlay TUIConfig) TUIConfig {
-	return base
+	out := base
+	if overlay.SimpleMode != nil {
+		out.SimpleMode = overlay.SimpleMode
+	}
+	if overlay.CompactToolGroups != nil {
+		out.CompactToolGroups = overlay.CompactToolGroups
+	}
+	return out
 }
 
 func mergeNotifications(base, overlay NotificationsConfig) NotificationsConfig {

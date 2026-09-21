@@ -76,7 +76,7 @@
 - [x] 1.10 Add an `internal/config` row to `docs/ARCHITECTURE.md`'s package table describing its responsibility and boundary (owns schema, TOML loading, layered merge; consumed by `cmd/jig`, `internal/tui`, `internal/notification` call sites, and `internal/telemetry`).
 - [x] 1.11 Run `gofmt -w` on changed files and `go build ./cmd/jig && go test ./internal/config ./cmd/jig -count=1 && go vet ./internal/config ./cmd/jig`; capture the Proof Artifacts above.
 
-### [ ] 2.0 Migrate TUI Preferences into `[tui]`, remove `.jig/tui.json`
+### [x] 2.0 Migrate TUI Preferences into `[tui]`, remove `.jig/tui.json`
 
 #### 2.0 Proof Artifact(s)
 
@@ -87,17 +87,17 @@
 
 #### 2.0 Tasks
 
-- [ ] 2.1 Add `SimpleMode bool` (`toml:"simple_mode"`) and `CompactToolGroups bool` (`toml:"compact_tool_groups"`) to `TUIConfig` in `internal/config/config.go`; set `Default().TUI` to `simple_mode = true, compact_tool_groups = false`, matching `prefs.Default()` exactly.
-- [ ] 2.2 In `internal/tui/root.go`, add a `WithTUIPrefs(cfg config.TUIConfig) Option` that stores the resolved `[tui]` values on the root model (alongside the existing `telemetryMode string` field pattern).
-- [ ] 2.3 In `internal/tui/monitor/monitor_model.go`, replace `WithPrefs(jigRoot string) Model` with a config-sourced constructor (e.g. `WithTUIConfig(cfg config.TUIConfig) Model`) that sets `simpleMode`/`compactToolGroups` directly from the passed struct instead of calling `prefs.Load`.
-- [ ] 2.4 Update the three call sites in `internal/tui/root_update.go` (`monitor.New(...).WithPrefs(m.manager.Root())`) to use the new config-sourced constructor, threading the root model's stored `[tui]` config through.
-- [ ] 2.5 In `cmd/jig/main.go`, pass the merged config's `[tui]` table into `tui.New(...)` via the new `WithTUIPrefs` option (loaded through `loadEffectiveConfig()` from Task 1).
-- [ ] 2.6 Change `Model.ToggleSimpleMode`/`savePrefs` in `monitor_model.go` to update in-memory state only (no `prefs.Save` call); update the doc comment to state the toggle is session-only now that `config.toml` is a hand-edited file, not a runtime-write target.
-- [ ] 2.7 Delete `internal/tui/prefs/prefs.go` and `internal/tui/prefs/prefs_test.go`; remove the package's import from `monitor_model.go` and any other importer.
-- [ ] 2.8 Update `internal/tui/monitor/monitor_tool_group_test.go` and `phase2_polish_test.go` to construct monitor models via the new config-sourced entry point instead of `prefs.Load`/`prefs.FileName`/`WithPrefs`.
-- [ ] 2.9 Add `internal/config` tests for `[tui]` table defaults and override merge; run `go test ./internal/tui/... ./internal/config -count=1 && go vet ./internal/tui/... ./internal/config`.
-- [ ] 2.10 Manually verify (or script) the CLI/Screenshot Proof Artifact: set `[tui] compact_tool_groups = true` in a scratch `.jig/config.toml`, run `jig config show` to confirm the value, and launch the TUI to confirm compact rendering.
-- [ ] 2.11 Run the grep sweep (`grep -rn "tui.json\|tui/prefs" --include="*.go" .`) and confirm no non-historical matches remain.
+- [x] 2.1 Add `SimpleMode bool` (`toml:"simple_mode"`) and `CompactToolGroups bool` (`toml:"compact_tool_groups"`) to `TUIConfig` in `internal/config/config.go`; set `Default().TUI` to `simple_mode = true, compact_tool_groups = false`, matching `prefs.Default()` exactly.
+- [x] 2.2 In `internal/tui/root.go`, add a `WithTUIPrefs(cfg config.TUIConfig) Option` that stores the resolved `[tui]` values on the root model (alongside the existing `telemetryMode string` field pattern).
+- [x] 2.3 In `internal/tui/monitor/monitor_model.go`, replace `WithPrefs(jigRoot string) Model` with a config-sourced constructor (e.g. `WithTUIConfig(cfg config.TUIConfig) Model`) that sets `simpleMode`/`compactToolGroups` directly from the passed struct instead of calling `prefs.Load`.
+- [x] 2.4 Update the three call sites in `internal/tui/root_update.go` (`monitor.New(...).WithPrefs(m.manager.Root())`) to use the new config-sourced constructor, threading the root model's stored `[tui]` config through.
+- [x] 2.5 In `cmd/jig/main.go`, pass the merged config's `[tui]` table into `tui.New(...)` via the new `WithTUIPrefs` option (loaded through `loadEffectiveConfig()` from Task 1).
+- [x] 2.6 Change `Model.ToggleSimpleMode`/`savePrefs` in `monitor_model.go` to update in-memory state only (no `prefs.Save` call); update the doc comment to state the toggle is session-only now that `config.toml` is a hand-edited file, not a runtime-write target.
+- [x] 2.7 Delete `internal/tui/prefs/prefs.go` and `internal/tui/prefs/prefs_test.go`; remove the package's import from `monitor_model.go` and any other importer.
+- [x] 2.8 Update `internal/tui/monitor/monitor_tool_group_test.go` and `phase2_polish_test.go` to construct monitor models via the new config-sourced entry point instead of `prefs.Load`/`prefs.FileName`/`WithPrefs`.
+- [x] 2.9 Add `internal/config` tests for `[tui]` table defaults and override merge; run `go test ./internal/tui/... ./internal/config -count=1 && go vet ./internal/tui/... ./internal/config`.
+- [x] 2.10 Manually verify (or script) the CLI/Screenshot Proof Artifact: set `[tui] compact_tool_groups = true` in a scratch `.jig/config.toml`, run `jig config show` to confirm the value, and launch the TUI to confirm compact rendering.
+- [x] 2.11 Run the grep sweep (`grep -rn "tui.json\|tui/prefs" --include="*.go" .`) and confirm no non-historical matches remain.
 
 ### [ ] 3.0 Migrate Notification Config into `[notifications]`; add `[ui] glyph_preset` default
 

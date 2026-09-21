@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"jig/internal/config"
 	"jig/internal/engine"
 	"jig/internal/tui/detail"
 	"jig/internal/tui/monitor"
@@ -93,6 +94,11 @@ type rootModel struct {
 	// otlp | both) used to render an "otel:<mode>" badge in the monitor
 	// status line. Empty or "off" hides the badge.
 	telemetryMode string
+
+	// tuiConfig holds the merged [tui] table (Spec 28 Unit 2), threaded into
+	// every monitor.New(...) construction site in place of the former
+	// monitor.WithPrefs(jigRoot) disk read.
+	tuiConfig config.TUIConfig
 
 	// leaveConfirm asks before abandoning a dirty review compose buffer when
 	// the operator presses a leave-Monitor chord (0.4 / A6).
@@ -202,6 +208,13 @@ func WithStartHook(fn func(runID string, wf *workflow.Workflow)) Option {
 // line. Empty or "off" hides the badge.
 func WithTelemetryMode(mode string) Option {
 	return func(m *rootModel) { m.telemetryMode = mode }
+}
+
+// WithTUIPrefs installs the merged [tui] table (Spec 28 Unit 2), consulted
+// by every monitor.New(...) construction site in place of the retired
+// .jig/tui.json disk read.
+func WithTUIPrefs(cfg config.TUIConfig) Option {
+	return func(m *rootModel) { m.tuiConfig = cfg }
 }
 
 // New returns jig's root TUI model. mgr is the engine manager; it must be

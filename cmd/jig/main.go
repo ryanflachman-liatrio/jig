@@ -78,6 +78,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	cfg, err := loadEffectiveConfig(".jig")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
+
 	tel := setupTelemetry(ctx, ".jig")
 	defer tel.shutdown(context.Background())
 
@@ -104,6 +110,7 @@ func main() {
 		tui.WithDiagnostics(diagnostics),
 		tui.WithStartHook(tel.registerRun),
 		tui.WithTelemetryMode(tel.mode()),
+		tui.WithTUIPrefs(cfg.TUI),
 	))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running program: %v\n", err)

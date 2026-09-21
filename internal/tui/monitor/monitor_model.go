@@ -10,12 +10,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 
+	"jig/internal/config"
 	"jig/internal/engine"
 	"jig/internal/helpchat"
 	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/transcript"
-	"jig/internal/tui/prefs"
 	questionpanel "jig/internal/tui/question"
 	reviewworkspace "jig/internal/tui/review"
 	"jig/internal/tui/shared"
@@ -327,9 +327,8 @@ type Model struct {
 	height int
 
 	// simpleMode hides advanced transcript affordances from footer/help (2.3).
-	// Default true; loaded from .jig/tui.json when jigRoot is set.
+	// Default true; sourced from the merged [tui] config (WithTUIConfig).
 	simpleMode bool
-	jigRoot    string // .jig/ root for prefs persistence; "" = in-memory only
 
 	// diagnostics renders a sanitized text dump of the process-wide
 	// notification diagnostic ring (spec 23-spec-run-notifications FR-17).
@@ -637,13 +636,12 @@ func New(runID string) Model {
 	}
 }
 
-// WithPrefs loads simple-mode preference from jigRoot (.jig/). Empty root keeps
-// the in-memory default (simple ON).
-func (m Model) WithPrefs(jigRoot string) Model {
-	m.jigRoot = jigRoot
-	p := prefs.Load(jigRoot)
-	m.simpleMode = p.SimpleMode
-	m.compactToolGroups = p.CompactToolGroups
+// WithTUIConfig sources simple-mode/compact-tool-group preference from the
+// merged [tui] config table (Spec 28 Unit 2), replacing the retired
+// .jig/tui.json disk read.
+func (m Model) WithTUIConfig(cfg config.TUIConfig) Model {
+	m.simpleMode = cfg.SimpleModeOrDefault()
+	m.compactToolGroups = cfg.CompactToolGroupsOrDefault()
 	return m
 }
 
@@ -658,18 +656,13 @@ func (m Model) WithTelemetryMode(mode string) Model {
 // SimpleMode reports whether advanced transcript chrome is hidden.
 func (m Model) SimpleMode() bool { return m.simpleMode }
 
-// ToggleSimpleMode flips simple/advanced and persists to .jig/tui.json.
+// ToggleSimpleMode flips simple/advanced for the rest of this session only.
+// config.toml is a hand-edited file, not a runtime-write target (Spec 28
+// Unit 2), so this toggle no longer persists across process restarts —
+// unlike the retired .jig/tui.json write, it is in-memory-only from here.
 func (m Model) ToggleSimpleMode() Model {
 	m.simpleMode = !m.simpleMode
-	m.savePrefs()
 	return m
-}
-
-func (m Model) savePrefs() {
-	_ = prefs.Save(m.jigRoot, prefs.Prefs{
-		SimpleMode:        m.simpleMode,
-		CompactToolGroups: m.compactToolGroups,
-	})
 }
 
 // SetRun wires the live engine handle so the help agent can read run state and

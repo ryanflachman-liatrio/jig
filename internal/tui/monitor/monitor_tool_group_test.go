@@ -10,7 +10,6 @@ import (
 
 	"jig/internal/toolcall"
 	"jig/internal/transcript"
-	"jig/internal/tui/prefs"
 	"jig/internal/tui/shared"
 )
 
@@ -288,13 +287,12 @@ func TestCompactToolGroupPreviewBound(t *testing.T) {
 	}
 }
 
-func TestCompactToolGroupInteractionAndPersistence(t *testing.T) {
+func TestCompactToolGroupInteractionSessionOnly(t *testing.T) {
 	entries := toolGroupEntries(
 		toolExchange("a", "bash", map[string]any{"command": "go test ./..."}, 0, 0, 0, false),
 		toolExchange("b", "bash", map[string]any{"command": "go vet ./..."}, 0, 0, 0, false),
 	)
-	dir := t.TempDir()
-	m := newMonitorWithSteps(t).WithPrefs(dir)
+	m := newMonitorWithSteps(t)
 	m.focus = focusTranscript
 	m.chatStep = "a"
 	m.setChatPage(transcript.Page{Entries: entries})
@@ -317,9 +315,8 @@ func TestCompactToolGroupInteractionAndPersistence(t *testing.T) {
 	if len(m.chatItems) != 1 || m.chatItems[0].kind != transcriptItemToolGroup {
 		t.Fatalf("toggle-on items=%+v, want one group", m.chatItems)
 	}
-	loaded := prefs.Load(dir)
-	if !loaded.CompactToolGroups || !loaded.SimpleMode || !strings.Contains(ansi.Strip(m.chatBody()), "compact tool groups: on") {
-		t.Fatal("toggle did not persist or show confirmation")
+	if !m.compactToolGroups || !m.simpleMode || !strings.Contains(ansi.Strip(m.chatBody()), "compact tool groups: on") {
+		t.Fatal("toggle did not take effect for this session or show confirmation")
 	}
 	m, _ = m.Update(key("enter"))
 	if len(m.chatCursorTargets) != 3 {

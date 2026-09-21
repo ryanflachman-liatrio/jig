@@ -1,14 +1,12 @@
 package monitor
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/tui/prefs"
+	"jig/internal/config"
 	"jig/internal/tui/shared"
 )
 
@@ -141,27 +139,21 @@ func TestSimpleModeFiltersFooterKeepsPalette(t *testing.T) {
 	}
 }
 
-func TestSimpleModeTogglePersists(t *testing.T) {
-	dir := t.TempDir()
-	m := newMonitorWithSteps(t).WithPrefs(dir)
+func TestSimpleModeToggleIsSessionOnly(t *testing.T) {
+	m := newMonitorWithSteps(t).WithTUIConfig(config.TUIConfig{})
 	if !m.SimpleMode() {
-		t.Fatal("default prefs should be simple ON")
+		t.Fatal("default [tui] config should be simple ON")
 	}
 	m = m.ToggleSimpleMode()
 	if m.SimpleMode() {
 		t.Fatal("toggle should disable simple mode")
 	}
-	path := filepath.Join(dir, prefs.FileName)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), `"simple_mode": false`) {
-		t.Fatalf("prefs file = %s", data)
-	}
-	m2 := New("run-1").WithPrefs(dir)
-	if m2.SimpleMode() {
-		t.Fatal("reloaded prefs should keep simple OFF")
+	// config.toml is hand-edited, not a runtime-write target (Spec 28 Unit
+	// 2): a fresh model sourced from the same (unmodified) config must not
+	// observe the in-session toggle.
+	m2 := New("run-1").WithTUIConfig(config.TUIConfig{})
+	if !m2.SimpleMode() {
+		t.Fatal("a fresh model must not inherit the prior session's in-memory toggle")
 	}
 	// Key chord also toggles.
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 24})

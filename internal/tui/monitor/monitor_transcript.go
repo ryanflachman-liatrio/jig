@@ -222,8 +222,10 @@ func (m *Model) toggleCompactToolGroups() {
 	if item, ok := m.selectedTranscriptItem(); ok && item.kind == transcriptItemToolGroup && len(item.groupMembers) > 0 {
 		saved = item.groupMembers[0].key
 	}
+	// Session-only for the rest of this run (Spec 28 Unit 2): config.toml is
+	// hand-edited, not a runtime-write target, so this toggle no longer
+	// persists to the retired .jig/tui.json.
 	m.compactToolGroups = !m.compactToolGroups
-	m.savePrefs()
 	m.chatItemRendered = make(map[transcriptRenderKey]string)
 	m.chatItems = m.buildChatItems()
 	if m.compactToolGroups {
