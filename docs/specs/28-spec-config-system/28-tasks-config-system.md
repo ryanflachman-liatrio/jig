@@ -147,7 +147,7 @@
 - [x] 4.7 Add `internal/telemetry/config_test.go` cases for `KillSwitchActive` (true/false/unset env values); add `internal/config/telemetry_test.go` cases for env-base-only, config-overrides-env for at least `otlp_endpoint`, and kill-switch-forces-mode-off-after-config-override.
 - [x] 4.8 Run `go test ./internal/telemetry ./internal/config ./cmd/jig -count=1 && go vet ./internal/telemetry ./internal/config ./cmd/jig`; capture the four CLI Proof Artifacts, including the `OTEL_SDK_DISABLED` override-wins-over-config-enabled case with a real `jig run` invocation.
 
-### [ ] 5.0 Retire `.jig/telemetry.json` prefs and close out cross-cutting verification
+### [x] 5.0 Retire `.jig/telemetry.json` prefs and close out cross-cutting verification
 
 #### 5.0 Proof Artifact(s)
 
@@ -158,10 +158,10 @@
 
 #### 5.0 Tasks
 
-- [ ] 5.1 Delete `internal/telemetry/prefs.go` (`PrefsFileName`, `PrefsPath`, `LoadPrefs`, `SavePrefs`); confirm the `Prefs` struct in `config.go` remains only as `ResolveConfig`'s in-memory parameter type (no remaining disk-file callers).
-- [ ] 5.2 Update `internal/telemetry/config_test.go` to remove the `SavePrefs`-round-trip test (`TestSavePrefsRoundTrip`-style case at line ~209/242) and any other disk-file-specific assertions; keep `ResolveConfig`/`Prefs{}`-as-value tests.
-- [ ] 5.3 Confirm `cmd/jig/telemetry.go` (updated in Task 4.6) has no remaining `telemetry.LoadPrefs` call; remove the now-stale doc comment on `setupTelemetry` referencing `.jig/telemetry.json`.
-- [ ] 5.4 Run the grep sweep (`grep -rn "telemetry.json\|LoadPrefs\|SavePrefs" --include="*.go" .`) and confirm no non-historical matches remain.
-- [ ] 5.5 Sweep `docs/*.md` (`docs/observability.md`, `docs/operations.md`, `docs/TUI.md`, `docs/adr/0012-observability-export.md`) for references to `.jig/tui.json`, `.jig/notifications.toml`, or `.jig/telemetry.json` and update them to describe the `config.toml` `[tui]`/`[notifications]`/`[telemetry]` tables instead; leave historical ADR/plan narrative describing past decisions unedited.
-- [ ] 5.6 Run the full repository check sequence from `docs/TESTING.md`: `gofmt -l` on all changed files (fix any hits), `go build ./cmd/jig`, `go test ./...`, `go vet ./...`.
-- [ ] 5.7 Do a final targeted diff review confirming only intended files changed and every Unit 1-4 Proof Artifact is reproducible from the final state of the branch.
+- [x] 5.1 Delete `internal/telemetry/prefs.go` (`PrefsFileName`, `PrefsPath`, `LoadPrefs`, `SavePrefs`); confirm the `Prefs` struct in `config.go` remains only as `ResolveConfig`'s in-memory parameter type (no remaining disk-file callers).
+- [x] 5.2 Update `internal/telemetry/config_test.go` to remove the `SavePrefs`-round-trip test (`TestSavePrefsRoundTrip`-style case at line ~209/242) and any other disk-file-specific assertions; keep `ResolveConfig`/`Prefs{}`-as-value tests.
+- [x] 5.3 Confirm `cmd/jig/telemetry.go` (updated in Task 4.6) has no remaining `telemetry.LoadPrefs` call; remove the now-stale doc comment on `setupTelemetry` referencing `.jig/telemetry.json`.
+- [x] 5.4 Run the grep sweep (`grep -rn "telemetry.json\|LoadPrefs\|SavePrefs" --include="*.go" .`) and confirm no non-historical matches remain.
+- [x] 5.5 Sweep `docs/*.md` (`docs/observability.md`, `docs/operations.md`, `docs/TUI.md`, `docs/adr/0012-observability-export.md`) for references to `.jig/tui.json`, `.jig/notifications.toml`, or `.jig/telemetry.json` and update them to describe the `config.toml` `[tui]`/`[notifications]`/`[telemetry]` tables instead; leave historical ADR/plan narrative describing past decisions unedited.
+- [x] 5.6 Run the full repository check sequence from `docs/TESTING.md`: `gofmt -l` on all changed files (fix any hits), `go build ./cmd/jig`, `go test ./...`, `go vet ./...`.
+- [x] 5.7 Do a final targeted diff review confirming only intended files changed and every Unit 1-4 Proof Artifact is reproducible from the final state of the branch.

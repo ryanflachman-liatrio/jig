@@ -180,9 +180,11 @@ func MapEnv(m map[string]string) EnvLookup {
 	}
 }
 
-// Prefs is the shape of .jig/telemetry.json. Mirrors internal/tui/prefs style:
-// missing file → zero value; corrupt file → zero value with a warning; empty
-// jigRoot → no-op reads/writes.
+// Prefs is [ResolveConfig]'s in-memory operator-preferences layer. It has no
+// disk-backed loader of its own: internal/config owns the actual TOML file
+// (config.toml's top-level [telemetry] table) and constructs a Prefs value
+// to pass in here (see internal/config/telemetry.go's env-derived base
+// layer, which calls ResolveConfig with a zero-value Prefs{} deliberately).
 //
 // Fields intentionally use the same names as [Config] so operators can
 // map them mentally 1:1.
@@ -212,11 +214,16 @@ type TelemetryFields struct {
 	ResourceAttributes   map[string]string
 }
 
-// ResolveConfig folds env vars, .jig/telemetry.json prefs, and per-workflow
-// [telemetry] settings into one Config. Precedence (rightmost wins):
+// ResolveConfig folds env vars, prefs, and per-workflow [telemetry] settings
+// into one Config. Precedence (rightmost wins):
 //
-//	[telemetry] workflow ← prefs (.jig/telemetry.json) ← env (OTEL_*, JIG_TELEMETRY_*)
+//	[telemetry] workflow ← prefs ← env (OTEL_*, JIG_TELEMETRY_*)
 //	with OTEL_SDK_DISABLED as an unconditional kill switch.
+//
+// internal/config is the sole disk-backed caller of this function: it
+// resolves the env-derived base layer with a zero-value Prefs (see
+// internal/config/telemetry.go), then layers config.toml's own [telemetry]
+// table on top itself, outside ResolveConfig.
 //
 // Callers pass an [EnvLookup] rather than reading os.Getenv directly so tests
 // stay hermetic.
@@ -368,7 +375,7 @@ func validateResolved(cfg Config, tel TelemetryFields) error {
 	}
 	if tel.Enabled && cfg.Mode == ModeOff {
 		return fmt.Errorf("telemetry: [telemetry].enabled = true but no exporter configured " +
-			"(set OTEL_METRICS_EXPORTER, OTEL_TRACES_EXPORTER, JIG_TELEMETRY_MODE, or a .jig/telemetry.json mode)")
+			"(set OTEL_METRICS_EXPORTER, OTEL_TRACES_EXPORTER, JIG_TELEMETRY_MODE, or config.toml's [telemetry] mode)")
 	}
 	// Not fatal — matches the "empty bind disables listener" contract in
 	// the plan. Log a warning so the operator notices at run start.

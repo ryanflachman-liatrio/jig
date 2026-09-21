@@ -102,11 +102,12 @@ func (v *validator) checkMeta() {
 }
 
 // checkTelemetry validates the optional [telemetry] table. The mode /
-// endpoint / listener bind live in env or .jig/telemetry.json, so validation
-// here is purely structural: prefix shape, attribute-key shape. Enabled ==
-// true is not a full-blown load-time error on its own (the exporter target
-// comes from env / prefs, which are runtime concerns), but every field the
-// operator did author must be well-formed.
+// endpoint / listener bind live in env or config.toml's own top-level
+// [telemetry] table, so validation here is purely structural: prefix shape,
+// attribute-key shape. Enabled == true is not a full-blown load-time error
+// on its own (the exporter target comes from env / config, which are
+// runtime concerns), but every field the operator did author must be
+// well-formed.
 func (v *validator) checkTelemetry() {
 	t := v.wf.Telemetry
 	if t.MetricPrefix != "" && !telemetryPrefixRe.MatchString(t.MetricPrefix) {

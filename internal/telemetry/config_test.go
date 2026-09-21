@@ -3,7 +3,6 @@ package telemetry
 import (
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -231,52 +230,6 @@ func TestParseKVListAndBool(t *testing.T) {
 		if parseBool(v) {
 			t.Errorf("parseBool(%q) = true", v)
 		}
-	}
-}
-
-func TestPrefsRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	want := Prefs{
-		Mode:           string(ModeProm),
-		PrometheusAddr: "127.0.0.1:9464",
-		MetricPrefix:   "jig",
-	}
-	if err := SavePrefs(dir, want); err != nil {
-		t.Fatalf("SavePrefs: %v", err)
-	}
-	got := LoadPrefs(dir)
-	if got.Mode != want.Mode || got.PrometheusAddr != want.PrometheusAddr || got.MetricPrefix != want.MetricPrefix {
-		t.Errorf("round trip mismatch: got %+v, want %+v", got, want)
-	}
-}
-
-func TestPrefsMissingFileReturnsZero(t *testing.T) {
-	got := LoadPrefs(t.TempDir())
-	if got.Mode != "" || got.PrometheusAddr != "" {
-		t.Errorf("missing file should yield zero, got %+v", got)
-	}
-}
-
-func TestPrefsCorruptFileReturnsZero(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, PrefsFileName), []byte("not json"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	got := LoadPrefs(dir)
-	if got.Mode != "" {
-		t.Errorf("corrupt file should yield zero, got %+v", got)
-	}
-}
-
-func TestPrefsEmptyRootIsNoOp(t *testing.T) {
-	if err := SavePrefs("", Prefs{Mode: "prom"}); err != nil {
-		t.Errorf("SavePrefs(\"\"): %v", err)
-	}
-	if got := LoadPrefs(""); got.Mode != "" {
-		t.Errorf("LoadPrefs(\"\") = %+v, want zero", got)
-	}
-	if PrefsPath("") != "" {
-		t.Errorf("PrefsPath(\"\") = %q, want empty", PrefsPath(""))
 	}
 }
 

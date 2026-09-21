@@ -25,11 +25,17 @@ implementation plan is [`docs/plans/a18-otel-prometheus-export.md`](plans/a18-ot
 
 Configuration is layered. The rightmost source wins:
 
-1. OTel-standard `OTEL_*` env vars.
-2. `JIG_TELEMETRY_*` env vars (jig-specific supplement).
-3. `.jig/telemetry.json` (per operator).
-4. Workflow `[telemetry]` block (`enabled = true` requires that an exporter
-   has already been selected via env or prefs).
+1. OTel-standard `OTEL_*` env vars and the `JIG_TELEMETRY_*` supplement —
+   this is `[telemetry]`'s built-in-defaults layer, resolved dynamically at
+   load time so a machine or CI job with only env vars set and no
+   `config.toml` behaves exactly as it always has.
+2. `config.toml`'s `[telemetry]` table (user-level, then project-level;
+   project wins). This **overrides** the env-derived base per key — a
+   deliberate inversion of "env is authoritative" adopted so `config.toml`
+   is a real override surface for telemetry, not a second, lower-priority
+   place to set the same thing.
+3. Workflow `[telemetry]` block (`enabled = true` requires that an exporter
+   has already been selected via env or `config.toml`).
 
 `OTEL_SDK_DISABLED=true` is a hard kill switch and wins over every source.
 
@@ -106,26 +112,34 @@ Used only where no OTel-standard equivalent exists.
 These names never overlap with `JIG_SECRET_*` (secret name resolution) or
 with `JIG_INPUT_*` / `JIG_FANOUT_*` (command child inputs).
 
-### `.jig/telemetry.json`
+### `config.toml`'s `[telemetry]` table
 
-Peer of `.jig/tui.json`. Missing or corrupt files fall back to the zero
-value (`mode: "off"`) so a broken prefs file never bricks the TUI or `jig
-run`. Empty root (persistence-off) is a no-op for the writer.
+Owned by `internal/config` (`jig config show` prints the fully-merged
+result). A missing `config.toml`, or one with no `[telemetry]` table, falls
+through to the env-derived base layer above unchanged — a broken or absent
+config file never bricks the TUI or `jig run`. Persistence-off (`root ==
+""`) skips the project-level layer entirely and still resolves the
+user-level layer and env base.
 
-```json
-{
-  "mode": "off",
-  "otlp_endpoint": "",
-  "prometheus_addr": "",
-  "resource_attributes": {"env": "dev"}
-}
+```toml
+[telemetry]
+mode = "off"
+otlp_endpoint = ""
+prometheus_addr = ""
+resource_attributes = { env = "dev" }
 ```
+
+`otlp_headers` is a deliberate, called-out exception to `config.toml`'s
+general "no secrets" posture: operators who set bearer-token-style OTLP
+headers here should treat `config.toml` (and `jig config show`'s output)
+the same way they'd treat a file or command containing a secret.
 
 ### Workflow `[telemetry]` block
 
 Optional top-level field on `Workflow`, parallel to `[meta]` and
 `[defaults]`. Only fields that are meaningful per workflow belong here;
-endpoint URLs and headers stay in env or `.jig/telemetry.json`.
+endpoint URLs and headers stay in env or `config.toml`'s `[telemetry]`
+table.
 
 ```toml
 [telemetry]
@@ -141,19 +155,21 @@ Load-time validation (`jig validate`):
   Prometheus / OTel metric name prefix.
 - `resource_attributes` keys must be legal OTel attribute keys (dotted,
   lowercase, no spaces); values must be strings.
-- `enabled = true` requires that env or prefs already selected an exporter
-  target; the flag on its own does not spin up an exporter.
+- `enabled = true` requires that env or `config.toml` already selected an
+  exporter target; the flag on its own does not spin up an exporter.
 - Unknown fields fail load.
 
 ### Precedence summary
 
-- `OTEL_SDK_DISABLED=true` → exporter off (always).
+- `OTEL_SDK_DISABLED=true` → exporter off (always), even when `config.toml`
+  sets a non-off `mode` — the kill switch is re-checked once more after
+  every `[telemetry]` layer merges, specifically to catch that case.
 - Otherwise: workflow `[telemetry].enabled = false` → exporter off.
-- Otherwise: `JIG_TELEMETRY_MODE` (env) → `.jig/telemetry.json` → derived
-  mode from `OTEL_METRICS_EXPORTER` / `OTEL_TRACES_EXPORTER`, first
-  non-empty wins.
+- Otherwise, per key: `config.toml`'s `[telemetry]` table (project, then
+  user) → `JIG_TELEMETRY_MODE` (env) → derived mode from
+  `OTEL_METRICS_EXPORTER` / `OTEL_TRACES_EXPORTER`, first non-empty wins.
 - Workflow `[telemetry].metric_prefix` and `resource_attributes` are merged
-  over env-derived defaults.
+  over the env/config-derived defaults.
 
 ---
 
@@ -282,9 +298,9 @@ Highlights:
 `NewManager(exec, "")` remains valid. When telemetry is enabled through env
 in a persistence-off engine test, the exporter still initialises and emits
 run/step counters, but skips measurements that would require a run
-directory (no manifest reads, no journal replay). `.jig/telemetry.json`
-writers no-op on an empty root, matching the `internal/tui/prefs`
-precedent.
+directory (no manifest reads, no journal replay). `internal/config.Load`'s
+project-level `[telemetry]` layer is a no-op on an empty root — only the
+user-level and env-derived layers still resolve.
 
 ---
 

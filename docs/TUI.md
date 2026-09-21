@@ -138,8 +138,10 @@ retains the complete group. Expansion and selected-item copy use only the
 members present on the loaded page, so grouping never implies off-page evidence.
 
 Other recognized tools can use opt-in compact groups. Press `c` in Transcript
-or choose the command-palette action to toggle `compact_tool_groups`; the
-default is off and the preference is stored in `.jig/tui.json`. Eligible groups
+or choose the command-palette action to toggle `compact_tool_groups` for the
+current session; the default (`false`) comes from `config.toml`'s `[tui]`
+table (`compact_tool_groups`), which a persistent default can override, but
+the in-session toggle itself is not written back to disk. Eligible groups
 contain at least two adjacent, settled, successful calls of the same canonical
 kind and execution coordinate. Failures, running or incomplete calls, malformed
 or targetless calls, unknown tools, and `askuserquestion` remain standalone and

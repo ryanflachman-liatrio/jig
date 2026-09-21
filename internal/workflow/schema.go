@@ -262,17 +262,19 @@ type Meta struct {
 // Telemetry is the top-level [telemetry] table (A18). It controls whether
 // the optional OpenTelemetry / Prometheus / OTLP exporter is enabled for
 // this workflow and how instruments are named. Endpoint URL, headers, and
-// exporter selection remain env-scoped (OTel-standard OTEL_* vars) or per-
-// operator (.jig/telemetry.json); this block is per-workflow policy only.
+// exporter selection remain env-scoped (OTel-standard OTEL_* vars) or
+// operator-scoped (config.toml's own top-level [telemetry] table, resolved
+// by internal/config); this block is per-workflow policy only.
 //
 // The exporter is off by default: an empty [telemetry] table (or an
 // entirely missing one) yields Enabled == false, which produces a noop
 // telemetry.Provider at run start regardless of env configuration.
 type Telemetry struct {
 	// Enabled opts this workflow into the exporter. Requires that env or
-	// .jig/telemetry.json already selected an exporter target (Prometheus
-	// bind or OTLP endpoint); otherwise validate() rejects the workflow
-	// with an actionable message so the operator does not get silence.
+	// config.toml's [telemetry] table already selected an exporter target
+	// (Prometheus bind or OTLP endpoint); otherwise validate() rejects the
+	// workflow with an actionable message so the operator does not get
+	// silence.
 	Enabled bool `toml:"enabled"`
 	// MetricPrefix overrides the default "jig" prefix on every registered
 	// instrument. Must match [a-zA-Z][a-zA-Z0-9_]{0,31} so it is a legal
