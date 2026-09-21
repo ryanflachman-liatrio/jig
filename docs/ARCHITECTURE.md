@@ -26,6 +26,7 @@ Dependency versions live in the two `go.mod` files, not this map.
 
 | Package | Responsibility and boundary |
 |---|---|
+| `internal/config` | Typed `Config` schema, TOML loading for the user- and project-level `config.toml` files, and the layered defaults → user → project merge. No CLI flag parsing; consumed by `cmd/jig`, `internal/tui`, `internal/notification` call sites, and `internal/telemetry`. |
 | `internal/workflow` | TOML loading, authoring files, profiles/defaults, module expansion, typed conditions and output contracts, graph validation. No agent execution. |
 | `internal/engine` | Manager and per-run scheduler, readiness, budgets, retries/routes, fan-out, parks, review/integration, reset/reopen, journal event vocabulary. Defines `Executor` and `Reporter`. |
 | `internal/runner` | Concrete agent, command, and check execution, input delivery, validation, artifact capture, transcript writes. Uses the harness seam for agents. |

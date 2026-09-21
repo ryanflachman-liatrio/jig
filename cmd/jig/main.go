@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"jig/internal/config"
 	"jig/internal/datastore"
 	"jig/internal/tui"
 	"jig/internal/tui/shared"
@@ -26,12 +28,19 @@ func main() {
 	// consults the swapped vocabulary (shared.SetPreset), so downstream
 	// code — TUI, headless prompts, capture — degrades in one place.
 	applyGlobalPresetFlag()
+	// --config substitutes the resolved user-level config layer (Spec 28
+	// Unit 1). Parsed pre-dispatch, same style and same pass as --ascii, so
+	// it works uniformly ahead of or after a subcommand and no subcommand's
+	// flag.NewFlagSet has to redeclare it.
+	applyGlobalConfigFlag()
 
 	// Subcommands run and exit before the TUI takes over the terminal.
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "init":
 			os.Exit(runInit(os.Args[2:]))
+		case "config":
+			os.Exit(runConfig(os.Args[2:]))
 		case "notifications":
 			os.Exit(runNotifications(os.Args[2:]))
 		case "validate":
@@ -61,7 +70,7 @@ func main() {
 			return
 		default:
 			fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
-			fmt.Fprintln(os.Stderr, "usage: jig <init|validate|run|status|logs|doctor|resume|reset|prune|export|notifications>")
+			fmt.Fprintln(os.Stderr, "usage: jig <init|validate|run|status|logs|doctor|resume|reset|prune|export|notifications|config>")
 			os.Exit(2)
 		}
 	}
@@ -231,4 +240,61 @@ func applyGlobalPresetFlag() {
 		shared.SetPreset(shared.PresetASCII)
 	}
 	os.Args = filtered
+}
+
+// globalConfigFlagPath holds the --config flag's resolved path (empty when
+// absent), set once by applyGlobalConfigFlag before subcommand dispatch and
+// read by loadEffectiveConfig.
+var globalConfigFlagPath string
+
+// applyGlobalConfigFlag scans os.Args for the --config <path> / -config
+// <path> / --config=<path> / -config=<path> global flag, strips the
+// matched tokens the same pre-dispatch way applyGlobalPresetFlag strips
+// --ascii, and records the resolved path in globalConfigFlagPath. When
+// absent, the empty value tells loadEffectiveConfig to resolve the default
+// user-level path itself.
+func applyGlobalConfigFlag() {
+	if len(os.Args) < 2 {
+		return
+	}
+	filtered := os.Args[:1]
+	stop := false
+	for i := 1; i < len(os.Args); i++ {
+		arg := os.Args[i]
+		if stop {
+			filtered = append(filtered, arg)
+			continue
+		}
+		if arg == "--" {
+			stop = true
+			filtered = append(filtered, arg)
+			continue
+		}
+		switch {
+		case arg == "--config" || arg == "-config":
+			if i+1 < len(os.Args) {
+				globalConfigFlagPath = os.Args[i+1]
+				i++
+			}
+			continue
+		case strings.HasPrefix(arg, "--config="):
+			globalConfigFlagPath = strings.TrimPrefix(arg, "--config=")
+			continue
+		case strings.HasPrefix(arg, "-config="):
+			globalConfigFlagPath = strings.TrimPrefix(arg, "-config=")
+			continue
+		}
+		filtered = append(filtered, arg)
+	}
+	os.Args = filtered
+}
+
+// loadEffectiveConfig resolves the fully-merged Config for root (the
+// caller's own persistence root, including "" for persistence-off),
+// substituting globalConfigFlagPath for the user-level layer when --config
+// was passed. Every config-consuming entry point (bare jig, run,
+// notifications, config show) calls this with the root it already owns
+// rather than assuming a fixed path.
+func loadEffectiveConfig(root string) (config.Config, error) {
+	return config.Load(globalConfigFlagPath, root)
 }

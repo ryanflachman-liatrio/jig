@@ -283,9 +283,12 @@ Global flags:
                             drawing, arrows, and separators. Use on
                             terminals without Nerd Font / Unicode
                             support (TERM=linux, ancient telnet, etc.).
+  --config PATH             use PATH as the user-level config.toml
+                            layer instead of the default XDG location.
 
 Commands:
   init                      scaffold a valid workflow
+  config show               print the fully merged effective config
   notifications check WORKFLOW.toml [--root PATH]
                             inspect notification readiness without sending
   validate WORKFLOW.toml    validate a workflow
