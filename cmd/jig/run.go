@@ -107,10 +107,17 @@ func runRun(args []string) int {
 		}
 	}()
 
+	cfg, err := loadEffectiveConfig(*root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return headless.ExitFailed
+	}
+	applyResolvedGlyphPreset(cfg)
+
 	tel := setupTelemetry(ctx, *root)
 	defer tel.shutdown(context.Background())
 
-	rt, err := newRuntime(*root, tel)
+	rt, err := newRuntime(*root, cfg.Notifications, tel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return headless.ExitFailed

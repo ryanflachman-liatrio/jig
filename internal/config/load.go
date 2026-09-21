@@ -42,10 +42,11 @@ func UserConfigPath() (string, error) {
 
 // ProjectConfigPath resolves the project-level config file path relative to
 // root, which is already the .jig directory itself in every existing
-// caller (Runtime.root, runRun's --root), matching
-// notification.LoadLocalConfig's and prefs.Path's existing join convention.
-// An empty root means persistence-off: this returns "" without joining, so
-// callers never construct an unintended relative path (AGENTS.md).
+// caller (Runtime.root, runRun's --root), matching prefs.Path's join
+// convention (and notification.LoadLocalConfig's, before Unit 3 folded that
+// disk read into this package). An empty root means persistence-off: this
+// returns "" without joining, so callers never construct an unintended
+// relative path (AGENTS.md).
 func ProjectConfigPath(root string) string {
 	if root == "" {
 		return ""
@@ -85,5 +86,11 @@ func loadFile(path string) (Config, error) {
 // that adds fields with a restricted domain (e.g. [ui] glyph_preset) extends
 // this method.
 func (c Config) validate() error {
+	if c.UI.GlyphPreset != "" && c.UI.GlyphPreset != "ascii" && c.UI.GlyphPreset != "unicode" {
+		return ErrConfigInvalid
+	}
+	if err := c.Notifications.validate(); err != nil {
+		return err
+	}
 	return nil
 }

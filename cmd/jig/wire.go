@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"jig/internal/config"
 	"jig/internal/engine"
 	"jig/internal/harness"
 	"jig/internal/notification"
@@ -30,6 +31,7 @@ type Runtime struct {
 	Senders     *notification.SenderRegistry
 
 	root          string
+	notifications notification.LocalConfig
 	mu            sync.Mutex
 	policies      map[string]workflow.NotificationPolicy // runID → frozen resolved policy
 	bindingsByRun map[string][]notification.Binding
@@ -37,17 +39,19 @@ type Runtime struct {
 }
 
 // NewRuntime constructs the shared process runtime. It never contacts a
-// receiver or reads operator configuration on its own until a run is
-// registered; the observer resolves bindings once per RunRegistered call.
-func NewRuntime(root string) (*Runtime, error) {
-	return newRuntime(root, nil)
+// receiver on its own until a run is registered; the observer resolves
+// bindings once per RunRegistered call against the notifications config
+// passed in here (loaded once by the caller via loadEffectiveConfig, Spec 28
+// Unit 3 — Runtime no longer reads operator configuration from disk itself).
+func NewRuntime(root string, notifications config.NotificationsConfig) (*Runtime, error) {
+	return newRuntime(root, notifications, nil)
 }
 
 // newRuntime is [NewRuntime] with an optional telemetry handle. When tel is
 // non-nil, the Manager's executor is wrapped in a telemetry.MetricMux so
 // every step reports OTel spans/metrics alongside the notification runtime.
 // cmd/jig's CLI entry points use this; tests use the exported NewRuntime.
-func newRuntime(root string, tel *telemetryHandle) (*Runtime, error) {
+func newRuntime(root string, notifications config.NotificationsConfig, tel *telemetryHandle) (*Runtime, error) {
 	mgr, err := newManager(root, tel)
 	if err != nil {
 		return nil, err
@@ -65,6 +69,7 @@ func newRuntime(root string, tel *telemetryHandle) (*Runtime, error) {
 		Diagnostics:   diag,
 		Senders:       senders,
 		root:          root,
+		notifications: notifications.ToLocalConfig(),
 		policies:      make(map[string]workflow.NotificationPolicy),
 		bindingsByRun: make(map[string][]notification.Binding),
 	}
@@ -75,16 +80,12 @@ func newRuntime(root string, tel *telemetryHandle) (*Runtime, error) {
 }
 
 // resolveBindings is the bindings function the notification.Lifecycle calls
-// once per RunRegistered. It reads the operator's local configuration and
-// resolves current secrets. Missing config resolves to empty bindings
-// silently, matching FR-05 (missing local config means disabled).
+// once per RunRegistered. It resolves current secrets against the
+// notifications config captured at Runtime construction. Missing/disabled
+// config resolves to empty bindings silently, matching FR-05 (missing local
+// config means disabled).
 func (r *Runtime) resolveBindings(policy workflow.NotificationPolicy) []notification.Binding {
-	cfg, err := notification.LoadLocalConfig(r.root, os.ReadFile)
-	if err != nil {
-		r.Diagnostics.RecordOverflow(err.Error())
-		return nil
-	}
-	_, bindings := notification.ResolveBindings(policy, cfg, notification.Inspection{
+	_, bindings := notification.ResolveBindings(policy, r.notifications, notification.Inspection{
 		ResolveSecret: resolveNamedSecret,
 		DesktopStatus: notification.LocalDesktopStatus,
 	})

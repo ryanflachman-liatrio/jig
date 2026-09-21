@@ -43,7 +43,13 @@ func notificationsCheck(args []string, stdout, stderr io.Writer, deps notificati
 		fmt.Fprintln(stderr, "workflow_invalid: workflow/profile validation failed; run jig validate for details")
 		return 1
 	}
-	report := notification.Inspect(wf.NotificationPolicy(), *root, deps)
+	cfg, err := loadEffectiveConfig(*root)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	applyResolvedGlyphPreset(cfg)
+	report := notification.Inspect(wf.NotificationPolicy(), cfg.Notifications.ToLocalConfig(), deps)
 	report.Render(stdout)
 	if report.Problem {
 		return 1

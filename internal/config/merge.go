@@ -50,7 +50,11 @@ func Merge(base, overlay Config) Config {
 }
 
 func mergeUI(base, overlay UIConfig) UIConfig {
-	return base
+	out := base
+	if overlay.GlyphPreset != "" {
+		out.GlyphPreset = overlay.GlyphPreset
+	}
+	return out
 }
 
 func mergeTUI(base, overlay TUIConfig) TUIConfig {
@@ -65,7 +69,14 @@ func mergeTUI(base, overlay TUIConfig) TUIConfig {
 }
 
 func mergeNotifications(base, overlay NotificationsConfig) NotificationsConfig {
-	return base
+	out := base
+	if overlay.Enabled {
+		out.Enabled = overlay.Enabled
+	}
+	if len(overlay.Destinations) > 0 {
+		out.Destinations = overlay.Destinations
+	}
+	return out
 }
 
 // mergeTelemetry is a placeholder identity merge until Task 4.0 gives

@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -58,40 +56,6 @@ bearer_secret='ops-token'`, false},
 			}
 			if tc.name == "disabled without secrets" && (cfg.Enabled || cfg.Destinations[0].Enabled) {
 				t.Fatal("enabled by default")
-			}
-		})
-	}
-}
-
-func TestLocalConfigRead(t *testing.T) {
-	for _, tc := range []struct {
-		name, root string
-		err        error
-		want       string
-	}{
-		{"persistence off", "", errors.New("CANARY"), ""},
-		{"missing", "root", os.ErrNotExist, ""},
-		{"unreadable", "root", errors.New("CANARY"), "config_unreadable"},
-		{"malformed", "root", nil, "config_invalid"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			calls := 0
-			_, err := LoadLocalConfig(tc.root, func(path string) ([]byte, error) {
-				calls++
-				if path != filepath.Join(tc.root, "notifications.toml") {
-					t.Fatal(path)
-				}
-				return []byte("enabled=CANARY"), tc.err
-			})
-			if tc.root == "" && calls != 0 {
-				t.Fatal("persistence-off read")
-			}
-			if tc.want == "" {
-				if err != nil {
-					t.Fatal(err)
-				}
-			} else if err == nil || err.Error() != tc.want {
-				t.Fatalf("got %v", err)
 			}
 		})
 	}
@@ -257,13 +221,5 @@ func TestResolveBindingsFailureIsolation(t *testing.T) {
 	}
 	if len(bindings[0].Events) != 1 || bindings[0].Events[0] != workflow.RunFailed {
 		t.Fatal("operator expanded policy events")
-	}
-}
-
-func TestReadinessConfigErrorRetainsPolicy(t *testing.T) {
-	p := workflow.NotificationPolicy{Events: []workflow.NotificationEvent{workflow.RunFailed}, Routes: []workflow.NotificationRoute{{Destination: "ops", Events: []workflow.NotificationEvent{workflow.RunFailed}}}}
-	r := Inspect(p, "root", Inspection{ReadFile: func(string) ([]byte, error) { return nil, errors.New("CANARY") }})
-	if !r.Problem || len(r.Destinations) != 1 || r.Destinations[0].Alias != "ops" || r.Destinations[0].Status != "config_unreadable" {
-		t.Fatalf("lost requested policy: %+v", r)
 	}
 }

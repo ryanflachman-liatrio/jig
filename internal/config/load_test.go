@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -25,7 +27,7 @@ func TestLoadFileMissingIsNotError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("missing file: unexpected error %v", err)
 	}
-	if cfg != (Config{}) {
+	if !reflect.DeepEqual(cfg, Config{}) {
 		t.Fatalf("missing file: got %+v, want zero value", cfg)
 	}
 }
@@ -35,7 +37,7 @@ func TestLoadFileEmptyPathIsNotError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("empty path: unexpected error %v", err)
 	}
-	if cfg != (Config{}) {
+	if !reflect.DeepEqual(cfg, Config{}) {
 		t.Fatalf("empty path: got %+v, want zero value", cfg)
 	}
 }
@@ -62,6 +64,42 @@ func TestLoadFileInvalidTOMLIsSanitized(t *testing.T) {
 	}
 }
 
+// TestGlyphPresetCaseSensitivity is the schema validation FR for Unit 3:
+// [ui] glyph_preset accepts only the exact lowercase strings "ascii" and
+// "unicode"; any other casing (including an otherwise-correct value with the
+// wrong case) is ErrConfigInvalid, with no case-folding/normalization.
+func TestGlyphPresetCaseSensitivity(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		bad   bool
+	}{
+		{"ascii", false},
+		{"unicode", false},
+		{"ASCII", true},
+		{"Unicode", true},
+		{"nerd-font", true},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.toml")
+			content := "[ui]\nglyph_preset = " + strconv.Quote(tc.value) + "\n"
+			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := loadFile(path)
+			if tc.bad {
+				if !errors.Is(err, ErrConfigInvalid) {
+					t.Fatalf("glyph_preset=%q: err = %v, want errors.Is(err, ErrConfigInvalid)", tc.value, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("glyph_preset=%q: unexpected error %v", tc.value, err)
+			}
+		})
+	}
+}
+
 func TestLoadFileValidTOML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
@@ -72,7 +110,7 @@ func TestLoadFileValidTOML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("valid TOML: unexpected error %v", err)
 	}
-	if cfg != (Config{}) {
+	if !reflect.DeepEqual(cfg, Config{}) {
 		t.Fatalf("valid TOML with no keys: got %+v, want zero value", cfg)
 	}
 }

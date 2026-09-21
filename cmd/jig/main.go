@@ -24,10 +24,13 @@ func main() {
 	// strip it from os.Args before the subcommand dispatcher so it works
 	// as either a global flag (\`jig --ascii\`) or ahead of a subcommand
 	// (\`jig --ascii run x.toml\`), and subcommand flag.Parse calls do
-	// not see an unknown flag. Every rendered glyph after this point
-	// consults the swapped vocabulary (shared.SetPreset), so downstream
-	// code — TUI, headless prompts, capture — degrades in one place.
-	applyGlobalPresetFlag()
+	// not see an unknown flag. The tri-state result (Spec 28 Unit 3) is
+	// resolved against the merged config's [ui] glyph_preset below, after
+	// loadEffectiveConfig, so a flag always wins but an unset flag can fall
+	// back to config; every rendered glyph after that consults the swapped
+	// vocabulary (shared.SetPreset), so downstream code — TUI, headless
+	// prompts, capture — degrades in one place.
+	globalPresetFlag = applyGlobalPresetFlag()
 	// --config substitutes the resolved user-level config layer (Spec 28
 	// Unit 1). Parsed pre-dispatch, same style and same pass as --ascii, so
 	// it works uniformly ahead of or after a subcommand and no subcommand's
@@ -83,11 +86,12 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
 		os.Exit(1)
 	}
+	applyResolvedGlyphPreset(cfg)
 
 	tel := setupTelemetry(ctx, ".jig")
 	defer tel.shutdown(context.Background())
 
-	rt, err := newRuntime(".jig", tel)
+	rt, err := newRuntime(".jig", cfg.Notifications, tel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing jig: %v\n", err)
 		os.Exit(1)
@@ -188,11 +192,12 @@ func runPrune(args []string) int {
 }
 
 // applyGlobalPresetFlag scans os.Args for the --ascii / -ascii /
-// --ascii=<bool> forms, strips the matched token when present, and
-// switches the shared glyph vocabulary to PresetASCII (omp slice 14
-// FR-14.3). Absent the flag the process keeps the default Unicode
-// preset — SetPreset(PresetUnicode) is not called explicitly so this
-// stays a no-op cost path.
+// --ascii=<bool> forms, strips the matched token when present, and returns
+// a tri-state config.GlyphFlag distinguishing "not passed" from an explicit
+// true or false (Spec 28 Unit 3): an explicit --ascii=false must not be
+// confused with the flag being absent, since absence lets [ui] glyph_preset
+// take over (config.ResolveGlyphPreset) while an explicit false must win
+// over any config value.
 //
 // The flag is handled here, before flag.NewFlagSet in any subcommand,
 // so subcommand parsers do not have to redeclare --ascii and never see
@@ -201,7 +206,7 @@ func runPrune(args []string) int {
 //	jig --ascii              (long)
 //	jig -ascii               (short-style, matches Go's flag package)
 //	jig --ascii=true         (explicit true)
-//	jig --ascii=false        (explicit false, treated as absent)
+//	jig --ascii=false        (explicit false)
 //	jig --ascii <subcommand> (position between binary and subcommand)
 //	jig <subcommand> --ascii (any position; the token is stripped
 //	                          before the subcommand's flag.Parse runs)
@@ -209,9 +214,9 @@ func runPrune(args []string) int {
 // The literal token \`--\` terminates flag processing exactly as
 // flag.Parse would: an \`--ascii\` after \`--\` is treated as a
 // positional argument and left in place.
-func applyGlobalPresetFlag() {
+func applyGlobalPresetFlag() config.GlyphFlag {
 	if len(os.Args) < 2 {
-		return
+		return config.GlyphFlagUnset
 	}
 	filtered := os.Args[:1]
 	seen := false
@@ -243,10 +248,15 @@ func applyGlobalPresetFlag() {
 		}
 		filtered = append(filtered, arg)
 	}
-	if seen && value {
-		shared.SetPreset(shared.PresetASCII)
-	}
 	os.Args = filtered
+	switch {
+	case !seen:
+		return config.GlyphFlagUnset
+	case value:
+		return config.GlyphFlagASCII
+	default:
+		return config.GlyphFlagUnicode
+	}
 }
 
 // globalConfigFlagPath holds the --config flag's resolved path (empty when
@@ -304,4 +314,19 @@ func applyGlobalConfigFlag() {
 // rather than assuming a fixed path.
 func loadEffectiveConfig(root string) (config.Config, error) {
 	return config.Load(globalConfigFlagPath, root)
+}
+
+// globalPresetFlag holds --ascii's tri-state result (config.GlyphFlagUnset
+// when absent), set once by applyGlobalPresetFlag before subcommand
+// dispatch and read by applyResolvedGlyphPreset.
+var globalPresetFlag config.GlyphFlag
+
+// applyResolvedGlyphPreset resolves the active glyph vocabulary from
+// globalPresetFlag and cfg's [ui] glyph_preset (config.ResolveGlyphPreset)
+// and switches the shared vocabulary. Every config-consuming entry point
+// calls this once, right after loadEffectiveConfig, so --ascii and
+// [ui] glyph_preset degrade the same glyphs uniformly across bare jig,
+// run, notifications, and config show.
+func applyResolvedGlyphPreset(cfg config.Config) {
+	shared.SetPreset(config.ResolveGlyphPreset(globalPresetFlag, cfg))
 }

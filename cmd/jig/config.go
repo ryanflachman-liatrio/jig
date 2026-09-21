@@ -35,6 +35,7 @@ func configShow(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	applyResolvedGlyphPreset(cfg)
 
 	enc := toml.NewEncoder(stdout)
 	if err := enc.Encode(cfg); err != nil {

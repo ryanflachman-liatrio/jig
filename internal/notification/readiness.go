@@ -31,27 +31,22 @@ type ReadinessReport struct {
 // Inspection provides read-only dependencies. There is deliberately no sender
 // or command runner: readiness can inspect prerequisites but cannot deliver.
 type Inspection struct {
-	ReadFile      func(string) ([]byte, error)
 	ResolveSecret func(string) (string, error)
 	DesktopStatus func() string
 }
 
-func Inspect(policy workflow.NotificationPolicy, root string, deps Inspection) ReadinessReport {
-	cfg, err := LoadLocalConfig(root, deps.ReadFile)
-	if err != nil {
-		report := ReadinessReport{Events: slices.Clone(policy.Events), Status: err.Error(), Problem: true}
-		for _, route := range policy.Routes {
-			report.Destinations = append(report.Destinations, ReadinessEntry{Alias: route.Destination, Events: slices.Clone(route.Events), Status: err.Error()})
-		}
-		return report
-	}
+// Inspect reports local delivery readiness for policy against cfg, the
+// already-loaded and merged [notifications] configuration (internal/config
+// owns loading it from disk; this package only resolves bindings from an
+// in-memory LocalConfig).
+func Inspect(policy workflow.NotificationPolicy, cfg LocalConfig, deps Inspection) ReadinessReport {
 	report, _ := ResolveBindings(policy, cfg, deps)
 	return report
 }
 
 func ResolveBindings(policy workflow.NotificationPolicy, cfg LocalConfig, deps Inspection) (ReadinessReport, []Binding) {
 	report := ReadinessReport{Events: slices.Clone(policy.Events), Enabled: cfg.Enabled, Status: "ready"}
-	if err := cfg.validate(); err != nil {
+	if err := cfg.Validate(); err != nil {
 		report.Status = err.Error()
 		report.Problem = true
 		return report, nil

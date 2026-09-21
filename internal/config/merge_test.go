@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -29,7 +30,7 @@ func TestLoadDefaultsOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: unexpected error %v", err)
 	}
-	if cfg != Default() {
+	if !reflect.DeepEqual(cfg, Default()) {
 		t.Fatalf("Load with no files present: got %+v, want Default()", cfg)
 	}
 }

@@ -5,8 +5,6 @@ package notification
 import (
 	"errors"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -34,45 +32,28 @@ type Destination struct {
 	BearerSecret *string         `toml:"bearer_secret"`
 }
 
-// Fixed reason codes deliberately discard parser, filesystem and secret errors:
-// those errors can embed arbitrary local content, including credentials.
-var (
-	ErrConfigUnreadable = errors.New("config_unreadable")
-	ErrConfigInvalid    = errors.New("config_invalid")
-)
+// ErrConfigInvalid is a fixed reason code that deliberately discards the
+// underlying parser/validation error: that error can embed arbitrary local
+// content, including credentials.
+var ErrConfigInvalid = errors.New("config_invalid")
 
-// LoadLocalConfig never joins paths for an empty persistence root.
-// readFile may be injected for callers without a disk-backed configuration.
-func LoadLocalConfig(root string, readFile func(string) ([]byte, error)) (LocalConfig, error) {
-	if root == "" {
-		return LocalConfig{}, nil
-	}
-	if readFile == nil {
-		readFile = os.ReadFile
-	}
-	data, err := readFile(filepath.Join(root, "notifications.toml"))
-	if errors.Is(err, os.ErrNotExist) {
-		return LocalConfig{}, nil
-	}
-	if err != nil {
-		return LocalConfig{}, ErrConfigUnreadable
-	}
-	return ParseLocalConfig(data)
-}
-
+// ParseLocalConfig parses and validates raw TOML into a LocalConfig. Disk
+// loading is internal/config's responsibility (internal/config.Load); this
+// package only owns the schema, parsing, and validation.
 func ParseLocalConfig(data []byte) (LocalConfig, error) {
 	var cfg LocalConfig
 	md, err := toml.Decode(string(data), &cfg)
 	if err != nil || len(md.Undecoded()) > 0 {
 		return LocalConfig{}, ErrConfigInvalid
 	}
-	if err := cfg.validate(); err != nil {
+	if err := cfg.Validate(); err != nil {
 		return LocalConfig{}, err
 	}
 	return cfg, nil
 }
 
-func (cfg LocalConfig) validate() error {
+// Validate checks alias/type/destination schema constraints.
+func (cfg LocalConfig) Validate() error {
 	aliases := map[string]bool{}
 	types := map[DestinationType]bool{}
 	for _, d := range cfg.Destinations {

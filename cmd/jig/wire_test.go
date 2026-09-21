@@ -5,6 +5,7 @@ import (
 	"context"
 	"testing"
 
+	"jig/internal/config"
 	"jig/internal/notification"
 	"jig/internal/workflow"
 )
@@ -22,7 +23,7 @@ func TestNewManagerUsesPortableBuiltinRoster(t *testing.T) {
 
 func TestNewRuntimeSharesOneDispatcher(t *testing.T) {
 	t.Chdir(t.TempDir())
-	rt, err := NewRuntime("")
+	rt, err := NewRuntime("", config.NotificationsConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +37,7 @@ func TestNewRuntimeSharesOneDispatcher(t *testing.T) {
 
 func TestRuntimePrepareRunRecordsPolicy(t *testing.T) {
 	t.Chdir(t.TempDir())
-	rt, err := NewRuntime("")
+	rt, err := NewRuntime("", config.NotificationsConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +65,7 @@ func TestRuntimePrepareRunRecordsPolicy(t *testing.T) {
 // misinterpreted as non-empty, printing noise on every ordinary run.
 func TestDrainDiagnosticsToIsSilentWhenEmpty(t *testing.T) {
 	t.Chdir(t.TempDir())
-	rt, err := NewRuntime("")
+	rt, err := NewRuntime("", config.NotificationsConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +82,7 @@ func TestDrainDiagnosticsToIsSilentWhenEmpty(t *testing.T) {
 // recorded diagnostic is actually drained to the writer.
 func TestDrainDiagnosticsToRendersWhenPresent(t *testing.T) {
 	t.Chdir(t.TempDir())
-	rt, err := NewRuntime("")
+	rt, err := NewRuntime("", config.NotificationsConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}

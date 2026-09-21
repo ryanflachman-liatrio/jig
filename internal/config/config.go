@@ -4,6 +4,8 @@
 // file, and CLI flags into one effective value. See docs/ARCHITECTURE.md.
 package config
 
+import "jig/internal/notification"
+
 // Config is the fully-typed, merged configuration surface. Each nested table
 // corresponds to one TOML table ([ui], [tui], [notifications], [telemetry]).
 // Fields are added to the nested structs by the unit that owns them; this
@@ -17,7 +19,13 @@ type Config struct {
 
 // UIConfig holds general presentation defaults not owned by a more specific
 // table.
-type UIConfig struct{}
+type UIConfig struct {
+	// GlyphPreset selects the glyph vocabulary (shared.SymbolPreset) when no
+	// --ascii/--ascii=<bool> flag is passed. Exactly "ascii" or "unicode"
+	// (case-sensitive, no normalization); "" means unset (see glyph.go's
+	// ResolveGlyphPreset). Defaults to "unicode".
+	GlyphPreset string `toml:"glyph_preset"`
+}
 
 // TUIConfig holds terminal-UI display preferences (formerly .jig/tui.json).
 //
@@ -50,8 +58,26 @@ func (c TUIConfig) CompactToolGroupsOrDefault() bool {
 }
 
 // NotificationsConfig holds operator notification bindings (formerly
-// .jig/notifications.toml).
-type NotificationsConfig struct{}
+// .jig/notifications.toml), reusing notification's own destination types
+// rather than redeclaring their shape.
+type NotificationsConfig struct {
+	Enabled      bool                       `toml:"enabled"`
+	Destinations []notification.Destination `toml:"destination"`
+}
+
+// ToLocalConfig converts to notification.LocalConfig, the shape
+// notification.Inspect/ResolveBindings consume. internal/config owns this
+// conversion; internal/notification has no config-package dependency.
+func (c NotificationsConfig) ToLocalConfig() notification.LocalConfig {
+	return notification.LocalConfig{Enabled: c.Enabled, Destinations: c.Destinations}
+}
+
+// validate delegates to notification.LocalConfig's own alias/type/destination
+// schema checks so [notifications] failures produce the same ErrConfigInvalid
+// as any other table.
+func (c NotificationsConfig) validate() error {
+	return c.ToLocalConfig().Validate()
+}
 
 // TelemetryConfig holds OpenTelemetry/Prometheus exporter defaults (formerly
 // OTEL_*/JIG_TELEMETRY_* env vars only).

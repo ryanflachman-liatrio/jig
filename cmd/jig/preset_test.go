@@ -5,108 +5,121 @@ import (
 	"reflect"
 	"testing"
 
+	"jig/internal/config"
 	"jig/internal/tui/shared"
 )
 
 // TestApplyGlobalPresetFlag_StripsFlag proves applyGlobalPresetFlag
 // removes the --ascii token from os.Args so downstream subcommand flag
-// parsers never see it. Covers the positional variants documented on
+// parsers never see it, and returns the correct tri-state config.GlyphFlag
+// (Spec 28 Unit 3: an explicit --ascii=false must be distinguishable from
+// the flag being absent). Covers the positional variants documented on
 // the function.
 func TestApplyGlobalPresetFlag_StripsFlag(t *testing.T) {
-	t.Cleanup(resetPreset)
-
 	tests := []struct {
-		name string
-		in   []string
-		want []string
+		name     string
+		in       []string
+		want     []string
+		wantFlag config.GlyphFlag
 	}{
 		{
-			name: "long form before subcommand",
-			in:   []string{"jig", "--ascii", "run", "wf.toml"},
-			want: []string{"jig", "run", "wf.toml"},
+			name:     "long form before subcommand",
+			in:       []string{"jig", "--ascii", "run", "wf.toml"},
+			want:     []string{"jig", "run", "wf.toml"},
+			wantFlag: config.GlyphFlagASCII,
 		},
 		{
-			name: "long form after subcommand",
-			in:   []string{"jig", "run", "--ascii", "wf.toml"},
-			want: []string{"jig", "run", "wf.toml"},
+			name:     "long form after subcommand",
+			in:       []string{"jig", "run", "--ascii", "wf.toml"},
+			want:     []string{"jig", "run", "wf.toml"},
+			wantFlag: config.GlyphFlagASCII,
 		},
 		{
-			name: "short form",
-			in:   []string{"jig", "-ascii"},
-			want: []string{"jig"},
+			name:     "short form",
+			in:       []string{"jig", "-ascii"},
+			want:     []string{"jig"},
+			wantFlag: config.GlyphFlagASCII,
 		},
 		{
-			name: "explicit true value",
-			in:   []string{"jig", "--ascii=true", "help"},
-			want: []string{"jig", "help"},
+			name:     "explicit true value",
+			in:       []string{"jig", "--ascii=true", "help"},
+			want:     []string{"jig", "help"},
+			wantFlag: config.GlyphFlagASCII,
 		},
 		{
-			name: "explicit false value",
-			in:   []string{"jig", "--ascii=false", "help"},
-			want: []string{"jig", "help"},
+			name:     "explicit false value",
+			in:       []string{"jig", "--ascii=false", "help"},
+			want:     []string{"jig", "help"},
+			wantFlag: config.GlyphFlagUnicode,
 		},
 		{
-			name: "no flag present",
-			in:   []string{"jig", "run", "wf.toml"},
-			want: []string{"jig", "run", "wf.toml"},
+			name:     "no flag present",
+			in:       []string{"jig", "run", "wf.toml"},
+			want:     []string{"jig", "run", "wf.toml"},
+			wantFlag: config.GlyphFlagUnset,
 		},
 		{
-			name: "after -- terminator (treated as positional)",
-			in:   []string{"jig", "run", "--", "--ascii"},
-			want: []string{"jig", "run", "--", "--ascii"},
+			name:     "after -- terminator (treated as positional)",
+			in:       []string{"jig", "run", "--", "--ascii"},
+			want:     []string{"jig", "run", "--", "--ascii"},
+			wantFlag: config.GlyphFlagUnset,
 		},
 		{
-			name: "multiple occurrences all stripped",
-			in:   []string{"jig", "--ascii", "run", "--ascii", "wf.toml"},
-			want: []string{"jig", "run", "wf.toml"},
+			name:     "multiple occurrences all stripped",
+			in:       []string{"jig", "--ascii", "run", "--ascii", "wf.toml"},
+			want:     []string{"jig", "run", "wf.toml"},
+			wantFlag: config.GlyphFlagASCII,
 		},
 		{
-			name: "only binary name",
-			in:   []string{"jig"},
-			want: []string{"jig"},
+			name:     "only binary name",
+			in:       []string{"jig"},
+			want:     []string{"jig"},
+			wantFlag: config.GlyphFlagUnset,
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			resetPreset()
 			original := os.Args
 			os.Args = append([]string(nil), tt.in...)
 			t.Cleanup(func() { os.Args = original })
 
-			applyGlobalPresetFlag()
+			got := applyGlobalPresetFlag()
 			if !reflect.DeepEqual(os.Args, tt.want) {
 				t.Errorf("os.Args = %v, want %v", os.Args, tt.want)
+			}
+			if got != tt.wantFlag {
+				t.Errorf("applyGlobalPresetFlag() = %v, want %v", got, tt.wantFlag)
 			}
 		})
 	}
 }
 
-// TestApplyGlobalPresetFlag_SwitchesPreset proves that a truthy --ascii
-// switches the shared vocabulary. Covers the round trip: a run without
-// the flag keeps Unicode; a run with the flag lands on ASCII; explicit
-// --ascii=false is a no-op (kept for completeness, since the default
-// is Unicode).
-func TestApplyGlobalPresetFlag_SwitchesPreset(t *testing.T) {
+// TestApplyResolvedGlyphPreset_SwitchesPreset proves the tri-state flag
+// returned by applyGlobalPresetFlag switches the shared vocabulary once
+// combined with a Config via applyResolvedGlyphPreset. Covers the round
+// trip: absent keeps Unicode; the flag lands on ASCII; explicit
+// --ascii=false stays Unicode even when config asks for ascii.
+func TestApplyResolvedGlyphPreset_SwitchesPreset(t *testing.T) {
 	t.Cleanup(resetPreset)
 
 	tests := []struct {
 		name string
-		args []string
+		flag config.GlyphFlag
+		cfg  config.Config
 		want string
 	}{
-		{"absent keeps Unicode", []string{"jig", "help"}, "✓"},
-		{"--ascii flips to ASCII", []string{"jig", "--ascii", "help"}, "[ok]"},
-		{"--ascii=true flips to ASCII", []string{"jig", "--ascii=true"}, "[ok]"},
-		{"--ascii=false stays Unicode", []string{"jig", "--ascii=false"}, "✓"},
+		{"absent keeps Unicode", config.GlyphFlagUnset, config.Config{}, "✓"},
+		{"ascii flag flips to ASCII", config.GlyphFlagASCII, config.Config{}, "[ok]"},
+		{"explicit unicode flag wins over config ascii", config.GlyphFlagUnicode, config.Config{UI: config.UIConfig{GlyphPreset: "ascii"}}, "✓"},
+		{"unset flag falls back to config ascii", config.GlyphFlagUnset, config.Config{UI: config.UIConfig{GlyphPreset: "ascii"}}, "[ok]"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			resetPreset()
-			original := os.Args
-			os.Args = append([]string(nil), tt.args...)
-			t.Cleanup(func() { os.Args = original })
+			globalPresetFlag = tt.flag
+			t.Cleanup(func() { globalPresetFlag = config.GlyphFlagUnset })
 
-			applyGlobalPresetFlag()
+			applyResolvedGlyphPreset(tt.cfg)
 			if got := shared.IconSuccess; got != tt.want {
 				t.Errorf("IconSuccess = %q, want %q", got, tt.want)
 			}
