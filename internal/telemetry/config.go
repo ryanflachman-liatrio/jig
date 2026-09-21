@@ -151,6 +151,19 @@ func ValidateResourceAttrKey(key string) error {
 	return nil
 }
 
+// KillSwitchActive reports whether OTEL_SDK_DISABLED unconditionally
+// disables telemetry, reading and bool-parsing it directly from the process
+// environment. Exported so internal/config can call it a second time after
+// merging the [telemetry] table across every config.toml layer (Spec 28
+// Unit 4), forcing the merged Mode to off regardless of what any layer,
+// including an explicit config.toml value, set it to. This keeps the
+// env-var name and bool-parsing rule in one place instead of duplicating it
+// between packages.
+func KillSwitchActive() bool {
+	v, ok := os.LookupEnv("OTEL_SDK_DISABLED")
+	return ok && parseBool(v)
+}
+
 // EnvLookup is the interface [ResolveConfig] uses to read env vars. The
 // default (os.LookupEnv) is production; tests inject a map-backed lookup so
 // they can exercise every env-var combination without touching process state.
@@ -316,8 +329,13 @@ func ResolveConfig(env EnvLookup, prefs Prefs, tel TelemetryFields) (Config, err
 		cfg.Mode = deriveMode(cfg)
 	}
 
-	// Kill switch: overrides every other source.
-	if v, ok := env("OTEL_SDK_DISABLED"); ok && parseBool(v) {
+	// Kill switch: overrides every other source. KillSwitchActive reads the
+	// real process environment directly rather than the injectable env
+	// param above, so it behaves identically for every caller (Spec 28 Unit
+	// 4): internal/config calls the same function a second time, after
+	// merging config.toml's [telemetry] layers on top of this env-derived
+	// base, to force Mode off regardless of what config.toml set it to.
+	if KillSwitchActive() {
 		cfg.Mode = ModeOff
 	}
 

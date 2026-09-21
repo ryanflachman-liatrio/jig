@@ -79,9 +79,31 @@ func (c NotificationsConfig) validate() error {
 	return c.ToLocalConfig().Validate()
 }
 
-// TelemetryConfig holds OpenTelemetry/Prometheus exporter defaults (formerly
-// OTEL_*/JIG_TELEMETRY_* env vars only).
-type TelemetryConfig struct{}
+// TelemetryConfig mirrors every field telemetry.ResolveConfig resolves.
+// Unlike every other table, [telemetry]'s built-in-defaults layer is not a
+// hardcoded zero value: it is populated dynamically from today's
+// OTEL_*/JIG_TELEMETRY_* env vars at Load time (see telemetry.go), so a
+// machine with only env vars set and no config.toml behaves exactly as it
+// does today. User/project config.toml values layer on top of that
+// env-derived base and win, a deliberate inversion of env-vars-are-
+// authoritative for every other table.
+type TelemetryConfig struct {
+	Mode               string            `toml:"mode"`
+	ServiceName        string            `toml:"service_name"`
+	ResourceAttributes map[string]string `toml:"resource_attributes"`
+	OTLPEndpoint       string            `toml:"otlp_endpoint"`
+	OTLPProtocol       string            `toml:"otlp_protocol"`
+	// OTLPHeaders is a deliberate, called-out exception to config.toml's
+	// "no secrets" default posture: operators who set bearer-token-style
+	// OTLP headers here should treat config.toml like a file containing a
+	// secret (spec Non-Goal #6 / Security Considerations).
+	OTLPHeaders     map[string]string `toml:"otlp_headers"`
+	OTLPInsecure    bool              `toml:"otlp_insecure"`
+	MetricsExporter string            `toml:"metrics_exporter"`
+	TracesExporter  string            `toml:"traces_exporter"`
+	PrometheusAddr  string            `toml:"prometheus_addr"`
+	PrometheusPath  string            `toml:"prometheus_path"`
+}
 
 // Default returns the built-in defaults layer: the lowest-precedence input
 // to Merge. Every field not set by a documented non-zero default keeps its

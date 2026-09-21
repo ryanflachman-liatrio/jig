@@ -30,8 +30,19 @@ func Load(userPathOverride, root string) (Config, error) {
 		return Config{}, err
 	}
 
-	merged := Merge(Default(), userCfg)
+	// [telemetry]'s built-in-defaults layer is the one exception to a
+	// hardcoded zero value (Unit 4): it is populated from today's env vars
+	// at resolution time, so config.toml's user/project layers below can
+	// override an env-derived value instead of the other way around.
+	base := Default()
+	base.Telemetry, err = telemetryDefaultsFromEnv()
+	if err != nil {
+		return Config{}, err
+	}
+
+	merged := Merge(base, userCfg)
 	merged = Merge(merged, projectCfg)
+	merged.Telemetry = applyTelemetryKillSwitch(merged.Telemetry)
 	return merged, nil
 }
 
@@ -79,8 +90,59 @@ func mergeNotifications(base, overlay NotificationsConfig) NotificationsConfig {
 	return out
 }
 
-// mergeTelemetry is a placeholder identity merge until Task 4.0 gives
-// TelemetryConfig fields and an env-derived base layer (internal/config/telemetry.go).
+// mergeTelemetry merges base (the env-derived defaults layer for the first
+// call, or a lower-precedence config.toml layer for the second) with
+// overlay per key, matching every other table's convention: overlay's
+// non-zero fields win, zero fields fall through to base. Map fields merge
+// per key (mergeStringMap) rather than replacing the whole map, matching
+// telemetry.ResolveConfig's own additive header/resource-attribute merge.
 func mergeTelemetry(base, overlay TelemetryConfig) TelemetryConfig {
-	return base
+	out := base
+	if overlay.Mode != "" {
+		out.Mode = overlay.Mode
+	}
+	if overlay.ServiceName != "" {
+		out.ServiceName = overlay.ServiceName
+	}
+	out.ResourceAttributes = mergeStringMap(out.ResourceAttributes, overlay.ResourceAttributes)
+	if overlay.OTLPEndpoint != "" {
+		out.OTLPEndpoint = overlay.OTLPEndpoint
+	}
+	if overlay.OTLPProtocol != "" {
+		out.OTLPProtocol = overlay.OTLPProtocol
+	}
+	out.OTLPHeaders = mergeStringMap(out.OTLPHeaders, overlay.OTLPHeaders)
+	if overlay.OTLPInsecure {
+		out.OTLPInsecure = overlay.OTLPInsecure
+	}
+	if overlay.MetricsExporter != "" {
+		out.MetricsExporter = overlay.MetricsExporter
+	}
+	if overlay.TracesExporter != "" {
+		out.TracesExporter = overlay.TracesExporter
+	}
+	if overlay.PrometheusAddr != "" {
+		out.PrometheusAddr = overlay.PrometheusAddr
+	}
+	if overlay.PrometheusPath != "" {
+		out.PrometheusPath = overlay.PrometheusPath
+	}
+	return out
+}
+
+// mergeStringMap merges overlay's keys onto a copy of base, per key,
+// leaving base untouched. An empty overlay returns base as-is (no
+// allocation for the common no-override case).
+func mergeStringMap(base, overlay map[string]string) map[string]string {
+	if len(overlay) == 0 {
+		return base
+	}
+	out := make(map[string]string, len(base)+len(overlay))
+	for k, v := range base {
+		out[k] = v
+	}
+	for k, v := range overlay {
+		out[k] = v
+	}
+	return out
 }

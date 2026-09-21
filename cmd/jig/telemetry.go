@@ -39,22 +39,24 @@ type telemetryHandle struct {
 	stop     func()
 }
 
-// setupTelemetry resolves env + .jig/telemetry.json (workflow contribution is
-// deferred to registerRun) and constructs the Provider and EventExporter. It
-// returns a handle whose Shutdown is a no-op when telemetry is off, so both
-// TUI and headless can defer it unconditionally.
+// setupTelemetry resolves the merged config's [telemetry] table (workflow
+// contribution is deferred to registerRun) and constructs the Provider and
+// EventExporter. It returns a handle whose Shutdown is a no-op when
+// telemetry is off, so both TUI and headless can defer it unconditionally.
+// root keeps flowing through unchanged so runRun's own --root value still
+// selects the right project-level config.toml (Spec 28 Unit 4).
 //
-// Failing to resolve a config is intentionally non-fatal: a malformed prefs
-// file or an OTLP dial failure logs a warning and continues with a noop
-// exporter, matching the plan's "exporter failures never change exit codes"
-// contract.
+// Failing to resolve a config is intentionally non-fatal: a malformed
+// config file or an OTLP dial failure logs a warning and continues with a
+// noop exporter, matching the plan's "exporter failures never change exit
+// codes" contract.
 func setupTelemetry(ctx context.Context, root string) *telemetryHandle {
-	prefs := telemetry.LoadPrefs(root)
-	cfg, err := telemetry.ResolveConfig(telemetry.OSEnv(), prefs, telemetry.TelemetryFields{})
+	effective, err := loadEffectiveConfig(root)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "telemetry: %v\n", err)
 		return &telemetryHandle{stop: func() {}}
 	}
+	cfg := effective.Telemetry.ToTelemetryConfig()
 	if cfg.OnWarn == nil {
 		cfg.OnWarn = func(e error) { fmt.Fprintln(os.Stderr, e.Error()) }
 	}

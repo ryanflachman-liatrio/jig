@@ -112,8 +112,11 @@ func TestResolveConfigPrecedence(t *testing.T) {
 }
 
 func TestResolveConfigKillSwitch(t *testing.T) {
+	// KillSwitchActive reads the real process environment directly (not the
+	// injectable env param below), so OTEL_SDK_DISABLED must be set via
+	// t.Setenv rather than folded into the MapEnv fixture.
+	t.Setenv("OTEL_SDK_DISABLED", "true")
 	env := MapEnv(map[string]string{
-		"OTEL_SDK_DISABLED":             "true",
 		"JIG_TELEMETRY_MODE":            "both",
 		"OTEL_EXPORTER_OTLP_ENDPOINT":   "https://collector",
 		"JIG_TELEMETRY_PROMETHEUS_ADDR": "127.0.0.1:9464",
@@ -124,6 +127,33 @@ func TestResolveConfigKillSwitch(t *testing.T) {
 	}
 	if cfg.Mode != ModeOff {
 		t.Errorf("Mode = %q, want off (kill switch)", cfg.Mode)
+	}
+}
+
+func TestKillSwitchActive(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  bool
+		val  string
+		want bool
+	}{
+		{"unset", false, "", false},
+		{"true", true, "true", true},
+		{"1", true, "1", true},
+		{"false", true, "false", false},
+		{"empty value set", true, "", false},
+		{"garbage", true, "CANARY", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.set {
+				t.Setenv("OTEL_SDK_DISABLED", tc.val)
+			} else {
+				os.Unsetenv("OTEL_SDK_DISABLED")
+			}
+			if got := KillSwitchActive(); got != tc.want {
+				t.Errorf("KillSwitchActive() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
