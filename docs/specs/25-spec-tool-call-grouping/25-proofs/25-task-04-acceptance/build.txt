@@ -1,2 +1,0 @@
-Command: go build ./cmd/jig
-Result: PASS (exit 0; no output)

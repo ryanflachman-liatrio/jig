@@ -1,2 +1,0 @@
-$ gofmt -l <changed-go-files>
-exit=0

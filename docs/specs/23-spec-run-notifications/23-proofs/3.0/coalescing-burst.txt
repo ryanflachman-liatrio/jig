@@ -1,4 +1,0 @@
-=== RUN   TestAttentionCoalescingBurst
---- PASS: TestAttentionCoalescingBurst (0.00s)
-PASS
-ok  	jig/internal/notification	0.355s

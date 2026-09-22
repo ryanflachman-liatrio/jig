@@ -1,2 +1,0 @@
-$ go build ./cmd/jig
-EXIT=0

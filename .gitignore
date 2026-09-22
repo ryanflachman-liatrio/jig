@@ -13,3 +13,18 @@ coverage.out
 .DS_Store
 *.swp
 /.claude/worktrees
+
+# docs/ is ephemeral by default: specs, plans, epics, ADRs, and one-off
+# design notes live on disk for agents to read but are not committed.
+# Only the durable reference docs in AGENTS.md's reading map are tracked.
+docs/*
+!docs/ARCHITECTURE.md
+!docs/CONVENTIONS.md
+!docs/GRAPH_ENGINEERING.md
+!docs/TUI.md
+!docs/TESTING.md
+!docs/workflow-schema.md
+!docs/headless.md
+!docs/operations.md
+!docs/security-monitoring.md
+!docs/observability.md

@@ -11,6 +11,10 @@ and executable tests establish what ships; the schema documents the authoring
 contract. If they disagree, identify and reconcile the discrepancy within the
 task. Specs, plans, proofs, and ADRs explain intent and history; their presence
 does not prove that a feature exists or that an old design still applies.
+Everything under `docs/` except the reading-map files below is working
+history: it lives on disk (`docs/adr`, `docs/plans`, `docs/specs`,
+`docs/epics`, `docs/research`, and one-off design notes) but is git-ignored,
+not committed. Only the durable reference docs in the table are tracked.
 
 | When working on | Read |
 |---|---|

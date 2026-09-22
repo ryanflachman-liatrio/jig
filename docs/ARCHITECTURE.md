@@ -138,6 +138,7 @@ lines, never terminal rows. `internal/tui/review` handles interaction;
 - [TUI engineering](TUI.md), [Go conventions](CONVENTIONS.md), [testing](TESTING.md).
 - [Operations](operations.md), [headless execution](headless.md),
   [observability](observability.md), [security monitoring](security-monitoring.md).
-- [ADRs](adr/README.md) and [engine design history](engine-design.md) explain
-  earlier decisions. Verify API sketches and historical guarantees against
-  the current implementation before using them.
+- `docs/adr/`, `docs/plans/`, `docs/specs/`, `docs/epics/`, and `docs/research/`
+  hold working history (decisions, specs, plans, proofs) on disk but are not
+  committed — see [AGENTS.md](../AGENTS.md). Verify API sketches and
+  historical guarantees against the current implementation before using them.
