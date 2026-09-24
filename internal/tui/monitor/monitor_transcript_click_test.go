@@ -6,18 +6,19 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"jig/internal/transcript"
+	"jig/internal/tui/shared"
 )
 
 // clickTranscriptLine builds a MouseLeft click on the transcript panel that
 // lands on the given body-line index. The Y math mirrors updateMouse:
-// screen y = panels.transcript.y + line - chatVP.YOffset(). The x is anchored
-// to the panel's leftmost content column so tests never accidentally hit the
-// panel border.
+// screen y = panels.transcript.y + pinned chrome rows + line -
+// chatVP.YOffset(). The x is anchored to the panel's leftmost content column
+// so tests never accidentally hit the panel border.
 func clickTranscriptLine(m Model, line int) tea.MouseClickMsg {
 	panels := m.mousePanels()
 	return tea.MouseClickMsg{
 		X:      panels.transcript.x + 1,
-		Y:      panels.transcript.y + line - m.chatVP.YOffset(),
+		Y:      panels.transcript.y + len(m.transcriptChrome()) + line - m.chatVP.YOffset(),
 		Button: tea.MouseLeft,
 	}
 }
@@ -438,6 +439,7 @@ func TestTranscriptClickExcludedWhileSearchOpen(t *testing.T) {
 	prevExpand := m.chatItemExpand[item.key]
 
 	m.searchOpen = true
+	m.searchInput = shared.NewInputTextarea("find in loaded page", 20, 1, shared.WithoutBorder())
 	msg := clickTranscriptItem(t, m, item.key)
 	m, _ = m.Update(msg)
 	if m.chatItemExpand[item.key] != prevExpand {

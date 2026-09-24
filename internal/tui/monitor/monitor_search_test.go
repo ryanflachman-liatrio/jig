@@ -385,3 +385,83 @@ func TestSearchInputAndContextualNavigation(t *testing.T) {
 		t.Fatalf("clearing search did not restore loaded transcript:\n%s", body)
 	}
 }
+
+// TestTranscriptSearchChromePinnedOverLoadedItems covers G3: the search input,
+// match status, and filter picker used to render only in the empty-transcript
+// branch, so with a loaded transcript "/" and "F" worked but showed nothing.
+// The chrome is now pinned above the viewport — visible at any scroll offset —
+// and the viewport shrinks by exactly the chrome rows so item line ranges,
+// cursor visibility, and click hit-testing stay aligned.
+func TestTranscriptSearchChromePinnedOverLoadedItems(t *testing.T) {
+	blocks := make([]transcript.Block, 30)
+	for i := range blocks {
+		blocks[i] = transcript.Block{Type: transcript.BlockText, Text: fmt.Sprintf("content %02d", i+1)}
+	}
+	blocks[25].Text = "the needle block"
+	runDir := writeTranscript(t, "a", []transcript.Entry{{Role: transcript.RoleAssistant, Blocks: blocks}})
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+	m.chatAutoScroll = false
+	m.chatVP.GotoBottom()
+	scrolled := m.chatVP.YOffset()
+	if scrolled == 0 {
+		t.Fatal("fixture transcript does not scroll; test needs a taller body")
+	}
+	assertChromeFits := func(stage string) {
+		t.Helper()
+		if got := m.chatVP.Height() + len(m.transcriptChrome()); got != m.transcriptInnerH {
+			t.Fatalf("%s: viewport %d + chrome %d rows != panel height %d",
+				stage, m.chatVP.Height(), len(m.transcriptChrome()), m.transcriptInnerH)
+		}
+	}
+
+	m, _ = m.Update(key("/"))
+	if !m.searchOpen {
+		t.Fatal("/ did not open transcript search")
+	}
+	if view := ansiStrip(m.View()); !strings.Contains(view, "find in loaded page") {
+		t.Fatalf("search input not visible over a loaded transcript:\n%s", view)
+	}
+	if m.chatVP.YOffset() == 0 {
+		t.Fatal("opening search jumped the transcript to the top")
+	}
+	assertChromeFits("search open")
+
+	for _, r := range "needle" {
+		m, _ = m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	m, _ = m.Update(key("enter"))
+	if view := ansiStrip(m.View()); !strings.Contains(view, "/needle · 1/1 blocks") {
+		t.Fatalf("search status not visible after submit:\n%s", view)
+	}
+	assertChromeFits("search status")
+
+	m, _ = m.Update(key("F"))
+	if view := ansiStrip(m.View()); !strings.Contains(view, "Transcript filters") {
+		t.Fatalf("filter picker not visible over a loaded transcript:\n%s", view)
+	}
+	assertChromeFits("filters open")
+	m, _ = m.Update(key("esc"))
+	assertChromeFits("filters closed")
+
+	// With the status row pinned, a click on the first viewport row must hit
+	// the item rendered there, not one chrome-height further down. "e" matches
+	// every block, so the pinned status row stays and nothing is hidden.
+	m.searchQuery = "e"
+	m.rebuildTranscriptItemState(m.selectedTranscriptItemKey())
+	m.rerunSearch()
+	m.refreshPanels()
+	if len(m.transcriptChrome()) == 0 || len(m.chatCursorTargets) < 10 {
+		t.Fatalf("click fixture wants chrome and many targets: chrome=%d targets=%d",
+			len(m.transcriptChrome()), len(m.chatCursorTargets))
+	}
+	target := m.chatCursorTargets[len(m.chatCursorTargets)-1]
+	rng := m.chatItemLineRanges[transcriptLineKey{itemKey: target.key}]
+	m.chatVP.SetYOffset(rng.start)
+	m.chatItemCursor = 0
+	m, _ = m.Update(clickTranscriptLine(m, rng.start))
+	if m.chatItemCursor != len(m.chatCursorTargets)-1 {
+		t.Fatalf("click on first viewport row selected cursor %d, want %d", m.chatItemCursor, len(m.chatCursorTargets)-1)
+	}
+}

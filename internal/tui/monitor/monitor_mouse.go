@@ -125,8 +125,9 @@ func itemIsExpandable(item transcriptItem) bool {
 // exchange without losing their place ("reader trap" rule in
 // docs/plans/clickable-transcript.md).
 //
-// panelY is the mouse Y in panel-content coordinates
-// (mouse.Y - panels.transcript.y). Blank spacer lines between items, the
+// panelY is the mouse Y in viewport coordinates (mouse.Y -
+// panels.transcript.y, less the pinned search/filter chrome rows); clicks on
+// the chrome arrive negative and are ignored. Blank spacer lines between items, the
 // page-edge banner, and file view all resolve to no hit and leave the
 // model untouched.
 func (m *Model) clickTranscript(panelY int) {
@@ -182,7 +183,7 @@ func (m Model) updateMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 			}
 		} else if panels.transcriptVisible && panels.transcript.contains(mouse.X, mouse.Y) {
 			m.focus = focusTranscript
-			m.clickTranscript(mouse.Y - panels.transcript.y)
+			m.clickTranscript(mouse.Y - panels.transcript.y - len(m.transcriptChrome()))
 		}
 	case tea.MouseWheelMsg:
 		delta := 0

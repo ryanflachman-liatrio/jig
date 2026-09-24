@@ -6,6 +6,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"jig/internal/datastore"
 	"jig/internal/engine"
 	"jig/internal/step"
@@ -570,9 +572,80 @@ func (m *Model) prunePageState() {
 	}
 }
 
+// transcriptChrome renders the search input, search/filter status, and filter
+// picker. They sit pinned above the Transcript viewport rather than inside
+// chatBody, so they stay visible however far the reader has scrolled and never
+// shift the item line ranges that navigation and mouse hit-testing index by.
+// It returns nil when there is nothing to show.
+func (m Model) transcriptChrome() []string {
+	if m.selKind == "file" {
+		return nil
+	}
+	var lines []string
+	if m.searchOpen {
+		lines = append(lines, "  "+shared.Theme.Accent.Render("/")+" "+m.searchInput.View())
+	}
+	var viewState []string
+	if status := m.searchStatus(); status != "" {
+		viewState = append(viewState, status)
+	}
+	if filters := m.filterSummary(); filters != "" {
+		viewState = append(viewState, "filters: "+filters)
+	}
+	if len(viewState) > 0 {
+		lines = append(lines, "  "+shared.Theme.Chat.Hint.Render(strings.Join(viewState, "  •  ")))
+	}
+	if m.filterOpen {
+		lines = append(lines, "  "+shared.Theme.Title.Render("Transcript filters"))
+		for i, label := range filterLabels {
+			mark := "[ ]"
+			if m.filterEnabled(i) {
+				mark = "[x]"
+			}
+			line := fmt.Sprintf("%s %s", mark, label)
+			if i == m.filterCursor {
+				line = shared.Theme.SelectedLine.Render("› " + line)
+			} else {
+				line = "  " + line
+			}
+			lines = append(lines, "  "+line)
+		}
+		lines = append(lines, "  "+shared.Theme.Chat.Hint.Render("j/k move · space toggle · enter/esc close"))
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	lines = append(lines, "") // spacer above the transcript body
+	// Always leave the viewport at least one row.
+	if limit := m.transcriptInnerH - 1; len(lines) > limit {
+		lines = lines[:max(limit, 0)]
+	}
+	for i := range lines {
+		lines[i] = ansi.Truncate(lines[i], m.transcriptInnerW, shared.EllipsisGlyph)
+	}
+	return lines
+}
+
+// setChatContent sizes the Transcript viewport to the rows left under the
+// pinned chrome, then renders chatBody into it. Every chatVP content refresh
+// goes through here so the viewport height tracks the chrome.
+func (m *Model) setChatContent() {
+	m.chatVP.SetHeight(max(m.transcriptInnerH-len(m.transcriptChrome()), 0))
+	m.chatVP.SetContent(m.chatBody())
+}
+
+// transcriptPanelContent stacks the pinned chrome over the viewport.
+func (m Model) transcriptPanelContent() string {
+	chrome := m.transcriptChrome()
+	if len(chrome) == 0 {
+		return m.chatVP.View()
+	}
+	return strings.Join(chrome, "\n") + "\n" + m.chatVP.View()
+}
+
 // chatBody renders one step's agent chat chain from its transcript. Loaded
 // entries delegate to the normalized item renderer; this branch owns only the
-// empty-state and filter chrome.
+// empty state.
 func (m *Model) chatBody() string {
 	if m.selKind == "file" && m.selFile != "" {
 		return m.fileBody()
@@ -617,37 +690,6 @@ func (m *Model) chatBody() string {
 	// this empty-transcript branch still reports where the step is.
 	header := indicator + "  " + statusStyle(s.status).Render(string(s.status))
 	b.WriteString("  " + header + "\n\n")
-
-	if m.searchOpen {
-		b.WriteString("  " + shared.Theme.Accent.Render("/") + " " + m.searchInput.View() + "\n")
-	}
-	var viewState []string
-	if status := m.searchStatus(); status != "" {
-		viewState = append(viewState, status)
-	}
-	if filters := m.filterSummary(); filters != "" {
-		viewState = append(viewState, "filters: "+filters)
-	}
-	if len(viewState) > 0 {
-		b.WriteString("  " + shared.Theme.Chat.Hint.Render(strings.Join(viewState, "  •  ")) + "\n\n")
-	}
-	if m.filterOpen {
-		b.WriteString("  " + shared.Theme.Title.Render("Transcript filters") + "\n")
-		for i, label := range filterLabels {
-			mark := "[ ]"
-			if m.filterEnabled(i) {
-				mark = "[x]"
-			}
-			line := fmt.Sprintf("%s %s", mark, label)
-			if i == m.filterCursor {
-				line = shared.Theme.SelectedLine.Render("› " + line)
-			} else {
-				line = "  " + line
-			}
-			b.WriteString("  " + line + "\n")
-		}
-		b.WriteString("  " + shared.Theme.Chat.Hint.Render("j/k move · space toggle · enter/esc close") + "\n\n")
-	}
 
 	running := s.status == step.StatusRunning
 	hasTail := false

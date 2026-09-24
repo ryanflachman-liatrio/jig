@@ -530,9 +530,6 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			m.searchInput.SetValue(m.searchQuery)
 			m.chatAutoScroll = false
 			m.refreshPanels()
-			if m.ready {
-				m.chatVP.GotoTop()
-			}
 			return m, textarea.Blink
 		}
 		return m, nil
@@ -541,9 +538,6 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			m.filterOpen = true
 			m.chatAutoScroll = false
 			m.refreshPanels()
-			if m.ready {
-				m.chatVP.GotoTop()
-			}
 		}
 		return m, nil
 	case keybind.Matches(msg, m.keys.ClearView):
@@ -662,7 +656,7 @@ func (m *Model) refreshPanels() {
 		return
 	}
 	m.vp.SetContent(m.listBody())
-	m.chatVP.SetContent(m.chatBody())
+	m.setChatContent()
 	if m.chatAutoScroll {
 		m.chatVP.GotoBottom()
 	}

@@ -134,6 +134,7 @@ func (m *Model) resize() {
 	if m.transcriptInnerW < 1 {
 		m.transcriptInnerW = 1
 	}
+	m.transcriptInnerH = innerH
 
 	if !m.ready {
 		m.vp = viewport.New(viewport.WithWidth(m.stepsInnerW), viewport.WithHeight(innerH))
@@ -170,7 +171,7 @@ func (m *Model) resize() {
 	}
 	m.rebuildRenderer()
 	m.vp.SetContent(m.listBody())
-	m.chatVP.SetContent(m.chatBody())
+	m.setChatContent()
 }
 
 // gateInnerWidth is the content width available to a gate strip's textarea. The

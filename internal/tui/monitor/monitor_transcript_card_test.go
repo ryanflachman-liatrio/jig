@@ -57,6 +57,7 @@ func cloneLineRanges(in map[transcriptLineKey]lineRange) map[transcriptLineKey]l
 func TestTranscriptCardLineRangesCachedAndFresh(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	m.transcriptInnerW = 60
+	m.transcriptInnerH = 6
 	m.chatVP.SetHeight(6)
 	m.setChatPage(syntheticExchangePage(3, 30))
 	m.chatItemExpand[m.chatItems[1].key] = true

@@ -362,6 +362,9 @@ type Model struct {
 	stepsInnerW      int
 	transcriptInnerW int
 	narrow           bool
+	// transcriptInnerH is the Transcript panel's content height; chatVP gets
+	// what remains after the pinned search/filter chrome (setChatContent).
+	transcriptInnerH int
 
 	// lastTranscriptW is the transcript panel inner width the glamour renderer
 	// and per-block cache were last built for; rebuildRenderer invalidates the

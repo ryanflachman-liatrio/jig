@@ -162,6 +162,12 @@ members but retain the complete group, while copying a child copies that exchang
 and copying the group header copies every loaded member. Press `x` to clear the
 current transcript search and filters.
 
+The search input, search/filter status, and filter picker are pinned above the
+Transcript viewport, not rendered into its content. The viewport shrinks by the
+pinned rows, so the controls stay visible at any scroll offset and item line
+ranges keep indexing the content alone. Route viewport content refreshes through
+`setChatContent`, and offset transcript mouse hit-testing by the pinned rows.
+
 Keep render caches local to their owner and include all inputs that affect
 rendering in invalidation decisions (width, content/version, expansion, and
 presentation mode as applicable). Shared map storage under a value receiver

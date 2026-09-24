@@ -36,7 +36,7 @@ func (m *Model) flushDirty() {
 		m.dirtyList = false
 	}
 	if m.dirtyChat {
-		m.chatVP.SetContent(m.chatBody())
+		m.setChatContent()
 		if m.chatAutoScroll {
 			m.chatVP.GotoBottom()
 		}

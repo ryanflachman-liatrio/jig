@@ -540,7 +540,7 @@ func (m Model) View() string {
 		if m.narrow {
 			// Single-panel fallback: render only the focused panel full-width.
 			if m.focus == focusTranscript {
-				panels = shared.BreadcrumbPanel(rightTitle, m.chatVP.View(), m.width, layout.panelH, true)
+				panels = shared.BreadcrumbPanel(rightTitle, m.transcriptPanelContent(), m.width, layout.panelH, true)
 			} else {
 				// Steps or Gate focus shows the Steps panel (the gate has its own strip).
 				panels = shared.BreadcrumbPanel(leftTitle, m.vp.View(), m.width, layout.panelH, m.focus == focusSteps)
@@ -548,7 +548,7 @@ func (m Model) View() string {
 		} else {
 			stepsW, transcriptW, _ := panelSplit(m.width)
 			left := shared.BreadcrumbPanel(leftTitle, m.vp.View(), stepsW, layout.panelH, m.focus == focusSteps)
-			right := shared.BreadcrumbPanel(rightTitle, m.chatVP.View(), transcriptW, layout.panelH, m.focus == focusTranscript)
+			right := shared.BreadcrumbPanel(rightTitle, m.transcriptPanelContent(), transcriptW, layout.panelH, m.focus == focusTranscript)
 			panels = lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 		}
 	}

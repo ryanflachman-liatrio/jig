@@ -483,6 +483,7 @@ func TestMonitorItemNavigationKeepsCursorVisible(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	m.RunDir = runDir
 	m = enterChatStep(t, m, "a")
+	m.transcriptInnerH = 6
 	m.chatVP.SetHeight(6)
 	m.chatVP.GotoTop()
 
@@ -543,6 +544,7 @@ func TestMonitorTallExpandedBlockKeepsHeaderVisible(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	m.RunDir = runDir
 	m = enterChatStep(t, m, "a")
+	m.transcriptInnerH = 6
 	m.chatVP.SetHeight(6)
 	m.chatVP.GotoTop()
 
@@ -570,6 +572,7 @@ func TestMonitorStreamingPreservesBlockNavigationPosition(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	m.RunDir = runDir
 	m = enterChatStep(t, m, "a")
+	m.transcriptInnerH = 6
 	m.chatVP.SetHeight(6)
 	m.chatVP.GotoTop()
 	for range 10 {
