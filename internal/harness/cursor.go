@@ -35,8 +35,8 @@ func (*CursorHarness) PreviewPrompt(spec SessionSpec) string {
 }
 
 // Open spawns cursor-agent acp, authenticates, opens a session at spec.Cwd,
-// and starts the prompt turn in the background. Rejects capability-gated
-// SessionSpec fields this harness does not advertise.
+// and starts the prompt turn in the background. Capability gating happens
+// before Open, in the runner (runner.AgentExecutor.Execute).
 func (h *CursorHarness) Open(ctx context.Context, spec SessionSpec) (Session, error) {
 	events := make(chan Event, 32)
 	sess := &acpSession{events: events, hasSchema: spec.Schema != nil, schema: spec.Schema, partial: spec.Partial}

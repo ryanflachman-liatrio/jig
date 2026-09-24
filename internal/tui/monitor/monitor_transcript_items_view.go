@@ -488,13 +488,10 @@ func itemHasDetail(item transcriptItem) bool {
 
 func (m *Model) writeItemDetail(b *strings.Builder, label, content string, anchor detailAnchor) {
 	shown, hidden := boundTranscriptDetail(content, max(m.transcriptInnerW-8, 1), anchor)
-	// The detail body is currently rendered inside `if expanded { ... }`
-	// so the item's toggle state is always true here; passing expanded=false
-	// lets ExpandHint short-circuit only on hasMore, which keeps the hint
-	// visible whenever content is bounded. jig has no separate "fully
-	// expanded body" state distinct from the row bound, so this is the
-	// correct semantic (epic slice 06, Q-06.1).
-	hint := shared.ExpandHint(false, hidden > 0, m.keys.Toggle.Help().Key)
+	// The detail body renders only for an expanded item, and there is no
+	// larger in-place view — Toggle would collapse it — so the bounded rows
+	// point at copying the full recorded content instead.
+	hint := shared.CopyFullHint(hidden > 0, m.keys.CopyItem.Help().Key)
 	b.WriteString("      " + shared.Theme.Chat.TranscriptLabel.Render(label+":") + "\n")
 	if hidden > 0 && anchor == detailAnchorTail {
 		line := shared.HintLine(shared.EarlierItems(hidden, "line", "lines"), hint)
@@ -616,7 +613,7 @@ func writeDiffSection(m *Model, b *strings.Builder, d *toolcall.Diff, proj *diff
 	rows := renderDiffRows(proj, d.Path, contentWidth, true, m.insetRenderer, expandKey)
 	joined := strings.Join(rows, "\n")
 	shown, hidden := boundTranscriptDetail(joined, contentWidth, anchor)
-	hint := shared.ExpandHint(false, hidden > 0, expandKey)
+	hint := shared.CopyFullHint(hidden > 0, m.keys.CopyItem.Help().Key)
 
 	if hintText != "" {
 		b.WriteString("    " + shared.Theme.Chat.Hint.Render(hintText) + "\n")
@@ -642,7 +639,7 @@ func writeDiffSection(m *Model, b *strings.Builder, d *toolcall.Diff, proj *diff
 // being shown.
 func writeResultingSourceCard(m *Model, b *strings.Builder, d *toolcall.Diff, hintText string, anchor detailAnchor) {
 	shown, hidden := boundTranscriptDetail(d.NewText, max(m.transcriptInnerW-8, 1), anchor)
-	hint := shared.ExpandHint(false, hidden > 0, m.keys.Toggle.Help().Key)
+	hint := shared.CopyFullHint(hidden > 0, m.keys.CopyItem.Help().Key)
 	b.WriteString("    " + shared.Theme.Chat.TranscriptLabel.Render("New code · "+d.Path) + "\n")
 	if hintText != "" {
 		b.WriteString("    " + shared.Theme.Chat.Hint.Render(hintText) + "\n")

@@ -193,7 +193,7 @@ func TestTranscriptCardPageBoundsSearchExpansionAndClipboard(t *testing.T) {
 	m.chatItemExpandAll = true
 	expanded := stripANSI(m.itemTranscriptBody())
 	// Slice 06 retired "… N lines hidden" in favor of the shared
-	// "… N more lines [<key>: Expand]" vocabulary. The presence of "more
+	// "… N more lines [<key>: Copy full]" vocabulary. The presence of "more
 	// lines" is what proves the detail-bound notice still fires after the
 	// wholesale card cache invalidation on width and page change.
 	if !strings.Contains(expanded, "more lines") {

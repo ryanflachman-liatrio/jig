@@ -56,8 +56,9 @@ func (*AcpHarness) PreviewPrompt(spec SessionSpec) string {
 
 // Open spawns the adapter, opens a session at spec.Cwd, and starts the
 // prompt turn in the background so Messages() can begin delivering events
-// immediately. It rejects any capability-gated SessionSpec field this
-// harness does not advertise, rather than silently ignoring it.
+// immediately. Capability gating happens before Open, in the runner
+// (runner.AgentExecutor.Execute and buildSessionSpec), which fails closed on
+// opted-in features this harness does not advertise.
 func (h *AcpHarness) Open(ctx context.Context, spec SessionSpec) (Session, error) {
 	events := make(chan Event, 32)
 	sess := &acpSession{events: events, hasSchema: spec.Schema != nil, schema: spec.Schema, partial: spec.Partial}

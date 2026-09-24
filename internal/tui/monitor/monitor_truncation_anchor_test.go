@@ -79,7 +79,7 @@ func TestAnchorForStateMapping(t *testing.T) {
 
 // TestWriteItemDetailRunningExchangeTailAnchors locks FR-06.11 and
 // FR-06.12 together: a running tool exchange renders its bounded body
-// tail-anchored, prepends the "… N earlier lines [enter: Expand]" marker
+// tail-anchored, prepends the "… N earlier lines [y: Copy full]" marker
 // above the visible rows, and keeps the newest rows (the distinctive last
 // row) instead of the beginning.
 func TestWriteItemDetailRunningExchangeTailAnchors(t *testing.T) {
@@ -98,7 +98,7 @@ func TestWriteItemDetailRunningExchangeTailAnchors(t *testing.T) {
 	// 20 rows total, 12 kept -> 8 hidden. The tail anchor prepends the
 	// marker and keeps rows 9..20; row-01 must be dropped, row-20 must be
 	// present.
-	if !strings.Contains(plain, "… 8 earlier lines [enter: Expand]") {
+	if !strings.Contains(plain, "… 8 earlier lines [y: Copy full]") {
 		t.Fatalf("running exchange missing prepended EarlierItems marker:\n%s", plain)
 	}
 	if !strings.Contains(plain, "row-20") {
@@ -132,7 +132,7 @@ func TestWriteItemDetailSettledExchangeHeadAnchors(t *testing.T) {
 	}
 	plain := stripANSI(m.itemTranscriptBody())
 
-	if !strings.Contains(plain, "… 8 more lines [enter: Expand]") {
+	if !strings.Contains(plain, "… 8 more lines [y: Copy full]") {
 		t.Fatalf("settled exchange missing appended MoreItems marker:\n%s", plain)
 	}
 	if !strings.Contains(plain, "row-01") {

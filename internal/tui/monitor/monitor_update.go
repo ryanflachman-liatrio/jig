@@ -705,7 +705,8 @@ func (m Model) toggleHelpChat() (Model, tea.Cmd) {
 	sizeCmd := func() tea.Msg { return helpchat.SizeMsg{W: m.helpBoxW(), H: m.helpBoxH()} }
 
 	if m.run == nil {
-		// Journal-replayed run — pre-populate unavailable message, skip SDK connect.
+		// Journal-replayed run — no live engine to query, so show the unavailable
+		// message instead of starting the helper agent.
 		m.helpModel = helpchat.NewUnavailable()
 		m.helpReady = true
 		return m, sizeCmd

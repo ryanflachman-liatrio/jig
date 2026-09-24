@@ -78,9 +78,11 @@ type McpServerStdio struct {
 
 // SessionSpec is the jig-owned set of session options, replacing the Claude
 // SDK's functional-option list so internal/harness has no SDK dependency.
-// Fields below the blank line are capability-gated: a harness that receives
-// one it does not advertise in Capabilities() must reject Open (defensive
-// symmetry against false-capability escalation), never silently ignore it.
+// Fields below the blank line are capability-gated. The runner, not Open,
+// enforces the gate: runner.AgentExecutor.Execute fails closed on an opted-in
+// feature (block_on resume, a declared schema, AskUserQuestion) the harness
+// does not advertise, and buildSessionSpec omits best-effort fields (partial
+// streaming, the base schema) the harness lacks.
 type SessionSpec struct {
 	Prompt            string
 	Model             string

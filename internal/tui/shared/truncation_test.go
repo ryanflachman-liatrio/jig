@@ -82,6 +82,28 @@ func TestTruncationExpandHint(t *testing.T) {
 	}
 }
 
+func TestTruncationCopyFullHint(t *testing.T) {
+	tests := []struct {
+		name    string
+		hasMore bool
+		keyHelp string
+		want    string
+	}{
+		{"no more short-circuits", false, "y", ""},
+		{"empty key short-circuits", true, "", ""},
+		{"whitespace key short-circuits", true, "  ", ""},
+		{"default y binding", true, "y", "[y: Copy full]"},
+		{"rebind ctrl+y", true, "ctrl+y", "[ctrl+y: Copy full]"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := CopyFullHint(tt.hasMore, tt.keyHelp); got != tt.want {
+				t.Fatalf("CopyFullHint(%v, %q) = %q, want %q", tt.hasMore, tt.keyHelp, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestTruncationHintLine(t *testing.T) {
 	tests := []struct {
 		name       string

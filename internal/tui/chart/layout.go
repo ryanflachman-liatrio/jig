@@ -36,7 +36,7 @@ type chartNode struct {
 	typ        string // step type: agent | command | review
 	rank       int    // longest-path depth over depends_on (0 = no deps)
 	gate       bool   // has a [step.validate] gate
-	gateLabel  string // compact description of the gate's check (see gateLabel()); not yet drawn
+	gateLabel  string // compact description of the gate's check (see gateLabel()); drawn beside the node
 	retry      bool   // on_failure = "retry"
 	maxRetries int    // max_retries value (0 means use engine default of 1)
 	loop       *chartLoop

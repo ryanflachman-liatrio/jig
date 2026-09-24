@@ -74,9 +74,10 @@ func diffExchange(id, path string, rows int) []transcript.Entry {
 }
 
 // TestWriteItemDetailHiddenLinesHint locks FR-06.6: the writeItemDetail
-// truncation hint uses the shared MoreItems + ExpandHint vocabulary, is
-// pluralized against the hidden count, and derives the expand key from the
-// live Toggle binding.
+// truncation hint uses the shared MoreItems + CopyFullHint vocabulary, is
+// pluralized against the hidden count, and derives the key from the live
+// CopyItem binding. The item is already expanded, so an "Expand" hint would
+// be wrong: Toggle collapses it (G5).
 func TestWriteItemDetailHiddenLinesHint(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	m.transcriptInnerW = 80
@@ -85,7 +86,7 @@ func TestWriteItemDetailHiddenLinesHint(t *testing.T) {
 
 	plain := stripANSI(m.itemTranscriptBody())
 	// 20 rows - 12 kept = 8 hidden.
-	want := "… 8 more lines [enter: Expand]"
+	want := "… 8 more lines [y: Copy full]"
 	if !strings.Contains(plain, want) {
 		t.Fatalf("writeItemDetail hidden-lines hint missing %q:\n%s", want, plain)
 	}
@@ -105,7 +106,7 @@ func TestWriteItemDetailHiddenLinesHintSingular(t *testing.T) {
 	m.setChatPage(transcript.Page{Entries: hiddenLinesExchange("hint-singular", 13)})
 
 	plain := stripANSI(m.itemTranscriptBody())
-	want := "… 1 more line [enter: Expand]"
+	want := "… 1 more line [y: Copy full]"
 	if !strings.Contains(plain, want) {
 		t.Fatalf("singular hidden-lines hint missing %q:\n%s", want, plain)
 	}
@@ -123,7 +124,7 @@ func TestWriteNewCodeCardsHiddenLinesHint(t *testing.T) {
 	m.setChatPage(transcript.Page{Entries: diffExchange("edit-hint", "internal/synthetic/file.go", 20)})
 
 	plain := stripANSI(m.itemTranscriptBody())
-	want := "… 8 more lines [enter: Expand]"
+	want := "… 8 more lines [y: Copy full]"
 	if !strings.Contains(plain, want) {
 		t.Fatalf("writeNewCodeCards hidden-lines hint missing %q:\n%s", want, plain)
 	}
@@ -162,18 +163,18 @@ func TestCaptureTruncatedHint(t *testing.T) {
 	}
 }
 
-// TestWriteItemDetailHintRespectsToggleRebind locks FR-06.7: the expand
-// key text is read from the Monitor's live Toggle binding at render time.
-// Rebinding Toggle changes the rendered hint without editing the renderer.
-func TestWriteItemDetailHintRespectsToggleRebind(t *testing.T) {
+// TestWriteItemDetailHintRespectsCopyRebind locks FR-06.7: the hint's key
+// text is read from the Monitor's live CopyItem binding at render time, so a
+// rebind changes the rendered hint without editing the renderer.
+func TestWriteItemDetailHintRespectsCopyRebind(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	m.transcriptInnerW = 80
 	m.chatItemExpandAll = true
 	m.setChatPage(transcript.Page{Entries: hiddenLinesExchange("rebind", 20)})
 
-	m.keys.Toggle = keybind.NewBinding(
-		keybind.WithKeys("ctrl+o"),
-		keybind.WithHelp("ctrl+o", "expand"),
+	m.keys.CopyItem = keybind.NewBinding(
+		keybind.WithKeys("ctrl+y"),
+		keybind.WithHelp("ctrl+y", "copy"),
 	)
 	// Bust the header-only card cache so the item re-renders with the
 	// rebound key; the hint lives below the card, but re-rendering keeps
@@ -181,12 +182,28 @@ func TestWriteItemDetailHintRespectsToggleRebind(t *testing.T) {
 	m.chatItemRendered = make(map[transcriptRenderKey]string)
 
 	plain := stripANSI(m.itemTranscriptBody())
-	want := "[ctrl+o: Expand]"
+	want := "[ctrl+y: Copy full]"
 	if !strings.Contains(plain, want) {
 		t.Fatalf("rebound key text missing %q:\n%s", want, plain)
 	}
-	if strings.Contains(plain, "[enter: Expand]") {
+	if strings.Contains(plain, "[y: Copy full]") {
 		t.Fatalf("default key text leaked into rebind case:\n%s", plain)
+	}
+}
+
+// TestExpandedDetailNeverOffersExpand is the G5 regression: a bounded detail
+// body only renders for an expanded item, where Toggle collapses, so it must
+// not advertise the Toggle key as "Expand".
+func TestExpandedDetailNeverOffersExpand(t *testing.T) {
+	m := newMonitorWithSteps(t)
+	m.transcriptInnerW = 96
+	m.chatItemExpandAll = true
+	m.setChatPage(transcript.Page{Entries: append(hiddenLinesExchange("g5-output", 20),
+		diffExchange("g5-diff", "internal/synthetic/file.go", 20)...)})
+
+	plain := stripANSI(m.itemTranscriptBody())
+	if strings.Contains(plain, "Expand]") {
+		t.Fatalf("expanded detail advertises an expand key:\n%s", plain)
 	}
 }
 
@@ -214,8 +231,8 @@ func TestTruncationVocabularyRetirement(t *testing.T) {
 	retiredPattern := regexp.MustCompile(`"… [^"]*%d`)
 
 	var (
-		sawMoreItems  bool
-		sawExpandHint bool
+		sawMoreItems bool
+		sawCopyHint  bool
 	)
 	for _, ent := range entries {
 		if ent.IsDir() {
@@ -242,14 +259,14 @@ func TestTruncationVocabularyRetirement(t *testing.T) {
 		}
 		if name == "monitor_transcript_items_view.go" {
 			sawMoreItems = strings.Contains(src, "shared.MoreItems(")
-			sawExpandHint = strings.Contains(src, "shared.ExpandHint(")
+			sawCopyHint = strings.Contains(src, "shared.CopyFullHint(")
 		}
 	}
 	if !sawMoreItems {
 		t.Errorf("monitor_transcript_items_view.go missing shared.MoreItems call site; retirement was inline-renamed rather than routed through the shared helper")
 	}
-	if !sawExpandHint {
-		t.Errorf("monitor_transcript_items_view.go missing shared.ExpandHint call site; retirement was inline-renamed rather than routed through the shared helper")
+	if !sawCopyHint {
+		t.Errorf("monitor_transcript_items_view.go missing shared.CopyFullHint call site; retirement was inline-renamed rather than routed through the shared helper")
 	}
 }
 
@@ -279,7 +296,7 @@ func TestTruncationMonitorGallery(t *testing.T) {
 	fmt.Fprintln(&b, "#")
 	fmt.Fprintln(&b, "# Fabricated exchange: read synthetic log, 20 rows -> 12 kept, 8 hidden.")
 	fmt.Fprintln(&b, "# transcriptInnerW=80, chatItemExpandAll=true.")
-	fmt.Fprintln(&b, "# Toggle binding:", m.keys.Toggle.Help().Key, "->", m.keys.Toggle.Help().Desc)
+	fmt.Fprintln(&b, "# CopyItem binding:", m.keys.CopyItem.Help().Key, "->", m.keys.CopyItem.Help().Desc)
 	fmt.Fprintln(&b, "#")
 	fmt.Fprintln(&b, "# --- ANSI-stripped ---")
 	fmt.Fprintln(&b, plain)
@@ -294,7 +311,7 @@ func TestTruncationMonitorGallery(t *testing.T) {
 	notes := "Generated by TestTruncationMonitorGallery in internal/tui/monitor/monitor_transcript_vocabulary_test.go.\n" +
 		"Command: JIG_UI_SNAPSHOT_DIR=<dir> go test ./internal/tui/monitor -run TestTruncationMonitorGallery -count=1\n" +
 		"transcriptInnerW=80, displayState=toolDisplaySuccess (result Status=\"completed\").\n" +
-		"Toggle.Help().Key=" + m.keys.Toggle.Help().Key + " -> the hint reads via ExpandHint(false, hidden>0, key).\n"
+		"CopyItem.Help().Key=" + m.keys.CopyItem.Help().Key + " -> the hint reads via CopyFullHint(hidden>0, key).\n"
 	if err := os.WriteFile(filepath.Join(dir, "25-task-2-monitor-vocabulary.notes.txt"), []byte(notes), 0o644); err != nil {
 		t.Fatalf("write notes: %v", err)
 	}

@@ -49,6 +49,19 @@ func ExpandHint(expanded, hasMore bool, keyHelp string) string {
 	return "[" + key + ": Expand]"
 }
 
+// CopyFullHint renders "[<key>: Copy full]" for a detail body bounded to the
+// transcript row budget. An expanded item has no larger in-place view — its
+// toggle collapses it — so the recovery path for the hidden rows is copying
+// the item's full recorded content. Returns "" when nothing is hidden or no
+// key text was supplied.
+func CopyFullHint(hasMore bool, keyHelp string) string {
+	key := strings.TrimSpace(keyHelp)
+	if !hasMore || key == "" {
+		return ""
+	}
+	return "[" + key + ": Copy full]"
+}
+
 // HintLine joins a count phrase and an expand hint with a single ASCII
 // space. Either side may be empty; the combinator never emits a leading
 // or trailing space or a double space so the resulting line is safe to

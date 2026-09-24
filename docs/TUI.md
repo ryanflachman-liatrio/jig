@@ -130,9 +130,10 @@ a user-role tool result is not human guidance. Preserve truncation indicators
 and bounded window reads. Follow the live tail only while the user is already
 at the tail; new output must not steal the position of someone reading history.
 
-Adjacent local-file read exchanges at one execution coordinate form a
-page-local **grouped read** when at least two are loaded without an intervening
-item. A grouped read is one navigation and expansion target; its compact tree
+Every uninterrupted run of local-file read exchanges at one execution
+coordinate forms a page-local **grouped read**, including a run of one, so a
+lone read opens and collapses the same way. A single failed read is the
+exception: it stays standalone so its error detail renders inline. A grouped read is one navigation and expansion target; its compact tree
 retains every distinct loaded target, and a search or filter match on any member
 retains the complete group. Expansion and selected-item copy use only the
 members present on the loaded page, so grouping never implies off-page evidence.
@@ -142,7 +143,7 @@ or choose the command-palette action to toggle `compact_tool_groups` for the
 current session; the default (`false`) comes from `config.toml`'s `[tui]`
 table (`compact_tool_groups`), which a persistent default can override, but
 the in-session toggle itself is not written back to disk. Eligible groups
-contain at least two adjacent, settled, successful calls of the same canonical
+contain one or more adjacent, settled, successful calls of the same canonical
 kind and execution coordinate. Failures, running or incomplete calls, malformed
 or targetless calls, unknown tools, and `askuserquestion` remain standalone and
 split a run.
