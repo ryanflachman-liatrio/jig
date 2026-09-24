@@ -1,8 +1,8 @@
 // clipboard_documentation_contract_test.go pins docs/clipboard.md and the
 // README against the implementation constants and Surface enum so the
 // mapping table, byte limits, and tracking references cannot silently drift
-// out of the code. Prose review lives in the proof artifact; this test only
-// asserts the concrete claims that automation can verify.
+// out of the code. This test only asserts the concrete claims that
+// automation can verify.
 package tui
 
 import (
@@ -27,12 +27,6 @@ const clipboardDocPath = "../../docs/clipboard.md"
 //   - The two byte limits documented in docs/clipboard.md match the
 //     constants exactly (both as raw byte counts and as human units).
 //   - The README's Documentation section links to docs/clipboard.md.
-//   - The B1 / T2 tracking rows in open-goals.md reference the clipboard
-//     spec, so a future goal audit stays in sync.
-//
-// Wording review (prose, tone, examples) intentionally lives in the proof
-// artifact under docs/specs/23-spec-clipboard-yank/proofs/. This test guards
-// only the machine-checkable claims.
 func TestClipboardDocumentationContract(t *testing.T) {
 	doc := readFileString(t, clipboardDocPath)
 
@@ -85,14 +79,6 @@ func TestClipboardDocumentationContract(t *testing.T) {
 		"xclip",
 		"pbcopy",
 		"OSC52",
-	)
-
-	// Tracking references — B1 and T2 have to point at spec 23 so a
-	// future open-goals audit can trace the implementation.
-	openGoals := readFileString(t, "../../docs/plans/open-goals.md")
-	assertContainsAll(t, openGoals, "open-goals B1/T2 tracking",
-		"spec 23",
-		"clipboard.md",
 	)
 
 	// README documentation index — the clipboard doc must be linked.

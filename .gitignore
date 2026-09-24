@@ -28,3 +28,4 @@ docs/*
 !docs/operations.md
 !docs/security-monitoring.md
 !docs/observability.md
+!docs/clipboard.md

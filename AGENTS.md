@@ -22,7 +22,7 @@ not committed. Only the durable reference docs in the table are tracked.
 | Go implementation or refactoring | [Go conventions](docs/CONVENTIONS.md) |
 | Workflow syntax, defaults, paths, or validation | [Workflow schema](docs/workflow-schema.md) and `internal/workflow` |
 | Scheduling, graph changes, retries, or recovery | [Graph and workflow engineering](docs/GRAPH_ENGINEERING.md) |
-| Terminal interaction, layout, or rendering | [TUI engineering](docs/TUI.md) |
+| Terminal interaction, layout, or rendering | [TUI engineering](docs/TUI.md), [clipboard](docs/clipboard.md) |
 | Any behavior change or verification | [Testing](docs/TESTING.md) |
 | Domain naming | [Vocabulary](CONTEXT.md) |
 | CLI automation or operational controls | [Headless contract](docs/headless.md), [operations](docs/operations.md) |

@@ -44,7 +44,7 @@ func (*fixtureAgent) NewSession(_ context.Context, req acpsdk.NewSessionRequest)
 			fixtureRecord("mcp-server:" + s.Stdio.Name + ":" + s.Stdio.Command)
 		}
 	}
-	return acpsdk.NewSessionResponse{SessionId: "fixture-session"}, nil
+	return acpsdk.NewSessionResponse{SessionId: "fixture-session", ConfigOptions: fixtureConfigOptions()}, nil
 }
 func (a *fixtureAgent) LoadSession(ctx context.Context, req acpsdk.LoadSessionRequest) (acpsdk.LoadSessionResponse, error) {
 	fixtureRecord("load-session")
@@ -52,11 +52,37 @@ func (a *fixtureAgent) LoadSession(ctx context.Context, req acpsdk.LoadSessionRe
 		SessionId: req.SessionId,
 		Update:    acpsdk.UpdateAgentMessageText("historical replay must stay suppressed"),
 	})
-	return acpsdk.LoadSessionResponse{}, nil
+	return acpsdk.LoadSessionResponse{ConfigOptions: fixtureConfigOptions()}, nil
 }
-func (*fixtureAgent) SetSessionConfigOption(context.Context, acpsdk.SetSessionConfigOptionRequest) (acpsdk.SetSessionConfigOptionResponse, error) {
-	fixtureRecord("set-config")
-	return acpsdk.SetSessionConfigOptionResponse{}, nil
+func (*fixtureAgent) SetSessionConfigOption(_ context.Context, req acpsdk.SetSessionConfigOptionRequest) (acpsdk.SetSessionConfigOptionResponse, error) {
+	if req.ValueId != nil {
+		fixtureRecord(fmt.Sprintf("set-config:%s=%s", req.ValueId.ConfigId, req.ValueId.Value))
+	}
+	return acpsdk.SetSessionConfigOptionResponse{ConfigOptions: fixtureConfigOptions()}, nil
+}
+
+// fixtureConfigOptions mirrors each real adapter's semantic selectors: every
+// backend advertises a model selector, while Cursor exposes no thought_level
+// selector (its reasoning parameters use a Cursor-specific category).
+func fixtureConfigOptions() []acpsdk.SessionConfigOption {
+	selector := func(id string, category acpsdk.SessionConfigOptionCategory, values ...string) acpsdk.SessionConfigOption {
+		options := make(acpsdk.SessionConfigSelectOptionsUngrouped, len(values))
+		for i, value := range values {
+			options[i] = acpsdk.SessionConfigSelectOption{Value: acpsdk.SessionConfigValueId(value), Name: value}
+		}
+		return acpsdk.SessionConfigOption{Select: &acpsdk.SessionConfigOptionSelect{
+			Id:       acpsdk.SessionConfigId(id),
+			Name:     id,
+			Type:     "select",
+			Category: &category,
+			Options:  acpsdk.SessionConfigSelectOptions{Ungrouped: &options},
+		}}
+	}
+	options := []acpsdk.SessionConfigOption{selector("model", acpsdk.SessionConfigOptionCategoryModel, "default", "haiku", "fixture-model")}
+	if fixtureWorker() != "cursor" {
+		options = append(options, selector("effort", acpsdk.SessionConfigOptionCategoryThoughtLevel, "default", "low", "high"))
+	}
+	return options
 }
 func (*fixtureAgent) Cancel(context.Context, acpsdk.CancelNotification) error {
 	fixtureRecord("cancel")

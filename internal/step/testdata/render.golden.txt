@@ -1,0 +1,18 @@
+## Workflow context
+
+You are step `plan` in workflow `feature` (iteration 2 of 3).
+Purpose: turn research findings into an ordered implementation plan.
+Notes: prefer the smallest change that satisfies the acceptance criteria.
+
+Upstream (already complete):
+- `intake` (succeeded) — classify the request and extract research areas
+- `research_backend` (failed)
+These reach you as the inputs listed below; this section is orientation only.
+
+Downstream (what your output feeds):
+- `plan_review` (human review) — a person reviews your summary and approves or requests revisions
+- `implement` (agent) — consumes your `tasks` (conditional on `approved == true`)
+
+State: re-running because `plan_review` requested revisions on the previous iteration. Address the reviewer feedback in your inputs.
+
+---

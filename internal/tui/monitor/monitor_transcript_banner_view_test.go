@@ -94,16 +94,19 @@ func TestBoundaryBannerFoldsIntoClosingItemLineRange(t *testing.T) {
 	if second.start <= rng.end {
 		t.Fatalf("turn B start=%d must be after turn A end=%d (banner fold breach)", second.start, rng.end)
 	}
-	if got := stripANSI(rows[second.start]); !strings.Contains(got, "turn B") &&
-		// glamour may render a "User" header above prose; body must
-		// still appear within the item's own range, not the banner.
-		!strings.Contains(got, "User") {
-		endRow := second.end + 1
-		if endRow > len(rows) {
-			endRow = len(rows)
+	// The user bubble opens with a tinted blank padding row, so the first
+	// non-blank row of turn B's range is its prose — never the banner.
+	endRow := min(second.end+1, len(rows))
+	first := ""
+	for _, row := range rows[second.start:endRow] {
+		if plain := strings.TrimSpace(stripANSI(row)); plain != "" {
+			first = plain
+			break
 		}
-		t.Fatalf("turn B does not begin at row=%d: %q\nrange rows:\n%s",
-			second.start, got, strings.Join(rows[second.start:endRow], "\n"))
+	}
+	if !strings.Contains(first, "turn B") {
+		t.Fatalf("turn B range [%d,%d] does not open with its body; first non-blank row %q\nrange rows:\n%s",
+			second.start, second.end, first, strings.Join(rows[second.start:endRow], "\n"))
 	}
 }
 

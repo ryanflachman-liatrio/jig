@@ -306,6 +306,17 @@ Unknown values fail at `jig validate`. Capability mismatches (e.g.
 `[step.schema]` on a harness that does not advertise structured output) fail
 closed at execute time.
 
+A non-empty `model` / `effort` is applied as ACP session config through the
+adapter's semantic `model` and `thought_level` selectors, on new and resumed
+sessions alike. A value the adapter cannot honor fails the step before its
+prompt is sent; it is never silently dropped.
+
+| Backend | `model` | `effort` |
+|---|---|---|
+| `claude` | Full IDs (`claude-haiku-4-5-20251001`) or aliases (`haiku`); the adapter resolves and validates the value. | Applied when the selected model advertises effort levels; otherwise fails. |
+| `cursor` | Must exactly match a Cursor model name the adapter advertises. | Not supported — Cursor exposes no `thought_level` selector, so any `effort` fails. |
+| `codex` | Must exactly match an advertised Codex model. | Must match an advertised reasoning level. |
+
 Codex's CLI has no native ACP server. `backend = "codex"` starts the
 `@agentclientprotocol/codex-acp` stdio adapter, which drives the Codex App
 Server using the operator's existing Codex login. Do not use `codex exec` or

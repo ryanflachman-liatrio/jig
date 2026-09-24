@@ -52,8 +52,8 @@ const (
 	IsolationNone     Isolation = "none"
 )
 
-// EffortLevel tunes how much reasoning the model spends per step. It maps
-// straight onto the Claude Agent SDK's WithEffort option.
+// EffortLevel tunes how much reasoning the model spends per step. Harnesses
+// apply it through the ACP adapter's thought_level session config selector.
 type EffortLevel string
 
 const (

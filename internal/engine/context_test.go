@@ -288,10 +288,10 @@ inputs = ["@plan.tasks"]
 }
 
 const (
-	// examplePreamblePath is the committed 2.0 proof (assembled `plan` preamble,
-	// first-run form); reviseLoopPreamblePath is the 3.0 proof (revise iteration).
-	examplePreamblePath     = "../../docs/specs/03-spec-step-context-assembly/03-proofs/2.0-plan-preamble.txt"
-	reviseLoopPreamblePath  = "../../docs/specs/03-spec-step-context-assembly/03-proofs/3.0-revise-loop-preamble.txt"
+	// examplePreamblePath is the assembled `plan` preamble golden (first-run
+	// form); reviseLoopPreamblePath is the revise-iteration golden.
+	examplePreamblePath     = "testdata/plan-preamble.golden.txt"
+	reviseLoopPreamblePath  = "testdata/revise-loop-preamble.golden.txt"
 	updatePreambleGoldenEnv = "UPDATE_PREAMBLE_GOLDEN"
 )
 

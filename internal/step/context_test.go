@@ -7,10 +7,9 @@ import (
 	"testing"
 )
 
-// goldenPath is the committed render golden — the byte-for-byte assertion target
-// shared with the spec's "Rendered format" block. Keeping the test pointed at
-// the committed proof artifact means the golden and the proof cannot drift.
-const goldenPath = "../../docs/specs/03-spec-step-context-assembly/03-proofs/1.0-render-golden.txt"
+// goldenPath is the committed render golden — the byte-for-byte assertion
+// target for Render's layout.
+const goldenPath = "testdata/render.golden.txt"
 
 // fullyPopulated is the struct described by task 1.0's proof: two upstream (one
 // succeeded with a purpose, one failed), two downstream (one propagated-purpose

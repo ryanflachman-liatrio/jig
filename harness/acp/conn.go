@@ -214,6 +214,10 @@ func (c *Conn) LoadSession(ctx context.Context, cwd, sessionID string, mcpServer
 // SetSelectConfig applies an advertised select configuration option by its
 // adapter-provided ID.
 func (c *Conn) SetSelectConfig(ctx context.Context, sessionID, configID, value string) error {
+	return c.setSelectConfig(ctx, sessionID, configID, value, true)
+}
+
+func (c *Conn) setSelectConfig(ctx context.Context, sessionID, configID, value string, checkValue bool) error {
 	if value == "" {
 		return nil
 	}
@@ -221,7 +225,7 @@ func (c *Conn) SetSelectConfig(ctx context.Context, sessionID, configID, value s
 	if !ok {
 		return fmt.Errorf("adapter did not advertise session config option %q", configID)
 	}
-	if !containsConfigValue(options, value) {
+	if checkValue && !containsConfigValue(options, value) {
 		return fmt.Errorf("%s %q is unavailable; adapter advertises %s", configID, value, strings.Join(options, ", "))
 	}
 
@@ -256,6 +260,30 @@ func (c *Conn) SetSelectConfigByCategory(
 	category acpsdk.SessionConfigOptionCategory,
 	value string,
 ) error {
+	return c.setSelectConfigByCategory(ctx, sessionID, category, value, true)
+}
+
+// SetSelectConfigByCategoryAdapterValidated is SetSelectConfigByCategory for
+// adapters that resolve values server-side (e.g. Claude's adapter maps a full
+// model ID onto its alias options). The category must still be advertised,
+// but the value is not required to match an advertised option verbatim; the
+// adapter rejects an unresolvable value and that error is returned.
+func (c *Conn) SetSelectConfigByCategoryAdapterValidated(
+	ctx context.Context,
+	sessionID string,
+	category acpsdk.SessionConfigOptionCategory,
+	value string,
+) error {
+	return c.setSelectConfigByCategory(ctx, sessionID, category, value, false)
+}
+
+func (c *Conn) setSelectConfigByCategory(
+	ctx context.Context,
+	sessionID string,
+	category acpsdk.SessionConfigOptionCategory,
+	value string,
+	checkValue bool,
+) error {
 	if value == "" {
 		return nil
 	}
@@ -263,7 +291,7 @@ func (c *Conn) SetSelectConfigByCategory(
 	if !ok {
 		return fmt.Errorf("adapter did not advertise a %q session config option", category)
 	}
-	return c.SetSelectConfig(ctx, sessionID, configID, value)
+	return c.setSelectConfig(ctx, sessionID, configID, value, checkValue)
 }
 
 func (c *Conn) setSessionConfig(sessionID string, options []acpsdk.SessionConfigOption) {

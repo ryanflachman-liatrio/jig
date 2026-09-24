@@ -18,11 +18,20 @@ type acpSessionConfigPolicy interface {
 type semanticACPConfigPolicy struct {
 	model  bool
 	effort bool
+	// adapterResolvesModel defers model-value validation to the adapter, for
+	// adapters that map full model IDs (claude-haiku-4-5-20251001) onto
+	// their alias options (haiku). An unresolvable model still fails closed
+	// with the adapter's error.
+	adapterResolvesModel bool
 }
 
 func (p semanticACPConfigPolicy) Apply(ctx context.Context, conn *acp.Conn, sessionID string, spec SessionSpec) error {
 	if p.model {
-		if err := conn.SetSelectConfigByCategory(ctx, sessionID, acpsdk.SessionConfigOptionCategoryModel, spec.Model); err != nil {
+		set := conn.SetSelectConfigByCategory
+		if p.adapterResolvesModel {
+			set = conn.SetSelectConfigByCategoryAdapterValidated
+		}
+		if err := set(ctx, sessionID, acpsdk.SessionConfigOptionCategoryModel, spec.Model); err != nil {
 			return err
 		}
 	}

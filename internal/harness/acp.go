@@ -25,6 +25,12 @@ import (
 // confinement — see the spec's success metric 5).
 type AcpHarness struct{}
 
+// claudeACPConfig applies model and effort through the adapter's semantic
+// selectors. Model is set first because the adapter only advertises an
+// effort selector for models that support one. The adapter resolves full
+// model IDs onto its alias options, so it validates the model value.
+var claudeACPConfig = semanticACPConfigPolicy{model: true, effort: true, adapterResolvesModel: true}
+
 // NewAcpHarness returns an AcpHarness ready to use.
 func NewAcpHarness() *AcpHarness { return &AcpHarness{} }
 
@@ -90,6 +96,11 @@ func (h *AcpHarness) Open(ctx context.Context, spec SessionSpec) (Session, error
 		_ = conn.Close()
 		return nil, fmt.Errorf("acp: %w", err)
 	}
+	if err := claudeACPConfig.Apply(ctx, conn, sessionID, spec); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("acp: %w", err)
+	}
+	conn.ConfigurationCompleted()
 	events <- Event{Type: EventSessionID, SessionID: sessionID}
 
 	go sess.run(ctx, sessionID, spec.Prompt)

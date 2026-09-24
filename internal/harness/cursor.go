@@ -16,6 +16,12 @@ import (
 // shared with AcpHarness via the same acpSession type.
 type CursorHarness struct{}
 
+// cursorACPConfig applies model and effort through ACP's semantic selectors.
+// Cursor advertises its model selector with exact model names; it exposes
+// reasoning parameters under its own category rather than thought_level, so
+// a requested effort fails closed instead of being silently dropped.
+var cursorACPConfig = semanticACPConfigPolicy{model: true, effort: true}
+
 func NewCursorHarness() *CursorHarness { return &CursorHarness{} }
 
 func (*CursorHarness) Name() string { return "cursor" }
@@ -64,6 +70,11 @@ func (h *CursorHarness) Open(ctx context.Context, spec SessionSpec) (Session, er
 		_ = conn.Close()
 		return nil, fmt.Errorf("cursor: %w", err)
 	}
+	if err := cursorACPConfig.Apply(ctx, conn, sessionID, spec); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("cursor: %w", err)
+	}
+	conn.ConfigurationCompleted()
 	events <- Event{Type: EventSessionID, SessionID: sessionID}
 
 	go sess.run(ctx, sessionID, spec.Prompt)
