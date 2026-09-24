@@ -110,6 +110,85 @@ run = "true"
 	drainUntilFinished(t, ctrl, 5*time.Second)
 }
 
+type selectQuestionExec struct {
+	seen chan interaction.QuestionResponse
+}
+
+func (e *selectQuestionExec) Execute(ctx context.Context, _ StepRequest, rep Reporter) (*step.Result, error) {
+	e.seen <- rep.Question(ctx, interaction.QuestionRequest{
+		ID: "pick",
+		Fields: []interaction.QuestionField{{
+			ID: "env", Prompt: "env?", Kind: interaction.FieldSingleSelect, Required: true,
+			Options: []interaction.QuestionOption{{Value: "staging", Label: "staging"}},
+		}},
+	})
+	return &step.Result{Status: step.StatusSucceeded}, nil
+}
+
+// TestRejectedQuestionAnswerIsReannounced covers G2: a response the original
+// request cannot accept (here a custom answer on a field without AllowCustom)
+// must not be dropped silently. The UI has already dismissed the panel, so the
+// engine re-emits the question and keeps it answerable.
+func TestRejectedQuestionAnswerIsReannounced(t *testing.T) {
+	const toml = `
+[workflow]
+name = "rejected-answer"
+version = "1.0"
+[[step]]
+id = "ask"
+type = "command"
+run = "true"
+`
+	wf, err := workflow.Decode(toml, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec := &selectQuestionExec{seen: make(chan interaction.QuestionResponse, 1)}
+	mgr := NewManager(exec, "")
+	_, ctrl := mgr.Subscribe()
+	run, err := mgr.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitQuestion := func() AgentQuestion {
+		t.Helper()
+		for {
+			select {
+			case ev := <-ctrl:
+				if q, ok := ev.(AgentQuestion); ok {
+					return q
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("timed out waiting for AgentQuestion")
+			}
+		}
+	}
+	first := waitQuestion()
+
+	run.AnswerQuestion("ask", interaction.QuestionResponse{
+		RequestID: first.Request.ID,
+		Action:    interaction.ActionAccept,
+		Answers:   map[string]interaction.Answer{"env": {Custom: "on-prem"}},
+	})
+	again := waitQuestion()
+	if again.Request.ID != first.Request.ID || again.StepID != "ask" {
+		t.Fatalf("re-announced question = %+v, want request %q on step ask", again, first.Request.ID)
+	}
+	if snap := run.Snapshot(); snap.Steps[0].Status != step.StatusNeedsInput {
+		t.Fatalf("status after rejected answer = %s, want needs_input", snap.Steps[0].Status)
+	}
+
+	run.AnswerQuestion("ask", interaction.QuestionResponse{
+		RequestID: first.Request.ID,
+		Action:    interaction.ActionAccept,
+		Answers:   map[string]interaction.Answer{"env": {Values: []string{"staging"}}},
+	})
+	if got := <-exec.seen; got.Answers["env"].Values[0] != "staging" {
+		t.Fatalf("delivered response = %+v, want staging", got)
+	}
+	drainUntilFinished(t, ctrl, 5*time.Second)
+}
+
 func (e *questionExec) Execute(ctx context.Context, req StepRequest, rep Reporter) (*step.Result, error) {
 	if req.Step.ID != e.stepID {
 		return &step.Result{Status: step.StatusSucceeded}, nil

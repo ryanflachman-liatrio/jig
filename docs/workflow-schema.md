@@ -332,7 +332,8 @@ advertises user-question support. Claude ACP uses form elicitation and supports
 text, single-select, multi-select, and the Claude adapter's “Other” fields.
 Cursor ACP uses its native `cursor/ask_question` callback for required
 single- and multi-select questions; option IDs, rather than display labels, are
-returned to Cursor. Cursor sessions also support continuation through ACP
+returned to Cursor. That callback has no slot for free text, so Cursor
+questions offer no typed “Other…” answer. Cursor sessions also support continuation through ACP
 `session/load`, provided the running CLI negotiates that capability. A missing,
 expired, or incompatible saved session fails the step; jig never starts a fresh
 conversation in its place. Permission requests remain a separate security

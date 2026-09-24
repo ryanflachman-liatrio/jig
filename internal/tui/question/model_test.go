@@ -306,24 +306,45 @@ func TestQuestionStackedEligibilityExcludesTextFields(t *testing.T) {
 	}
 }
 
-// TestQuestionAllowCustomAlwaysOn verifies every select field can type a
-// custom answer regardless of what the request declared: New() normalizes
-// AllowCustom on, since a human should never be stuck picking the
-// closest-but-wrong option.
-func TestQuestionAllowCustomAlwaysOn(t *testing.T) {
-	req := stackedTestRequest()
-	req.Fields[0].AllowCustom = false
-	m := New(req)
-	if !m.currentField().AllowCustom {
-		t.Fatal("New() must force AllowCustom on for select fields")
-	}
-	if req.Fields[0].AllowCustom {
-		t.Fatal("New() must not mutate the caller's original request")
-	}
+// TestQuestionPanelHonorsAllowCustom locks the G2 fix: a select field whose
+// request did not set AllowCustom offers no typed answer in either layout,
+// because the harness could not deliver one and the engine would reject the
+// response against the original request, stranding the step in needs_input.
+func TestQuestionPanelHonorsAllowCustom(t *testing.T) {
+	t.Run("paginated", func(t *testing.T) {
+		req := testRequest()
+		req.Fields[0].AllowCustom = false
+		m := New(req)
+		if view := m.View(); strings.Contains(view, "Other") {
+			t.Fatalf("paginated view offers Other without AllowCustom:\n%s", view)
+		}
+		// The cursor stops on the last option; enter selects it rather than
+		// opening a custom editor.
+		m, _ = m.Update(press("down"))
+		m, _ = m.Update(press("down"))
+		if m.CapturesText() {
+			t.Fatal("cursor reached a custom row that AllowCustom=false should not render")
+		}
+	})
+	t.Run("stacked", func(t *testing.T) {
+		m := New(stackedTestRequest()).Resize(60, 20)
+		if !m.stacked {
+			t.Fatal("expected stacked mode")
+		}
+		if view := m.View(); strings.Contains(view, "type your own answer") {
+			t.Fatalf("stacked header advertises custom answers no field allows:\n%s", view)
+		}
+		m, _ = m.Update(press("o"))
+		if m.CapturesText() {
+			t.Fatal("o opened a custom editor on a field without AllowCustom")
+		}
+	})
 }
 
 func TestQuestionStackedCustomAnswerDetourReturnsToStackedView(t *testing.T) {
-	m := New(stackedTestRequest()).Resize(60, 20)
+	req := stackedTestRequest()
+	req.Fields[0].AllowCustom = true
+	m := New(req).Resize(60, 20)
 	if !m.stacked {
 		t.Fatal("expected stacked mode")
 	}

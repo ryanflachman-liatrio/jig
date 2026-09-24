@@ -49,18 +49,13 @@ type Model struct {
 	customFromStacked bool
 }
 
-// New builds a panel for req. Every select-kind field always lets the user
-// type an answer other than the presented options — the panel doesn't defer
-// to the request's AllowCustom flag, since a human should never be stuck
-// picking the closest-but-wrong option. req.Fields is copied before this
-// normalization so the caller's original request is left untouched.
+// New builds a panel for req. A select field offers a typed "Other…" answer
+// only when the request sets AllowCustom: the flag is the harness's statement
+// that its wire format can carry free text for that field (Claude and Codex
+// ACP send a companion field for every AskUserQuestion; Cursor's native
+// callback returns option IDs only). Offering it anyway yields a response the
+// engine must reject against the original request.
 func New(req interaction.QuestionRequest) Model {
-	req.Fields = append([]interaction.QuestionField(nil), req.Fields...)
-	for i := range req.Fields {
-		if req.Fields[i].Kind != interaction.FieldText {
-			req.Fields[i].AllowCustom = true
-		}
-	}
 	m := Model{
 		request:      req,
 		answers:      make(map[string]interaction.Answer),
@@ -292,6 +287,9 @@ func (m Model) updateStacked(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	case "o":
 		// Detour into a one-off custom-answer textarea for the focused field;
 		// enter/esc there return to this stacked view (see customFromStacked).
+		if !field.AllowCustom {
+			return m, nil
+		}
 		m.fieldIdx = m.focusFieldIdx
 		m.phase = phaseCustom
 		m.customFromStacked = true
@@ -353,6 +351,15 @@ func (m Model) stackedAnswers() (map[string]interaction.Answer, bool) {
 // stackedHasMultiSelect reports whether the request has any multi-select
 // field, so HelpBindings only advertises "space toggle" when it does
 // something.
+func stackedHasCustom(req interaction.QuestionRequest) bool {
+	for _, field := range req.Fields {
+		if field.AllowCustom {
+			return true
+		}
+	}
+	return false
+}
+
 func stackedHasMultiSelect(req interaction.QuestionRequest) bool {
 	for _, field := range req.Fields {
 		if field.Kind == interaction.FieldMultiSelect {
@@ -571,7 +578,9 @@ func (m Model) HelpBindings() []keybind.Binding {
 			binding([]string{"enter"}, "enter", "confirm all"),
 			binding([]string{"tab", "shift+tab"}, "tab", "next field"),
 			navigate,
-			binding([]string{"o"}, "o", "type answer"),
+		}
+		if m.request.Fields[m.focusFieldIdx].AllowCustom {
+			bindings = append(bindings, binding([]string{"o"}, "o", "type answer"))
 		}
 		if stackedHasMultiSelect(m.request) {
 			bindings = append(bindings, binding([]string{" ", "space"}, "space", "toggle"))

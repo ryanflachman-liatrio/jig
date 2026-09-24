@@ -336,6 +336,10 @@ func (m agentQuestionAnswerMsg) execute(s *scheduler) {
 		return
 	}
 	if err := m.response.Validate(item.request); err != nil {
+		// The question stays pending, but the UI already dismissed its panel on
+		// submit. Re-announce it so the operator can answer again instead of the
+		// step sitting in needs_input with nothing on screen.
+		s.emit(AgentQuestion{RunID: s.runID, StepID: m.stepID, Request: item.request})
 		return
 	}
 	delete(pending, m.response.RequestID)

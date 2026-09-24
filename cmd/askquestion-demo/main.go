@@ -12,11 +12,11 @@
 // Resize the terminal while it's running to see the gate panel re-fit; press
 // q to answer-cancel and exit, or ctrl+c to quit at any time.
 //
-// Every select field always lets you type your own answer instead of
-// picking an option, regardless of the field's AllowCustom flag: in the
-// paginated view (-mode=paginated or -mode=long), move the cursor down to
-// the "Other…" row and press enter; in the stacked view (-mode=stacked,
-// the default), press o to open a one-off textarea for the focused field.
+// Every demo select field sets AllowCustom, as the Claude adapter does, so you
+// can type your own answer instead of picking an option: in the paginated
+// view (-mode=paginated or -mode=long), move the cursor down to the "Other…"
+// row and press enter; in the stacked view (-mode=stacked, the default),
+// press o to open a one-off textarea for the focused field.
 package main
 
 import (
@@ -103,7 +103,7 @@ func buildRequest(mode string) (interaction.QuestionRequest, error) {
 			Fields: []interaction.QuestionField{
 				{
 					ID: "env", Header: "Environment", Prompt: "Deploy to which environment?",
-					Kind: interaction.FieldSingleSelect, Required: true,
+					Kind: interaction.FieldSingleSelect, Required: true, AllowCustom: true,
 					Options: []interaction.QuestionOption{
 						{Value: "staging", Label: "Staging"},
 						{Value: "prod", Label: "Production"},
@@ -112,7 +112,7 @@ func buildRequest(mode string) (interaction.QuestionRequest, error) {
 				},
 				{
 					ID: "checks", Header: "Checks", Prompt: "Run which test suites?",
-					Kind: interaction.FieldMultiSelect, Required: true,
+					Kind: interaction.FieldMultiSelect, Required: true, AllowCustom: true,
 					Options: []interaction.QuestionOption{
 						{Value: "unit", Label: "Unit"},
 						{Value: "integration", Label: "Integration"},
@@ -121,7 +121,7 @@ func buildRequest(mode string) (interaction.QuestionRequest, error) {
 				},
 				{
 					ID: "notify", Header: "Notify", Prompt: "Notify the team on completion?",
-					Kind: interaction.FieldSingleSelect, Required: true,
+					Kind: interaction.FieldSingleSelect, Required: true, AllowCustom: true,
 					Options: []interaction.QuestionOption{
 						{Value: "yes", Label: "Yes"},
 						{Value: "no", Label: "No"},
@@ -141,7 +141,7 @@ func buildRequest(mode string) (interaction.QuestionRequest, error) {
 				{ID: "release", Prompt: "Release name?", Kind: interaction.FieldText, Required: true},
 				{
 					ID: "env", Header: "Environment", Prompt: "Deploy to which environment?",
-					Kind: interaction.FieldSingleSelect, Required: true,
+					Kind: interaction.FieldSingleSelect, Required: true, AllowCustom: true,
 					Options: []interaction.QuestionOption{
 						{Value: "staging", Label: "Staging"},
 						{Value: "prod", Label: "Production"},
@@ -177,7 +177,7 @@ func buildRequest(mode string) (interaction.QuestionRequest, error) {
 			Fields: []interaction.QuestionField{
 				{
 					ID: "region", Header: "Region", Prompt: "Which region should we deploy to?",
-					Kind: interaction.FieldSingleSelect, Required: true, Options: opts,
+					Kind: interaction.FieldSingleSelect, Required: true, AllowCustom: true, Options: opts,
 				},
 			},
 		}, nil

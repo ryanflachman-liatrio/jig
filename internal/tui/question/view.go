@@ -104,9 +104,11 @@ func (m Model) fieldLines() []string {
 // time. Only the focused field's cursor row is highlighted; tab/shift+tab
 // move focus between fields (updateStacked).
 func (m Model) stackedLines() []string {
-	lines := []string{shared.Theme.Chat.Hint.Render(
-		fmt.Sprintf("Answer all %d  ·  o to type your own answer", len(m.request.Fields)),
-	)}
+	header := fmt.Sprintf("Answer all %d", len(m.request.Fields))
+	if stackedHasCustom(m.request) {
+		header += "  ·  o to type your own answer"
+	}
+	lines := []string{shared.Theme.Chat.Hint.Render(header)}
 	for i, field := range m.request.Fields {
 		focused := i == m.focusFieldIdx
 		promptPrefix := "  "
