@@ -205,6 +205,7 @@ version = "0.1"
 [[step]]
 id = "bad"
 type = "agent"
+isolation = "none"
 skill = "chat"
 `
 	wf, err := workflow.Decode(toml, "")

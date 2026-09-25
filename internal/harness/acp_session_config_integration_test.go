@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"jig/internal/agentcfg"
 	"jig/internal/engine"
 	"jig/internal/harness"
 	"jig/internal/runner"
@@ -32,7 +33,7 @@ func TestACPHarnessesApplyStepModelAndEffort(t *testing.T) {
 
 	for _, tc := range []struct {
 		name, backend, model string
-		effort               workflow.EffortLevel
+		effort               string
 		resume               bool
 		wantSets             []string
 		wantErr              string
@@ -63,11 +64,6 @@ func TestACPHarnessesApplyStepModelAndEffort(t *testing.T) {
 			wantErr: "is unavailable; adapter advertises",
 		},
 		{
-			name: "cursor effort fails closed", backend: "cursor",
-			effort:  "high",
-			wantErr: `did not advertise a "thought_level" session config option`,
-		},
-		{
 			name: "codex model and effort", backend: "codex",
 			model: "fixture-model", effort: "low",
 			wantSets: []string{"set-config:model=fixture-model", "set-config:effort=low"},
@@ -81,7 +77,8 @@ func TestACPHarnessesApplyStepModelAndEffort(t *testing.T) {
 			req := engine.StepRequest{
 				Step: &workflow.Step{
 					ID: "worker", Type: workflow.StepAgent, Backend: tc.backend,
-					Isolation: workflow.IsolationNone, Model: tc.model, Effort: tc.effort,
+					Isolation: workflow.IsolationNone, Model: tc.model,
+					SnapshotAgent: &workflow.AgentSnapshot{Agent: resolvedFixtureAgent(tc.backend, tc.model, tc.effort)},
 				},
 				TranscriptPath: filepath.Join(stepDir, "transcript.jsonl"),
 				ExecutionDir:   stepDir,
@@ -122,4 +119,16 @@ func TestACPHarnessesApplyStepModelAndEffort(t *testing.T) {
 			}
 		})
 	}
+}
+
+// resolvedFixtureAgent builds the resolved agent a loaded step would carry.
+func resolvedFixtureAgent(backend, model, effort string) agentcfg.Agent {
+	common := agentcfg.Common{Model: model}
+	switch backend {
+	case agentcfg.BackendCodex:
+		return agentcfg.CodexAgent{Common: common, Effort: effort}
+	case agentcfg.BackendCursor:
+		return agentcfg.CursorAgent{Common: common}
+	}
+	return agentcfg.ClaudeAgent{Common: common, Effort: effort}
 }

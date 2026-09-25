@@ -33,7 +33,7 @@ label = "x"
 id = "ask"
 type = "agent"
 skill = "ask"
-profile = "@interactive"
+ask_user = true
 depends_on = ["gate"]
 
 [[step]]

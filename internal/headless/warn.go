@@ -34,10 +34,10 @@ func InventoryGates(wf *workflow.Workflow) []GateWarning {
 				Detail: fmt.Sprintf("block_on=%q will fail-closed if true", s.BlockOn),
 			})
 		}
-		if s.Profile == "@interactive" {
+		if s.AskUserEnabled() {
 			out = append(out, GateWarning{
 				StepID: s.ID, Kind: "interactive",
-				Detail: `profile="@interactive" enables AskUserQuestion`,
+				Detail: "ask_user = true enables AskUserQuestion",
 			})
 		}
 		for _, in := range s.Inputs {

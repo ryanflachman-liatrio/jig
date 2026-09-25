@@ -4,8 +4,8 @@
 # Shows:
 #   - an `agent` step driven by a Claude agent file (`agent_file`) instead of a
 #     skill dir — its frontmatter tools/model and body prompt fold into the step
-#   - the model/reasoning knobs: effort, fallback_model, max_thinking_tokens,
-#     max_budget_usd, plus a disallowed_tools denylist and append_system_prompt
+#   - a Claude [step.agent] with effort, fallback_model, max_thinking_tokens,
+#     max_budget_usd and a disallowed_tools denylist, plus append_system_prompt
 #
 # Validate it with:  jig validate .agents/jig/review.toml
 # =============================================================================
@@ -15,31 +15,29 @@ name        = "review"
 version     = "1"
 description = "Security review driven by a Claude agent file."
 
-[defaults]
-backend             = "claude"
-model               = "claude-opus-4-8"
-fallback_model      = "claude-sonnet-4-6"
-effort              = "high"
-max_turns           = 20
-max_thinking_tokens = 8000
-max_budget_usd      = 5.0
-permission_mode     = "acceptEdits"
-
-# The reviewer's prompt, tools, and model come from the agent file. We add a
-# per-step instruction and tighten reasoning/cost just for this step.
+# The step's agent carries the model, reasoning and cost limits. It keeps all
+# built-in tools except Bash and runs in place.
 [[step]]
 id                   = "review"
 type                 = "agent"
 skill                = "../skills/research_backend"
-profile              = "@interactive"
+ask_user             = true
+isolation            = "none"
 inputs               = [
   "templates/context-assess.md",
   { from = "user", label = "Any additional context or focus areas for the review?", as = "user_context" },
 ]
-disallowed_tools     = ["Bash"]
 append_system_prompt = "Only report high and critical severity findings."
-effort               = "max"
-max_budget_usd       = 2.0
+
+  [step.agent]
+  model               = "claude-opus-4-8"
+  fallback_model      = "claude-sonnet-4-6"
+  effort              = "max"
+  max_turns           = 20
+  max_thinking_tokens = 8000
+  max_budget_usd      = 2.0
+  permission_mode     = "acceptEdits"
+  disallowed_tools    = ["Bash"]
 
   [step.schema]
   passed  = "bool"

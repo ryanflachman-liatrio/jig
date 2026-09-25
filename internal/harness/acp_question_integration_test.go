@@ -19,9 +19,9 @@ func TestACPAskUserQuestionIntegration(t *testing.T) {
 
 	var asked atomic.Bool
 	session, err := NewAcpHarness().Open(ctx, SessionSpec{
-		Cwd:          t.TempDir(),
-		Prompt:       "Use AskUserQuestion to ask exactly one single-select question with choices Alpha and Beta. After the answer, reply with one short sentence.",
-		AllowedTools: []string{"AskUserQuestion"},
+		Cwd:     t.TempDir(),
+		Prompt:  "Use AskUserQuestion to ask exactly one single-select question with choices Alpha and Beta. After the answer, reply with one short sentence.",
+		AskUser: true,
 		Question: func(_ context.Context, req interaction.QuestionRequest) interaction.QuestionResponse {
 			asked.Store(true)
 			field := req.Fields[0]

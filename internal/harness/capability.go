@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 
+	"jig/internal/agentcfg"
 	"jig/internal/interaction"
 )
 
@@ -84,17 +85,17 @@ type McpServerStdio struct {
 // does not advertise, and buildSessionSpec omits best-effort fields (partial
 // streaming, the base schema) the harness lacks.
 type SessionSpec struct {
-	Prompt            string
-	Model             string
-	FallbackModel     string
-	Effort            string
-	MaxTurns          int
-	MaxThinkingTokens int
-	MaxBudgetUSD      float64
-	PermissionMode    string
-	AllowedTools      []string
-	DisallowedTools   []string
-	Cwd               string
+	Prompt string
+	// Model is the resolved agent's model (Agent.Base().Model), kept flat for
+	// the config policy and non-step sessions.
+	Model string
+	// Agent is the step's resolved single-backend agent. Harnesses enforce its
+	// backend-specific settings; nil means the backend's defaults.
+	Agent agentcfg.Agent
+	// AskUser reports whether the step allows the agent to ask the human a
+	// question mid-run.
+	AskUser bool
+	Cwd     string
 	// DiagnosticsDir is an optional run-local directory for transport diagnostics.
 	// Harnesses that do not own a subprocess ignore it.
 	DiagnosticsDir string
@@ -122,4 +123,16 @@ type SessionSpec struct {
 // do not need to implement it.
 type PromptPreviewer interface {
 	PreviewPrompt(SessionSpec) string
+}
+
+// Effort returns the resolved agent's effort level, or "" when the backend has
+// no effort setting or none was set.
+func (s SessionSpec) Effort() string {
+	switch a := s.Agent.(type) {
+	case agentcfg.ClaudeAgent:
+		return a.Effort
+	case agentcfg.CodexAgent:
+		return a.Effort
+	}
+	return ""
 }

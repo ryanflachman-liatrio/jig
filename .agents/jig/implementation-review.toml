@@ -5,11 +5,6 @@ name        = "implementation-review"
 version     = "1"
 description = "One Codex ACP implementation step followed by human diff review."
 
-[defaults]
-backend         = "codex"
-permission_mode = "acceptEdits"
-max_turns       = 30
-
 [[step]]
 id        = "implement"
 type      = "agent"
@@ -18,7 +13,7 @@ isolation = "worktree"
 inputs = [
   { from = "user", label = "Describe one concrete implementation change to make:", as = "implementation_request" },
 ]
-allowed_tools = ["Read", "Grep", "Glob", "Edit", "Write", "Bash"]
+agent = { backend = "codex" }
 
 [[step]]
 id          = "validate_diff"

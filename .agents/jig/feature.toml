@@ -23,10 +23,7 @@ version     = "1"
 description = "Research -> plan -> implement -> verify -> ship, with review gates and loops."
 
 [defaults]
-model           = "claude-opus-4-8"
-max_turns       = 120
-permission_mode = "acceptEdits"
-backend         = "claude"
+agent           = "@feature-default"
 max_parallel    = 3
 artifacts_dir   = ".jig/artifacts"
 
@@ -38,12 +35,12 @@ artifacts_dir   = ".jig/artifacts"
 id            = "intake"
 type          = "agent"
 skill         = "../skills/intake"
-profile       = "@interactive"
+ask_user      = true
 inputs        = [
   { from = "user", label = "Describe the feature you want to build:", as = "feature_request" },
   { path = "templates/context-assess.md", inline = true },
 ]
-allowed_tools = ["Read", "Grep", "Glob"]
+agent         = "@feature-reader"
 
   [step.schema]
   areas      = { list = "text" }
@@ -61,7 +58,7 @@ depends_on    = ["intake"]
 when          = "intake.status == 'succeeded'"
 skill         = "../skills/research_backend"
 inputs        = ["@intake.summary", "@intake.areas"]
-allowed_tools = ["Read", "Grep", "Glob", "WebSearch"]
+agent         = { extends = "@feature-default", tools = ["Read", "Grep", "Glob", "WebSearch"] }
 block_on      = "research_backend.status == 'blocked'"
 
   [step.schema]
@@ -75,7 +72,7 @@ depends_on    = ["intake"]
 when          = "intake.status == 'succeeded'"
 skill         = "../skills/research_frontend"
 inputs        = ["@intake.summary", "@intake.areas"]
-allowed_tools = ["Read", "Grep", "Glob", "WebSearch"]
+agent         = { extends = "@feature-default", tools = ["Read", "Grep", "Glob", "WebSearch"] }
 block_on      = "research_frontend.status == 'blocked'"
 
   [step.schema]
@@ -92,7 +89,7 @@ type          = "agent"
 depends_on    = ["intake", "research_backend", "research_frontend"]
 skill         = "../skills/plan"
 inputs        = ["@intake.summary", "@research_backend.summary", "@research_frontend.summary"]
-allowed_tools = ["Read", "Grep", "Glob"]
+agent         = "@feature-reader"
 
   [step.schema]
   approach = "text"
@@ -133,7 +130,7 @@ when          = "plan_review == 'approve'"
 skill         = "../skills/implement"
 inputs        = ["@plan.tasks", { ref = "@plan.approach", inline = true }]
 isolation     = "worktree"
-allowed_tools = ["Read", "Grep", "Glob", "Edit", "Write", "Bash"]
+agent         = { extends = "@feature-default", tools = ["Read", "Grep", "Glob", "Edit", "Write", "Bash"] }
 
 # -----------------------------------------------------------------------------
 # 6. Checks — TWO deterministic command steps fan out in parallel off
@@ -215,7 +212,7 @@ type          = "agent"
 depends_on    = ["typecheck", "unit_test"]
 skill         = "../skills/qa"
 inputs        = ["@unit_test"]
-allowed_tools = ["Read", "Grep", "Glob"]
+agent         = "@feature-reader"
 
   [step.schema]
   passed      = "bool"
@@ -242,7 +239,7 @@ id            = "triage_findings"
 type          = "agent"
 depends_on    = ["qa"]
 skill         = "../skills/triage_finding"
-allowed_tools = ["Read", "Grep", "Glob"]
+agent         = "@feature-reader"
 
   [step.foreach]
   items        = "@qa.qa_findings"

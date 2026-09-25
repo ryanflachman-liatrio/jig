@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"jig/internal/agentcfg"
 	"jig/internal/harness"
 	"jig/internal/sentinel"
 )
@@ -99,14 +100,15 @@ func TestMonitorAdapterIsolationAndLifecycle(t *testing.T) {
 	if sentSpec.Model != monitorModel {
 		t.Fatalf("model = %q", sentSpec.Model)
 	}
-	if sentSpec.MaxTurns != 1 {
-		t.Fatalf("max turns = %d", sentSpec.MaxTurns)
+	claude, ok := sentSpec.Agent.(agentcfg.ClaudeAgent)
+	if !ok {
+		t.Fatalf("agent = %#v, want a Claude agent", sentSpec.Agent)
 	}
-	if sentSpec.AllowedTools == nil || len(sentSpec.AllowedTools) != 0 {
-		t.Fatalf("allowed tools = %#v", sentSpec.AllowedTools)
+	if claude.MaxTurns != 1 || claude.Model != monitorModel {
+		t.Fatalf("agent = %#v, want max_turns 1 and the monitor model", claude)
 	}
-	if sentSpec.DisallowedTools == nil || len(sentSpec.DisallowedTools) != 0 {
-		t.Fatalf("disallowed tools = %#v", sentSpec.DisallowedTools)
+	if claude.Tools == nil || len(claude.Tools) != 0 {
+		t.Fatalf("tools = %#v, want explicit empty (no built-in tools)", claude.Tools)
 	}
 	if sentSpec.Schema == nil {
 		t.Fatal("expected schema to be set so AcpHarness injects it into the prompt")

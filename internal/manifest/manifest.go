@@ -60,14 +60,17 @@ func NewWriter(runDir string) (*Writer, error) {
 // step reaches a terminal status.  It is filled by the engine's emit() method,
 // which already knows the current step state.
 type StepTerminal struct {
-	StepID            string
-	Status            string // "succeeded" | "failed" | "skipped"
-	Attempt           int
-	TotalCostUSD      *float64
-	Result            *step.Result
-	Backend           string
-	Model             string
-	ToolPolicy        []string
+	StepID       string
+	Status       string // "succeeded" | "failed" | "skipped"
+	Attempt      int
+	TotalCostUSD *float64
+	Result       *step.Result
+	Backend      string
+	Model        string
+	ToolPolicy   []string
+	// AgentPosture is the resolved agent's permission posture (backend, mode
+	// or permission_mode, tool lists) with applied defaults.
+	AgentPosture      map[string]string
 	IntegrationCommit string
 	DiffSHA256        string
 }
@@ -137,7 +140,7 @@ func (w *Writer) writeResult(t *StepTerminal) {
 		Result:       t.Result,
 		Provenance: provenanceJSON{
 			Backend: t.Backend, Model: t.Model,
-			ToolPolicy: t.ToolPolicy, IntegrationCommit: t.IntegrationCommit,
+			ToolPolicy: t.ToolPolicy, AgentPosture: t.AgentPosture, IntegrationCommit: t.IntegrationCommit,
 			DiffSHA256:     t.DiffSHA256,
 			OutputSHA256:   digestPath(resultOutputPath(t.Result)),
 			ArtifactSHA256: digestArtifacts(t.Result),
@@ -164,6 +167,7 @@ type provenanceJSON struct {
 	Backend           string            `json:"backend,omitempty"`
 	Model             string            `json:"model,omitempty"`
 	ToolPolicy        []string          `json:"tool_policy,omitempty"`
+	AgentPosture      map[string]string `json:"agent_posture,omitempty"`
 	IntegrationCommit string            `json:"integration_commit,omitempty"`
 	DiffSHA256        string            `json:"diff_sha256,omitempty"`
 	OutputSHA256      string            `json:"output_sha256,omitempty"`

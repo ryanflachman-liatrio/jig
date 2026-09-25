@@ -5,8 +5,7 @@ schema_version = 1
 
 # Module steps resolve defaults before this module is expanded into the parent.
 [defaults]
-backend = "codex"
-model = "gpt-5.6-luna"
+agent = "@sdd-codex"
 
 [module.inputs.spec_name]
 type = "text"
@@ -32,7 +31,6 @@ type = "agent"
 depends_on = ["implementation_review"]
 skill = "../../skills/sdd-implement-code"
 inputs = ["@module.spec_name", "@module.task_path", "@module.selected_task", "@module.finding_ids", "@module.affected_paths"]
-allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit", "Bash"]
 isolation = "worktree"
 resource_class = "mutation"
 mutation_paths = ["internal/**", "cmd/**", "docs/specs/**", "go.mod", "go.sum"]

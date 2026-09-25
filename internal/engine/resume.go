@@ -116,7 +116,11 @@ func DecodeWorkflowSnapshot(data []byte) (*workflow.Workflow, error) {
 	}
 	var wf *workflow.Workflow
 	if len(snap.ExpandedSteps) > 0 {
-		wf = workflow.RestoreExpandedWithTelemetry(snap.Meta, snap.Defaults, snap.Telemetry, snap.PublicSteps, snap.ExpandedSteps, snap.ModuleSources)
+		restored, err := workflow.RestoreExpandedWithTelemetry(snap.Meta, snap.Defaults, snap.Telemetry, snap.PublicSteps, snap.ExpandedSteps, snap.ModuleSources)
+		if err != nil {
+			return nil, err
+		}
+		wf = restored
 	} else {
 		decoded, err := workflow.DecodeLocked(snap.TOML, snap.BaseDir, snap.SourcePath, snap.ModuleSources)
 		if err != nil {

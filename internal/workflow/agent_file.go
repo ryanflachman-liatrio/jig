@@ -47,12 +47,6 @@ func (wf *Workflow) resolveAgentFiles(baseDir string) error {
 		s.SnapshotAgentPrompt = af.Prompt
 		s.agentFileTools = af.Tools
 		s.agentFileModel = af.Model
-		if len(s.AllowedTools) == 0 {
-			s.AllowedTools = af.Tools
-		}
-		if s.Model == "" {
-			s.Model = af.Model
-		}
 	}
 	return nil
 }

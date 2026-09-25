@@ -1,0 +1,19 @@
+# Shared agents for the SDD workflow family (.agents/jig/sdd.toml and its
+# modules). Codex has no per-tool allowlist: read-only steps use the
+# read-only sandbox mode; write-capable steps use the default agent mode.
+
+[[agent]]
+id = "@sdd-codex"
+backend = "codex"
+model = "gpt-5.6-luna"
+
+[[agent]]
+id = "@sdd-codex-reader"
+extends = "@sdd-codex"
+mode = "read-only"
+
+# The parent orchestration spends more reasoning on its exception records.
+[[agent]]
+id = "@sdd-default"
+extends = "@sdd-codex"
+effort = "high"

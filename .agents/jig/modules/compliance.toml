@@ -3,8 +3,7 @@ schema_version = 1
 
 # Module steps resolve defaults before this module is expanded into the parent.
 [defaults]
-backend = "codex"
-model = "gpt-5.6-luna"
+agent = "@sdd-codex"
 
 [module.inputs.spec_name]
 type = "text"
@@ -23,7 +22,7 @@ id = "scope"
 type = "agent"
 skill = "../../skills/sdd-compliance-scope"
 inputs = ["@module.spec_name", "@module.validation_report"]
-allowed_tools = ["Read", "Grep", "Glob"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   includes_ui = "bool"
@@ -36,7 +35,7 @@ type = "agent"
 depends_on = ["scope"]
 skill = "../../skills/sdd-check-owasp"
 inputs = ["@module.validation_report"]
-allowed_tools = ["Read", "Grep", "Glob"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   findings = "text"
@@ -48,7 +47,7 @@ depends_on = ["scope"]
 when = "scope.includes_sensitive_data"
 skill = "../../skills/sdd-check-data-privacy"
 inputs = ["@module.validation_report"]
-allowed_tools = ["Read", "Grep", "Glob"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   findings = "text"
@@ -60,7 +59,7 @@ depends_on = ["scope"]
 when = "scope.includes_ui"
 skill = "../../skills/sdd-check-accessibility"
 inputs = ["@module.validation_report"]
-allowed_tools = ["Read", "Grep", "Glob"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   findings = "text"
@@ -71,7 +70,7 @@ type = "agent"
 depends_on = ["scope"]
 skill = "../../skills/sdd-research-ecosystem"
 inputs = ["@module.validation_report"]
-allowed_tools = ["Read", "Grep", "Glob"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   findings = "text"
@@ -82,7 +81,6 @@ type = "agent"
 depends_on = ["scope", "security", "privacy", "accessibility", "dependencies"]
 skill = "../../skills/sdd-assemble-compliance"
 inputs = ["@module.spec_name", "@module.validation_report", "@security.findings", "@privacy.findings", "@accessibility.findings", "@dependencies.findings"]
-allowed_tools = ["Read", "Write"]
 isolation = "worktree"
 resource_class = "mutation"
 mutation_paths = ["docs/specs/**"]

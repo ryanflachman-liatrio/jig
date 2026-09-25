@@ -188,7 +188,7 @@ fleet_budget_usd = 1
 [[step]]
 id = "worker"
 type = "agent"
-backend = %q
+agent = { backend = %q }
 skill = "fixture-skill"
 isolation = "none"
 `, backend), repo)
@@ -293,7 +293,7 @@ fleet_budget_usd = 1
 [[step]]
 id = "worker"
 type = "agent"
-backend = %q
+agent = { backend = %q }
 skill = "fixture-skill"
 isolation = "none"
 `, tc.backend), repo)
@@ -511,7 +511,7 @@ fleet_budget_usd = 1
 [[step]]
 id = "worker"
 type = "agent"
-backend = %q
+agent = { backend = %q }
 skill = "fixture-skill"
 isolation = "none"
 `, tc.backend), repo)
@@ -709,13 +709,13 @@ fleet_budget_usd = 1
 [[step]]
 id = "claude-worker"
 type = "agent"
-backend = "claude"
+agent = { backend = "claude" }
 skill = "fixture-skill"
 isolation = "none"
 [[step]]
 id = "cursor-opted-out"
 type = "agent"
-backend = "cursor"
+agent = { backend = "cursor" }
 skill = "fixture-skill"
 isolation = "none"
   [step.security]
@@ -723,7 +723,7 @@ isolation = "none"
 [[step]]
 id = "codex-worker"
 type = "agent"
-backend = "codex"
+agent = { backend = "codex" }
 skill = "fixture-skill"
 isolation = "none"
 `, repo)
@@ -832,7 +832,7 @@ debounce_ms = 10
 [[step]]
 id = "worker"
 type = "agent"
-backend = %q
+agent = { backend = %q }
 skill = "fixture-skill"
 isolation = "none"%s
 `, policy.defaults, backend, stepSecurity), repo)

@@ -1,0 +1,5 @@
+# Shared agent for the bugfix workflow (.agents/jig/bugfix.toml).
+
+[[agent]]
+id = "@bugfix-default"
+permission_mode = "acceptEdits"

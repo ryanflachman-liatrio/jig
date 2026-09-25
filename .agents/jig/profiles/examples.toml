@@ -1,0 +1,7 @@
+# Shared agents for the workflows under examples/.
+
+# dynamic-fanout.toml: small, tool-less producer agents.
+[[agent]]
+id = "@fanout-producer"
+max_turns = 4
+tools = []

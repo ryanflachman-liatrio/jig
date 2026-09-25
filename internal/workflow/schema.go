@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"jig/internal/agentcfg"
 )
 
 // StepType is the kind of work a step performs.
@@ -52,53 +54,13 @@ const (
 	IsolationNone     Isolation = "none"
 )
 
-// EffortLevel tunes how much reasoning the model spends per step. Harnesses
-// apply it through the ACP adapter's thought_level session config selector.
-type EffortLevel string
-
-const (
-	EffortLow    EffortLevel = "low"
-	EffortMedium EffortLevel = "medium"
-	EffortHigh   EffortLevel = "high"
-	EffortXHigh  EffortLevel = "xhigh"
-	EffortMax    EffortLevel = "max"
-)
-
-// valid reports whether e is one of the known effort levels.
-func (e EffortLevel) valid() bool {
-	switch e {
-	case EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax:
-		return true
-	}
-	return false
-}
-
-// validPermissionMode reports whether s is one of the SDK's known permission
-// modes. PermissionMode is a plain string field (not a named type like
-// EffortLevel) since it is passed straight through to the SDK.
-func validPermissionMode(s string) bool {
-	switch s {
-	case "default", "acceptEdits", "plan", "bypassPermissions":
-		return true
-	}
-	return false
-}
-
 // Backend names the agent vendor jig reaches over ACP, the only transport.
-// Selected in TOML only (never via env).
+// The canonical constants live in agentcfg.
 const (
-	BackendClaude = "claude"
-	BackendCursor = "cursor"
-	BackendCodex  = "codex"
+	BackendClaude = agentcfg.BackendClaude
+	BackendCursor = agentcfg.BackendCursor
+	BackendCodex  = agentcfg.BackendCodex
 )
-
-func validBackend(s string) bool {
-	switch s {
-	case BackendClaude, BackendCursor, BackendCodex:
-		return true
-	}
-	return false
-}
 
 // OutputKind is the shape of a step's typed verdict.
 type OutputKind string
@@ -108,16 +70,6 @@ const (
 	OutputBool OutputKind = "bool" // true/false verdict
 	OutputEnum OutputKind = "enum" // one of a fixed set of values
 )
-
-// mutatingTools are the tools whose presence in a step's allowlist implies the
-// step edits the working tree, which flips worktree isolation on by default.
-var mutatingTools = map[string]bool{
-	"Edit":         true,
-	"MultiEdit":    true,
-	"Write":        true,
-	"Bash":         true,
-	"NotebookEdit": true,
-}
 
 // Workflow is a parsed workflow file.
 type Workflow struct {
@@ -133,9 +85,6 @@ type Workflow struct {
 	// index maps step id -> position in Steps, populated by applyDefaults so
 	// validation and later execution can resolve references in O(1).
 	index map[string]int
-	// profileIndex maps profile id (e.g. "@interactive") -> AgentProfile,
-	// populated at load time from built-ins and .agents/jig/profiles/*.toml.
-	profileIndex map[string]*AgentProfile
 
 	sourcePath string
 	sourceTOML string
@@ -208,7 +157,7 @@ func (wf *Workflow) ModuleSources() []ModuleSource {
 // RestoreExpanded reconstructs the already-validated execution graph captured
 // at run start. It intentionally does not reload module files: resume uses this
 // locked graph even when the checkout has since changed.
-func RestoreExpanded(meta Meta, defaults Defaults, publicSteps, steps []Step, sources []ModuleSource) *Workflow {
+func RestoreExpanded(meta Meta, defaults Defaults, publicSteps, steps []Step, sources []ModuleSource) (*Workflow, error) {
 	return RestoreExpandedWithTelemetry(meta, defaults, Telemetry{}, publicSteps, steps, sources)
 }
 
@@ -217,7 +166,17 @@ func RestoreExpanded(meta Meta, defaults Defaults, publicSteps, steps []Step, so
 // Telemetry block at run start use this variant so a resumed run keeps the
 // same exporter policy the operator authored, even if the on-disk TOML has
 // since drifted.
-func RestoreExpandedWithTelemetry(meta Meta, defaults Defaults, telemetry Telemetry, publicSteps, steps []Step, sources []ModuleSource) *Workflow {
+//
+// Each agent step's resolved agent comes from its persisted SnapshotAgent and
+// is never re-resolved from [defaults] or profiles on disk. A snapshot whose
+// agent step lacks one predates the agent schema and is rejected rather than
+// silently restored as an unrestricted default agent.
+func RestoreExpandedWithTelemetry(meta Meta, defaults Defaults, telemetry Telemetry, publicSteps, steps []Step, sources []ModuleSource) (*Workflow, error) {
+	for _, s := range steps {
+		if s.Type == StepAgent && s.SnapshotAgent == nil {
+			return nil, fmt.Errorf("workflow snapshot predates the agent schema (step %q); start a new run", s.ID)
+		}
+	}
 	wf := &Workflow{
 		Meta:          meta,
 		Defaults:      defaults,
@@ -227,29 +186,7 @@ func RestoreExpandedWithTelemetry(meta Meta, defaults Defaults, telemetry Teleme
 		moduleSources: append([]ModuleSource(nil), sources...),
 	}
 	wf.applyDefaults()
-	return wf
-}
-
-// AgentProfile is a reusable bundle of agent configuration. Profiles let
-// workflow authors give a step a named "personality" (tool access, model
-// knobs, interaction style) without repeating the same fields on every step.
-// Built-in profiles are hard-coded in profiles.go; project-local profiles
-// live in .agents/jig/profiles/*.toml using [[agent]] tables.
-type AgentProfile struct {
-	ID                string      `toml:"id"`
-	Tools             []string    `toml:"tools"`
-	DisallowedTools   []string    `toml:"disallowed_tools"`
-	Model             string      `toml:"model"`
-	FallbackModel     string      `toml:"fallback_model"`
-	Effort            EffortLevel `toml:"effort"`
-	MaxTurns          int         `toml:"max_turns"`
-	MaxThinkingTokens int         `toml:"max_thinking_tokens"`
-	MaxBudgetUSD      float64     `toml:"max_budget_usd"`
-	PermissionMode    string      `toml:"permission_mode"`
-	// AskUserQuestion injects "AskUserQuestion" into the step's AllowedTools
-	// so the agent can pause mid-run to collect human input via the TUI.
-	AskUserQuestion    bool   `toml:"ask_user_question"`
-	AppendSystemPrompt string `toml:"append_system_prompt"`
+	return wf, nil
 }
 
 // Meta is the top-level [workflow] table.
@@ -333,16 +270,9 @@ type StepSecurity struct {
 
 // Defaults is the [defaults] table. Per-step fields override these.
 type Defaults struct {
-	Model             string      `toml:"model"`
-	FallbackModel     string      `toml:"fallback_model"`
-	Effort            EffortLevel `toml:"effort"`
-	MaxTurns          int         `toml:"max_turns"`
-	MaxThinkingTokens int         `toml:"max_thinking_tokens"`
-	MaxBudgetUSD      float64     `toml:"max_budget_usd"`
-	Cwd               string      `toml:"cwd"`
-	PermissionMode    string      `toml:"permission_mode"`
-	MaxParallel       int         `toml:"max_parallel"`
-	ArtifactsDir      string      `toml:"artifacts_dir"`
+	Cwd          string `toml:"cwd"`
+	MaxParallel  int    `toml:"max_parallel"`
+	ArtifactsDir string `toml:"artifacts_dir"`
 	// ResourceLimits caps concurrently running steps by resource class. A class
 	// not present here is constrained only by max_parallel.
 	ResourceLimits map[string]int `toml:"resource_limits"`
@@ -365,10 +295,6 @@ type Defaults struct {
 	// (nil ⇒ enabled) stays distinct from an explicit false; a per-step
 	// inject_context overrides it.
 	InjectContext *bool `toml:"inject_context"`
-
-	// Backend selects which agent vendor runs agent steps, always over ACP.
-	// Per-step values override this; see Step.Backend.
-	Backend string `toml:"backend"`
 
 	// Agent is the workflow-wide agent used whole by agent steps that set no
 	// agent of their own.
@@ -412,7 +338,6 @@ type Step struct {
 	// Agent-only.
 	Skill     string `toml:"skill"`
 	AgentFile string `toml:"agent_file"` // xor with Skill: a Claude agent .md file
-	Profile   string `toml:"profile"`    // "@id" references a named AgentProfile
 	// Agent is the step's single-backend agent: a profile reference or an
 	// inline [step.agent] table. It wins whole over [defaults] agent.
 	Agent *AgentRef `toml:"agent"`
@@ -443,24 +368,10 @@ type Step struct {
 	// framing. Agent-only; see StepContextSpec.
 	Context *StepContextSpec `toml:"context"`
 
-	// Tool access: AllowedTools is the allowlist; DisallowedTools is the
-	// complementary denylist (e.g. everything but Bash).
-	AllowedTools    []string `toml:"allowed_tools"`
-	DisallowedTools []string `toml:"disallowed_tools"`
-
-	// Model & reasoning knobs (all overridable from [defaults]).
-	Model             string      `toml:"model"`
-	FallbackModel     string      `toml:"fallback_model"`
-	Effort            EffortLevel `toml:"effort"`
-	MaxTurns          int         `toml:"max_turns"`
-	MaxThinkingTokens int         `toml:"max_thinking_tokens"`
-	MaxBudgetUSD      float64     `toml:"max_budget_usd"`
-	PermissionMode    string      `toml:"permission_mode"`
-
-	// Backend is the agent vendor (claude, cursor, or codex), always reached
-	// over ACP. Inherited from [defaults]; resolved to a non-empty value by
-	// applyDefaults.
-	Backend string `toml:"backend"`
+	// Backend and Model are the resolved agent's backend and model, derived
+	// from SnapshotAgent for readers that only need those two values.
+	Backend string `toml:"-" json:"-"`
+	Model   string `toml:"-" json:"-"`
 
 	// OutputTemplate is a path (relative to the workflow file) to a markdown
 	// template that structures the agent's text response. The engine reads it at
@@ -697,16 +608,16 @@ func (s *Step) OutputTemplateBody() string {
 // the engine gets a single boolean read and never has to re-consult [defaults].
 func (s *Step) InjectContextEnabled() bool { return s.injectContext }
 
-// isMutating reports whether the step's tool allowlist implies it edits the
-// working tree.
+// isMutating reports whether the step's resolved agent may edit the working
+// tree. A step with no resolved agent is treated as mutating (fail safe).
 func (s *Step) isMutating() bool {
-	for _, t := range s.AllowedTools {
-		if mutatingTools[t] {
-			return true
-		}
-	}
-	return false
+	a := s.ResolvedAgent()
+	return a == nil || agentcfg.IsMutating(a)
 }
+
+// AskUserEnabled reports whether the step lets its agent ask the human a
+// question mid-run (ask_user = true).
+func (s *Step) AskUserEnabled() bool { return s.AskUser != nil && *s.AskUser }
 
 // Input is one entry of a step's `inputs` array. It is either a reference to a
 // prior step's output (Ref, from "@stepid") or a literal file path (Path).

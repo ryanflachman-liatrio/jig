@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"jig/internal/agentcfg"
 	"jig/internal/engine"
 	"jig/internal/harness"
 	"jig/internal/step"
@@ -29,8 +30,7 @@ func (r *IntegrationResolver) ResolveIntegration(ctx context.Context, req engine
 	resolverStep.BlockOn = ""
 	resolverStep.Schema = nil
 	resolverStep.SchemaFile = ""
-	resolverStep.AllowedTools = []string{"Read", "Grep", "Glob", "Write", "Edit", "Bash"}
-	resolverStep.DisallowedTools = nil
+	resolverStep.SnapshotAgent = &workflow.AgentSnapshot{Agent: resolverAgent(req.Step)}
 	resolverStep.AppendSystemPrompt = strings.TrimSpace(resolverStep.AppendSystemPrompt + "\n\n" + integrationResolutionPrompt(req.Conflicts))
 
 	return r.agent.Execute(ctx, engine.StepRequest{
@@ -40,4 +40,22 @@ func (r *IntegrationResolver) ResolveIntegration(ctx context.Context, req engine
 
 func integrationResolutionPrompt(paths []string) string {
 	return "You are resolving an integration conflict in the current worktree. Resolve only these conflicted paths: " + strings.Join(paths, ", ") + ". Preserve both intended changes when compatible. Do not commit, reset, rebase, or alter workflow state. Remove all conflict markers, run focused checks when practical, and leave the resolution staged for human review."
+}
+
+// resolverAgent is a write-capable agent on the conflicted step's backend and
+// model. Per-backend enforcement details are refined with the adapters.
+func resolverAgent(st *workflow.Step) agentcfg.Agent {
+	var common agentcfg.Common
+	backend := agentcfg.BackendClaude
+	if a := st.ResolvedAgent(); a != nil {
+		common.Model = a.Base().Model
+		backend = a.Backend()
+	}
+	switch backend {
+	case agentcfg.BackendCodex:
+		return agentcfg.CodexAgent{Common: common, Mode: "agent"}
+	case agentcfg.BackendCursor:
+		return agentcfg.CursorAgent{Common: common, Mode: "agent"}
+	}
+	return agentcfg.ClaudeAgent{Common: common, Tools: []string{"Read", "Grep", "Glob", "Write", "Edit", "Bash"}}
 }

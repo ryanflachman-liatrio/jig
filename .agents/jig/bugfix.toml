@@ -3,8 +3,7 @@ name = "bugfix"
 version = "1"
 
 [defaults]
-backend         = "claude"
-permission_mode = "acceptEdits"
+agent = "@bugfix-default"
 
 [[step]]
 id            = "triage"
@@ -12,7 +11,7 @@ type          = "agent"
 skill         = "../skills/intake"
 inputs        = ["templates/context-assess.md"]
 output        = ".jig/artifacts/triage.md"
-allowed_tools = ["Read", "Grep", "Glob"]
+agent         = { extends = "@bugfix-default", tools = ["Read", "Grep", "Glob"] }
 
 [[step]]
 id            = "fix"
@@ -20,7 +19,7 @@ type          = "agent"
 depends_on    = ["triage"]
 skill         = "../skills/implement"
 inputs        = ["@triage"]
-allowed_tools = ["Read", "Edit", "Write", "Bash"]
+agent         = { extends = "@bugfix-default", tools = ["Read", "Edit", "Write", "Bash"] }
 
   [step.validate]
   command = "go test ./..."

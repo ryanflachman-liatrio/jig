@@ -23,7 +23,7 @@ version     = "1"
 description = "Discover a small list, fan out a bounded analysis over it, then synthesize the ordered aggregate."
 
 [defaults]
-max_turns    = 4
+agent        = "@fanout-producer"
 max_parallel = 4
 
 # -----------------------------------------------------------------------------
@@ -34,7 +34,6 @@ max_parallel = 4
 id            = "discover"
 type          = "agent"
 skill         = "skills/dynamic-fanout-discover"
-allowed_tools = []
 
   [step.schema]
   targets = { list = { name = "text", path = "text" } }
@@ -72,4 +71,3 @@ depends_on    = ["analyze"]
 when          = "analyze.all_succeeded && analyze.count >= 1"
 skill         = "skills/dynamic-fanout-synthesize"
 inputs        = ["@analyze.results"]
-allowed_tools = []

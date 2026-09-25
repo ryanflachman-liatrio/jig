@@ -526,6 +526,7 @@ version = "1"
 [[step]]
 id = "agent"
 type = "agent"
+isolation = "none"
 skill = "agent"
 `, "")
 	if err != nil {
@@ -626,6 +627,7 @@ version = "1"
 [[step]]
 id = "agent"
 type = "agent"
+isolation = "none"
 skill = "agent"
 `, "")
 	if err != nil {
@@ -725,6 +727,7 @@ version = "1"
 [[step]]
 id = "agent"
 type = "agent"
+isolation = "none"
 skill = "agent"
 `, "")
 	if err != nil {
@@ -777,18 +780,22 @@ version = "1"
 [[step]]
 id = "recovery"
 type = "agent"
+isolation = "none"
 skill = "agent"
 [[step]]
 id = "stopped"
 type = "agent"
+isolation = "none"
 skill = "agent"
 [[step]]
 id = "input"
 type = "agent"
+isolation = "none"
 skill = "agent"
 [[step]]
 id = "worker"
 type = "agent"
+isolation = "none"
 skill = "agent"
 `, "")
 	if err != nil {
@@ -1036,6 +1043,7 @@ version = "1"
 [[step]]
 id = "agent"
 type = "agent"
+isolation = "none"
 skill = "agent"
 `, "")
 	if err != nil {
@@ -1219,6 +1227,7 @@ version = "1"
 [[step]]
 id = "agent"
 type = "agent"
+isolation = "none"
 skill = "agent"
 `, "")
 	if err != nil {

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"jig/internal/agentcfg"
 )
 
 // validBugfix is the worked example from docs/workflow-schema.md. Skill dirs and
@@ -16,7 +18,7 @@ name = "bugfix"
 version = "1"
 
 [defaults]
-permission_mode = "acceptEdits"
+agent = { permission_mode = "acceptEdits" }
 
 [[step]]
 id = "triage"
@@ -24,7 +26,7 @@ type = "agent"
 skill = "skills/triage"
 inputs = ["reports/bug.md", { path = "conventions.md", inline = true }]
 output = "triage.md"
-allowed_tools = ["Read", "Grep", "Glob"]
+agent = { tools = ["Read", "Grep", "Glob"] }
 
 [[step]]
 id = "fix"
@@ -32,7 +34,7 @@ type = "agent"
 depends_on = ["triage"]
 skill = "skills/fix"
 inputs = ["@triage"]
-allowed_tools = ["Read", "Edit", "Write", "Bash"]
+agent = { tools = ["Read", "Edit", "Write", "Bash"] }
 
   [step.validate]
   command = "go test ./..."
@@ -959,19 +961,18 @@ func TestDecodeBackend(t *testing.T) {
 name = "x"
 version = "1"
 [defaults]
-backend = "claude"
+agent = { backend = "claude" }
 [[step]]
 id = "a"
 type = "agent"
 skill = "skills/a"
-allowed_tools = ["Read"]
+agent = { tools = ["Read"] }
 [[step]]
 id = "b"
 type = "agent"
 skill = "skills/a"
 depends_on = ["a"]
-backend = "cursor"
-allowed_tools = ["Read"]
+agent = { backend = "cursor" }
 `
 		wf, err := Decode(toml, dir)
 		if err != nil {
@@ -996,8 +997,7 @@ version = "1"
 id = "a"
 type = "agent"
 skill = "skills/a"
-backend = "cursor"
-allowed_tools = ["Read"]
+agent = { backend = "cursor" }
 `
 		wf, err := Decode(toml, dir)
 		if err != nil {
@@ -1018,8 +1018,7 @@ version = "1"
 id = "a"
 type = "agent"
 skill = "skills/a"
-backend = "codex"
-allowed_tools = ["Read"]
+agent = { backend = "codex" }
 `
 		wf, err := Decode(toml, dir)
 		if err != nil {
@@ -1040,8 +1039,7 @@ version = "1"
 id = "a"
 type = "agent"
 skill = "skills/a"
-backend = "openai"
-allowed_tools = ["Read"]
+agent = { backend = "openai" }
 `
 		_, err := Decode(toml, dir)
 		if err == nil || !strings.Contains(err.Error(), "invalid backend") {
@@ -1059,7 +1057,7 @@ id = "a"
 type = "agent"
 skill = "skills/a"
 transport = "acp"
-allowed_tools = ["Read"]
+agent = { tools = ["Read"] }
 `
 		_, err := Decode(toml, dir)
 		if err == nil || !strings.Contains(err.Error(), "unknown key") {
@@ -1214,7 +1212,7 @@ version = "1"
 id = "a"
 type = "agent"
 skill = "s"
-allowed_tools = ["Read"]
+agent = { tools = ["Read"] }
 [step.schema]
 status = { enum = ["ok", "fail"] }
 [[step]]
@@ -1235,7 +1233,7 @@ version = "1"
 id = "a"
 type = "agent"
 skill = "s"
-allowed_tools = ["Read"]
+agent = { tools = ["Read"] }
 [step.schema]
 status = { enum = ["ok", "fail"] }
 [[step]]
@@ -1256,7 +1254,7 @@ version = "1"
 id = "a"
 type = "agent"
 skill = "s"
-allowed_tools = ["Read"]
+agent = { tools = ["Read"] }
 output_type = { enum = ["x", "y"] }
 [step.schema]
 status = "text"`,
@@ -1272,7 +1270,7 @@ version = "1"
 id = "a"
 type = "agent"
 skill = "s"
-allowed_tools = ["Read"]
+agent = { tools = ["Read"] }
 schema_file = "x.json"
 [step.schema]
 status = "text"`,
@@ -1302,8 +1300,7 @@ version = "1"
 id = "a"
 type = "agent"
 skill = "s"
-effort = "turbo"
-allowed_tools = ["Read"]`,
+agent = { effort = "turbo", tools = ["Read"] }`,
 			want: "invalid effort",
 		},
 		{
@@ -1316,9 +1313,8 @@ version = "1"
 id = "a"
 type = "agent"
 skill = "s"
-max_budget_usd = -1.0
-allowed_tools = ["Read"]`,
-			want: "max_budget_usd must be >= 0",
+agent = { max_budget_usd = -1.0, tools = ["Read"] }`,
+			want: "must be >= 0",
 		},
 		{
 			name: "skill and agent_file both set",
@@ -1342,7 +1338,7 @@ version = "1"
 [[step]]
 id = "a"
 type = "agent"
-allowed_tools = ["Read"]`,
+agent = { tools = ["Read"] }`,
 			want: "requires `skill` or `agent_file`",
 		},
 		{
@@ -1447,13 +1443,13 @@ id = "override_on"
 type = "agent"
 skill = "s"
 inject_context = true
-allowed_tools = ["Read"]
+agent = { tools = ["Read"] }
 
 [[step]]
 id = "inherit_off"
 type = "agent"
 skill = "s"
-allowed_tools = ["Read"]
+agent = { tools = ["Read"] }
 `
 	wf, err := Decode(toml, "") // "" skips skill-dir existence checks
 	if err != nil {
@@ -1478,7 +1474,7 @@ version = "1"
 id = "a"
 type = "agent"
 skill = "s"
-allowed_tools = ["Read"]
+agent = { tools = ["Read"] }
 [step.context]
 purpose = "why a exists"
 notes = "local guidance for a"
@@ -1593,7 +1589,7 @@ func TestPermissionModeValid(t *testing.T) {
 name = "x"
 version = "1"
 [defaults]
-permission_mode = "acceptEdits"
+agent = { permission_mode = "acceptEdits" }
 [[step]]
 id = "a"
 type = "agent"
@@ -1602,7 +1598,7 @@ skill = "s"
 id = "b"
 type = "agent"
 skill = "s"
-permission_mode = "bypassPermissions"
+agent = { permission_mode = "bypassPermissions" }
 `
 	if _, err := Decode(toml, ""); err != nil {
 		t.Fatalf("expected valid, got error: %v", err)
@@ -1620,7 +1616,7 @@ version = "1"
 id = "a"
 type = "agent"
 skill = "s"
-permission_mode = "accept-edits"
+agent = { permission_mode = "accept-edits" }
 `
 	_, err := Decode(toml, "")
 	if err == nil {
@@ -1643,7 +1639,7 @@ version = "1"
 id = "research"
 type = "agent"
 skill = "skills/research"
-allowed_tools = ["Read", "Grep"]
+agent = { tools = ["Read", "Grep"] }
 
   [step.schema]
   sources = { list = { url = "text", relevance = "number" } }
@@ -1655,7 +1651,7 @@ depends_on = ["research"]
 skill = "skills/report"
 inputs = ["@research.summary", { ref = "@research.status", inline = true }]
 when = "research.status == 'succeeded'"
-allowed_tools = ["Read"]
+agent = { tools = ["Read"] }
 `
 
 func TestDecodeProducerSchema(t *testing.T) {
@@ -1745,14 +1741,14 @@ id = "triage"
 type = "agent"
 skill = "skills/triage"
 schema_file = "schemas/triage.json"
-allowed_tools = ["Read"]
+agent = { tools = ["Read"] }
 [[step]]
 id = "route"
 type = "agent"
 depends_on = ["triage"]
 skill = "skills/route"
 when = "triage.priority == 'high'"
-allowed_tools = ["Read"]
+agent = { tools = ["Read"] }
 `
 	wf, err := Decode(src, dir)
 	if err != nil {
@@ -1785,7 +1781,7 @@ You are a meticulous security reviewer. Flag any risky change.`)
 name = "x"
 version = "1"
 
-[defaults]
+[defaults.agent]
 effort         = "high"
 fallback_model = "claude-sonnet-4-6"
 
@@ -1798,8 +1794,7 @@ agent_file = "agents/reviewer.md"
 id         = "override"
 type       = "agent"
 agent_file = "agents/reviewer.md"
-model      = "claude-haiku-4-5-20251001"
-effort     = "low"
+agent      = { model = "claude-haiku-4-5-20251001", effort = "low" }
 `
 	wf, err := Decode(src, dir)
 	if err != nil {
@@ -1810,8 +1805,9 @@ effort     = "low"
 	if got := rv.agentPrompt; !strings.Contains(got, "security reviewer") {
 		t.Errorf("agentPrompt = %q, want the file body", got)
 	}
-	if got, want := strings.Join(rv.AllowedTools, ","), "Read,Grep,Edit,Bash"; got != want {
-		t.Errorf("AllowedTools = %q, want %q", got, want)
+	rc := rv.ResolvedAgent().(agentcfg.ClaudeAgent)
+	if got, want := strings.Join(rc.Tools, ","), "Read,Grep,Edit,Bash"; got != want {
+		t.Errorf("Tools = %q, want %q", got, want)
 	}
 	if rv.Model != "opus" {
 		t.Errorf("Model = %q, want %q (from agent file)", rv.Model, "opus")
@@ -1820,21 +1816,16 @@ effort     = "low"
 	if rv.Isolation != IsolationWorktree {
 		t.Errorf("Isolation = %q, want worktree (mutating tools from file)", rv.Isolation)
 	}
-	// Defaults still apply for knobs the file doesn't set.
-	if rv.Effort != EffortHigh {
-		t.Errorf("Effort = %q, want high (from defaults)", rv.Effort)
-	}
-	if rv.FallbackModel != "claude-sonnet-4-6" {
-		t.Errorf("FallbackModel = %q, want inherited from defaults", rv.FallbackModel)
+	// The [defaults] agent layers over the file for knobs the file doesn't set.
+	if rc.Effort != "high" || rc.FallbackModel != "claude-sonnet-4-6" {
+		t.Errorf("agent = %+v, want effort/fallback_model from [defaults] agent", rc)
 	}
 
-	// Explicit step fields outrank both the file and defaults.
+	// The step's own agent outranks both the file and defaults.
 	ov := wf.Steps[wf.index["override"]]
-	if ov.Model != "claude-haiku-4-5-20251001" {
-		t.Errorf("override Model = %q, want the explicit step value", ov.Model)
-	}
-	if ov.Effort != EffortLow {
-		t.Errorf("override Effort = %q, want low", ov.Effort)
+	oc := ov.ResolvedAgent().(agentcfg.ClaudeAgent)
+	if ov.Model != "claude-haiku-4-5-20251001" || oc.Effort != "low" {
+		t.Errorf("override agent = %+v, want the explicit step values", oc)
 	}
 }
 
@@ -1898,113 +1889,42 @@ skill = "skills/test"
 	}
 }
 
-func TestDecodeProfileValid(t *testing.T) {
-	// minAgent is the smallest valid agent-step TOML, minus any profile.
-	const hdr = `
+// TestDecodeAskUser verifies ask_user is a step-level flag that leaves the
+// agent's tool lists untouched.
+func TestDecodeAskUser(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteSkill(t, filepath.Join(dir, "s", "SKILL.md"), "# Skill")
+	wf, err := Decode(`
 [workflow]
 name = "x"
 version = "1"
-`
-	cases := []struct {
-		name           string
-		toml           string
-		checkStep      string
-		wantTools      []string
-		wantDisallowed []string
-	}{
-		{
-			name: "@interactive on step with no tools injects AskUserQuestion",
-			toml: hdr + `
 [[step]]
 id = "ask"
 type = "agent"
 skill = "s"
-profile = "@interactive"
-`,
-			checkStep: "ask",
-			wantTools: []string{"AskUserQuestion"},
-		},
-		{
-			name: "@interactive on step with explicit tools appends AskUserQuestion",
-			toml: hdr + `
-[[step]]
-id = "ask"
-type = "agent"
-skill = "s"
-profile = "@interactive"
-allowed_tools = ["Read", "Grep"]
-`,
-			checkStep: "ask",
-			wantTools: []string{"Read", "Grep", "AskUserQuestion"},
-		},
-		{
-			name: "@interactive does not add AskUserQuestion twice",
-			toml: hdr + `
-[[step]]
-id = "ask"
-type = "agent"
-skill = "s"
-profile = "@interactive"
-allowed_tools = ["AskUserQuestion", "Read"]
-`,
-			checkStep: "ask",
-			wantTools: []string{"AskUserQuestion", "Read"},
-		},
-		{
-			name: "@autonomous sets disallowed_tools",
-			toml: hdr + `
+ask_user = true
+agent = { tools = [] }
 [[step]]
 id = "bot"
 type = "agent"
 skill = "s"
-profile = "@autonomous"
-`,
-			checkStep:      "bot",
-			wantDisallowed: []string{"AskUserQuestion"},
-		},
-		{
-			name: "explicit disallowed_tools wins over @autonomous",
-			toml: hdr + `
-[[step]]
-id = "bot"
-type = "agent"
-skill = "s"
-profile = "@autonomous"
-disallowed_tools = ["Bash"]
-`,
-			checkStep:      "bot",
-			wantDisallowed: []string{"Bash"},
-		},
+`, dir)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
 	}
-
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "s"), 0o755); err != nil {
-		t.Fatal(err)
+	ask := wf.Steps[wf.index["ask"]]
+	if !ask.AskUserEnabled() {
+		t.Error("ask.AskUserEnabled() = false, want true")
 	}
-	mustWriteSkill(t, filepath.Join(dir, "s", "SKILL.md"), "# Skill")
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			wf, err := Decode(tc.toml, dir)
-			if err != nil {
-				t.Fatalf("Decode: %v", err)
-			}
-			s := wf.Steps[wf.index[tc.checkStep]]
-			if tc.wantTools != nil {
-				if got := strings.Join(s.AllowedTools, ","); got != strings.Join(tc.wantTools, ",") {
-					t.Errorf("AllowedTools = %q, want %q", got, strings.Join(tc.wantTools, ","))
-				}
-			}
-			if tc.wantDisallowed != nil {
-				if got := strings.Join(s.DisallowedTools, ","); got != strings.Join(tc.wantDisallowed, ",") {
-					t.Errorf("DisallowedTools = %q, want %q", got, strings.Join(tc.wantDisallowed, ","))
-				}
-			}
-		})
+	if tools := ask.ResolvedAgent().(agentcfg.ClaudeAgent).Tools; tools == nil || len(tools) != 0 {
+		t.Errorf("ask tools = %#v, want explicit empty", tools)
+	}
+	if wf.Steps[wf.index["bot"]].AskUserEnabled() {
+		t.Error("bot.AskUserEnabled() = true, want false (the default)")
 	}
 }
 
-func TestDecodeProfileInvalid(t *testing.T) {
+func TestDecodeAskUserInvalid(t *testing.T) {
 	const hdr = `
 [workflow]
 name = "x"
@@ -2016,76 +1936,47 @@ version = "1"
 		want string
 	}{
 		{
-			name: "unknown profile",
-			toml: hdr + `
-[[step]]
-id = "a"
-type = "agent"
-skill = "s"
-profile = "@nonexistent"
-`,
-			want: `unknown profile "@nonexistent"`,
-		},
-		{
-			name: "profile without @ prefix",
-			toml: hdr + `
-[[step]]
-id = "a"
-type = "agent"
-skill = "s"
-profile = "interactive"
-`,
-			want: `profile "interactive" must start with '@'`,
-		},
-		{
-			name: "profile on command step",
+			name: "ask_user on command step",
 			toml: hdr + `
 [[step]]
 id = "a"
 type = "command"
 run = "true"
-profile = "@interactive"
+ask_user = true
 `,
-			want: "fields belonging to another step type",
+			want: "`ask_user` is only valid on agent steps",
 		},
 		{
-			name: "profile on review step",
-			toml: hdr + `
-[[step]]
-id = "a"
-type = "review"
-output_type = "bool"
-profile = "@interactive"
-[[step.review]]
-source = "diff"
-label = "Code changes"
-`,
-			want: "fields belonging to another step type",
-		},
-		{
-			name: "@interactive combined with block_on",
+			name: "ask_user combined with block_on",
 			toml: hdr + `
 [[step]]
 id = "a"
 type = "agent"
 skill = "s"
-profile = "@interactive"
+ask_user = true
 block_on = "a.needs_input"
 [step.schema]
 needs_input = "bool"
 `,
 			want: "overlapping purposes",
 		},
+		{
+			name: "AskUserQuestion in tools",
+			toml: hdr + `
+[[step]]
+id = "a"
+type = "agent"
+skill = "s"
+agent = { tools = ["AskUserQuestion"] }
+`,
+			want: "set ask_user on the step instead",
+		},
 	}
-
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Decode(tc.toml, "")
-			if err == nil {
-				t.Fatalf("expected error containing %q, got nil", tc.want)
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("error = %q, want substring %q", err.Error(), tc.want)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want substring %q", err, tc.want)
 			}
 		})
 	}
@@ -2731,7 +2622,10 @@ func TestLoadForEachClonedAcrossSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	clone := RestoreExpanded(wf.Meta, wf.Defaults, wf.PublicSteps(), wf.Steps, wf.ModuleSources())
+	clone, err := RestoreExpanded(wf.Meta, wf.Defaults, wf.PublicSteps(), wf.Steps, wf.ModuleSources())
+	if err != nil {
+		t.Fatal(err)
+	}
 	clone.Steps[clone.index["analyze"]].ForEach.As = "mutated"
 	if wf.Steps[wf.index["analyze"]].ForEach.As != "target" {
 		t.Fatalf("original ForEach.As mutated to %q; clone is aliased", wf.Steps[wf.index["analyze"]].ForEach.As)

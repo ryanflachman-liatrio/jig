@@ -245,3 +245,19 @@ func TestExportNoUsableEvidenceFailsWithoutArchive(t *testing.T) {
 		t.Fatalf("no-evidence export created a destination: %v", statErr)
 	}
 }
+
+// TestExportStepBackend verifies the exported step summary's backend comes
+// from the step's resolved agent persisted in the run snapshot.
+func TestExportStepBackend(t *testing.T) {
+	_, _, _, run := exportFixture(t, false)
+	for _, st := range run.Steps {
+		if st.Type != "agent" {
+			continue
+		}
+		if st.Backend != "codex" {
+			t.Fatalf("agent step backend = %q, want codex from the resolved agent", st.Backend)
+		}
+		return
+	}
+	t.Fatal("no agent step in exported run summary")
+}

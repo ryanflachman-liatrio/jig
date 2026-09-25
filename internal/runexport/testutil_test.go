@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"jig/internal/agentcfg"
 	"jig/internal/engine"
 	"jig/internal/toolcall"
 	"jig/internal/transcript"
@@ -134,7 +135,8 @@ func writeJSONLFile(t *testing.T, path string, lines [][]byte) {
 func fixtureWorkflowSteps() []workflow.Step {
 	return []workflow.Step{
 		{ID: "fetch", Type: workflow.StepCommand},
-		{ID: "agent-1", Type: workflow.StepAgent, Backend: workflow.BackendClaude, DependsOn: []string{"fetch"}},
+		{ID: "agent-1", Type: workflow.StepAgent, DependsOn: []string{"fetch"},
+			SnapshotAgent: &workflow.AgentSnapshot{Agent: agentcfg.CodexAgent{Mode: "read-only"}}},
 		{ID: "review-1", Type: workflow.StepReview, When: "false"},
 	}
 }

@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"jig/internal/agentcfg"
 	"jig/internal/datastore"
 	"jig/internal/interaction"
 	"jig/internal/manifest"
@@ -3615,7 +3616,12 @@ func (s *scheduler) terminalManifest(e Event) *manifest.StepTerminal {
 	if wfStep := s.stepByID(ss.StepID); wfStep != nil {
 		term.Backend = wfStep.Backend
 		term.Model = wfStep.Model
-		term.ToolPolicy = append(append([]string{}, wfStep.AllowedTools...), wfStep.DisallowedTools...)
+		if a := wfStep.ResolvedAgent(); a != nil {
+			if c, ok := a.(agentcfg.ClaudeAgent); ok {
+				term.ToolPolicy = append(append([]string{}, c.Tools...), c.DisallowedTools...)
+			}
+			term.AgentPosture = agentcfg.Posture(a)
+		}
 	}
 	term.IntegrationCommit = s.stepCommits[ss.StepID]
 	if diff := s.diffs[ss.StepID]; diff != "" {

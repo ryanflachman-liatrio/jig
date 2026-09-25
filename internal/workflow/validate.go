@@ -207,9 +207,8 @@ func (v *validator) checkResourceLimits() {
 	}
 }
 
-// checkTuning validates the model/reasoning knobs. These are inherited onto
-// every step from [defaults] (like model), so they are checked for all step
-// types rather than gated on agent.
+// checkTuning validates resource_class and timeout. Agent knobs are validated
+// during agent resolution.
 func (v *validator) checkTuning(s *Step) {
 	if s.ResourceClass != "" {
 		if !isIdent(s.ResourceClass) {
@@ -218,23 +217,8 @@ func (v *validator) checkTuning(s *Step) {
 			v.errf("step %q resource_class %q has no [defaults] resource_limits entry", s.ID, s.ResourceClass)
 		}
 	}
-	if s.Effort != "" && !s.Effort.valid() {
-		v.errf("step %q has invalid effort %q (want low|medium|high|xhigh|max)", s.ID, s.Effort)
-	}
-	if s.PermissionMode != "" && !validPermissionMode(s.PermissionMode) {
-		v.errf("step %q has invalid permission_mode %q (want default|acceptEdits|plan|bypassPermissions)", s.ID, s.PermissionMode)
-	}
-	if s.MaxThinkingTokens < 0 {
-		v.errf("step %q max_thinking_tokens must be >= 0", s.ID)
-	}
-	if s.MaxBudgetUSD < 0 {
-		v.errf("step %q max_budget_usd must be >= 0", s.ID)
-	}
 	if s.Timeout.Duration < 0 {
 		v.errf("step %q timeout must be greater than zero", s.ID)
-	}
-	if s.Backend != "" && !validBackend(s.Backend) {
-		v.errf("step %q has invalid backend %q (want %s|%s|%s)", s.ID, s.Backend, BackendClaude, BackendCursor, BackendCodex)
 	}
 }
 
@@ -297,12 +281,9 @@ func (v *validator) checkExecutionControls(s *Step) {
 }
 
 // hasAgentOnlyFields reports whether any explicitly-set, agent-only field is
-// present, so command/review steps can reject them. Model/effort/etc. are
-// excluded: they flow onto every step from [defaults] and are simply ignored by
-// non-agent steps.
+// present, so command/review steps can reject them.
 func hasAgentOnlyFields(s *Step) bool {
-	return s.Skill != "" || s.AgentFile != "" || s.Profile != "" ||
-		len(s.AllowedTools) > 0 || len(s.DisallowedTools) > 0 ||
+	return s.Agent != nil || s.AskUser != nil || s.Skill != "" || s.AgentFile != "" ||
 		s.AppendSystemPrompt != "" || s.BlockOn != ""
 }
 
@@ -366,30 +347,16 @@ func (v *validator) checkSchema(s *Step) {
 	}
 }
 
-// checkProfile validates the profile field on an agent step.
-func (v *validator) checkProfile(s *Step) {
-	if s.Profile == "" {
-		return
-	}
-	if !strings.HasPrefix(s.Profile, "@") {
-		v.errf("agent step %q: profile %q must start with '@'", s.ID, s.Profile)
-		return
-	}
-	p, ok := v.wf.profileIndex[s.Profile]
-	if !ok {
-		v.errf("agent step %q: unknown profile %q", s.ID, s.Profile)
-		return
-	}
-	// block_on and AskUserQuestion both pause the agent for human input but via
-	// completely different engine paths; combining them on the same step is a
-	// design error.
-	if p.AskUserQuestion && s.BlockOn != "" {
-		v.errf("agent step %q: block_on and AskUserQuestion (from profile %q) serve overlapping purposes; use one", s.ID, s.Profile)
+// checkAskUser rejects combining ask_user with block_on: both pause the agent
+// for human input but through different engine paths.
+func (v *validator) checkAskUser(s *Step) {
+	if s.AskUserEnabled() && s.BlockOn != "" {
+		v.errf("agent step %q: block_on and ask_user serve overlapping purposes; use one", s.ID)
 	}
 }
 
 func (v *validator) checkAgent(s *Step) {
-	v.checkProfile(s)
+	v.checkAskUser(s)
 	// A step is driven by exactly one of a skill dir or a Claude agent file.
 	switch {
 	case s.Skill == "" && s.AgentFile == "":

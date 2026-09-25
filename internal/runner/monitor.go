@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"jig/internal/agentcfg"
 	"jig/internal/harness"
 	"jig/internal/sentinel"
 )
@@ -62,13 +63,15 @@ func monitorSessionSpec(spec sentinel.MonitorSpec, windowText string) harness.Se
 	prompt.WriteString("\n\n## Untrusted Transcript Window\n\n")
 	prompt.WriteString(windowText)
 	return harness.SessionSpec{
-		Prompt:          prompt.String(),
-		Model:           spec.Model,
-		MaxTurns:        1,
-		AllowedTools:    []string{},
-		DisallowedTools: []string{},
-		Schema:          monitorJSONSchema,
-		Permission:      denyAll,
+		Prompt: prompt.String(),
+		Model:  spec.Model,
+		Agent: agentcfg.ClaudeAgent{
+			Common:   agentcfg.Common{Model: spec.Model},
+			Tools:    []string{},
+			MaxTurns: 1,
+		},
+		Schema:     monitorJSONSchema,
+		Permission: denyAll,
 	}
 }
 

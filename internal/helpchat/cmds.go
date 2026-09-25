@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"jig/internal/agentcfg"
 	"jig/internal/engine"
 	"jig/internal/harness"
 )
@@ -83,7 +84,7 @@ func queryCmd(
 		spec := harness.SessionSpec{
 			Prompt:     prompt,
 			Model:      helpModelID,
-			MaxTurns:   200,
+			Agent:      agentcfg.ClaudeAgent{Common: agentcfg.Common{Model: helpModelID}, MaxTurns: 200},
 			Partial:    true,
 			Resume:     sessionID,
 			Permission: buildPermissionFn(dispatch),

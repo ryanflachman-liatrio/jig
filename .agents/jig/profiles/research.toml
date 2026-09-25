@@ -1,0 +1,5 @@
+# Shared agent for the research workflow (.agents/jig/research.toml).
+
+[[agent]]
+id = "@research-default"
+permission_mode = "acceptEdits"

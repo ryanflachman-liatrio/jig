@@ -3,8 +3,7 @@ schema_version = 1
 
 # Module steps resolve defaults before this module is expanded into the parent.
 [defaults]
-backend = "codex"
-model = "gpt-5.6-luna"
+agent = "@sdd-codex"
 
 [module.inputs.spec_name]
 type = "text"
@@ -20,7 +19,6 @@ id = "discover"
 type = "agent"
 skill = "../../skills/sdd-discover-artifacts"
 inputs = ["@module.spec_name"]
-allowed_tools = ["Read", "Grep", "Glob", "Bash"]
 isolation = "none"
   [step.schema]
   spec_path = "text"
@@ -34,7 +32,7 @@ type = "agent"
 depends_on = ["discover"]
 skill = "../../skills/sdd-build-coverage-matrix"
 inputs = ["@discover.spec_path", "@discover.task_path", "@discover.requirements"]
-allowed_tools = ["Read", "Grep", "Glob"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   findings = "text"
@@ -45,7 +43,7 @@ type = "agent"
 depends_on = ["discover"]
 skill = "../../skills/sdd-check-repo-compliance"
 inputs = ["@discover.spec_path", "@discover.task_path", "@discover.changed_files"]
-allowed_tools = ["Read", "Grep", "Glob"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   findings = "text"
@@ -56,7 +54,7 @@ type = "agent"
 depends_on = ["discover"]
 skill = "../../skills/sdd-check-credentials"
 inputs = ["@discover.spec_path", "@discover.task_path"]
-allowed_tools = ["Read", "Grep", "Glob"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   findings = "text"
@@ -67,7 +65,6 @@ type = "agent"
 depends_on = ["discover", "coverage_matrix", "repo_compliance", "proofs"]
 skill = "../../skills/sdd-assemble-report"
 inputs = ["@discover.spec_path", "@discover.task_path", "@coverage_matrix.findings", "@repo_compliance.findings", "@proofs.findings"]
-allowed_tools = ["Read", "Write"]
 isolation = "worktree"
 resource_class = "mutation"
 mutation_paths = ["docs/specs/**"]

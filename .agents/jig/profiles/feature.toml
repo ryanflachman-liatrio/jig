@@ -1,0 +1,13 @@
+# Shared agents for the feature workflow (.agents/jig/feature.toml).
+
+[[agent]]
+id = "@feature-default"
+model = "claude-opus-4-8"
+max_turns = 120
+permission_mode = "acceptEdits"
+
+# Read-only exploration: intake, planning, QA and triage.
+[[agent]]
+id = "@feature-reader"
+extends = "@feature-default"
+tools = ["Read", "Grep", "Glob"]

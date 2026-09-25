@@ -95,7 +95,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 		// still needs the configured repository as its process/session CWD.
 		spec.Cwd = req.RepoRoot
 	}
-	if containsStr(req.Step.AllowedTools, "AskUserQuestion") {
+	if req.Step.AskUserEnabled() {
 		if !caps.Has(harness.CapUserQuestion) {
 			return failResult(fmt.Sprintf("step uses AskUserQuestion but harness %q does not support user questions (CapUserQuestion)", h.Name()), start), nil
 		}
@@ -199,9 +199,8 @@ func writeAgentInput(req engine.StepRequest, prompt string) error {
 	return os.WriteFile(filepath.Join(filepath.Dir(req.TranscriptPath), "input.md"), []byte(prompt), 0o644)
 }
 
-// buildSessionSpec translates a step's already-defaulted model/tool/permission
-// fields (resolved from [defaults] by workflow.applyDefaults before this ever
-// runs) into a harness.SessionSpec. Zero-value fields are simply omitted so
+// buildSessionSpec carries a step's resolved agent (settled at load time from
+// the step, [defaults] or profiles) into a harness.SessionSpec unchanged. Zero-value fields are simply omitted so
 // the harness's own defaults apply. Prompt/Cwd/Resume/Permission/Question
 // are filled in separately by Execute, which has the request-scoped context
 // this function does not.
@@ -214,16 +213,12 @@ func writeAgentInput(req engine.StepRequest, prompt string) error {
 // which fail closed instead of silently degrading.
 func buildSessionSpec(st *workflow.Step, caps harness.CapabilitySet) (harness.SessionSpec, error) {
 	spec := harness.SessionSpec{
-		Partial:           caps.Has(harness.CapPartialStreaming),
-		Model:             st.Model,
-		FallbackModel:     st.FallbackModel,
-		Effort:            string(st.Effort),
-		MaxTurns:          st.MaxTurns,
-		MaxThinkingTokens: st.MaxThinkingTokens,
-		MaxBudgetUSD:      st.MaxBudgetUSD,
-		PermissionMode:    st.PermissionMode,
-		AllowedTools:      st.AllowedTools,
-		DisallowedTools:   st.DisallowedTools,
+		Partial: caps.Has(harness.CapPartialStreaming),
+		Agent:   st.ResolvedAgent(),
+		AskUser: st.AskUserEnabled(),
+	}
+	if spec.Agent != nil {
+		spec.Model = spec.Agent.Base().Model
 	}
 
 	if !caps.Has(harness.CapStructuredOutput) {

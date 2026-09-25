@@ -13,10 +13,6 @@ name        = "implement-review"
 version     = "1"
 description = "Ask the user what to build, implement it like a normal session, then gate the result on human review."
 
-[defaults]
-permission_mode = "acceptEdits"
-max_turns        = 40
-
 # -----------------------------------------------------------------------------
 # 1. Implement — a normal open-ended agent session. The only input is the
 #    user's free-form request, collected once (`once = true` keeps it from
@@ -28,7 +24,8 @@ max_turns        = 40
 id            = "implement"
 type          = "agent"
 skill         = "../skills/implement-review-implement"
-allowed_tools = ["Read", "Grep", "Glob", "Edit", "Write", "Bash", "AskUserQuestion"]
+ask_user      = true
+agent         = { permission_mode = "acceptEdits", max_turns = 40, tools = ["Read", "Grep", "Glob", "Edit", "Write", "Bash"] }
 
   [[step.inputs]]
   from  = "user"

@@ -494,3 +494,91 @@ func TestProfileDiscoveryRoot(t *testing.T) {
 		}
 	})
 }
+
+func TestRemovedAgentFields(t *testing.T) {
+	removed := []struct{ key, value string }{
+		{"backend", `"codex"`},
+		{"model", `"opus"`},
+		{"effort", `"high"`},
+		{"fallback_model", `"sonnet"`},
+		{"max_turns", "5"},
+		{"max_thinking_tokens", "100"},
+		{"max_budget_usd", "1.5"},
+		{"permission_mode", `"plan"`},
+		{"allowed_tools", `["Read"]`},
+		{"disallowed_tools", `["Bash"]`},
+	}
+	for _, f := range removed {
+		t.Run("step "+f.key, func(t *testing.T) {
+			_, err := loadAgentFixture(t, "", agentStep(f.key+" = "+f.value+"\n"))
+			if err == nil || !strings.Contains(err.Error(), "unknown key(s) in workflow: step."+f.key) {
+				t.Fatalf("error = %v, want unknown key step.%s", err, f.key)
+			}
+		})
+		t.Run("defaults "+f.key, func(t *testing.T) {
+			wf := agentWFHeader + "\n[defaults]\n" + f.key + " = " + f.value + "\n" + strings.TrimPrefix(agentStep(""), agentWFHeader)
+			_, err := loadAgentFixture(t, "", wf)
+			if err == nil || !strings.Contains(err.Error(), "unknown key(s) in workflow: defaults."+f.key) {
+				t.Fatalf("error = %v, want unknown key defaults.%s", err, f.key)
+			}
+		})
+	}
+	t.Run("step profile", func(t *testing.T) {
+		_, err := loadAgentFixture(t, "", agentStep(`profile = "@interactive"`+"\n"))
+		if err == nil || !strings.Contains(err.Error(), "unknown key(s) in workflow: step.profile") {
+			t.Fatalf("error = %v, want unknown key step.profile", err)
+		}
+	})
+	for _, id := range []string{"@interactive", "@autonomous"} {
+		t.Run("agent "+id, func(t *testing.T) {
+			_, err := loadAgentFixture(t, "", agentStep(`agent = "`+id+`"`+"\n"))
+			if err == nil || !strings.Contains(err.Error(), `unknown agent profile "`+id+`"`) || !strings.Contains(err.Error(), "ask_user") {
+				t.Fatalf("error = %v, want unknown agent profile naming ask_user", err)
+			}
+		})
+	}
+}
+
+func TestAgentIsolationDefault(t *testing.T) {
+	tests := []struct {
+		name  string
+		agent string
+		want  Isolation
+	}{
+		{"claude omitted tools", ``, IsolationWorktree},
+		{"claude with edit", `agent = { tools = ["Read", "Edit"] }`, IsolationWorktree},
+		{"claude with write", `agent = { tools = ["Write"] }`, IsolationWorktree},
+		{"claude with bash", `agent = { tools = ["Bash"] }`, IsolationWorktree},
+		{"claude read only", `agent = { tools = ["Read", "Grep"] }`, IsolationNone},
+		{"claude empty tools", `agent = { tools = [] }`, IsolationNone},
+		{"claude plan mode", `agent = { permission_mode = "plan" }`, IsolationNone},
+		{"codex unset mode", `agent = { backend = "codex" }`, IsolationWorktree},
+		{"codex agent", `agent = { backend = "codex", mode = "agent" }`, IsolationWorktree},
+		{"codex full access", `agent = { backend = "codex", mode = "agent-full-access" }`, IsolationWorktree},
+		{"codex read-only", `agent = { backend = "codex", mode = "read-only" }`, IsolationNone},
+		{"cursor unset mode", `agent = { backend = "cursor" }`, IsolationWorktree},
+		{"cursor agent", `agent = { backend = "cursor", mode = "agent" }`, IsolationWorktree},
+		{"cursor plan", `agent = { backend = "cursor", mode = "plan" }`, IsolationNone},
+		{"cursor ask", `agent = { backend = "cursor", mode = "ask" }`, IsolationNone},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wf, err := loadAgentFixture(t, "", agentStep(tt.agent+"\n"))
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if got := wf.Steps[wf.index["research"]].Isolation; got != tt.want {
+				t.Fatalf("isolation = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	t.Run("explicit isolation wins", func(t *testing.T) {
+		wf, err := loadAgentFixture(t, "", agentStep("isolation = \"none\"\n"))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if got := wf.Steps[wf.index["research"]].Isolation; got != IsolationNone {
+			t.Fatalf("isolation = %q, want none", got)
+		}
+	})
+}

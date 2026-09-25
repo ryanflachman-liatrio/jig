@@ -6,8 +6,7 @@ schema_version = 1
 # Modules are decoded independently before expansion, so they need their own
 # agent defaults rather than inheriting the parent workflow's settings.
 [defaults]
-backend = "codex"
-model = "gpt-5.6-luna"
+agent = "@sdd-codex"
 
 [module.exports.spec_name]
 ref = "@context_assess.spec_name"
@@ -29,7 +28,7 @@ inputs = [
   { from = "user", label = "Describe the feature to spec:", as = "request", once = true },
   { from = "user", label = "Spec name (kebab-case):", as = "spec_name", once = true },
 ]
-allowed_tools = ["Read", "Grep", "Glob"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   spec_name = "text"
@@ -42,7 +41,7 @@ type = "agent"
 depends_on = ["context_assess"]
 skill = "../../skills/sdd-research-security"
 inputs = ["@context_assess.summary", "@context_assess.technologies"]
-allowed_tools = ["WebSearch", "WebFetch"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   findings = { list = "text" }
@@ -53,7 +52,7 @@ type = "agent"
 depends_on = ["context_assess"]
 skill = "../../skills/sdd-research-api-contracts"
 inputs = ["@context_assess.summary", "@context_assess.technologies"]
-allowed_tools = ["WebSearch", "WebFetch"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   findings = { list = "text" }
@@ -64,7 +63,7 @@ type = "agent"
 depends_on = ["context_assess"]
 skill = "../../skills/sdd-research-data-patterns"
 inputs = ["@context_assess.summary", "@context_assess.technologies"]
-allowed_tools = ["WebSearch", "WebFetch"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   findings = { list = "text" }
@@ -75,7 +74,7 @@ type = "agent"
 depends_on = ["context_assess"]
 skill = "../../skills/sdd-research-testing-standards"
 inputs = ["@context_assess.summary", "@context_assess.technologies"]
-allowed_tools = ["WebSearch", "WebFetch"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   findings = { list = "text" }
@@ -86,7 +85,7 @@ type = "agent"
 depends_on = ["context_assess"]
 skill = "../../skills/sdd-research-ecosystem"
 inputs = ["@context_assess.summary", "@context_assess.technologies"]
-allowed_tools = ["WebSearch", "WebFetch"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   findings = { list = "text" }
@@ -97,7 +96,7 @@ type = "agent"
 depends_on = ["research_security", "research_api", "research_data", "research_testing", "research_ecosystem"]
 skill = "../../skills/sdd-synthesize-research"
 inputs = ["@research_security.findings", "@research_api.findings", "@research_data.findings", "@research_testing.findings", "@research_ecosystem.findings"]
-allowed_tools = []
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   research_notes = { list = "text" }
@@ -108,7 +107,7 @@ type = "agent"
 depends_on = ["context_assess", "synthesize_research"]
 skill = "../../skills/sdd-scope-assess"
 inputs = ["@context_assess.summary", "@synthesize_research.research_notes"]
-allowed_tools = ["Read", "Grep", "Glob"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   sizing = { enum = ["too_large", "too_small", "just_right"] }
@@ -137,7 +136,6 @@ depends_on = ["context_assess", "synthesize_research", "scope_assess", "scope_ga
 when = "scope_gate == 'proceed'"
 skill = "../../skills/sdd-write-spec"
 inputs = ["@context_assess.spec_name", "@context_assess.summary", "@synthesize_research.research_notes", "@scope_assess.rationale"]
-allowed_tools = ["Read", "Grep", "Glob", "Write"]
 isolation = "worktree"
 resource_class = "mutation"
 mutation_paths = ["docs/specs/**"]

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"jig/internal/agentcfg"
 	"jig/internal/datastore"
 	"jig/internal/engine"
 	"jig/internal/harness"
@@ -485,52 +486,55 @@ func TestCaptureStream_NoTranscript(t *testing.T) {
 	}
 }
 
-// TestBuildSessionSpec verifies each of a step's model/tool/permission fields
-// is translated into the matching SessionSpec field — the fix for the fields
-// being parsed and validated but never reaching the backend.
-func TestBuildSessionSpec(t *testing.T) {
-	st := &workflow.Step{
-		Model:             "claude-opus-4-8",
-		FallbackModel:     "claude-sonnet-4-6",
-		Effort:            workflow.EffortHigh,
-		MaxTurns:          20,
-		MaxThinkingTokens: 8000,
-		MaxBudgetUSD:      5.0,
-		PermissionMode:    "acceptEdits",
-		AllowedTools:      []string{"Read", "Grep"},
-		DisallowedTools:   []string{"Bash"},
+// TestBuildSessionSpecAgent verifies the step's resolved concrete agent
+// reaches SessionSpec unchanged for every backend, with Model mirrored from it.
+func TestBuildSessionSpecAgent(t *testing.T) {
+	allCaps := harness.NewCapabilitySet(harness.CapPermissionCallback, harness.CapUserQuestion, harness.CapSessionResume, harness.CapStructuredOutput, harness.CapPartialStreaming)
+	tests := []struct {
+		name  string
+		agent agentcfg.Agent
+	}{
+		{"claude", agentcfg.ClaudeAgent{
+			Common: agentcfg.Common{Model: "claude-opus-4-8"}, Effort: "high", FallbackModel: "claude-sonnet-4-6",
+			MaxTurns: 20, MaxThinkingTokens: 8000, MaxBudgetUSD: 5, PermissionMode: "acceptEdits",
+			Tools: []string{"Read", "Grep"}, DisallowedTools: []string{"Bash"},
+		}},
+		{"claude no tools", agentcfg.ClaudeAgent{Tools: []string{}}},
+		{"codex", agentcfg.CodexAgent{Common: agentcfg.Common{Model: "gpt-fixture"}, Effort: "low", Mode: "read-only", CollaborationMode: "plan"}},
+		{"cursor", agentcfg.CursorAgent{Common: agentcfg.Common{Model: "cursor-fixture"}, Mode: "ask"}},
 	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			askUser := true
+			st := &workflow.Step{AskUser: &askUser, SnapshotAgent: &workflow.AgentSnapshot{Agent: tt.agent}}
+			spec, err := buildSessionSpec(st, allCaps)
+			if err != nil {
+				t.Fatalf("buildSessionSpec: %v", err)
+			}
+			if !reflect.DeepEqual(spec.Agent, tt.agent) {
+				t.Errorf("Agent = %#v, want %#v", spec.Agent, tt.agent)
+			}
+			if spec.Model != tt.agent.Base().Model {
+				t.Errorf("Model = %q, want %q", spec.Model, tt.agent.Base().Model)
+			}
+			if !spec.AskUser {
+				t.Error("AskUser = false, want true")
+			}
+		})
+	}
+}
+
+// TestBuildSessionSpec verifies a Claude agent's effort reaches the policy
+// through SessionSpec.Effort and partial streaming is requested.
+func TestBuildSessionSpec(t *testing.T) {
+	st := &workflow.Step{SnapshotAgent: &workflow.AgentSnapshot{Agent: agentcfg.ClaudeAgent{Effort: "high"}}}
 	allCaps := harness.NewCapabilitySet(harness.CapPermissionCallback, harness.CapUserQuestion, harness.CapSessionResume, harness.CapStructuredOutput, harness.CapPartialStreaming)
 	spec, err := buildSessionSpec(st, allCaps)
 	if err != nil {
 		t.Fatalf("buildSessionSpec: %v", err)
 	}
-	if spec.Model != "claude-opus-4-8" {
-		t.Errorf("Model = %v, want claude-opus-4-8", spec.Model)
-	}
-	if spec.FallbackModel != "claude-sonnet-4-6" {
-		t.Errorf("FallbackModel = %v, want claude-sonnet-4-6", spec.FallbackModel)
-	}
-	if spec.Effort != "high" {
-		t.Errorf("Effort = %v, want high", spec.Effort)
-	}
-	if spec.MaxTurns != 20 {
-		t.Errorf("MaxTurns = %d, want 20", spec.MaxTurns)
-	}
-	if spec.MaxThinkingTokens != 8000 {
-		t.Errorf("MaxThinkingTokens = %d, want 8000", spec.MaxThinkingTokens)
-	}
-	if spec.MaxBudgetUSD != 5.0 {
-		t.Errorf("MaxBudgetUSD = %v, want 5.0", spec.MaxBudgetUSD)
-	}
-	if spec.PermissionMode != "acceptEdits" {
-		t.Errorf("PermissionMode = %v, want acceptEdits", spec.PermissionMode)
-	}
-	if !reflect.DeepEqual(spec.AllowedTools, []string{"Read", "Grep"}) {
-		t.Errorf("AllowedTools = %v, want [Read Grep]", spec.AllowedTools)
-	}
-	if !reflect.DeepEqual(spec.DisallowedTools, []string{"Bash"}) {
-		t.Errorf("DisallowedTools = %v, want [Bash]", spec.DisallowedTools)
+	if spec.Effort() != "high" {
+		t.Errorf("Effort = %v, want high", spec.Effort())
 	}
 	if !spec.Partial {
 		t.Errorf("Partial = false, want true (unconditional partial streaming)")
@@ -546,15 +550,8 @@ func TestBuildSessionSpec_Empty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildSessionSpec: %v", err)
 	}
-	if spec.Model != "" || spec.FallbackModel != "" || spec.Effort != "" ||
-		spec.PermissionMode != "" || spec.MaxBudgetUSD != 0 {
+	if spec.Model != "" || spec.Agent != nil || spec.AskUser {
 		t.Errorf("zero-value step should leave optional fields unset: %+v", spec)
-	}
-	if spec.MaxTurns != 0 || spec.MaxThinkingTokens != 0 {
-		t.Errorf("zero-value step should leave numeric fields at 0: %+v", spec)
-	}
-	if len(spec.AllowedTools) != 0 || len(spec.DisallowedTools) != 0 {
-		t.Errorf("zero-value step should leave tool lists empty: %+v", spec)
 	}
 	// Base schema is always enforced — Schema must be set even with no
 	// declared [step.schema].
@@ -1340,7 +1337,7 @@ func TestExecute_GuardSemantics(t *testing.T) {
 			Sess:    sess,
 		}
 		e := NewAgentExecutorFixed(h)
-		req := engine.StepRequest{Step: &workflow.Step{PermissionMode: "acceptEdits"}, Guard: guard}
+		req := engine.StepRequest{Step: &workflow.Step{SnapshotAgent: &workflow.AgentSnapshot{Agent: agentcfg.ClaudeAgent{PermissionMode: "acceptEdits"}}}, Guard: guard}
 		res, err := e.Execute(context.Background(), req, &captureReporter{})
 		if err != nil {
 			t.Fatalf("Execute: %v", err)
@@ -1348,8 +1345,8 @@ func TestExecute_GuardSemantics(t *testing.T) {
 		if res.Status != step.StatusSucceeded {
 			t.Fatalf("status = %q, want succeeded: %s", res.Status, res.Err)
 		}
-		if h.OpenSpec.PermissionMode != "acceptEdits" {
-			t.Errorf("PermissionMode = %q, want acceptEdits passed through unchanged", h.OpenSpec.PermissionMode)
+		if c, _ := h.OpenSpec.Agent.(agentcfg.ClaudeAgent); c.PermissionMode != "acceptEdits" {
+			t.Errorf("Agent = %#v, want acceptEdits passed through unchanged", h.OpenSpec.Agent)
 		}
 		if h.OpenSpec.Permission == nil {
 			t.Error("SessionSpec.Permission not set, want the guard callback still wired under acceptEdits")
@@ -1520,7 +1517,8 @@ func TestExecute_AcpProfile(t *testing.T) {
 	t.Run("AskUserQuestion + acp caps without CapUserQuestion → rejection", func(t *testing.T) {
 		h := &harness.FakeHarness{NameVal: "acp", Caps: acpCaps}
 		e := NewAgentExecutorFixed(h)
-		st := &workflow.Step{AllowedTools: []string{"AskUserQuestion"}}
+		askUser := true
+		st := &workflow.Step{AskUser: &askUser}
 		req := engine.StepRequest{Step: st}
 		res, err := e.Execute(context.Background(), req, &captureReporter{})
 		if err != nil {

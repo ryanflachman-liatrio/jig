@@ -36,7 +36,7 @@ func (p semanticACPConfigPolicy) Apply(ctx context.Context, conn *acp.Conn, sess
 		}
 	}
 	if p.effort {
-		if err := conn.SetSelectConfigByCategory(ctx, sessionID, acpsdk.SessionConfigOptionCategoryThoughtLevel, spec.Effort); err != nil {
+		if err := conn.SetSelectConfigByCategory(ctx, sessionID, acpsdk.SessionConfigOptionCategoryThoughtLevel, spec.Effort()); err != nil {
 			return err
 		}
 	}

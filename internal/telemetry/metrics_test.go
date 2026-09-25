@@ -256,8 +256,9 @@ func TestExporterStepStatusTerminalAndDuration(t *testing.T) {
 	if !hasAttribute(t, reader, "jig.step.finished", "step_type", "command") {
 		t.Error("jig.step.finished missing step_type=command attr")
 	}
-	if !hasAttribute(t, reader, "jig.step.finished", "backend", "claude") {
-		t.Error("jig.step.finished missing backend=claude attr")
+	// A command step has no agent, so its backend label is recorded empty.
+	if !hasAttribute(t, reader, "jig.step.finished", "backend", "") {
+		t.Error("jig.step.finished missing empty backend attr for a command step")
 	}
 	if pts := dataPointsFor(t, reader, "jig.step.duration"); len(pts) != 1 || pts[0].Sum <= 0 {
 		t.Errorf("jig.step.duration = %+v", pts)

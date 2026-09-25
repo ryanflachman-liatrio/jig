@@ -3,8 +3,7 @@ schema_version = 1
 
 # Module steps resolve defaults before this module is expanded into the parent.
 [defaults]
-backend = "codex"
-model = "gpt-5.6-luna"
+agent = "@sdd-codex"
 
 [module.inputs.spec_name]
 type = "text"
@@ -23,7 +22,7 @@ id = "analyze_requirements"
 type = "agent"
 skill = "../../skills/sdd-analyze-spec-requirements"
 inputs = ["@module.spec_name", "@module.spec_path"]
-allowed_tools = ["Read", "Grep", "Glob"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   requirements_notes = "text"
@@ -32,7 +31,7 @@ isolation = "none"
 id = "analyze_standards"
 type = "agent"
 skill = "../../skills/sdd-analyze-repo-standards"
-allowed_tools = ["Read", "Grep", "Glob"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   standards_evidence = { list = { source = "text", status = "text", standards = { list = "text" } } }
@@ -43,7 +42,6 @@ type = "agent"
 depends_on = ["analyze_requirements", "analyze_standards"]
 skill = "../../skills/sdd-parent-tasks"
 inputs = ["@module.spec_name", "@module.spec_path", "@analyze_requirements.requirements_notes", "@analyze_standards.standards_evidence"]
-allowed_tools = ["Read", "Grep", "Glob", "Write"]
 isolation = "worktree"
 resource_class = "mutation"
 mutation_paths = ["docs/specs/**"]
@@ -57,7 +55,6 @@ type = "agent"
 depends_on = ["generate_tasks"]
 skill = "../../skills/sdd-subtasks"
 inputs = ["@module.spec_name", "@module.spec_path", "@generate_tasks.task_path"]
-allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit"]
 isolation = "worktree"
 resource_class = "mutation"
 mutation_paths = ["docs/specs/**"]
@@ -70,7 +67,7 @@ type = "agent"
 depends_on = ["expand_tasks"]
 skill = "../../skills/sdd-audit-traceability"
 inputs = ["@module.spec_path", "@expand_tasks.task_path"]
-allowed_tools = ["Read", "Grep", "Glob"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   findings = "text"
@@ -81,7 +78,7 @@ type = "agent"
 depends_on = ["expand_tasks"]
 skill = "../../skills/sdd-audit-proof-quality"
 inputs = ["@module.spec_path", "@expand_tasks.task_path"]
-allowed_tools = ["Read", "Grep", "Glob"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   findings = "text"
@@ -92,7 +89,7 @@ type = "agent"
 depends_on = ["expand_tasks", "analyze_standards"]
 skill = "../../skills/sdd-audit-standards-consistency"
 inputs = ["@module.spec_path", "@expand_tasks.task_path", "@analyze_standards.standards_evidence"]
-allowed_tools = ["Read", "Grep", "Glob"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   findings = "text"
@@ -103,7 +100,7 @@ type = "agent"
 depends_on = ["expand_tasks"]
 skill = "../../skills/sdd-audit-open-questions"
 inputs = ["@module.spec_path", "@expand_tasks.task_path"]
-allowed_tools = ["Read", "Grep", "Glob"]
+agent = "@sdd-codex-reader"
 isolation = "none"
   [step.schema]
   findings = "text"
@@ -114,7 +111,6 @@ type = "agent"
 depends_on = ["audit_traceability", "audit_proofs", "audit_standards", "audit_open_questions"]
 skill = "../../skills/sdd-synthesize-audit"
 inputs = ["@expand_tasks.task_path", "@audit_traceability.findings", "@audit_proofs.findings", "@audit_standards.findings", "@audit_open_questions.findings"]
-allowed_tools = ["Read", "Write"]
 isolation = "worktree"
 resource_class = "mutation"
 mutation_paths = ["docs/specs/**"]

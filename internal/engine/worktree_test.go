@@ -169,7 +169,7 @@ version = "0.1"
 id = "mutate"
 type = "agent"
 isolation = "worktree"
-allowed_tools = ["Write"]
+agent = { tools = ["Write"] }
 skill = "skills/mutate"
 `
 	wf, err := workflow.Decode(toml, "")
@@ -232,7 +232,7 @@ version = "0.1"
 id = "mutate"
 type = "agent"
 isolation = "worktree"
-allowed_tools = ["Write"]
+agent = { tools = ["Write"] }
 skill = "skills/mutate"
 
 [[step]]
@@ -324,7 +324,7 @@ version = "0.1"
 id = "mutate"
 type = "agent"
 isolation = "worktree"
-allowed_tools = ["Write"]
+agent = { tools = ["Write"] }
 skill = "skills/mutate"
 `
 	wf, err := workflow.Decode(toml, "")

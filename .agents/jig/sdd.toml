@@ -6,10 +6,7 @@ version = "1"
 description = "Production SDD orchestration over typed specification, planning, implementation, validation, compliance, and release-note modules."
 
 [defaults]
-backend = "codex"
-model = "gpt-5.6-luna"
-effort = "high"
-permission_mode = "acceptEdits"
+agent = "@sdd-default"
 max_parallel = 5
 resource_limits = { research = 5, checks = 3, mutation = 1 }
 max_read_only = 5
@@ -27,7 +24,7 @@ depends_on = ["spec"]
 when = "spec.scope_decision != 'proceed'"
 skill = "../skills/sdd-write-epic"
 inputs = ["@spec.spec_name"]
-allowed_tools = ["AskUserQuestion", "Read", "Write"]
+ask_user = true
 isolation = "worktree"
 resource_class = "mutation"
 mutation_paths = ["docs/specs/**"]
@@ -76,7 +73,8 @@ depends_on = ["implementation_review"]
 when = "implementation_review == 'redo'"
 skill = "../skills/sdd-clarify"
 inputs = ["@implementation_review", "@implement_task.completion_summary"]
-allowed_tools = ["AskUserQuestion"]
+agent = { extends = "@sdd-default", mode = "read-only" }
+ask_user = true
 isolation = "none"
   [step.schema]
   finding_ids = "text"
@@ -105,7 +103,8 @@ depends_on = ["validate"]
 when = "validate.status == 'fail'"
 skill = "../skills/sdd-clarify"
 inputs = ["@validate.report"]
-allowed_tools = ["AskUserQuestion"]
+agent = { extends = "@sdd-default", mode = "read-only" }
+ask_user = true
 isolation = "none"
   [step.schema]
   reviewer_identity = "text"
@@ -129,7 +128,8 @@ depends_on = ["compliance"]
 when = "compliance.status != 'pass'"
 skill = "../skills/sdd-clarify"
 inputs = ["@compliance.report"]
-allowed_tools = ["AskUserQuestion"]
+agent = { extends = "@sdd-default", mode = "read-only" }
+ask_user = true
 isolation = "none"
   [step.schema]
   reviewer_identity = "text"

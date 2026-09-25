@@ -3,8 +3,7 @@ schema_version = 1
 
 # Module steps resolve defaults before this module is expanded into the parent.
 [defaults]
-backend = "codex"
-model = "gpt-5.6-luna"
+agent = "@sdd-codex"
 
 [module.inputs.spec_name]
 type = "text"
@@ -23,7 +22,6 @@ id = "draft"
 type = "agent"
 skill = "../../skills/sdd-gen-changelog"
 inputs = ["@module.spec_name", "@module.validation_report", "@module.compliance_report"]
-allowed_tools = ["Read", "Grep", "Glob", "Write", "Edit"]
 isolation = "worktree"
 resource_class = "mutation"
 mutation_paths = ["CHANGELOG.md"]

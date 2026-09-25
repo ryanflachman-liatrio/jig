@@ -4,8 +4,7 @@ version = "1"
 description = "A producer (structured output) + downstream branching example."
 
 [defaults]
-backend         = "claude"
-permission_mode = "acceptEdits"
+agent = "@research-default"
 
 # Producer: schema-enforced structured output via an inline [step.schema].
 [[step]]
@@ -16,7 +15,7 @@ inputs        = [
   "templates/context-assess.md",
   { from = "user", label = "Any additional context or focus areas for the review?", as = "user_context" },
 ]
-allowed_tools = ["Read", "Grep", "Glob", "WebSearch"]
+agent         = { extends = "@research-default", tools = ["Read", "Grep", "Glob", "WebSearch"] }
 
   [step.schema]
   state      = { enum = ["complete", "partial", "blocked"] }
@@ -33,7 +32,7 @@ skill         = "../skills/research_frontend"
 inputs        = ["@research.summary", { ref = "@research.findings", inline = true }]
 when          = "research.state == 'complete'"
 output        = ".jig/artifacts/report.md"
-allowed_tools = ["Read"]
+agent         = { extends = "@research-default", tools = ["Read"] }
 
 # If research couldn't finish, escalate to a human instead of reporting.
 [[step]]

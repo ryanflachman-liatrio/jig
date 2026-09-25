@@ -181,7 +181,6 @@ type agentProfileSpec struct {
 	id   string
 	file string
 	spec *agentSpec
-	err  error // decode error, reported only when the profile is used
 }
 
 // agentResolver resolves agent layers against the union profile index.
@@ -199,10 +198,10 @@ func (r *agentResolver) resolveProfile(id string, chain []string) (*agentSpec, e
 	}
 	p, ok := r.profiles[id]
 	if !ok {
+		if id == "@interactive" || id == "@autonomous" {
+			return nil, fmt.Errorf("unknown agent profile %q (the built-in profiles were removed; set ask_user = true on the step instead of @interactive, and omit @autonomous)", id)
+		}
 		return nil, fmt.Errorf("unknown agent profile %q", id)
-	}
-	if p.err != nil {
-		return nil, fmt.Errorf("profile %q (%s): %w", id, p.file, p.err)
 	}
 	spec, err := r.resolveSpec(p.spec, append(chain, id))
 	if err != nil {
