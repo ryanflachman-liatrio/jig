@@ -148,7 +148,7 @@ func inspectCursorCLI(file string) ([]Finding, error) {
 		} `json:"permissions"`
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("%s: %w", file, err)
+		return nil, malformed(file, "JSON", err)
 	}
 	var findings []Finding
 	if cfg.ApprovalMode == "unrestricted" {
@@ -187,7 +187,7 @@ func inspectCodex(projectRoot, cwd string, env func(string) string) ([]Finding, 
 	if raw := env("CODEX_CONFIG"); raw != "" {
 		var cfg map[string]any
 		if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
-			return nil, fmt.Errorf("CODEX_CONFIG: %w", err)
+			return nil, malformed("CODEX_CONFIG", "JSON", err)
 		}
 		if reviewer, ok := cfg["approvals_reviewer"]; ok && reviewer != "user" {
 			findings = append(findings, reviewerFinding("CODEX_CONFIG"))
@@ -210,12 +210,32 @@ func inspectCodexConfig(file string) ([]Finding, error) {
 	}
 	var cfg map[string]any
 	if err := toml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("%s: %w", file, err)
+		return nil, malformed(file, "TOML", err)
 	}
 	if reviewer, ok := cfg["approvals_reviewer"]; ok && reviewer != "user" {
 		return []Finding{reviewerFinding(file)}, nil
 	}
 	return nil, nil
+}
+
+// malformed reports a config that does not parse by its position only. The
+// decoders quote the offending text, and operator config (for example an MCP
+// server's env table) can hold secrets, so the decoder error is never wrapped.
+func malformed(where, format string, err error) error {
+	var (
+		tomlErr   toml.ParseError
+		syntaxErr *json.SyntaxError
+		typeErr   *json.UnmarshalTypeError
+	)
+	switch {
+	case errors.As(err, &tomlErr):
+		return fmt.Errorf("%s: malformed %s at line %d", where, format, tomlErr.Position.Line)
+	case errors.As(err, &syntaxErr):
+		return fmt.Errorf("%s: malformed %s at byte %d", where, format, syntaxErr.Offset)
+	case errors.As(err, &typeErr):
+		return fmt.Errorf("%s: malformed %s at byte %d", where, format, typeErr.Offset)
+	}
+	return fmt.Errorf("%s: malformed %s", where, format)
 }
 
 func reviewerFinding(file string) Finding {

@@ -187,16 +187,32 @@ prefix_rule(pattern = ["ls"])`,
 }
 
 func TestInspectFailsClosedOnMalformedConfig(t *testing.T) {
-	for _, tc := range []struct{ backend, file, content string }{
-		{"cursor", "home/.cursor/cli-config.json", `{"approvalMode": `},
-		{"codex", "home/.codex/config.toml", `approvals_reviewer = `},
+	// Each file is malformed at a bare synthetic secret. The TOML decoder
+	// quotes an unquoted alphanumeric value in full in its error.
+	const token = "sktestexampleinvalid"
+	for _, tc := range []struct {
+		name, backend, file, content string
+		env                          map[string]string
+	}{
+		{name: "cursor json", backend: "cursor", file: "home/.cursor/cli-config.json", content: `{"env": {"TOKEN": ` + token + `}}`},
+		{name: "codex toml", backend: "codex", file: "home/.codex/config.toml", content: "[mcp_servers.x.env]\nTOKEN = " + token + "\n"},
+		{name: "codex env json", backend: "codex", file: "CODEX_CONFIG", env: map[string]string{"CODEX_CONFIG": `{"TOKEN": ` + token + `}`}},
 	} {
-		t.Run(tc.backend, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			writeFile(t, filepath.Join(dir, tc.file), tc.content)
-			_, err := Inspect(tc.backend, filepath.Join(dir, "project"), "", envOf(map[string]string{"HOME": filepath.Join(dir, "home")}))
+			env := map[string]string{"HOME": filepath.Join(dir, "home")}
+			for k, v := range tc.env {
+				env[k] = v
+			}
+			if tc.content != "" {
+				writeFile(t, filepath.Join(dir, tc.file), tc.content)
+			}
+			_, err := Inspect(tc.backend, filepath.Join(dir, "project"), "", envOf(env))
 			if err == nil || !strings.Contains(err.Error(), tc.file[strings.LastIndex(tc.file, "/")+1:]) {
 				t.Fatalf("err = %v, want an error naming the malformed file", err)
+			}
+			if strings.Contains(err.Error(), token) {
+				t.Fatalf("err = %v, leaks the malformed file's content", err)
 			}
 		})
 	}
