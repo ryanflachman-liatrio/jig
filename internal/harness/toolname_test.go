@@ -187,14 +187,14 @@ func TestCanonicalToolName(t *testing.T) {
 				observe:  []acp.Event{{Kind: acp.EventToolCall, ToolID: "c1", ToolKind: "edit", HasContent: true, Content: []acp.Content{{Type: "diff", Diff: &acp.Diff{Path: "/tmp/x", NewText: secret}}}}},
 				request:  acpsdk.ToolCallUpdate{ToolCallId: "c1", Kind: kindPtr(acpsdk.ToolKindEdit)},
 				wantName: "Edit", wantResolved: true,
-				wantInput: map[string]any{"file_path": "/tmp/x", "content": secret, "new_string": secret},
+				wantInput: map[string]any{"file_path": "/tmp/x", "file_paths": []any{"/tmp/x"}, "content": secret, "new_string": secret},
 			},
 			{
 				name:     "cursor edit from the request content diff",
 				backend:  agentcfg.BackendCursor,
 				request:  acpsdk.ToolCallUpdate{ToolCallId: "c1", Kind: kindPtr(acpsdk.ToolKindEdit), Content: []acpsdk.ToolCallContent{{Diff: &acpsdk.ToolCallContentDiff{Path: "/tmp/x", NewText: secret}}}},
 				wantName: "Edit", wantResolved: true,
-				wantInput: map[string]any{"file_path": "/tmp/x", "content": secret, "new_string": secret},
+				wantInput: map[string]any{"file_path": "/tmp/x", "file_paths": []any{"/tmp/x"}, "content": secret, "new_string": secret},
 			},
 			{
 				name:     "edit without content is unresolved",

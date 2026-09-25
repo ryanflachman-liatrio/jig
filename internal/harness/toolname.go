@@ -30,11 +30,38 @@ type toolCallEntry struct {
 	kind     string
 	title    string
 	rawInput map[string]any
-	// diffPath and diffNewText come from the first diff content item.
-	diffPath    string
-	diffNewText string
-	hasDiff     bool
-	paths       []string
+	// diffs holds every diff content item: one tool call can change several
+	// files (Codex emits one diff per file of a patch).
+	diffs []editDiff
+	paths []string
+}
+
+// editDiff is one file change carried by a tool call's diff content.
+type editDiff struct {
+	path    string
+	newText string
+}
+
+// notificationDiffs returns every diff in an observed notification's content.
+func notificationDiffs(content []acp.Content) []editDiff {
+	var diffs []editDiff
+	for _, item := range content {
+		if item.Diff != nil {
+			diffs = append(diffs, editDiff{path: item.Diff.Path, newText: item.Diff.NewText})
+		}
+	}
+	return diffs
+}
+
+// requestDiffs returns every diff in a permission request's content.
+func requestDiffs(content []acpsdk.ToolCallContent) []editDiff {
+	var diffs []editDiff
+	for _, item := range content {
+		if item.Diff != nil {
+			diffs = append(diffs, editDiff{path: item.Diff.Path, newText: item.Diff.NewText})
+		}
+	}
+	return diffs
 }
 
 // toolCalls is a session's tool-call cache, filled from tool_call and
@@ -86,11 +113,9 @@ func (c *toolCalls) observe(ev acp.Event) {
 		}
 	}
 	if ev.HasContent {
-		for _, content := range ev.Content {
-			if content.Diff != nil {
-				e.diffPath, e.diffNewText, e.hasDiff = content.Diff.Path, content.Diff.NewText, true
-				break
-			}
+		if diffs := notificationDiffs(ev.Content); len(diffs) > 0 {
+			// Replaced, never mutated, so a copied entry can share it.
+			e.diffs = diffs
 		}
 	}
 	if ev.HasLocations {
@@ -286,22 +311,34 @@ func guardInput(backend, name, kind, requestTitle string, tc acpsdk.ToolCallUpda
 	return input, true
 }
 
-// diffInput fills file_path and content from a diff: the request's content on
-// Cursor, the cached tool_call on Codex (whose requests carry neither). The
-// content is also exposed as new_string, which the secret-in-write rule reads
-// for Edit. A delete needs only its path.
+// diffInput fills file_path and content from the diffs: the request's content
+// on Cursor, the cached tool_call on Codex (whose requests carry neither). A
+// call can change several files, so content joins every diff's new text and
+// file_paths lists every path; file_path is the first. The content is also
+// exposed as new_string, which the secret-in-write rule reads for Edit. A
+// delete needs only its path.
 func diffInput(backend, kind string, tc acpsdk.ToolCallUpdate, e toolCallEntry, input map[string]any) (map[string]any, bool) {
-	path, text, ok := e.diffPath, e.diffNewText, e.hasDiff
+	diffs := e.diffs
 	if backend == agentcfg.BackendCursor {
-		for _, content := range tc.Content {
-			if content.Diff != nil {
-				path, text, ok = content.Diff.Path, content.Diff.NewText, true
-				break
-			}
+		if requested := requestDiffs(tc.Content); len(requested) > 0 {
+			diffs = requested
 		}
 	}
+	path, ok := "", len(diffs) > 0
 	if ok {
+		texts := make([]string, 0, len(diffs))
+		paths := make([]any, 0, len(diffs))
+		for _, diff := range diffs {
+			if diff.path == "" {
+				ok = false
+			}
+			texts = append(texts, diff.newText)
+			paths = append(paths, diff.path)
+		}
+		path = diffs[0].path
+		text := strings.Join(texts, "\n")
 		input["file_path"] = path
+		input["file_paths"] = paths
 		input["content"] = text
 		input["new_string"] = text
 	}

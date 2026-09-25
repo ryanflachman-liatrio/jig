@@ -166,6 +166,26 @@ func TestGuardSecretInWriteOnWire(t *testing.T) {
 			want: []string{"permission:e3:reject"}, wantFindings: 1,
 		},
 		{
+			// codex-acp emits one diff per file of a patch in one tool_call.
+			name:    "codex multi-file patch with the secret in a later diff",
+			backend: "codex",
+			script: []wirePermission{{
+				Notify: map[string]any{"sessionUpdate": "tool_call", "toolCallId": "e6", "title": "Editing files", "kind": "edit", "status": "pending", "content": append(
+					diff("/tmp/notes.md", "hello"), diff("/tmp/config.env", "KEY="+secret)...)},
+				Request: map[string]any{"toolCallId": "e6", "kind": "edit"},
+			}},
+			want: []string{"permission:e6:reject"}, wantFindings: 1,
+		},
+		{
+			name:    "cursor request with the secret in a later diff",
+			backend: "cursor",
+			script: []wirePermission{{
+				Request: map[string]any{"toolCallId": "e7", "kind": "edit", "title": "Edit files", "content": append(
+					diff("/tmp/notes.md", "hello"), diff("/tmp/config.env", "KEY="+secret)...)},
+			}},
+			want: []string{"permission:e7:reject"}, wantFindings: 1,
+		},
+		{
 			name:    "a clean edit is allowed once",
 			backend: "cursor",
 			script: []wirePermission{{
