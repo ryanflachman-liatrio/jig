@@ -40,15 +40,7 @@ version = "1"
 description = "…"                    # optional
 
 [defaults]                           # optional; per-step fields override these
-model               = "claude-opus-4-8"
-fallback_model      = "claude-sonnet-4-6"  # used if the primary is overloaded
-effort              = "high"         # low | medium | high | xhigh | max
-max_turns           = 20
-max_thinking_tokens = 8000
-max_budget_usd      = 5.0            # per-step cost ceiling
 cwd                 = "."
-permission_mode     = "acceptEdits"
-backend             = "claude"       # agent vendor: claude | cursor | codex (always reached over ACP)
 max_parallel        = 4
 resource_limits     = { research = 4, mutation = 1, checks = 2 } # optional per-class caps
 max_read_only       = 6                # optional capacity for isolation = "none"
@@ -58,10 +50,20 @@ max_security_findings = 3              # unique findings allowed before dispatch
 max_network_requests = 50              # observed outbound agent-tool calls; 0 is unlimited
 artifacts_dir       = ".jig/artifacts"   # run artifacts live outside the working tree
 inject_context      = true               # engine-assembled step-context preamble on agent steps (default true)
+
+[defaults.agent]                     # optional; the agent every step without `agent` uses
+backend             = "claude"       # claude | cursor | codex (always reached over ACP)
+model               = "claude-opus-4-8"
+fallback_model      = "claude-sonnet-4-6"  # used if the primary is overloaded
+effort              = "high"         # low | medium | high | xhigh | max
+max_turns           = 20
+max_thinking_tokens = 8000
+max_budget_usd      = 5.0            # whole-session cost ceiling
+permission_mode     = "acceptEdits"
 ```
 
-Backend selection is **TOML-only** (never an environment variable). See
-[Agent backend](#agent-backend-backend).
+Backend selection is **TOML-only** (never an environment variable): it is the
+resolved agent's `backend`. See [Agents](#agents-agent).
 
 ---
 
@@ -261,8 +263,6 @@ Claude agent file** (exactly one of `skill` / `agent_file`).
 | `skill`                | dir path | Directory with `SKILL.md` (+ optional helpers). Xor `agent_file`. |
 | `agent_file`           | path     | A Claude agent `.md` file (frontmatter + prompt). Xor `skill`. |
 | `inputs`               | [string] | `@stepid` / `@stepid.field` refs and/or file paths. See "Data flow". |
-| `allowed_tools`        | [string] | Tool allowlist for this context.                            |
-| `disallowed_tools`     | [string] | Tool denylist (complement of the allowlist).                |
 | `append_system_prompt` | string   | Extra per-step instructions appended after the skill/agent prompt. |
 | `isolation`            | string   | `"worktree"` or `"none"`. See "Worktrees".                  |
 | `[step.schema]`        | table    | Structured output contract (TOML-native). See "Structured outputs". |
@@ -270,8 +270,8 @@ Claude agent file** (exactly one of `skill` / `agent_file`).
 | `block_on`             | string   | Condition referencing the step's **own** schema output. See "Interactive input". |
 | `inject_context`       | bool     | Opt out of the engine-assembled step-context preamble (default `true`; overrides `[defaults]`). Agent-only. See "Step context". |
 | `[step.context]`       | table    | Author-supplied `purpose` / `notes` that *supplement* the preamble. See "Step context". |
-| `model` / `fallback_model` / `effort` / `max_turns` / `max_thinking_tokens` / `max_budget_usd` / `permission_mode` | | Override `[defaults]`. |
-| `backend`              | string   | Override `[defaults]`. See [Agent backend](#agent-backend-backend). |
+| `agent`                | string or table | The single-backend agent that runs the step: a profile reference (`"@name"`) or an inline table. Replaces `[defaults] agent` whole. See [Agents](#agents-agent). |
+| `ask_user`             | bool     | Let the agent ask the human questions mid-run (default `false`). Per step only. See [Agents](#agents-agent). |
 
 **`SKILL.md` contract.** Agent Skills convention: YAML frontmatter (`name`,
 `description`, `disable-model-invocation: true`) + instruction body. The
@@ -284,38 +284,240 @@ inputs and output instructions. This keeps prose out of the TOML and makes
 skills reusable.
 
 **`agent_file` contract.** A Claude Code agent file: YAML frontmatter (`name`,
-`description`, optional `tools`, optional `model`) + a system-prompt body. It is
-just a bundled `(prompt, tools, model)` triple, so at load time jig folds its
-`tools` into `allowed_tools` and its `model` into `model` **when the step leaves
-them unset** (explicit step fields win), and uses the body as the agent's system
-prompt. Everything else — `inputs`, schema, `validate`, `loop`, worktree
-isolation — behaves exactly as for a skill-driven step.
+`description`, optional `tools`, optional `model`) + a system-prompt body. Its
+frontmatter `tools` and `model` form a **Claude base layer** beneath the step's
+resolved agent: the agent's own `tools` or `model`, when set, replace them, and
+otherwise the file's values apply. An `agent_file` requires a Claude agent; a
+step whose agent resolves to Codex or Cursor fails at load. The body is used as
+the agent's system prompt. Everything else — `inputs`, schema, `validate`,
+`loop`, worktree isolation — behaves exactly as for a skill-driven step.
 
-### Agent backend (`backend`)
+### Agents (`agent`)
 
-Each agent step names which **backend** (vendor) runs it, always reached over
-ACP — there is no other transport to select. Selection is TOML-only — there
-is no process-wide env var.
+An agent step runs **one agent on one backend**. The `agent` key holds the
+whole configuration for that backend, and each backend accepts only the
+settings its adapter can enforce. There is no portable tool list or access
+tier: a setting another backend would ignore is rejected at load instead.
 
-| Field | Default | Values today | Notes |
+`agent` is either a **profile reference** or an **inline table**:
+
+```toml
+agent = "@reader"                                     # a profile (see below)
+agent = { backend = "codex", mode = "read-only" }     # inline
+agent = { extends = "@reader", tools = ["Read"] }     # inline, layered on a profile
+
+[step.agent]                                          # the same, as a sub-table
+backend = "cursor"
+mode    = "ask"
+```
+
+**Resolution.** A step's agent is its own `agent`, else `[defaults] agent`,
+else the implicit Claude agent with every setting at its default. The chosen
+agent is used **whole**: a step's `agent` replaces `[defaults] agent` rather
+than merging with it. Use `extends` to share settings. Resolution happens once
+at load; the resolved agent is stored in the run snapshot, and resume never
+re-resolves it, so later edits to profile files cannot change a running step.
+
+Every agent accepts `backend`, `model`, `append_system_prompt` and `extends`.
+`backend` defaults to `claude`. The backend-specific keys are:
+
+| Backend | Keys |
+|---|---|
+| `claude` | `effort`, `tools`, `disallowed_tools`, `permission_mode`, `max_turns`, `max_budget_usd`, `max_thinking_tokens`, `fallback_model` |
+| `codex` | `effort`, `mode`, `collaboration_mode` |
+| `cursor` | `mode` |
+
+A key that belongs to another backend, or to none, fails at load and names the
+backend and the key. `effort` is `low` \| `medium` \| `high` \| `xhigh` \| `max`.
+The mode values match the pinned adapters exactly; an unset mode is applied
+explicitly as its default, so operator-local defaults never decide a step's
+posture:
+
+| Backend | Key | Values | Applied when unset |
 |---|---|---|---|
-| `backend` | `claude` | `claude` \| `cursor` \| `codex` | Vendor. Gemini is not implemented yet. ACP reaches Claude through `@agentclientprotocol/claude-agent-acp@0.70.0`, Cursor through native `cursor-agent acp`, and Codex through `@agentclientprotocol/codex-acp@1.6.2`. |
+| `claude` | `permission_mode` | `default` \| `acceptEdits` \| `plan` \| `dontAsk` \| `bypassPermissions` | `default` |
+| `codex` | `mode` | `read-only` \| `agent` \| `agent-full-access` | `agent` |
+| `codex` | `collaboration_mode` | `default` \| `plan` | not sent (the adapter's `default`) |
+| `cursor` | `mode` | `agent` \| `plan` \| `ask` | `agent` |
 
-Inheritance matches `model` / `effort`: step → `[defaults]` → `claude`.
-Unknown values fail at `jig validate`. Capability mismatches (e.g.
-`[step.schema]` on a harness that does not advertise structured output) fail
-closed at execute time.
+Claude `dontAsk` denies every call that the repository's
+`.claude/settings.json` allow rules do not pre-approve, so it is read-only unless
+project rules grant more. It denies rather than approves, so it is not a
+never-prompt mode (see [Tier-1 guard and never-prompt modes](#tier-1-guard-and-never-prompt-modes)),
+and it still counts as mutating for the isolation default.
 
-A non-empty `model` / `effort` is applied as ACP session config through the
-adapter's semantic `model` and `thought_level` selectors, on new and resumed
-sessions alike. A value the adapter cannot honor fails the step before its
-prompt is sent; it is never silently dropped.
+**Claude tools.** `tools` and `disallowed_tools` take **bare built-in tool
+names** (`Read`, `Grep`, `Glob`, `Edit`, `Write`, `MultiEdit`, `NotebookEdit`,
+`Bash`, `BashOutput`, `KillShell`, `WebFetch`, `WebSearch`, `Task`, `Agent`,
+`TodoWrite`, `Skill`, `SlashCommand`, `ExitPlanMode`, `ListMcpResources`,
+`ReadMcpResource`). Permission-rule syntax such as `Bash(rm:*)` and MCP tool
+names are rejected. An **omitted** `tools` keeps every built-in tool; an
+**explicit empty** `tools = []` removes them all. `AskUserQuestion` is never
+listed: only `ask_user` governs it.
+
+**Limits.** Claude's `max_turns` and `max_budget_usd` apply to the whole
+session, not to each prompt. When one is reached the adapter rejects the next
+prompt, and the step fails with the adapter's message (for example
+`Reached maximum number of turns (3)`). Codex and Cursor have no limit keys.
+
+#### Profiles (`[[agent]]`) and `extends`
+
+Profiles are named, reusable agents. They live in
+`<project-root>/.agents/jig/profiles/*.toml` (the git repository root, or the
+workflow's directory outside a checkout), so every workflow in the repository
+shares them:
+
+```toml
+# .agents/jig/profiles/review.toml
+[[agent]]
+id              = "@reviewer"
+model           = "claude-opus-4-8"
+permission_mode = "acceptEdits"
+
+[[agent]]
+id      = "@reader"
+extends = "@reviewer"
+tools   = ["Read", "Grep", "Glob"]
+
+[[agent]]
+id      = "@codex-reader"
+backend = "codex"
+mode    = "read-only"
+```
+
+- An `id` starts with `@` followed by letters, digits, `_` or `-`, and is unique
+  across all profile files.
+- `extends = "@parent"` layers this agent over a profile. Every key the child
+  sets replaces the parent's; lists replace rather than append. Presence
+  matters: a child's `tools = []` removes every tool, while an omitted `tools`
+  inherits the parent's list.
+- The backend comes from the chain. A child may repeat its parent's `backend`
+  but not change it. An agent with neither `backend` nor `extends` is Claude.
+- Chains may be any depth; a cycle fails at load and names it.
+- A step's inline agent may `extends` a profile; `[defaults] agent` may too.
+
+There are no built-in profiles. The former `@interactive` and `@autonomous`
+fail with a pointer to `ask_user`.
+
+#### `ask_user`
+
+`ask_user = true` lets the step's agent pause and ask the human a structured
+question. It is set per step only — never in `[defaults]` or a profile, since a
+question blocks the run on a person. Without it no question handler is
+installed on any backend, and on Claude `AskUserQuestion` is added to the
+adapter's `disallowedTools`, so the model never sees the tool. With it, a
+present Claude `tools` list gets `AskUserQuestion` added, because the adapter's
+`tools` option would otherwise remove it. A step with `ask_user = true` fails
+closed at execute time on a harness without user-question support, and cannot
+also set `block_on` (both pause for human input, through different paths).
+
+Claude ACP asks through form elicitation and supports text, single-select,
+multi-select, and the Claude adapter's “Other” fields. Cursor ACP uses its
+native `cursor/ask_question` callback for required single- and multi-select
+questions; option IDs, rather than display labels, are returned to Cursor. That
+callback has no slot for free text, so Cursor questions offer no typed “Other…”
+answer. Permission requests remain a separate security decision and are never
+rendered as user questions.
+
+#### Per-backend enforcement
+
+Every setting is applied on new **and** resumed sessions. A value the adapter
+cannot honor fails the step **before its prompt is sent**, with the backend,
+key and value in the error; nothing is silently dropped. `model` is applied
+before any mode, because a model switch can reset the mode.
+
+| Backend | Setting | Mechanism |
+|---|---|---|
+| `claude` | `tools`, `disallowed_tools`, `max_turns`, `max_budget_usd`, `max_thinking_tokens`, `fallback_model` | `_meta.claudeCode.options` on `session/new` and `session/load`, as SDK `tools`, `disallowedTools`, `maxTurns`, `maxBudgetUsd`, `maxThinkingTokens`, `fallbackModel`. jig also sends `settingSources: ["project"]`. |
+| `claude` | `permission_mode` | The adapter's `mode` config option, after the model. (`_meta` `permissionMode` is overwritten by the adapter, so it is never sent.) |
+| `claude` | `model`, `effort` | Semantic `model` and `thought_level` config options. |
+| `codex` | `mode` | The adapter's `mode` config option. |
+| `codex` | `collaboration_mode` | The `collaboration_mode` config option, by id. |
+| `codex` | `model`, `effort` | Semantic `model` and `thought_level` config options. |
+| `cursor` | `mode` | The adapter's `mode` config option. |
+| `cursor` | `model` | Semantic `model` config option. |
 
 | Backend | `model` | `effort` |
 |---|---|---|
 | `claude` | Full IDs (`claude-haiku-4-5-20251001`) or aliases (`haiku`); the adapter resolves and validates the value. | Applied when the selected model advertises effort levels; otherwise fails. |
-| `cursor` | Must exactly match a Cursor model name the adapter advertises. | Not supported — Cursor exposes no `thought_level` selector, so any `effort` fails. |
+| `cursor` | Must exactly match a Cursor model name the adapter advertises. | No `effort` key — Cursor exposes no `thought_level` selector. |
 | `codex` | Must exactly match an advertised Codex model. | Must match an advertised reasoning level. |
+
+`settingSources: ["project"]` drops the operator's user and machine-local
+Claude settings, whose `permissions.allow` rules would otherwise auto-approve
+calls the Tier-1 guard never sees. The repository's `.claude/settings.json` and
+`CLAUDE.md` still load. `jig doctor` warns when `~/.claude/settings.json` sets
+`env` or `apiKeyHelper`, since those operators may rely on user settings for
+authentication.
+
+jig also applies its own **permission callback** on every agent step (see
+[Security monitoring](security-monitoring.md#permission-decisions)). On Claude
+it is a second layer over the adapter: a call outside a present `tools` list,
+inside `disallowed_tools`, or — under `permission_mode = "plan"` — outside the
+read-only set (`Read`, `Grep`, `Glob`, `WebSearch`, `WebFetch`) is denied.
+`ExitPlanMode` is always denied, so an agent never changes its own mode.
+
+#### Tier-1 guard and never-prompt modes
+
+The Tier-1 guard decides on the adapter's permission requests. A mode that
+never raises one — Claude `bypassPermissions`, Codex `agent-full-access` —
+would blind it, so a step with Tier-1 enabled (the default) and such a mode
+fails at load:
+
+```text
+step "fix": claude permission_mode = "bypassPermissions" never prompts, so the Tier-1 guard cannot run; set [step.security] tier1_enabled = false or choose another mode
+```
+
+What each mode leaves the guard able to see is listed under
+[Tier-1 coverage](security-monitoring.md#tier-1-coverage-per-backend-and-mode).
+
+#### Run manifest
+
+Each step's terminal record carries `agent_posture`: the resolved backend and
+its mode settings, with an unset mode reported as the applied default (Claude
+also `tools` — `*` when omitted — and `disallowed_tools`). Claude steps also
+record `tool_policy`, the step's `tools` followed by its `disallowed_tools`.
+
+#### Removed fields
+
+The flat agent fields on steps and `[defaults]` — `backend`, `model`,
+`effort`, `fallback_model`, `max_turns`, `max_thinking_tokens`,
+`max_budget_usd`, `permission_mode`, `allowed_tools`, `disallowed_tools` — and
+the step `profile` key are gone. They fail as unknown keys; move them into
+`agent`. Runs started before this change cannot be resumed.
+
+#### Examples
+
+```toml
+[defaults]
+agent = "@reviewer"                     # every step without its own agent
+
+[[step]]
+id    = "survey"
+type  = "agent"
+skill = "skills/survey"
+agent = "@reader"                       # a profile
+
+[[step]]
+id    = "draft"
+type  = "agent"
+skill = "skills/draft"
+agent = { extends = "@reader", tools = ["Read", "Write"] }   # inline, on a profile
+
+[[step]]
+id       = "clarify"
+type     = "agent"
+skill    = "skills/clarify"
+ask_user = true                         # may ask the human; uses [defaults] agent
+
+[[step]]
+id    = "audit"
+type  = "agent"
+skill = "skills/audit"
+  [step.agent]
+  backend = "codex"
+  mode    = "read-only"
+```
 
 Codex's CLI has no native ACP server. `backend = "codex"` starts the
 `@agentclientprotocol/codex-acp` stdio adapter, which drives the Codex App
@@ -326,23 +528,6 @@ The run monitor shows file patches only when an ACP adapter emits standard
 tool-call diff or location detail. A completed edit with no such detail shows
 `Adapter did not provide edit details.`; jig does not infer patches from tool
 titles or the workspace.
-
-Interactive steps may enable `AskUserQuestion` only when the selected harness
-advertises user-question support. Claude ACP uses form elicitation and supports
-text, single-select, multi-select, and the Claude adapter's “Other” fields.
-Cursor ACP uses its native `cursor/ask_question` callback for required
-single- and multi-select questions; option IDs, rather than display labels, are
-returned to Cursor. That callback has no slot for free text, so Cursor
-questions offer no typed “Other…” answer. Cursor sessions also support continuation through ACP
-`session/load`, provided the running CLI negotiates that capability. A missing,
-expired, or incompatible saved session fails the step; jig never starts a fresh
-conversation in its place. Permission requests remain a separate security
-decision and are never rendered as user questions.
-
-```toml
-[defaults]
-backend = "codex"
-```
 
 ### Command step
 
@@ -696,8 +881,12 @@ concurrent readers neither observe later integration nor modify the central run
 checkout. With persistence disabled, `ExecutionDir` is empty and the process
 working directory remains the fallback.
 
-- **Default on** for agent steps whose `allowed_tools` include mutating tools
-  (`Edit`/`Write`/`Bash`); override with `isolation = "none"`.
+- **Default on** for agent steps whose resolved agent may mutate the tree;
+  override with `isolation = "none"`. A Claude agent is non-mutating under
+  `permission_mode = "plan"` or with a `tools` list free of `Edit`, `MultiEdit`,
+  `Write`, `NotebookEdit` and `Bash`; an omitted `tools` counts as mutating.
+  Codex is non-mutating only in `mode = "read-only"`; Cursor only in `plan` or
+  `ask`.
 - **Branch name is derived by convention:** `jig/<workflow>/<run-id>/<step-id>`.
   No injected variable is needed; the scheduler owns branch lifecycle.
 - **Each step worktree branches off the run-branch HEAD**, not repo-root HEAD.
@@ -800,10 +989,10 @@ by the engine. Field specs: `"text"` / `"number"` / `"bool"`, `{ enum = [...] }`
 
 ```toml
 [[step]]
-id            = "research"
-type          = "agent"
-skill         = "skills/research"
-allowed_tools = ["Read", "Grep", "Glob"]
+id    = "research"
+type  = "agent"
+skill = "skills/research"
+agent = { tools = ["Read", "Grep", "Glob"] }
 
   [step.schema]
   summary    = "text"                                   # convention: always include a markdown summary
@@ -1115,24 +1304,24 @@ name = "bugfix"
 version = "1"
 
 [defaults]
-permission_mode = "acceptEdits"
+agent = { permission_mode = "acceptEdits" }
 
 [[step]]
-id            = "triage"
-type          = "agent"
-skill         = "skills/triage"
-inputs        = ["reports/bug-1234.md"]
-output        = ".jig/artifacts/triage.md"
-allowed_tools = ["Read", "Grep", "Glob"]
+id     = "triage"
+type   = "agent"
+skill  = "skills/triage"
+inputs = ["reports/bug-1234.md"]
+output = ".jig/artifacts/triage.md"
+agent  = { permission_mode = "acceptEdits", tools = ["Read", "Grep", "Glob"] }
 
 # mutating: worktree defaulted on; no `output` — diff + observed metadata are the result
 [[step]]
-id            = "fix"
-type          = "agent"
-depends_on    = ["triage"]
-skill         = "skills/fix"
-inputs        = ["@triage"]
-allowed_tools = ["Read", "Edit", "Write", "Bash"]
+id         = "fix"
+type       = "agent"
+depends_on = ["triage"]
+skill      = "skills/fix"
+inputs     = ["@triage"]
+agent      = { permission_mode = "acceptEdits", tools = ["Read", "Edit", "Write", "Bash"] }
 
   [step.validate]
   command = "go test ./..."
@@ -1142,10 +1331,10 @@ allowed_tools = ["Read", "Edit", "Write", "Bash"]
 id          = "approve"
 type        = "review"
 depends_on  = ["fix"]
+output_type = { enum = ["approve", "revise"] }
 [[step.review]]
 source      = "diff"
 label       = "Code changes"
-output_type = { enum = ["approve", "revise"] }
 
 [[step.route]]
 when           = "approve == 'revise'"

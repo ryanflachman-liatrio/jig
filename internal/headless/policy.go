@@ -50,7 +50,7 @@ func (p *Policy) Handle(run *engine.Run, ev engine.Event) error {
 	case engine.AgentQuestion:
 		return &GateError{
 			Code:    "gate_question",
-			Message: "AskUserQuestion required; headless fails closed (prefer profile = \"@autonomous\")",
+			Message: "AskUserQuestion required; headless fails closed (leave ask_user unset on agent steps)",
 			StepID:  e.StepID,
 		}
 	case engine.RecoveryRequest:

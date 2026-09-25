@@ -38,7 +38,10 @@ values, not decisions inferred from prose.
 protocol. Check outcomes distinguish pass, fail, error, and engine-determined
 non-applicability; these are not interchangeable with ordinary step status.
 
-**Agent profile:** reusable agent settings folded into unresolved step fields.
+**Agent:** the single-backend configuration that runs an agent step — one of a
+Claude, Codex, or Cursor agent, carrying only settings that backend enforces.
+**Agent profile:** a named, reusable agent (`[[agent]]` in
+`.agents/jig/profiles/`) that a step references or `extends`.
 **Quality profile:** a repository-specific deterministic check contract used by
 SDD workflows. **Notification profile:** reusable run notification policy.
 Qualify “profile” when the meaning is ambiguous.
@@ -149,9 +152,11 @@ with the previous backend conversation ID; it does not reuse a closed object.
 Required support is checked explicitly and fails closed when absent. Do not
 infer capabilities from a concrete type assertion or vendor name.
 
-**PermissionFn:** jig's synchronous pre-tool callback at the harness boundary.
-The runner binds it to the security guard; the harness does not own sentinel
-policy. A worktree and an allowed-tools list are different controls.
+**PermissionFn:** jig's synchronous pre-tool callback at the harness boundary,
+installed on every agent step. The harness resolves the canonical tool name
+and input; the runner applies the decision order (Claude tool-list second
+layer, then the security guard). The harness does not own sentinel policy. A
+worktree and a tool list are different controls.
 
 ## TUI presentation
 

@@ -30,7 +30,8 @@ Dependency versions live in the two `go.mod` files, not this map.
 | `internal/workflow` | TOML loading, authoring files, profiles/defaults, module expansion, typed conditions and output contracts, graph validation. No agent execution. |
 | `internal/engine` | Manager and per-run scheduler, readiness, budgets, retries/routes, fan-out, parks, review/integration, reset/reopen, journal event vocabulary. Defines `Executor` and `Reporter`. |
 | `internal/runner` | Concrete agent, command, and check execution, input delivery, validation, artifact capture, transcript writes. Uses the harness seam for agents. |
-| `internal/harness` | Claude ACP, Cursor ACP, and Codex ACP lifecycle/capability adapters; normalizes vendor output. |
+| `internal/agentcfg` | Leaf package: the sealed single-backend agent union (`ClaudeAgent`, `CodexAgent`, `CursorAgent`), mode tables and value validation. Shared by `internal/workflow` and `internal/harness` so neither imports the other. |
+| `internal/harness` | Claude ACP, Cursor ACP, and Codex ACP lifecycle/capability adapters; normalizes vendor output, enforces each backend's agent settings, and resolves canonical tool names for permission decisions. |
 | `harness/acp` | ACP process, connection, protocol, diagnostics, and platform-specific transport support. |
 | `internal/step` | Shared step status/state/result data. Keep it independent of orchestration and presentation. |
 | `internal/datastore` | Run paths, snapshots, artifacts, fan-out manifests, session/review storage, retention, and file operations. |
@@ -39,6 +40,7 @@ Dependency versions live in the two `go.mod` files, not this map.
 | `internal/toolcall`, `internal/interaction` | Shared tool activity and question contracts across runner/harness/presentation. |
 | `internal/review` | Immutable review documents, anchors, drafts, and submissions; separate from their TUI presentation. |
 | `internal/sentinel` | Deterministic tool guard and security-monitor contracts. |
+| `internal/operatorcfg` | Leaf package that inspects operator-local Codex/Cursor auto-approval config; used by `internal/runner` (before `Open`) and `internal/ops` (doctor). |
 | `internal/headless`, `internal/ops` | Headless policy and operational inspection/control over the same run model. |
 | `internal/notification` | Frozen run policy, operator bindings, bounded delivery, diagnostics. Delivery failure must not change run outcomes. |
 | `internal/telemetry` | OTel/Prometheus adapters and executor/reporter wrappers. Engine/runner/Monitor stay free of exporter SDK imports. |

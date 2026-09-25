@@ -163,9 +163,9 @@ mutation and direct the operator to the TUI. See
 ## Authoring CI-safe workflows
 
 - Prefer `jig run … --ci` (or the expanded flag set)
-- Prefer `profile = "@autonomous"` on agent steps — **only** disallows
-  `AskUserQuestion` when `disallowed_tools` was left empty; it does **not**
-  block review / `from=user` / `block_on` / recovery / merge
+- Leave `ask_user` unset (the default) on agent steps, so agents cannot ask
+  mid-run questions; it does **not** block review / `from=user` / `block_on` /
+  recovery / merge
 - Avoid `type = "review"`, `from = "user"`, and `block_on`
 - Expect `FinalMergeRequest` when persistence is on, cwd is a git repo, and the
   run branch gained commits — pass `--discard-merge` / `--approve-merge` /

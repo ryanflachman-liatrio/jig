@@ -61,7 +61,7 @@ Keep skill input/output contracts aligned with their invoking TOML when edited.
 
 ## Backend selection
 
-Selection is TOML-only: the resolved step `backend` field goes to
+Selection is TOML-only: the resolved agent's `backend` goes to
 `harness.For(backend)`. Every backend is ACP-backed; there is no other
 transport to select. Do not use or reintroduce `JIG_HARNESS` or
 `harness.FromEnv`.
@@ -72,8 +72,9 @@ transport to select. Do not use or reintroduce `JIG_HARNESS` or
 | `cursor` | `CursorHarness`, native `cursor-agent acp` |
 | `codex` | `CodexHarness`, using `@agentclientprotocol/codex-acp` |
 
-`backend` resolves step → `[defaults]` → `claude`. Verify resolution in
-`internal/workflow/load.go` and supported backends in
+A step's agent is its `agent`, else `[defaults] agent`, else the implicit
+Claude agent; each agent names one backend (default `claude`). Verify
+resolution in `internal/workflow/agent.go` and supported backends in
 `internal/harness/select.go` when changing this area.
 
 Gemini is not implemented. The Codex ACP adapter drives the App Server using

@@ -17,6 +17,91 @@ The guard redacts the supported tool inputs it inspects. This is pattern-based
 protection, not a claim that every secret, PII value, assistant block, or tool
 result is recognized.
 
+### Permission decisions
+
+The guard runs inside jig's permission callback, which every agent step
+installs; a harness without permission callbacks fails the step closed. Each
+adapter permission request is resolved to a **canonical tool name** and the
+input the rules read (`command` for `Bash`, `url` for `WebFetch`, `file_path`
+and `content` for edits), in one place in `internal/harness`:
+
+- A per-session cache, filled from `tool_call` notifications and keyed by
+  `toolCallId`, supplies what the request itself lacks. The ACP SDK can deliver
+  a request before the notification the adapter sent first, so a request that
+  cannot be resolved yet waits up to about 2 s for it; the wait ends if the
+  request is cancelled.
+- Claude names come from `_meta.claudeCode.toolName` (request, then cache),
+  then the ACP `kind`. Codex and Cursor names come from `kind`
+  (`execute`→`Bash`, `edit`/`delete`→`Edit`, `fetch`→`WebFetch`,
+  `search`→`WebSearch`, `read`→`Read`), else the title (for example an MCP
+  tool).
+- Inputs come from each backend's wire shape: Claude `rawInput`; Codex
+  `rawInput.command` and, for edits, the cached `tool_call` diff; Cursor the
+  backticked request title and the request's `content` diff.
+
+The decision order is:
+
+1. **Unresolved identity** — a call whose tool name cannot be resolved is
+   denied by the harness, on every step.
+2. **Unresolved input** — on a guarded step, a `Bash` or edit call whose
+   command, path or content cannot be assembled is denied.
+3. **`ExitPlanMode`** is denied, guarded or not, so an agent never changes its
+   own permission mode.
+4. **Claude second layer** — a call outside a present `tools` list, inside
+   `disallowed_tools`, or outside the read-only set under
+   `permission_mode = "plan"` is denied. `AskUserQuestion` is exempt; only
+   `ask_user` governs it.
+5. **Tier-1 guard**, when enabled; a denial records a finding.
+6. Otherwise **allow**.
+
+An allow selects only the request's `allow_once` option. `allow_always` answers
+persist rules — adapter session rules, or the operator's Codex exec-policy and
+Cursor allowlist — that later calls would skip jig for, so a request offering no
+`allow_once` option is rejected. The Tier-2 classifier session keeps a deny-all
+callback.
+
+### Tier-1 coverage per backend and mode
+
+The guard sees only calls the adapter asks about. What reaches it depends on
+the backend and mode:
+
+| Backend | Mode | What prompts, and so reaches the guard | Gaps |
+|---|---|---|---|
+| `claude` | `default` | Calls the repository's `.claude/settings.json` allow rules do not pre-approve. | Project allow rules auto-approve without a prompt. |
+| `claude` | `acceptEdits` | Shell, fetch and other non-edit calls. | Auto-approved edits bypass the secret-in-write rule. Project allow rules. |
+| `claude` | `plan` | Read-only calls; jig's second layer denies everything else and `ExitPlanMode`. | Project allow rules. |
+| `claude` | `dontAsk` | Nothing: calls not pre-approved are denied, not prompted. | Project allow rules are the only way a call runs. |
+| `claude` | `bypassPermissions` | Nothing. | Rejected at load under Tier-1. |
+| `codex` | `read-only` | Edits and commands that leave the read-only sandbox. | Reads never prompt. Exec-policy prefix rules auto-approve. |
+| `codex` | `agent` | Commands that leave the sandbox (for example network access). | Edits and in-sandbox commands run without prompting. Reads never prompt. Exec-policy prefix rules. |
+| `codex` | `agent-full-access` | Nothing. | Rejected at load under Tier-1. |
+| `cursor` | `agent` | Shell commands and edits not on the operator's allowlist. | Allowlist entries auto-approve. Reads never prompt. Cursor approves any operation without a `toolCallId` without asking — an adapter gap jig cannot close. |
+| `cursor` | `plan`, `ask` | The adapter's read-only modes; anything it asks about. | Reads never prompt. Allowlist entries. Operations without a `toolCallId`. |
+
+Tier 2 still reviews the transcript in every case.
+
+Three rules keep the gaps from being silent:
+
+- **Never-prompt modes fail at load.** A step with Tier-1 enabled whose agent
+  uses Claude `bypassPermissions` or Codex `agent-full-access` is rejected, with
+  a message suggesting `[step.security] tier1_enabled = false` or another mode.
+- **Operator allowlists are checked before `Open`.** For a guarded Codex or
+  Cursor step, the runner inspects operator-local permission config just before
+  opening the session (never in `jig validate`, which stays machine-independent).
+  **Blanket** auto-approval fails the step: Cursor `approvalMode =
+  "unrestricted"` or a `permissions.json`, or a Codex `approvals_reviewer` other
+  than the user. **Narrow** entries — Cursor `permissions.allow` entries,
+  including every `.cursor/cli.json` from the project root to the cwd, and
+  Codex exec-policy `prefix_rule`s that allow, including the repository's
+  `.codex/rules` — are recorded as `guard` findings (monitor
+  `operator-allowlist`, severity `low`, action `observed`) and the step runs.
+  Messages name the file and entry index only, never the entry text. `jig
+  doctor` lists the same findings: blanket as a failure, narrow as a warning.
+- **Claude user settings are dropped.** jig sends
+  `settingSources: ["project"]`, so `~/.claude/settings.json` and local
+  settings — and their allow rules — never apply. `jig doctor` warns when user
+  settings set `env` or `apiKeyHelper`.
+
 ## Tier 2: embedded classifier fleet
 
 The binary embeds a fixed roster from `internal/runner/monitors/`:
@@ -54,17 +139,17 @@ or PII detection.
 
 ## Classifier isolation and prerequisites
 
-Tier-2 classifiers use the direct Claude Agent SDK even when the observed worker
-uses Claude ACP, Cursor ACP, or Codex ACP. The operator therefore needs a working
-Claude CLI/SDK login in addition to any worker-backend login, and classifier
-calls incur separate Claude billing.
+Tier-2 classifiers run on the Claude ACP adapter even when the observed worker
+uses Cursor or Codex. The operator therefore needs a working Claude login in
+addition to any worker-backend login, and classifier calls incur separate
+Claude billing.
 
-Every invocation uses the embedded prompt as the SDK system prompt and the
-bounded transcript as untrusted user data. It has an explicitly empty tool list,
-allowed-tool list, settings-source list, and skills list; a deny callback is
-also installed. The result schema permits exactly the required `flagged`,
-`severity`, and `detail` fields, the turn limit is one, and dispatch has a
-30-second upper bound. jig creates no transcript or artifact files for the
+Each invocation is a Claude agent with `tools = []` (no built-in tools),
+`max_turns = 1`, no question handler, and a deny-all permission callback. ACP
+has no separate system-prompt channel, so the embedded prompt and the bounded
+transcript, marked as untrusted, are sent as one delimited prompt. The result
+schema permits exactly the required `flagged`, `severity`, and `detail` fields,
+and dispatch has a 30-second upper bound. jig creates no transcript or artifact files for the
 classifier session. That is a jig persistence-off guarantee, not a promise about
 vendor CLI session storage.
 

@@ -52,13 +52,13 @@ name    = "bugfix"
 version = "1"
 
 [defaults]
-permission_mode = "acceptEdits"
+agent = { permission_mode = "acceptEdits" }         # the Claude agent every step uses
 
 [[step]]
-id            = "fix"
-type          = "agent"
-skill         = "../skills/implement"              # relative to .agents/jig/
-allowed_tools = ["Read", "Edit", "Write", "Bash"]   # mutating -> runs in a git worktree
+id    = "fix"
+type  = "agent"
+skill = "../skills/implement"                       # relative to .agents/jig/
+agent = { permission_mode = "acceptEdits", tools = ["Read", "Edit", "Write", "Bash"] }  # mutating -> runs in a git worktree
 
   [step.validate]
   command = "go test ./..."                         # deterministic gate
