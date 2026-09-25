@@ -117,3 +117,64 @@ func TestDoctorClaudeUserSettings(t *testing.T) {
 		})
 	}
 }
+
+// TestDoctorOperatorAllowlist proves doctor lists operator-local Codex and
+// Cursor auto-approval config: blanket approval fails, narrow entries warn,
+// each names its file, and no entry text is printed.
+func TestDoctorOperatorAllowlist(t *testing.T) {
+	const synthetic = "sk-test-example-invalid"
+	dir := t.TempDir()
+	files := map[string]string{
+		"cursor/cli-config.json":   `{"approvalMode": "unrestricted", "permissions": {"allow": ["Shell(echo ` + synthetic + `)"]}}`,
+		"codex/config.toml":        `approvals_reviewer = "auto"`,
+		"codex/rules/deploy.rules": `prefix_rule(pattern = ["deploy", "` + synthetic + `"])`,
+	}
+	for rel, content := range files {
+		path := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("HOME", filepath.Join(dir, "home"))
+	t.Setenv("CURSOR_CONFIG_DIR", filepath.Join(dir, "cursor"))
+	t.Setenv("CODEX_HOME", filepath.Join(dir, "codex"))
+	t.Setenv("CODEX_CONFIG", "")
+
+	report := Doctor(DoctorOptions{
+		Root:     t.TempDir(),
+		Cwd:      t.TempDir(),
+		LookPath: func(binary string) (string, error) { return "/usr/bin/" + binary, nil },
+	})
+	if encoded := fmt.Sprintf("%#v", report); strings.Contains(encoded, synthetic) {
+		t.Fatalf("doctor printed an allow entry's text: %s", encoded)
+	}
+	want := map[string]CheckStatus{
+		"backend.cursor.operator_allowlist " + filepath.Join(dir, "cursor/cli-config.json") + " approvalMode":      CheckFail,
+		"backend.cursor.operator_allowlist " + filepath.Join(dir, "cursor/cli-config.json") + " permissions.allow": CheckWarn,
+		"backend.codex.operator_allowlist " + filepath.Join(dir, "codex/config.toml") + " approvals_reviewer":      CheckFail,
+		"backend.codex.operator_allowlist " + filepath.Join(dir, "codex/rules/deploy.rules") + " prefix_rule":      CheckWarn,
+	}
+	got := map[string]CheckStatus{}
+	for _, check := range report.Checks {
+		if !strings.HasSuffix(check.ID, ".operator_allowlist") {
+			continue
+		}
+		for _, key := range []string{"approvalMode", "permissions.allow", "approvals_reviewer", "prefix_rule"} {
+			if strings.Contains(check.Message, ": "+key) {
+				got[check.ID+" "+check.Scope+" "+key] = check.Status
+				if !strings.Contains(check.Message, check.Scope) {
+					t.Fatalf("check %+v does not name its file", check)
+				}
+			}
+		}
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("operator allowlist checks = %v, want %v", got, want)
+	}
+	if report.OK {
+		t.Fatal("doctor passed despite blanket auto-approval")
+	}
+}

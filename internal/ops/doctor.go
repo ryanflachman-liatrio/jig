@@ -12,6 +12,7 @@ import (
 	"jig/internal/datastore"
 	"jig/internal/engine"
 	"jig/internal/headless"
+	"jig/internal/operatorcfg"
 	"jig/internal/workflow"
 )
 
@@ -82,7 +83,7 @@ func Doctor(opts DoctorOptions) DoctorReport {
 
 	if wf == nil {
 		checks = append(checks, binaryCheck("git.binary", "git", "optional", false, opts.LookPath, "install git to use worktree-isolated workflows"))
-		checks = append(checks, optionalBackendChecks(opts.LookPath)...)
+		checks = append(checks, optionalBackendChecks(opts.LookPath, opts.Cwd)...)
 		return finishDoctor(checks)
 	}
 
@@ -122,7 +123,7 @@ func Doctor(opts DoctorOptions) DoctorReport {
 		}
 	}
 	for _, backend := range sortedKeys(backends) {
-		checks = append(checks, backendChecks(backend, true, opts.LookPath)...)
+		checks = append(checks, backendChecks(backend, true, opts.LookPath, opts.Cwd)...)
 	}
 	for _, tool := range sortedKeys(requiredTools) {
 		checks = append(checks, binaryCheck("check.required_tool", tool, tool, true, opts.LookPath, fmt.Sprintf("install %s and ensure it is on PATH", tool)))
@@ -215,18 +216,49 @@ func checkStoredRuns(root string) Check {
 	return Check{ID: "store.runs", Status: CheckPass, Scope: root, Message: fmt.Sprintf("%d persisted run(s) readable", len(ids))}
 }
 
-func optionalBackendChecks(lookPath func(string) (string, error)) []Check {
+func optionalBackendChecks(lookPath func(string) (string, error), cwd string) []Check {
 	var checks []Check
 	for _, backend := range []string{"claude", "cursor", "codex"} {
-		checks = append(checks, backendChecks(backend, false, lookPath)...)
+		checks = append(checks, backendChecks(backend, false, lookPath, cwd)...)
 	}
 	return checks
 }
 
-func backendChecks(backend string, required bool, lookPath func(string) (string, error)) []Check {
-	checks := backendExecutableChecks(backend, required, lookPath)
-	if backend == "claude" {
+func backendChecks(backend string, required bool, lookPath func(string) (string, error), cwd string) []Check {
+	checks, installed := backendExecutableChecks(backend, required, lookPath)
+	if !installed {
+		return checks
+	}
+	switch backend {
+	case "claude":
 		checks = append(checks, claudeUserSettingsChecks()...)
+	case "cursor", "codex":
+		checks = append(checks, operatorAllowlistChecks(backend, cwd)...)
+	}
+	return checks
+}
+
+// operatorAllowlistChecks lists the operator-local Codex or Cursor config that
+// auto-approves calls without a prompt, so the Tier-1 guard never sees them.
+// Blanket approval fails guarded steps at run time, so it is a failure here;
+// narrow entries are warnings. Entries are named by file and index only.
+func operatorAllowlistChecks(backend, cwd string) []Check {
+	id := "backend." + backend + ".operator_allowlist"
+	root := cwd
+	if abs, err := filepath.Abs(cwd); err == nil {
+		root = abs
+	}
+	findings, err := operatorcfg.Inspect(backend, root, root, os.Getenv)
+	if err != nil {
+		return []Check{{ID: id, Status: CheckFail, Scope: backend, Message: err.Error(), Remediation: "fix the config file; guarded steps fail until it can be read"}}
+	}
+	var checks []Check
+	for _, f := range findings {
+		if f.Class == operatorcfg.Blanket {
+			checks = append(checks, Check{ID: id, Status: CheckFail, Scope: f.File, Message: f.String() + " auto-approves every tool call, so guarded steps on this backend fail before they start", Remediation: "remove the setting, or set [step.security] tier1_enabled = false on the affected steps"})
+			continue
+		}
+		checks = append(checks, Check{ID: id, Status: CheckWarn, Scope: f.File, Message: f.String() + " auto-approves matching tool calls without a prompt, so the Tier-1 guard does not see them"})
 	}
 	return checks
 }
@@ -267,7 +299,9 @@ func claudeUserSettingsChecks() []Check {
 	}}
 }
 
-func backendExecutableChecks(backend string, required bool, lookPath func(string) (string, error)) []Check {
+// backendExecutableChecks reports whether the backend's executables are on
+// PATH; installed is false for a missing or unsupported backend.
+func backendExecutableChecks(backend string, required bool, lookPath func(string) (string, error)) (checks []Check, installed bool) {
 	id := "backend." + backend
 	tools := []string{}
 	login := ""
@@ -279,7 +313,7 @@ func backendExecutableChecks(backend string, required bool, lookPath func(string
 	case "codex":
 		tools, login = []string{"npx", "codex"}, "codex login"
 	default:
-		return []Check{{ID: id, Status: CheckFail, Scope: backend, Message: "unsupported backend"}}
+		return []Check{{ID: id, Status: CheckFail, Scope: backend, Message: "unsupported backend"}}, false
 	}
 	missing := []string{}
 	for _, tool := range tools {
@@ -292,13 +326,13 @@ func backendExecutableChecks(backend string, required bool, lookPath func(string
 		if required {
 			status = CheckFail
 		}
-		return []Check{{ID: id, Status: status, Scope: backend, Message: "missing executable(s): " + strings.Join(missing, ", "), Remediation: "install prerequisites and ensure they are on PATH"}}
+		return []Check{{ID: id, Status: status, Scope: backend, Message: "missing executable(s): " + strings.Join(missing, ", "), Remediation: "install prerequisites and ensure they are on PATH"}}, false
 	}
 	message := "local executables available; login validity unverified (run `" + login + "`)"
 	if backend == "claude" || backend == "codex" {
 		message += "; pinned npx adapter may require network or a populated cache"
 	}
-	return []Check{{ID: id, Status: CheckWarn, Scope: backend, Message: message}}
+	return []Check{{ID: id, Status: CheckWarn, Scope: backend, Message: message}}, true
 }
 
 func binaryCheck(id, binary, scope string, required bool, lookPath func(string) (string, error), remediation string) Check {

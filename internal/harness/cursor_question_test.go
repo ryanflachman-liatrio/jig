@@ -30,13 +30,8 @@ func TestCursorQuestionTranslationUsesStableOptionIDs(t *testing.T) {
 	}
 }
 
-func TestCursorQuestionDisabledAndRejectsMissingID(t *testing.T) {
-	h := newCursorQuestionHandler(nil)
-	out, err := h(context.Background(), acp.CursorQuestionRequest{ToolCallID: "x"})
-	if err != nil || out.Outcome != "skipped" {
-		t.Fatalf("disabled = %+v, %v", out, err)
-	}
-	_, err = cursorQuestionRequest(acp.CursorQuestionRequest{Questions: []acp.CursorQuestion{{ID: "q", Question: "Q", Options: []acp.CursorQuestionOption{{ID: "a", Label: "A"}}}}})
+func TestCursorQuestionRejectsMissingID(t *testing.T) {
+	_, err := cursorQuestionRequest(acp.CursorQuestionRequest{Questions: []acp.CursorQuestion{{ID: "q", Question: "Q", Options: []acp.CursorQuestionOption{{ID: "a", Label: "A"}}}}})
 	if err == nil {
 		t.Fatal("missing toolCallId accepted")
 	}

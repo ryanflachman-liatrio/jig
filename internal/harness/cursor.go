@@ -16,11 +16,11 @@ import (
 // shared with AcpHarness via the same acpSession type.
 type CursorHarness struct{}
 
-// cursorACPConfig applies model and effort through ACP's semantic selectors.
-// Cursor advertises its model selector with exact model names; it exposes
-// reasoning parameters under its own category rather than thought_level, so
-// a requested effort fails closed instead of being silently dropped.
-var cursorACPConfig = semanticACPConfigPolicy{model: true, effort: true}
+// cursorACPConfig applies the model and mode through ACP's semantic
+// selectors. Cursor advertises its model selector with exact model names.
+// CursorAgent has no effort key; Cursor exposes reasoning parameters under its
+// own category, not thought_level.
+var cursorACPConfig = cursorACPConfigPolicy{}
 
 func NewCursorHarness() *CursorHarness { return &CursorHarness{} }
 
@@ -52,9 +52,15 @@ func (h *CursorHarness) Open(ctx context.Context, spec SessionSpec) (Session, er
 		}
 	}
 
+	// Without a question function no handler is installed, and the client
+	// answers Cursor questions as skipped.
+	var question acp.CursorQuestionHandler
+	if spec.Question != nil {
+		question = newCursorQuestionHandler(spec.Question)
+	}
 	conn, err := acp.ConnectCursor(ctx, decide, func(ev acp.Event) {
 		sess.onEvent(ev)
-	}, newCursorQuestionHandler(spec.Question), spec.DiagnosticsDir)
+	}, question, spec.DiagnosticsDir)
 	if err != nil {
 		return nil, fmt.Errorf("cursor: %w", err)
 	}

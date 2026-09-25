@@ -26,6 +26,16 @@ func TestIntegrationResolverAgent(t *testing.T) {
 			},
 		},
 		{
+			name:  "codex runs in agent mode on the conflicted model",
+			agent: agentcfg.CodexAgent{Common: agentcfg.Common{Model: "fixture-model"}, Mode: "read-only", CollaborationMode: "plan"},
+			want:  agentcfg.CodexAgent{Common: agentcfg.Common{Model: "fixture-model"}, Mode: "agent"},
+		},
+		{
+			name:  "cursor runs in agent mode on the conflicted model",
+			agent: agentcfg.CursorAgent{Common: agentcfg.Common{Model: "fixture-model"}, Mode: "ask"},
+			want:  agentcfg.CursorAgent{Common: agentcfg.Common{Model: "fixture-model"}, Mode: "agent"},
+		},
+		{
 			name: "a step without an agent defaults to claude",
 			want: agentcfg.ClaudeAgent{
 				Tools:          []string{"Read", "Grep", "Glob", "Write", "Edit", "Bash"},

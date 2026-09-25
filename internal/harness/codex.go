@@ -13,7 +13,7 @@ import (
 // existing Codex CLI login and shares ACP event normalization with AcpHarness.
 type CodexHarness struct{}
 
-var codexACPConfig = semanticACPConfigPolicy{model: true, effort: true}
+var codexACPConfig = codexACPConfigPolicy{}
 
 func NewCodexHarness() *CodexHarness { return &CodexHarness{} }
 

@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1711,6 +1712,139 @@ func TestClaudeLimitFailure(t *testing.T) {
 			}
 			if res.SessionID != "limited" {
 				t.Fatalf("session id = %q, want the limited session kept for recovery", res.SessionID)
+			}
+		})
+	}
+}
+
+// TestAgentNoQuestionHandler proves the runner wires a question function only
+// when ask_user is on, and fails the step closed, without opening a session,
+// when ask_user is on but the harness cannot carry questions.
+func TestAgentNoQuestionHandler(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		askUser  bool
+		caps     harness.CapabilitySet
+		wantErr  string
+		wantAsk  bool
+		wantOpen bool
+	}{
+		{name: "ask_user off wires no question", caps: harness.NewCapabilitySet(harness.CapUserQuestion), wantOpen: true},
+		{name: "ask_user on wires the question", askUser: true, caps: harness.NewCapabilitySet(harness.CapUserQuestion), wantAsk: true, wantOpen: true},
+		{name: "ask_user on without CapUserQuestion fails closed", askUser: true, wantErr: "CapUserQuestion"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &harness.FakeHarness{NameVal: "fake", Caps: tc.caps, Sess: harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}})}
+			askUser := tc.askUser
+			req := engine.StepRequest{Step: &workflow.Step{ID: "worker", Type: workflow.StepAgent, AskUser: &askUser}}
+			res, err := NewAgentExecutorFixed(h).Execute(context.Background(), req, &captureReporter{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantErr != "" {
+				if res.Status != step.StatusFailed || !strings.Contains(res.Err, tc.wantErr) {
+					t.Fatalf("result = %s %q, want a failure naming %s", res.Status, res.Err, tc.wantErr)
+				}
+			}
+			opened := !reflect.DeepEqual(h.OpenSpec, harness.SessionSpec{})
+			if tc.wantOpen && res.Status != step.StatusSucceeded {
+				t.Fatalf("result = %s %q, want success", res.Status, res.Err)
+			}
+			if !tc.wantOpen && opened {
+				t.Fatalf("Open was called with %+v despite the failed capability gate", h.OpenSpec)
+			}
+			if got := h.OpenSpec.Question != nil; got != tc.wantAsk {
+				t.Fatalf("question wired = %t, want %t", got, tc.wantAsk)
+			}
+			if h.OpenSpec.AskUser != tc.wantAsk {
+				t.Fatalf("spec.AskUser = %t, want %t", h.OpenSpec.AskUser, tc.wantAsk)
+			}
+		})
+	}
+}
+
+// TestOperatorAllowlist proves a guarded Codex or Cursor step checks the
+// operator-local auto-approval config before Open: blanket approval fails the
+// step without opening a session, a narrow entry is recorded as an observed
+// Tier-1 finding and the step runs, and an unguarded step skips the check.
+func TestOperatorAllowlist(t *testing.T) {
+	const token = "sk-test-example-invalid"
+	for _, tc := range []struct {
+		name, backend, file, content string
+		guarded                      bool
+		wantErr                      string
+		wantFindings                 int
+	}{
+		{name: "cursor blanket fails before open", backend: "cursor", file: "cursor/cli-config.json", content: `{"approvalMode": "unrestricted"}`, guarded: true, wantErr: "approvalMode"},
+		{name: "cursor permissions.json fails before open", backend: "cursor", file: "cursor/permissions.json", content: `{}`, guarded: true, wantErr: "permissions.json"},
+		{name: "codex blanket fails before open", backend: "codex", file: "codex/config.toml", content: `approvals_reviewer = "auto"`, guarded: true, wantErr: "approvals_reviewer"},
+		{name: "cursor narrow entry is observed", backend: "cursor", file: "cursor/cli-config.json", content: `{"permissions": {"allow": ["Shell(echo ` + token + `)"]}}`, guarded: true, wantFindings: 1},
+		{name: "codex prefix rule is observed", backend: "codex", file: "codex/rules/default.rules", content: `prefix_rule(pattern = ["deploy", "` + token + `"])`, guarded: true, wantFindings: 1},
+		{name: "unguarded step skips the check", backend: "cursor", file: "cursor/cli-config.json", content: `{"approvalMode": "unrestricted"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("HOME", filepath.Join(dir, "home"))
+			t.Setenv("CURSOR_CONFIG_DIR", filepath.Join(dir, "cursor"))
+			t.Setenv("CODEX_HOME", filepath.Join(dir, "codex"))
+			t.Setenv("CODEX_CONFIG", "")
+			path := filepath.Join(dir, tc.file)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(tc.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			repo := filepath.Join(dir, "repo")
+			if err := os.MkdirAll(repo, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			h := &harness.FakeHarness{
+				NameVal: tc.backend,
+				Caps:    harness.NewCapabilitySet(harness.CapPermissionCallback),
+				Sess:    harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}}),
+			}
+			findingsPath := filepath.Join(dir, "findings.jsonl")
+			req := engine.StepRequest{
+				Step:         &workflow.Step{ID: "worker", Type: workflow.StepAgent, Backend: tc.backend},
+				RepoRoot:     repo,
+				FindingsPath: findingsPath,
+			}
+			if tc.guarded {
+				req.Guard = sentinel.NewGuard(nil)
+			}
+			rep := &captureReporter{}
+			res, err := NewAgentExecutorFixed(h).Execute(context.Background(), req, rep)
+			if err != nil {
+				t.Fatal(err)
+			}
+			opened := !reflect.DeepEqual(h.OpenSpec, harness.SessionSpec{})
+			if tc.wantErr != "" {
+				if res.Status != step.StatusFailed || !strings.Contains(res.Err, tc.wantErr) || !strings.Contains(res.Err, path) || !strings.Contains(res.Err, "tier1_enabled = false") {
+					t.Fatalf("result = %s %q, want a failure naming %s, %s and the remediation", res.Status, res.Err, path, tc.wantErr)
+				}
+				if opened {
+					t.Fatal("Open was called despite blanket operator auto-approval")
+				}
+				return
+			}
+			if res.Status != step.StatusSucceeded || !opened {
+				t.Fatalf("result = %s %q (opened=%t), want the step to run", res.Status, res.Err, opened)
+			}
+			findings, err := sentinel.ReadAll(findingsPath)
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			if len(findings) != tc.wantFindings || len(rep.findings) != tc.wantFindings {
+				t.Fatalf("persisted %d and reported %d findings, want %d", len(findings), len(rep.findings), tc.wantFindings)
+			}
+			for _, f := range findings {
+				if f.Tier != sentinel.TierGuard || f.Monitor != "operator-allowlist" || f.Severity != sentinel.SeverityLow || f.Action != sentinel.ActionObserved || !strings.Contains(f.Detail, path) {
+					t.Fatalf("finding = %+v", f)
+				}
+			}
+			if data, _ := os.ReadFile(findingsPath); strings.Contains(string(data), token) || strings.Contains(fmt.Sprintf("%+v", rep.findings), token) {
+				t.Fatal("a finding carried the synthetic token")
 			}
 		})
 	}

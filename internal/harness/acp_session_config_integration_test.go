@@ -3,6 +3,7 @@ package harness_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -52,7 +53,7 @@ func TestACPHarnessesApplyStepModelAndEffort(t *testing.T) {
 		{
 			name: "cursor exact model", backend: "cursor",
 			model:    "fixture-model",
-			wantSets: []string{"set-config:model=fixture-model"},
+			wantSets: []string{"set-config:model=fixture-model", "set-config:mode=agent"},
 		},
 		{
 			name: "cursor rejects unadvertised model", backend: "cursor",
@@ -62,7 +63,7 @@ func TestACPHarnessesApplyStepModelAndEffort(t *testing.T) {
 		{
 			name: "codex model and effort", backend: "codex",
 			model: "fixture-model", effort: "low",
-			wantSets: []string{"set-config:model=fixture-model", "set-config:effort=low"},
+			wantSets: []string{"set-config:model=fixture-model", "set-config:effort=low", "set-config:mode=agent"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -348,5 +349,159 @@ func TestClaudePromptLimitOnWire(t *testing.T) {
 	result, log := runFixtureStep(t, rpcLog, fixtureStep{backend: "claude", agent: agentcfg.ClaudeAgent{}})
 	if result.Status != step.StatusFailed || !strings.Contains(result.Err, "Reached maximum number of turns (3)") {
 		t.Fatalf("result = %s %q, want a failure carrying the adapter's limit message; rpc log:\n%s", result.Status, result.Err, log)
+	}
+}
+
+// TestCodexAgentMode proves Codex mode and collaboration_mode reach the
+// adapter as config options after the model, with an explicit mode default,
+// on new and resumed sessions, and fail before the prompt when unadvertised.
+func TestCodexAgentMode(t *testing.T) {
+	rpcLog := setupConfigFixture(t)
+	for _, tc := range []struct {
+		name     string
+		agent    agentcfg.CodexAgent
+		resume   bool
+		omit     string
+		wantSets []string
+		wantErr  []string
+	}{
+		{
+			name:     "explicit mode and collaboration_mode",
+			agent:    agentcfg.CodexAgent{Mode: "read-only", CollaborationMode: "plan"},
+			wantSets: []string{"set-config:mode=read-only", "set-config:collaboration_mode=plan"},
+		},
+		{
+			name:     "explicit settings on a resumed session",
+			agent:    agentcfg.CodexAgent{Mode: "read-only", CollaborationMode: "plan"},
+			resume:   true,
+			wantSets: []string{"set-config:mode=read-only", "set-config:collaboration_mode=plan"},
+		},
+		{
+			name:     "unset mode applies agent",
+			wantSets: []string{"set-config:mode=agent"},
+		},
+		{
+			name:     "unset mode applies agent on a resumed session",
+			resume:   true,
+			wantSets: []string{"set-config:mode=agent"},
+		},
+		{
+			name:     "model and effort precede the mode",
+			agent:    agentcfg.CodexAgent{Common: agentcfg.Common{Model: "fixture-model"}, Effort: "low", Mode: "agent-full-access"},
+			wantSets: []string{"set-config:model=fixture-model", "set-config:effort=low", "set-config:mode=agent-full-access"},
+		},
+		{
+			name:    "unadvertised mode fails before the prompt",
+			agent:   agentcfg.CodexAgent{Mode: "read-only"},
+			omit:    "read-only",
+			wantErr: []string{"codex:", "mode", `"read-only"`},
+		},
+		{
+			name:    "unadvertised collaboration_mode fails before the prompt",
+			agent:   agentcfg.CodexAgent{CollaborationMode: "plan"},
+			omit:    "plan",
+			wantErr: []string{"codex:", "collaboration_mode", `"plan"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("JIG_ACP_FIXTURE_OMIT_MODE", tc.omit)
+			assertFixtureModes(t, rpcLog, fixtureStep{backend: "codex", agent: tc.agent, resume: tc.resume}, tc.wantSets, tc.wantErr)
+		})
+	}
+}
+
+// TestCursorAgentMode proves Cursor mode reaches the adapter as a config
+// option after the model, with an explicit default, on new and resumed
+// sessions, and fails before the prompt when unadvertised.
+func TestCursorAgentMode(t *testing.T) {
+	rpcLog := setupConfigFixture(t)
+	for _, tc := range []struct {
+		name     string
+		agent    agentcfg.CursorAgent
+		resume   bool
+		omit     string
+		wantSets []string
+		wantErr  []string
+	}{
+		{name: "explicit mode", agent: agentcfg.CursorAgent{Mode: "ask"}, wantSets: []string{"set-config:mode=ask"}},
+		{name: "explicit mode on a resumed session", agent: agentcfg.CursorAgent{Mode: "ask"}, resume: true, wantSets: []string{"set-config:mode=ask"}},
+		{name: "unset mode applies agent", wantSets: []string{"set-config:mode=agent"}},
+		{name: "unset mode applies agent on a resumed session", resume: true, wantSets: []string{"set-config:mode=agent"}},
+		{
+			name:     "model precedes the mode",
+			agent:    agentcfg.CursorAgent{Common: agentcfg.Common{Model: "fixture-model"}, Mode: "plan"},
+			wantSets: []string{"set-config:model=fixture-model", "set-config:mode=plan"},
+		},
+		{
+			name:    "unadvertised mode fails before the prompt",
+			agent:   agentcfg.CursorAgent{Mode: "plan"},
+			omit:    "plan",
+			wantErr: []string{"cursor:", "mode", `"plan"`},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("JIG_ACP_FIXTURE_OMIT_MODE", tc.omit)
+			assertFixtureModes(t, rpcLog, fixtureStep{backend: "cursor", agent: tc.agent, resume: tc.resume}, tc.wantSets, tc.wantErr)
+		})
+	}
+}
+
+func assertFixtureModes(t *testing.T, rpcLog string, fs fixtureStep, wantSets, wantErr []string) {
+	t.Helper()
+	result, log := runFixtureStep(t, rpcLog, fs)
+	if len(wantErr) > 0 {
+		if result.Status != step.StatusFailed {
+			t.Fatalf("result = %s, want a failure; rpc log:\n%s", result.Status, log)
+		}
+		for _, want := range wantErr {
+			if !strings.Contains(result.Err, want) {
+				t.Fatalf("error %q does not contain %q", result.Err, want)
+			}
+		}
+		if len(fixtureLines(log, "prompt")) != 0 {
+			t.Fatalf("step prompted despite an unappliable setting; rpc log:\n%s", log)
+		}
+		return
+	}
+	if result.Status != step.StatusSucceeded {
+		t.Fatalf("result = %s %q; rpc log:\n%s", result.Status, result.Err, log)
+	}
+	if got := fixtureLines(log, "set-config:"); !reflect.DeepEqual(got, wantSets) {
+		t.Fatalf("config sets = %q, want %q", got, wantSets)
+	}
+	if fs.resume && len(fixtureLines(log, "load-session")) != 1 {
+		t.Fatalf("resumed step did not load its session; rpc log:\n%s", log)
+	}
+}
+
+// TestAgentNoQuestionHandler proves ask_user = false wires no question path:
+// Claude and Codex do not advertise ACP elicitation, and Cursor's native
+// ask_question is answered as skipped. With ask_user = true the path exists.
+func TestAgentNoQuestionHandler(t *testing.T) {
+	rpcLog := setupConfigFixture(t)
+	t.Setenv("JIG_ACP_FIXTURE_ASK", "1")
+	for _, backend := range []string{"claude", "codex", "cursor"} {
+		for _, askUser := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/ask_user=%t", backend, askUser), func(t *testing.T) {
+				result, log := runFixtureStep(t, rpcLog, fixtureStep{backend: backend, agent: resolvedFixtureAgent(backend, "", ""), askUser: askUser})
+				if result.Status != step.StatusSucceeded {
+					t.Fatalf("result = %s %q; rpc log:\n%s", result.Status, result.Err, log)
+				}
+				wantInit := fmt.Sprintf("init:elicitation=%t", askUser && backend != "cursor")
+				if got := fixtureLines(log, "init:"); !reflect.DeepEqual(got, []string{wantInit}) {
+					t.Fatalf("initialize = %q, want %q", got, wantInit)
+				}
+				if backend != "cursor" {
+					return
+				}
+				got := fixtureLines(log, "cursor-question:")
+				if len(got) != 1 {
+					t.Fatalf("cursor question lines = %q; rpc log:\n%s", got, log)
+				}
+				if skipped := got[0] == "cursor-question:skipped"; skipped == askUser {
+					t.Fatalf("cursor question outcome = %q with ask_user = %t", got[0], askUser)
+				}
+			})
+		}
 	}
 }

@@ -31,6 +31,7 @@ type fixtureAgent struct {
 }
 
 func (a *fixtureAgent) Initialize(_ context.Context, req acpsdk.InitializeRequest) (acpsdk.InitializeResponse, error) {
+	fixtureRecord(fmt.Sprintf("init:elicitation=%t", req.ClientCapabilities.Elicitation != nil))
 	return acpsdk.InitializeResponse{ProtocolVersion: req.ProtocolVersion, AgentCapabilities: acpsdk.AgentCapabilities{LoadSession: true}}, nil
 }
 func (*fixtureAgent) Authenticate(context.Context, acpsdk.AuthenticateRequest) (acpsdk.AuthenticateResponse, error) {
@@ -135,6 +136,24 @@ func (a *fixtureAgent) Prompt(ctx context.Context, req acpsdk.PromptRequest) (ac
 		// The Claude adapter rejects session/prompt with a JSON-RPC internal
 		// error when a turn or budget limit is hit.
 		return acpsdk.PromptResponse{}, &acpsdk.RequestError{Code: -32603, Message: message}
+	}
+	if os.Getenv("JIG_ACP_FIXTURE_ASK") == "1" && fixtureWorker() == "cursor" {
+		// Cursor asks through its own extension method rather than ACP
+		// elicitation; record whether jig installed a handler for it.
+		raw, err := a.conn.CallExtension(ctx, "_cursor/ask_question", map[string]any{
+			"toolCallId": "ask-1",
+			"title":      "Fixture question",
+			"questions":  []any{map[string]any{"id": "q", "question": "Pick one", "options": []any{map[string]any{"id": "a", "label": "A"}}}},
+		})
+		var out struct {
+			Outcome string `json:"outcome"`
+		}
+		if err == nil {
+			_ = json.Unmarshal(raw, &out)
+		} else {
+			out.Outcome = "error"
+		}
+		fixtureRecord("cursor-question:" + out.Outcome)
 	}
 	update := func(value acpsdk.SessionUpdate) {
 		_ = a.conn.SessionUpdate(ctx, acpsdk.SessionNotification{SessionId: req.SessionId, Update: value})

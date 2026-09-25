@@ -10,14 +10,12 @@ import (
 )
 
 // newCursorQuestionHandler keeps the native Cursor protocol isolated from the
-// interaction model used by the runner and Gate.
+// interaction model used by the runner and Gate. ask must be non-nil; a step
+// without questions installs no handler at all.
 func newCursorQuestionHandler(ask QuestionFn) acp.CursorQuestionHandler {
 	var mu sync.Mutex
 	active := make(map[string]struct{})
 	return func(ctx context.Context, in acp.CursorQuestionRequest) (acp.CursorQuestionResponse, error) {
-		if ask == nil {
-			return acp.CursorQuestionResponse{Outcome: "skipped", Message: "questions are disabled for this step"}, nil
-		}
 		req, err := cursorQuestionRequest(in)
 		if err != nil {
 			return acp.CursorQuestionResponse{}, err

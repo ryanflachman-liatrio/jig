@@ -131,6 +131,59 @@ func (p claudeACPConfigPolicy) Apply(ctx context.Context, conn *acp.Conn, sessio
 	return conn.SetSelectConfigByCategory(ctx, sessionID, acpsdk.SessionConfigOptionCategoryMode, mode)
 }
 
+// codexACPConfigPolicy enforces a CodexAgent. Codex takes no _meta; model and
+// effort use the semantic selectors, then mode (by category) and
+// collaboration_mode (by its own option id) are applied after them.
+type codexACPConfigPolicy struct{}
+
+func (codexACPConfigPolicy) SessionMeta(spec SessionSpec) (map[string]any, error) {
+	_, err := codexAgentOf(spec)
+	return nil, err
+}
+
+func (codexACPConfigPolicy) Apply(ctx context.Context, conn *acp.Conn, sessionID string, spec SessionSpec) error {
+	agent, err := codexAgentOf(spec)
+	if err != nil {
+		return err
+	}
+	if err := (semanticACPConfigPolicy{model: true, effort: true}).Apply(ctx, conn, sessionID, spec); err != nil {
+		return err
+	}
+	mode := agent.Mode
+	if mode == "" {
+		mode = agentcfg.DefaultCodexMode
+	}
+	if err := conn.SetSelectConfigByCategory(ctx, sessionID, acpsdk.SessionConfigOptionCategoryMode, mode); err != nil {
+		return err
+	}
+	// collaboration_mode has its own category, so it is set by option id.
+	return conn.SetSelectConfig(ctx, sessionID, "collaboration_mode", agent.CollaborationMode)
+}
+
+// cursorACPConfigPolicy enforces a CursorAgent. Cursor takes no _meta and has
+// no effort setting; the model is applied first, then the mode.
+type cursorACPConfigPolicy struct{}
+
+func (cursorACPConfigPolicy) SessionMeta(spec SessionSpec) (map[string]any, error) {
+	_, err := cursorAgentOf(spec)
+	return nil, err
+}
+
+func (cursorACPConfigPolicy) Apply(ctx context.Context, conn *acp.Conn, sessionID string, spec SessionSpec) error {
+	agent, err := cursorAgentOf(spec)
+	if err != nil {
+		return err
+	}
+	if err := (semanticACPConfigPolicy{model: true}).Apply(ctx, conn, sessionID, spec); err != nil {
+		return err
+	}
+	mode := agent.Mode
+	if mode == "" {
+		mode = agentcfg.DefaultCursorMode
+	}
+	return conn.SetSelectConfigByCategory(ctx, sessionID, acpsdk.SessionConfigOptionCategoryMode, mode)
+}
+
 // claudeAgentOf returns the spec's Claude agent. A nil agent is the backend's
 // defaults; any other backend's agent fails closed.
 func claudeAgentOf(spec SessionSpec) (agentcfg.ClaudeAgent, error) {
@@ -141,6 +194,28 @@ func claudeAgentOf(spec SessionSpec) (agentcfg.ClaudeAgent, error) {
 		return agent, nil
 	default:
 		return agentcfg.ClaudeAgent{}, wrongAgentError("acp", agent)
+	}
+}
+
+func codexAgentOf(spec SessionSpec) (agentcfg.CodexAgent, error) {
+	switch agent := spec.Agent.(type) {
+	case nil:
+		return agentcfg.CodexAgent{Common: agentcfg.Common{Model: spec.Model}}, nil
+	case agentcfg.CodexAgent:
+		return agent, nil
+	default:
+		return agentcfg.CodexAgent{}, wrongAgentError("codex", agent)
+	}
+}
+
+func cursorAgentOf(spec SessionSpec) (agentcfg.CursorAgent, error) {
+	switch agent := spec.Agent.(type) {
+	case nil:
+		return agentcfg.CursorAgent{Common: agentcfg.Common{Model: spec.Model}}, nil
+	case agentcfg.CursorAgent:
+		return agent, nil
+	default:
+		return agentcfg.CursorAgent{}, wrongAgentError("cursor", agent)
 	}
 }
 

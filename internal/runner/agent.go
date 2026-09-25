@@ -13,6 +13,7 @@ import (
 	"jig/internal/datastore"
 	"jig/internal/engine"
 	"jig/internal/harness"
+	"jig/internal/operatorcfg"
 	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/toolcall"
@@ -117,6 +118,11 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 			return harness.Decision{Allow: dec.Allow, Reason: dec.Reason}
 		}
 	}
+	if req.Guard != nil {
+		if msg := checkOperatorAllowlist(req, spec.Cwd, rep); msg != "" {
+			return failResult(msg, start), nil
+		}
+	}
 	inputPrompt := spec.Prompt
 	if previewer, ok := h.(harness.PromptPreviewer); ok {
 		inputPrompt = previewer.PreviewPrompt(spec)
@@ -176,6 +182,66 @@ func persistSessionID(req engine.StepRequest, sessionID string) error {
 		Iteration:  req.Iteration,
 		Generation: req.Generation,
 	})
+}
+
+// operatorAllowlistMonitor names the Tier-1 findings for operator-local
+// auto-approval config.
+const operatorAllowlistMonitor = "operator-allowlist"
+
+// checkOperatorAllowlist inspects the operator-local Codex or Cursor config a
+// guarded step would run under. Those sources auto-approve calls without a
+// permission prompt, so the guard never sees them, and ACP mode does not
+// override them. Blanket auto-approval fails the step (the returned message);
+// each narrow entry is recorded as an observed finding and the step runs.
+func checkOperatorAllowlist(req engine.StepRequest, cwd string, rep engine.Reporter) string {
+	backend := req.Step.Backend
+	findings, err := operatorcfg.Inspect(backend, req.RepoRoot, cwd, os.Getenv)
+	if err != nil {
+		return fmt.Sprintf("step is guarded and its operator config cannot be checked: %v", err)
+	}
+	for _, f := range findings {
+		if f.Class == operatorcfg.Blanket {
+			return fmt.Sprintf("step is guarded but %s auto-approves every %s tool call, so the Tier-1 guard never sees them; remove the setting, or set [step.security] tier1_enabled = false", f, backend)
+		}
+	}
+	if len(findings) == 0 {
+		return ""
+	}
+	fw, err := sentinel.NewWriter(req.FindingsPath)
+	if err != nil {
+		return fmt.Sprintf("findings sink: %v", err)
+	}
+	defer func() { _ = fw.Close() }()
+	for _, f := range findings {
+		evidenceKey := "operator-config:" + f.Location()
+		fp := sentinel.NewFingerprint(req.Step.ID, operatorAllowlistMonitor, evidenceKey)
+		_ = fw.Append(sentinel.Finding{
+			Ts:          time.Now().UTC(),
+			RunID:       req.RunID,
+			StepID:      req.Step.ID,
+			Iteration:   req.Iteration,
+			Tier:        sentinel.TierGuard,
+			Monitor:     operatorAllowlistMonitor,
+			Severity:    sentinel.SeverityLow,
+			Action:      sentinel.ActionObserved,
+			Detail:      fmt.Sprintf("%s auto-approves matching %s calls without a permission prompt, so the Tier-1 guard does not see them", f, backend),
+			Evidence:    evidenceKey,
+			Fingerprint: fp,
+		})
+		rep.Finding(engine.SecurityFinding{
+			RunID:       req.RunID,
+			StepID:      req.Step.ID,
+			Tier:        string(sentinel.TierGuard),
+			Monitor:     operatorAllowlistMonitor,
+			Severity:    string(sentinel.SeverityLow),
+			Action:      string(sentinel.ActionObserved),
+			Fingerprint: fp,
+			Iteration:   req.Iteration,
+			Attempt:     req.Attempt,
+			Generation:  req.Generation,
+		})
+	}
+	return ""
 }
 
 func outboundToolCall(tool string, input map[string]any) bool {
