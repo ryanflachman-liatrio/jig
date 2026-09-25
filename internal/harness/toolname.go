@@ -187,7 +187,10 @@ func (c *toolCalls) resolveToolCall(ctx context.Context, backend string, tc acps
 	id := string(tc.ToolCallId)
 	entry, found := c.peek(id)
 	call := assembleToolCall(backend, tc, entry)
-	if (call.Name == "" || !call.InputResolved) && !found && id != "" {
+	// A Claude request without _meta names its tool only through the cached
+	// tool_call; resolving it from kind first would conflate Write with Edit.
+	kindOnly := backend == agentcfg.BackendClaude && metaToolName(tc.Meta) == ""
+	if (call.Name == "" || !call.InputResolved || kindOnly) && !found && id != "" {
 		entry, found = c.lookup(ctx, id)
 		if ctx.Err() != nil {
 			return ToolCall{}, false

@@ -57,8 +57,9 @@ func TestCanonicalToolName(t *testing.T) {
 				want:    "WebFetch",
 			},
 			{
-				name:    "claude falls back to the kind mapping",
+				name:    "claude falls back to the kind mapping once the tool_call names nothing",
 				backend: agentcfg.BackendClaude,
+				observe: []acp.Event{{Kind: acp.EventToolCall, ToolID: "c1", ToolKind: "read"}},
 				request: acpsdk.ToolCallUpdate{ToolCallId: "c1", Kind: kindPtr(acpsdk.ToolKindRead)},
 				want:    "Read",
 			},
@@ -254,6 +255,23 @@ func TestCanonicalToolName(t *testing.T) {
 			call := <-done
 			if call.Name != "Bash" || !call.InputResolved {
 				t.Fatalf("call = %+v, want the late notification's Bash call", call)
+			}
+		})
+	})
+
+	t.Run("claude kind-only request waits for the cached name", func(t *testing.T) {
+		synctest.Test(t, func(t *testing.T) {
+			var calls toolCalls
+			done := make(chan ToolCall)
+			request := acpsdk.ToolCallUpdate{ToolCallId: "w", Kind: kindPtr(acpsdk.ToolKindEdit), RawInput: map[string]any{"file_path": "/tmp/x", "content": "hi"}}
+			go func() {
+				call, _ := calls.resolveToolCall(context.Background(), agentcfg.BackendClaude, request)
+				done <- call
+			}()
+			synctest.Wait() // kind alone would say Edit; the decision waits instead
+			calls.observe(acp.Event{Kind: acp.EventToolCall, ToolID: "w", Meta: claudeMeta("Write")})
+			if call := <-done; call.Name != "Write" {
+				t.Fatalf("call = %+v, want the cached Write name", call)
 			}
 		})
 	})
