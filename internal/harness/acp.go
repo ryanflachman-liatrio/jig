@@ -433,6 +433,18 @@ func (s *acpSession) Close() error {
 	return s.conn.Close()
 }
 
+// limitStopText returns the step error for a stop reason that means the turn
+// was cut short by a turn or budget limit, or "" for any other reason. The
+// Claude adapter reports a limit either by rejecting session/prompt (carrying
+// its own message) or, when the SDK result is not flagged as an error, by
+// returning max_turn_requests; both must fail the step.
+func limitStopText(stopReason acpsdk.StopReason) string {
+	if stopReason != acpsdk.StopReasonMaxTurnRequests {
+		return ""
+	}
+	return "agent stopped: reached its turn or budget limit (stop reason max_turn_requests)"
+}
+
 // acpMaxStructuredAttempts caps the prompt-inject → parse → retry loop so a
 // persistently non-compliant model does not spin indefinitely.
 const acpMaxStructuredAttempts = 3
@@ -447,6 +459,11 @@ func (s *acpSession) run(ctx context.Context, sessionID, prompt string) {
 		s.flushTextLocked()
 		if err != nil {
 			s.emitLocked(Event{Type: EventResult, IsError: true, ErrText: err.Error(), SessionID: sessionID})
+			s.mu.Unlock()
+			return
+		}
+		if msg := limitStopText(stopReason); msg != "" {
+			s.emitLocked(Event{Type: EventResult, IsError: true, ErrText: msg, SessionID: sessionID, Subtype: string(stopReason)})
 			s.mu.Unlock()
 			return
 		}
@@ -483,6 +500,11 @@ func (s *acpSession) run(ctx context.Context, sessionID, prompt string) {
 
 		if err != nil {
 			s.emitLocked(Event{Type: EventResult, IsError: true, ErrText: err.Error(), SessionID: sessionID})
+			s.mu.Unlock()
+			return
+		}
+		if msg := limitStopText(stopReason); msg != "" {
+			s.emitLocked(Event{Type: EventResult, IsError: true, ErrText: msg, SessionID: sessionID, Subtype: string(stopReason)})
 			s.mu.Unlock()
 			return
 		}

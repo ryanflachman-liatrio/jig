@@ -361,6 +361,18 @@ func TestClaudePromptLimitOnWire(t *testing.T) {
 	}
 }
 
+// TestClaudeLimitStopReasonOnWire proves a limit reported as the
+// max_turn_requests stop reason, rather than a rejected prompt, still fails
+// the step instead of passing its truncated output downstream.
+func TestClaudeLimitStopReasonOnWire(t *testing.T) {
+	rpcLog := setupConfigFixture(t)
+	t.Setenv("JIG_ACP_FIXTURE_STOP_REASON", "max_turn_requests")
+	result, log := runFixtureStep(t, rpcLog, fixtureStep{backend: "claude", agent: agentcfg.ClaudeAgent{MaxTurns: 3}})
+	if result.Status != step.StatusFailed || !strings.Contains(result.Err, "turn or budget limit") {
+		t.Fatalf("result = %s %q, want a failed limit step; rpc log:\n%s", result.Status, result.Err, log)
+	}
+}
+
 // TestCodexAgentMode proves Codex mode and collaboration_mode reach the
 // adapter as config options after the model, with an explicit mode default,
 // on new and resumed sessions, and fail before the prompt when unadvertised.

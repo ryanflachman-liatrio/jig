@@ -137,6 +137,11 @@ func (a *fixtureAgent) Prompt(ctx context.Context, req acpsdk.PromptRequest) (ac
 		// error when a turn or budget limit is hit.
 		return acpsdk.PromptResponse{}, &acpsdk.RequestError{Code: -32603, Message: message}
 	}
+	if reason := os.Getenv("JIG_ACP_FIXTURE_STOP_REASON"); reason != "" {
+		// The Claude adapter returns max_turn_requests, without an error,
+		// for a limit hit whose SDK result is not flagged is_error.
+		return acpsdk.PromptResponse{StopReason: acpsdk.StopReason(reason)}, nil
+	}
 	if raw := os.Getenv("JIG_ACP_FIXTURE_PERMISSIONS"); raw != "" {
 		return a.replayPermissions(ctx, req.SessionId, raw)
 	}
