@@ -30,7 +30,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	decide := func(acpsdk.ToolCallUpdate) bool { return *allow }
+	decide := func(context.Context, acpsdk.ToolCallUpdate) bool { return *allow }
 
 	result, err := acp.Run(ctx, cwd, *prompt, decide)
 	if err != nil {

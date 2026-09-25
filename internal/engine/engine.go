@@ -1879,14 +1879,10 @@ func (s *scheduler) buildRequest(
 	// Security is on by default (nil Enabled = on); resolved after applyDefaults.
 	var guard *sentinel.Guard
 	var findingsPath string
-	if st.Type == workflow.StepAgent {
-		secOn := st.Security.Enabled == nil || *st.Security.Enabled
-		t1On := st.Security.Tier1Enabled == nil || *st.Security.Tier1Enabled
-		if secOn && t1On {
-			guard = sentinel.NewGuard(st.Security.OutboundAllowlist)
-			if s.runDir != "" {
-				findingsPath = datastore.FindingsPath(s.runDir)
-			}
+	if st.Tier1Enabled() {
+		guard = sentinel.NewGuard(st.Security.OutboundAllowlist)
+		if s.runDir != "" {
+			findingsPath = datastore.FindingsPath(s.runDir)
 		}
 	}
 

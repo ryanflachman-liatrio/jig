@@ -4,9 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	acpsdk "github.com/coder/acp-go-sdk"
-
 	"jig/harness/acp"
+	"jig/internal/agentcfg"
 )
 
 // CodexHarness drives Codex through the ACP adapter. It uses the operator's
@@ -35,12 +34,7 @@ func (h *CodexHarness) Open(ctx context.Context, spec SessionSpec) (Session, err
 	events := make(chan Event, 32)
 	sess := &acpSession{events: events, hasSchema: spec.Schema != nil, schema: spec.Schema, partial: spec.Partial}
 
-	var decide acp.Decider
-	if spec.Permission != nil {
-		decide = func(tc acpsdk.ToolCallUpdate) bool {
-			return spec.Permission(toolCallName(tc), toolCallInput(tc)).Allow
-		}
-	}
+	decide := permissionDecider(agentcfg.BackendCodex, &sess.calls, spec.Permission)
 
 	var elicit acp.Elicitor
 	if spec.Question != nil {

@@ -554,7 +554,7 @@ func TestAgentIsolationDefault(t *testing.T) {
 		{"claude plan mode", `agent = { permission_mode = "plan" }`, IsolationNone},
 		{"codex unset mode", `agent = { backend = "codex" }`, IsolationWorktree},
 		{"codex agent", `agent = { backend = "codex", mode = "agent" }`, IsolationWorktree},
-		{"codex full access", `agent = { backend = "codex", mode = "agent-full-access" }`, IsolationWorktree},
+		{"codex full access", "agent = { backend = \"codex\", mode = \"agent-full-access\" }\n[step.security]\ntier1_enabled = false", IsolationWorktree},
 		{"codex read-only", `agent = { backend = "codex", mode = "read-only" }`, IsolationNone},
 		{"cursor unset mode", `agent = { backend = "cursor" }`, IsolationWorktree},
 		{"cursor agent", `agent = { backend = "cursor", mode = "agent" }`, IsolationWorktree},
@@ -581,4 +581,41 @@ func TestAgentIsolationDefault(t *testing.T) {
 			t.Fatalf("isolation = %q, want none", got)
 		}
 	})
+}
+
+// TestGuardNeverPromptMode proves a Tier-1-guarded step cannot use a mode that
+// never raises a permission request, since the guard would never run.
+func TestGuardNeverPromptMode(t *testing.T) {
+	const remedy = "set [step.security] tier1_enabled = false or choose another mode"
+	for _, tc := range []struct {
+		name, body, defaults, wantErr string
+	}{
+		{name: "claude bypassPermissions", body: `agent = { permission_mode = "bypassPermissions" }`, wantErr: `step "research": claude permission_mode = "bypassPermissions" never prompts`},
+		{name: "codex agent-full-access", body: `agent = { backend = "codex", mode = "agent-full-access" }`, wantErr: `step "research": codex mode = "agent-full-access" never prompts`},
+		{name: "defaults tier1 on still rejects", body: `agent = { permission_mode = "bypassPermissions" }`, defaults: "[defaults.security]\ntier1_enabled = true\n", wantErr: "never prompts"},
+		{name: "claude acceptEdits loads", body: `agent = { permission_mode = "acceptEdits" }`},
+		{name: "claude dontAsk loads", body: `agent = { permission_mode = "dontAsk" }`},
+		{name: "tier1 off loads", body: "agent = { permission_mode = \"bypassPermissions\" }\n[step.security]\ntier1_enabled = false"},
+		{name: "defaults tier1 off loads", body: `agent = { backend = "codex", mode = "agent-full-access" }`, defaults: "[defaults.security]\ntier1_enabled = false\n"},
+		{name: "security off loads", body: "agent = { backend = \"codex\", mode = \"agent-full-access\" }\n[step.security]\nenabled = false"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wf := agentWFHeader + tc.defaults + `
+[[step]]
+id = "research"
+type = "agent"
+skill = "skills/s"
+` + tc.body + "\n"
+			_, err := loadAgentFixture(t, "", wf)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Load: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) || !strings.Contains(err.Error(), remedy) {
+				t.Fatalf("Load error = %v, want %q with the remedy", err, tc.wantErr)
+			}
+		})
+	}
 }

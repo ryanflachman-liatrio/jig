@@ -16,9 +16,11 @@ import (
 )
 
 // Decider decides whether a tool call should be allowed. It is invoked once
-// per session/request_permission round-trip; the spike's security proof
-// depends on this being a real decision, not an always-allow stub.
-type Decider func(toolCall acpsdk.ToolCallUpdate) bool
+// per session/request_permission round-trip with that request's context, so a
+// decision that waits (for example on the tool call's notification) ends when
+// the request is cancelled. The spike's security proof depends on this being a
+// real decision, not an always-allow stub.
+type Decider func(ctx context.Context, toolCall acpsdk.ToolCallUpdate) bool
 
 type Elicitor func(context.Context, acpsdk.UnstableCreateElicitationRequest) (acpsdk.UnstableCreateElicitationResponse, error)
 
@@ -47,6 +49,9 @@ type Event struct {
 	Output    json.RawMessage
 	Locations []Location
 	Content   []Content
+	// Meta is the update's _meta object (for example Claude's
+	// _meta.claudeCode.toolName); nil when absent.
+	Meta map[string]any
 
 	// Update fields are optional in ACP. These flags distinguish an omitted
 	// field from a present empty collection, which replaces prior state.
@@ -134,33 +139,49 @@ func (c *Client) UnstableCreateElicitation(
 
 // RequestPermission implements acp.Client. It records the request, then asks
 // Decide for a real allow/deny decision and replies with the matching option.
-func (c *Client) RequestPermission(_ context.Context, params acpsdk.RequestPermissionRequest) (acpsdk.RequestPermissionResponse, error) {
+//
+// An allow selects only an allow_once option: allow_always answers persist
+// rules (adapter session rules, or the operator's exec-policy and allowlist)
+// that later calls would skip the decision for. A request that offers no
+// allow_once option is rejected instead. A rejection selects a reject option,
+// or cancels when the request offers none.
+func (c *Client) RequestPermission(ctx context.Context, params acpsdk.RequestPermissionRequest) (acpsdk.RequestPermissionResponse, error) {
 	c.mu.Lock()
 	c.requests = append(c.requests, params)
 	c.mu.Unlock()
 
-	allow := c.Decide != nil && c.Decide(params.ToolCall)
-
-	var wantKinds []acpsdk.PermissionOptionKind
-	if allow {
-		wantKinds = []acpsdk.PermissionOptionKind{acpsdk.PermissionOptionKindAllowOnce, acpsdk.PermissionOptionKindAllowAlways}
-	} else {
-		wantKinds = []acpsdk.PermissionOptionKind{acpsdk.PermissionOptionKindRejectOnce, acpsdk.PermissionOptionKindRejectAlways}
-	}
-	for _, want := range wantKinds {
-		for _, opt := range params.Options {
-			if opt.Kind == want {
-				return acpsdk.RequestPermissionResponse{
-					Outcome: acpsdk.RequestPermissionOutcome{
-						Selected: &acpsdk.RequestPermissionOutcomeSelected{OptionId: opt.OptionId},
-					},
-				}, nil
-			}
+	if c.Decide != nil && c.Decide(ctx, params.ToolCall) {
+		if id, ok := permissionOption(params.Options, acpsdk.PermissionOptionKindAllowOnce); ok {
+			return selectedPermission(id), nil
 		}
+	}
+	if id, ok := permissionOption(params.Options, acpsdk.PermissionOptionKindRejectOnce, acpsdk.PermissionOptionKindRejectAlways); ok {
+		return selectedPermission(id), nil
 	}
 	return acpsdk.RequestPermissionResponse{
 		Outcome: acpsdk.RequestPermissionOutcome{Cancelled: &acpsdk.RequestPermissionOutcomeCancelled{}},
 	}, nil
+}
+
+// permissionOption returns the first offered option of the earliest listed
+// kind.
+func permissionOption(options []acpsdk.PermissionOption, kinds ...acpsdk.PermissionOptionKind) (acpsdk.PermissionOptionId, bool) {
+	for _, kind := range kinds {
+		for _, opt := range options {
+			if opt.Kind == kind {
+				return opt.OptionId, true
+			}
+		}
+	}
+	return "", false
+}
+
+func selectedPermission(id acpsdk.PermissionOptionId) acpsdk.RequestPermissionResponse {
+	return acpsdk.RequestPermissionResponse{
+		Outcome: acpsdk.RequestPermissionOutcome{
+			Selected: &acpsdk.RequestPermissionOutcomeSelected{OptionId: id},
+		},
+	}
 }
 
 // SessionUpdate implements acp.Client, capturing the update as an Event.
@@ -182,6 +203,7 @@ func (c *Client) SessionUpdate(_ context.Context, params acpsdk.SessionNotificat
 			Locations: convertLocations(u.ToolCall.Locations), Content: convertContent(u.ToolCall.Content),
 			HasTitle: true, HasStatus: true, HasKind: true, HasInput: u.ToolCall.RawInput != nil,
 			HasOutput: u.ToolCall.RawOutput != nil, HasLocations: u.ToolCall.Locations != nil, HasContent: u.ToolCall.Content != nil,
+			Meta: u.ToolCall.Meta,
 		}
 	case u.ToolCallUpdate != nil:
 		status := ""
@@ -203,6 +225,7 @@ func (c *Client) SessionUpdate(_ context.Context, params acpsdk.SessionNotificat
 			HasTitle: u.ToolCallUpdate.Title != nil, HasStatus: u.ToolCallUpdate.Status != nil, HasKind: u.ToolCallUpdate.Kind != nil,
 			HasInput: u.ToolCallUpdate.RawInput != nil, HasOutput: u.ToolCallUpdate.RawOutput != nil,
 			HasLocations: u.ToolCallUpdate.Locations != nil, HasContent: u.ToolCallUpdate.Content != nil,
+			Meta: u.ToolCallUpdate.Meta,
 		}
 	case u.Plan != nil:
 		ev = Event{Kind: EventPlan}

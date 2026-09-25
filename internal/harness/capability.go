@@ -60,9 +60,22 @@ type Decision struct {
 	Reason string
 }
 
+// ToolCall is one tool call awaiting a permission decision, normalized across
+// backends. Name is the canonical tool name (Bash, Edit, WebFetch, …); Input
+// holds the fields the Tier-1 rules read (command, url, file_path, content).
+// InputResolved is false when a Bash call has no command or an edit has no
+// path or content, so a guarded step can deny what it cannot inspect.
+type ToolCall struct {
+	ID            string
+	Name          string
+	Input         map[string]any
+	InputResolved bool
+}
+
 // PermissionFn is invoked once per tool call when SessionSpec.Permission is
-// set (requires CapPermissionCallback).
-type PermissionFn func(toolName string, input map[string]any) Decision
+// set (requires CapPermissionCallback). Calls whose tool name cannot be
+// resolved are denied by the harness before PermissionFn runs.
+type PermissionFn func(ToolCall) Decision
 
 type QuestionFn func(context.Context, interaction.QuestionRequest) interaction.QuestionResponse
 

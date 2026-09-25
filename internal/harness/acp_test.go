@@ -503,38 +503,3 @@ func TestBuildStructuredRetryPrompt(t *testing.T) {
 		t.Error("format reminder missing")
 	}
 }
-
-// ── toolCallName / toolCallInput ─────────────────────────────────────────────
-
-func TestToolCallInput(t *testing.T) {
-	title := "Bash"
-	tests := []struct {
-		name       string
-		tc         acpsdk.ToolCallUpdate
-		wantName   string
-		wantFields int
-	}{
-		{
-			name:       "with title and object input",
-			tc:         acpsdk.ToolCallUpdate{Title: &title, RawInput: map[string]any{"command": "ls"}},
-			wantName:   "Bash",
-			wantFields: 1,
-		},
-		{
-			name:       "no title, non-object input",
-			tc:         acpsdk.ToolCallUpdate{RawInput: "not an object"},
-			wantName:   "",
-			wantFields: 0,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := toolCallName(tt.tc); got != tt.wantName {
-				t.Errorf("toolCallName() = %q, want %q", got, tt.wantName)
-			}
-			if got := toolCallInput(tt.tc); len(got) != tt.wantFields {
-				t.Errorf("toolCallInput() = %v, want %d field(s)", got, tt.wantFields)
-			}
-		})
-	}
-}

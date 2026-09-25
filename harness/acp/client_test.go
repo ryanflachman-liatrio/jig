@@ -129,7 +129,7 @@ func permissionRequest(options ...acpsdk.PermissionOption) acpsdk.RequestPermiss
 }
 
 func TestRequestPermission_AllowDecision(t *testing.T) {
-	c := &Client{Decide: func(acpsdk.ToolCallUpdate) bool { return true }}
+	c := &Client{Decide: func(context.Context, acpsdk.ToolCallUpdate) bool { return true }}
 	req := permissionRequest(
 		acpsdk.PermissionOption{OptionId: "allow", Name: "Allow", Kind: acpsdk.PermissionOptionKindAllowOnce},
 		acpsdk.PermissionOption{OptionId: "reject", Name: "Reject", Kind: acpsdk.PermissionOptionKindRejectOnce},
@@ -148,7 +148,7 @@ func TestRequestPermission_AllowDecision(t *testing.T) {
 }
 
 func TestRequestPermission_DenyDecision(t *testing.T) {
-	c := &Client{Decide: func(acpsdk.ToolCallUpdate) bool { return false }}
+	c := &Client{Decide: func(context.Context, acpsdk.ToolCallUpdate) bool { return false }}
 	req := permissionRequest(
 		acpsdk.PermissionOption{OptionId: "allow", Name: "Allow", Kind: acpsdk.PermissionOptionKindAllowOnce},
 		acpsdk.PermissionOption{OptionId: "reject", Name: "Reject", Kind: acpsdk.PermissionOptionKindRejectOnce},
@@ -163,18 +163,59 @@ func TestRequestPermission_DenyDecision(t *testing.T) {
 	}
 }
 
-func TestRequestPermission_NoMatchingOption_Cancels(t *testing.T) {
-	c := &Client{Decide: func(acpsdk.ToolCallUpdate) bool { return true }}
-	req := permissionRequest(
-		acpsdk.PermissionOption{OptionId: "reject", Name: "Reject", Kind: acpsdk.PermissionOptionKindRejectOnce},
-	)
-
-	resp, err := c.RequestPermission(context.Background(), req)
-	if err != nil {
-		t.Fatalf("RequestPermission returned error: %v", err)
+// TestRequestPermissionAllowOnce proves an allow selects only allow_once, and
+// that a request offering no allow_once option is rejected (or cancelled when
+// it offers no reject option either), so jig never persists an allow_always
+// rule on the agent's side.
+func TestRequestPermissionAllowOnce(t *testing.T) {
+	allowAlways := acpsdk.PermissionOption{OptionId: "always", Name: "Always allow", Kind: acpsdk.PermissionOptionKindAllowAlways}
+	allowOnce := acpsdk.PermissionOption{OptionId: "once", Name: "Allow", Kind: acpsdk.PermissionOptionKindAllowOnce}
+	rejectOnce := acpsdk.PermissionOption{OptionId: "reject", Name: "Reject", Kind: acpsdk.PermissionOptionKindRejectOnce}
+	rejectAlways := acpsdk.PermissionOption{OptionId: "never", Name: "Always reject", Kind: acpsdk.PermissionOptionKindRejectAlways}
+	for _, tc := range []struct {
+		name         string
+		options      []acpsdk.PermissionOption
+		wantSelected string // empty means cancelled
+	}{
+		{name: "allow selects allow_once even when allow_always is listed first", options: []acpsdk.PermissionOption{allowAlways, allowOnce, rejectOnce}, wantSelected: "once"},
+		{name: "allow_always only is rejected", options: []acpsdk.PermissionOption{allowAlways, rejectOnce}, wantSelected: "reject"},
+		{name: "allow_always only falls back to reject_always", options: []acpsdk.PermissionOption{allowAlways, rejectAlways}, wantSelected: "never"},
+		{name: "allow_always only with no reject option cancels", options: []acpsdk.PermissionOption{allowAlways}},
+		{name: "no allow option is rejected", options: []acpsdk.PermissionOption{rejectOnce}, wantSelected: "reject"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Client{Decide: func(context.Context, acpsdk.ToolCallUpdate) bool { return true }}
+			resp, err := c.RequestPermission(context.Background(), permissionRequest(tc.options...))
+			if err != nil {
+				t.Fatalf("RequestPermission returned error: %v", err)
+			}
+			switch {
+			case tc.wantSelected == "":
+				if resp.Outcome.Cancelled == nil {
+					t.Fatalf("Outcome = %+v, want Cancelled", resp.Outcome)
+				}
+			case resp.Outcome.Selected == nil || string(resp.Outcome.Selected.OptionId) != tc.wantSelected:
+				t.Fatalf("Outcome = %+v, want Selected.OptionId=%q", resp.Outcome, tc.wantSelected)
+			}
+		})
 	}
-	if resp.Outcome.Cancelled == nil {
-		t.Fatalf("Outcome = %+v, want Cancelled when no allow option is offered", resp.Outcome)
+}
+
+// TestRequestPermissionPassesContext proves the Decider receives the
+// request's own context, so a waiting decision observes cancellation.
+func TestRequestPermissionPassesContext(t *testing.T) {
+	type key struct{}
+	ctx := context.WithValue(context.Background(), key{}, "request")
+	var got any
+	c := &Client{Decide: func(ctx context.Context, _ acpsdk.ToolCallUpdate) bool {
+		got = ctx.Value(key{})
+		return false
+	}}
+	if _, err := c.RequestPermission(ctx, permissionRequest()); err != nil {
+		t.Fatal(err)
+	}
+	if got != "request" {
+		t.Fatalf("Decider context value = %v, want the request context", got)
 	}
 }
 
@@ -264,5 +305,29 @@ func TestRun_FailsFastWhenNpxMissing(t *testing.T) {
 	_, err := Run(context.Background(), ".", "hello", nil)
 	if err == nil {
 		t.Fatal("Run() error = nil, want a fail-fast error when npx is not on PATH")
+	}
+}
+
+// TestSessionUpdateCarriesToolMeta proves a tool call's _meta (Claude's
+// canonical toolName travels there) reaches the captured event.
+func TestSessionUpdateCarriesToolMeta(t *testing.T) {
+	c := &Client{}
+	meta := map[string]any{"claudeCode": map[string]any{"toolName": "Bash"}}
+	start := acpsdk.StartToolCall("call_1", "curl example")
+	start.ToolCall.Meta = meta
+	update := acpsdk.UpdateToolCall("call_1", acpsdk.WithUpdateStatus(acpsdk.ToolCallStatusCompleted))
+	update.ToolCallUpdate.Meta = meta
+	for _, u := range []acpsdk.SessionUpdate{start, update} {
+		if err := c.SessionUpdate(context.Background(), acpsdk.SessionNotification{SessionId: "sess_1", Update: u}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := len(c.Events()); got != 2 {
+		t.Fatalf("captured %d events, want 2", got)
+	}
+	for _, ev := range c.Events() {
+		if name, _ := ev.Meta["claudeCode"].(map[string]any)["toolName"].(string); name != "Bash" {
+			t.Fatalf("%s event meta = %#v, want claudeCode.toolName", ev.Kind, ev.Meta)
+		}
 	}
 }

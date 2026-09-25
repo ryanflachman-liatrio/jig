@@ -1599,6 +1599,8 @@ id = "b"
 type = "agent"
 skill = "s"
 agent = { permission_mode = "bypassPermissions" }
+  [step.security]
+  tier1_enabled = false
 `
 	if _, err := Decode(toml, ""); err != nil {
 		t.Fatalf("expected valid, got error: %v", err)

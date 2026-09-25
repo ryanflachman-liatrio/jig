@@ -105,13 +105,24 @@ func ValidateClaudeTools(a ClaudeAgent) error {
 // never raises a permission request, which blinds the Tier-1 guard. dontAsk
 // denies instead of prompting, so it is not a never-prompt mode.
 func NeverPrompts(a Agent) bool {
+	_, _, ok := NeverPromptSetting(a)
+	return ok
+}
+
+// NeverPromptSetting returns the key and value that make the agent a
+// never-prompt agent, for error messages.
+func NeverPromptSetting(a Agent) (key, value string, ok bool) {
 	switch a := a.(type) {
 	case ClaudeAgent:
-		return a.PermissionMode == "bypassPermissions"
+		if a.PermissionMode == "bypassPermissions" {
+			return "permission_mode", a.PermissionMode, true
+		}
 	case CodexAgent:
-		return a.Mode == "agent-full-access"
+		if a.Mode == "agent-full-access" {
+			return "mode", a.Mode, true
+		}
 	}
-	return false
+	return "", "", false
 }
 
 // IsMutating reports whether an agent may edit the working tree, which

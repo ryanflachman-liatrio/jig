@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"jig/internal/agentcfg"
 )
 
 // telemetryPrefixRe / telemetryAttrKeyRe mirror internal/telemetry so the
@@ -357,6 +359,13 @@ func (v *validator) checkAskUser(s *Step) {
 
 func (v *validator) checkAgent(s *Step) {
 	v.checkAskUser(s)
+	// A mode that never prompts never reaches jig's permission callback, so
+	// the Tier-1 guard could not run.
+	if agent := s.ResolvedAgent(); agent != nil && s.Tier1Enabled() {
+		if key, value, ok := agentcfg.NeverPromptSetting(agent); ok {
+			v.errf("step %q: %s %s = %q never prompts, so the Tier-1 guard cannot run; set [step.security] tier1_enabled = false or choose another mode", s.ID, agent.Backend(), key, value)
+		}
+	}
 	// A step is driven by exactly one of a skill dir or a Claude agent file.
 	switch {
 	case s.Skill == "" && s.AgentFile == "":

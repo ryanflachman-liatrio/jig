@@ -14,6 +14,7 @@ import (
 	"jig/internal/engine"
 	"jig/internal/harness"
 	"jig/internal/runner"
+	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/workflow"
 )
@@ -125,6 +126,10 @@ type fixtureStep struct {
 	agent   agentcfg.Agent
 	askUser bool
 	resume  bool
+	// guard, when set, runs the step under the Tier-1 guard, persisting
+	// findings to findingsPath.
+	guard        *sentinel.Guard
+	findingsPath string
 }
 
 // runFixtureStep executes one agent step through the real runner and harness
@@ -144,6 +149,10 @@ func runFixtureStep(t *testing.T, rpcLog string, fs fixtureStep) (*step.Result, 
 		},
 		TranscriptPath: filepath.Join(stepDir, "transcript.jsonl"),
 		ExecutionDir:   stepDir,
+	}
+	if fs.guard != nil {
+		req.Guard = fs.guard
+		req.FindingsPath = fs.findingsPath
 	}
 	if fs.resume {
 		req.ResumeSessionID = "fixture-session"

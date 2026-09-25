@@ -81,10 +81,10 @@ type StepRequest struct {
 	Message         string
 
 	// Guard, when non-nil, activates the Tier-1 deterministic firewall for this
-	// step. The runner installs the harness permission callback, which calls
-	// Guard.Check on each permission request the adapter raises. The agent's
-	// permission posture is not changed: modes that never raise a request leave
-	// the guard blind.
+	// step. The runner's permission callback, installed on every agent step,
+	// calls Guard.Check on each permission request the adapter raises. The
+	// agent's permission mode is not changed; a mode that never raises a
+	// request is rejected at load for a guarded step.
 	Guard *sentinel.Guard
 	// FindingsPath is the absolute path to the per-run findings.jsonl. When
 	// non-empty the runner appends a Finding record for every blocked/escalated

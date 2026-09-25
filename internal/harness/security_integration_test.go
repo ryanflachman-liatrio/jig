@@ -137,6 +137,9 @@ func (a *fixtureAgent) Prompt(ctx context.Context, req acpsdk.PromptRequest) (ac
 		// error when a turn or budget limit is hit.
 		return acpsdk.PromptResponse{}, &acpsdk.RequestError{Code: -32603, Message: message}
 	}
+	if raw := os.Getenv("JIG_ACP_FIXTURE_PERMISSIONS"); raw != "" {
+		return a.replayPermissions(ctx, req.SessionId, raw)
+	}
 	if os.Getenv("JIG_ACP_FIXTURE_ASK") == "1" && fixtureWorker() == "cursor" {
 		// Cursor asks through its own extension method rather than ACP
 		// elicitation; record whether jig installed a handler for it.
@@ -187,6 +190,64 @@ func (a *fixtureAgent) Prompt(ctx context.Context, req acpsdk.PromptRequest) (ac
 		return acpsdk.PromptResponse{StopReason: acpsdk.StopReasonCancelled}, nil
 	case <-time.After(delay):
 	}
+	return acpsdk.PromptResponse{StopReason: acpsdk.StopReasonEndTurn}, nil
+}
+
+// fixturePermission is one scripted permission round-trip in raw wire form:
+// an optional session/update notification sent first, then a
+// session/request_permission whose toolCall is Request.
+type fixturePermission struct {
+	Notify  json.RawMessage `json:"notify,omitempty"`
+	Request json.RawMessage `json:"request"`
+	// Options selects the offered option set: "" for a standard
+	// allow_always/allow_once/reject_once set, "exit_plan" for the Claude
+	// adapter's ExitPlanMode set.
+	Options string `json:"options,omitempty"`
+}
+
+// replayPermissions sends each scripted notification and permission request
+// in wire order and records the option jig selected as
+// "permission:<toolCallId>:<optionId>" (or ":cancelled").
+func (a *fixtureAgent) replayPermissions(ctx context.Context, sessionID acpsdk.SessionId, raw string) (acpsdk.PromptResponse, error) {
+	var script []fixturePermission
+	if err := json.Unmarshal([]byte(raw), &script); err != nil {
+		return acpsdk.PromptResponse{}, err
+	}
+	for _, step := range script {
+		if len(step.Notify) > 0 {
+			var note acpsdk.SessionNotification
+			if err := json.Unmarshal([]byte(fmt.Sprintf(`{"sessionId":%q,"update":%s}`, sessionID, step.Notify)), &note); err != nil {
+				return acpsdk.PromptResponse{}, err
+			}
+			_ = a.conn.SessionUpdate(ctx, note)
+		}
+		var toolCall acpsdk.ToolCallUpdate
+		if err := json.Unmarshal(step.Request, &toolCall); err != nil {
+			return acpsdk.PromptResponse{}, err
+		}
+		options := []acpsdk.PermissionOption{
+			{OptionId: "allow_always", Name: "Always allow", Kind: acpsdk.PermissionOptionKindAllowAlways},
+			{OptionId: "allow", Name: "Allow", Kind: acpsdk.PermissionOptionKindAllowOnce},
+			{OptionId: "reject", Name: "Reject", Kind: acpsdk.PermissionOptionKindRejectOnce},
+		}
+		if step.Options == "exit_plan" {
+			options = []acpsdk.PermissionOption{
+				{OptionId: "acceptEdits", Name: "Yes, and auto-accept edits", Kind: acpsdk.PermissionOptionKindAllowAlways},
+				{OptionId: "default", Name: "Yes, and manually approve edits", Kind: acpsdk.PermissionOptionKindAllowOnce},
+				{OptionId: "plan", Name: "No, keep planning", Kind: acpsdk.PermissionOptionKindRejectOnce},
+			}
+		}
+		resp, err := a.conn.RequestPermission(ctx, acpsdk.RequestPermissionRequest{SessionId: sessionID, ToolCall: toolCall, Options: options})
+		outcome := "cancelled"
+		switch {
+		case err != nil:
+			outcome = "error"
+		case resp.Outcome.Selected != nil:
+			outcome = string(resp.Outcome.Selected.OptionId)
+		}
+		fixtureRecord(fmt.Sprintf("permission:%s:%s", toolCall.ToolCallId, outcome))
+	}
+	_ = a.conn.SessionUpdate(ctx, acpsdk.SessionNotification{SessionId: sessionID, Update: acpsdk.UpdateAgentMessageText(`{"summary":"fixture","status":"succeeded"}`)})
 	return acpsdk.PromptResponse{StopReason: acpsdk.StopReasonEndTurn}, nil
 }
 

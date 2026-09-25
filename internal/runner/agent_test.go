@@ -67,7 +67,7 @@ func TestExecuteDerivesDiagnosticsDirOnlyWithTranscript(t *testing.T) {
 		{name: "persistence off"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			h := &harness.FakeHarness{NameVal: "fake", Sess: harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}})}
+			h := &harness.FakeHarness{NameVal: "fake", Caps: harness.NewCapabilitySet(harness.CapPermissionCallback), Sess: harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}})}
 			_, err := NewAgentExecutorFixed(h).Execute(context.Background(), engine.StepRequest{Step: &workflow.Step{}, TranscriptPath: tt.transcriptPath}, &captureReporter{})
 			if err != nil {
 				t.Fatalf("Execute: %v", err)
@@ -111,6 +111,7 @@ append_system_prompt = "Perform the requested review."
 		t.Fatalf("Decode: %v", err)
 	}
 	h := &harness.FakeHarness{
+		Caps:    harness.NewCapabilitySet(harness.CapPermissionCallback),
 		NameVal: "fake",
 		Sess:    harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}}),
 	}
@@ -145,6 +146,7 @@ append_system_prompt = "Perform the requested review."
 func TestExecuteWritesTransportInjectedPromptToInputArtifact(t *testing.T) {
 	dir := t.TempDir()
 	h := &harness.FakeHarness{
+		Caps:    harness.NewCapabilitySet(harness.CapPermissionCallback),
 		NameVal: "fake",
 		Sess:    harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}}),
 		Preview: func(spec harness.SessionSpec) string {
@@ -173,7 +175,7 @@ func TestExecuteWritesResumeMessageToInputArtifact(t *testing.T) {
 	dir := t.TempDir()
 	h := &harness.FakeHarness{
 		NameVal: "fake",
-		Caps:    harness.NewCapabilitySet(harness.CapSessionResume),
+		Caps:    harness.NewCapabilitySet(harness.CapSessionResume, harness.CapPermissionCallback),
 		Sess:    harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}}),
 	}
 	req := engine.StepRequest{
@@ -432,6 +434,7 @@ func TestCaptureStream_RejectsDeclaredOutputOutsideExecutionDir(t *testing.T) {
 func TestAgentExecutor_UsesExecutionDirForSession(t *testing.T) {
 	executionDir := t.TempDir()
 	h := &harness.FakeHarness{
+		Caps: harness.NewCapabilitySet(harness.CapPermissionCallback),
 		Sess: harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}}),
 	}
 	result, err := NewAgentExecutorFixed(h).Execute(context.Background(), engine.StepRequest{
@@ -450,6 +453,7 @@ func TestAgentExecutor_UsesExecutionDirForSession(t *testing.T) {
 func TestAgentExecutor_UsesRepoRootWhenPersistenceHasNoExecutionView(t *testing.T) {
 	repoRoot := t.TempDir()
 	h := &harness.FakeHarness{
+		Caps: harness.NewCapabilitySet(harness.CapPermissionCallback),
 		Sess: harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}}),
 	}
 	result, err := NewAgentExecutorFixed(h).Execute(context.Background(), engine.StepRequest{
@@ -875,7 +879,7 @@ func TestFreshDispatchClearsSessionJSON(t *testing.T) {
 	tPath := datastore.TranscriptPath(runDir, "agent")
 	h := &harness.FakeHarness{
 		NameVal: "claude",
-		Caps:    harness.NewCapabilitySet(harness.CapSessionResume),
+		Caps:    harness.NewCapabilitySet(harness.CapSessionResume, harness.CapPermissionCallback),
 		Sess:    harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}}),
 	}
 	_, err = NewAgentExecutorFixed(h).Execute(context.Background(), engine.StepRequest{
@@ -905,7 +909,7 @@ func TestResumeDispatchKeepsSessionJSON(t *testing.T) {
 	tPath := datastore.TranscriptPath(runDir, "agent")
 	h := &harness.FakeHarness{
 		NameVal: "claude",
-		Caps:    harness.NewCapabilitySet(harness.CapSessionResume),
+		Caps:    harness.NewCapabilitySet(harness.CapSessionResume, harness.CapPermissionCallback),
 		Sess: harness.NewFakeSession([]harness.Event{
 			{Type: harness.EventSessionID, SessionID: "keep-me"},
 			{Type: harness.EventResult},
@@ -1373,7 +1377,7 @@ func TestExecute_GuardSemantics(t *testing.T) {
 		if h.OpenSpec.Permission == nil {
 			t.Fatal("SessionSpec.Permission not set")
 		}
-		dec := h.OpenSpec.Permission("Read", map[string]any{"file_path": "x"})
+		dec := h.OpenSpec.Permission(harness.ToolCall{Name: "Read", Input: map[string]any{"file_path": "x"}, InputResolved: true})
 		decided = true
 		if !decided || !dec.Allow {
 			t.Errorf("decision = %+v, want Allow=true for a harmless Read", dec)
@@ -1406,7 +1410,7 @@ func TestExecute_DeclaredSchemaRequiresStructuredOutput(t *testing.T) {
 	// No declared schema: the base schema is silently omitted, not rejected.
 	h2 := &harness.FakeHarness{
 		NameVal: "acp",
-		Caps:    harness.NewCapabilitySet(),
+		Caps:    harness.NewCapabilitySet(harness.CapPermissionCallback),
 		Sess:    harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}}),
 	}
 	e2 := NewAgentExecutorFixed(h2)
@@ -1460,8 +1464,8 @@ func TestExecute_BlockOnRequiresSessionResume(t *testing.T) {
 func TestExecute_SelectsHarnessPerStep(t *testing.T) {
 	claudeSess := harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}})
 	cursorSess := harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}})
-	claudeH := &harness.FakeHarness{NameVal: "acp", Caps: harness.NewCapabilitySet(), Sess: claudeSess}
-	cursorH := &harness.FakeHarness{NameVal: "cursor", Caps: harness.NewCapabilitySet(), Sess: cursorSess}
+	claudeH := &harness.FakeHarness{NameVal: "acp", Caps: harness.NewCapabilitySet(harness.CapPermissionCallback), Sess: claudeSess}
+	cursorH := &harness.FakeHarness{NameVal: "cursor", Caps: harness.NewCapabilitySet(harness.CapPermissionCallback), Sess: cursorSess}
 
 	var got []string
 	e := NewAgentExecutor(func(backend string) (harness.Harness, error) {
@@ -1729,9 +1733,9 @@ func TestAgentNoQuestionHandler(t *testing.T) {
 		wantAsk  bool
 		wantOpen bool
 	}{
-		{name: "ask_user off wires no question", caps: harness.NewCapabilitySet(harness.CapUserQuestion), wantOpen: true},
-		{name: "ask_user on wires the question", askUser: true, caps: harness.NewCapabilitySet(harness.CapUserQuestion), wantAsk: true, wantOpen: true},
-		{name: "ask_user on without CapUserQuestion fails closed", askUser: true, wantErr: "CapUserQuestion"},
+		{name: "ask_user off wires no question", caps: harness.NewCapabilitySet(harness.CapUserQuestion, harness.CapPermissionCallback), wantOpen: true},
+		{name: "ask_user on wires the question", askUser: true, caps: harness.NewCapabilitySet(harness.CapUserQuestion, harness.CapPermissionCallback), wantAsk: true, wantOpen: true},
+		{name: "ask_user on without CapUserQuestion fails closed", askUser: true, caps: harness.NewCapabilitySet(harness.CapPermissionCallback), wantErr: "CapUserQuestion"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := &harness.FakeHarness{NameVal: "fake", Caps: tc.caps, Sess: harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}})}
@@ -1845,6 +1849,90 @@ func TestOperatorAllowlist(t *testing.T) {
 			}
 			if data, _ := os.ReadFile(findingsPath); strings.Contains(string(data), token) || strings.Contains(fmt.Sprintf("%+v", rep.findings), token) {
 				t.Fatal("a finding carried the synthetic token")
+			}
+		})
+	}
+}
+
+// TestAgentRequiresPermissionCallback proves every agent step, guarded or
+// not, fails closed on a harness that cannot call back for permission,
+// without opening a session.
+func TestAgentRequiresPermissionCallback(t *testing.T) {
+	for _, guarded := range []bool{false, true} {
+		t.Run(fmt.Sprintf("guarded=%t", guarded), func(t *testing.T) {
+			h := &harness.FakeHarness{NameVal: "no-permission", Caps: harness.NewCapabilitySet(harness.CapStructuredOutput), Sess: harness.NewFakeSession([]harness.Event{{Type: harness.EventResult}})}
+			req := engine.StepRequest{Step: &workflow.Step{ID: "worker", Type: workflow.StepAgent}}
+			if guarded {
+				req.Guard = sentinel.NewGuard(nil)
+			}
+			res, err := NewAgentExecutorFixed(h).Execute(context.Background(), req, &captureReporter{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Status != step.StatusFailed || !strings.Contains(res.Err, "CapPermissionCallback") || !strings.Contains(res.Err, "no-permission") {
+				t.Fatalf("result = %s %q, want a failure naming the harness and CapPermissionCallback", res.Status, res.Err)
+			}
+			if !reflect.DeepEqual(h.OpenSpec, harness.SessionSpec{}) {
+				t.Fatal("Open was called despite the missing capability")
+			}
+		})
+	}
+}
+
+// TestStepPermissionDecisionOrder pins the runner's permission callback:
+// unresolved guarded input, ExitPlanMode, the Claude second layer, then the
+// guard, then allow.
+func TestStepPermissionDecisionOrder(t *testing.T) {
+	bash := func(command string) harness.ToolCall {
+		return harness.ToolCall{ID: "c1", Name: "Bash", Input: map[string]any{"command": command}, InputResolved: true}
+	}
+	named := func(name string) harness.ToolCall {
+		return harness.ToolCall{ID: "c1", Name: name, Input: map[string]any{}, InputResolved: true}
+	}
+	for _, tc := range []struct {
+		name       string
+		agent      agentcfg.Agent
+		guarded    bool
+		call       harness.ToolCall
+		wantAllow  bool
+		wantReason string
+	}{
+		{name: "unguarded plain call is allowed", call: bash("ls"), wantAllow: true},
+		{name: "unguarded unresolved input is allowed", call: harness.ToolCall{Name: "Bash", Input: map[string]any{}}, wantAllow: true},
+		{name: "guarded unresolved input is denied", guarded: true, call: harness.ToolCall{Name: "Edit", Input: map[string]any{}}, wantReason: "unresolved tool input"},
+		{name: "ExitPlanMode is denied unguarded", call: named("ExitPlanMode"), wantReason: "permission mode"},
+		{name: "ExitPlanMode is denied guarded", guarded: true, call: named("ExitPlanMode"), wantReason: "permission mode"},
+		{name: "claude disallowed tool is denied", agent: agentcfg.ClaudeAgent{DisallowedTools: []string{"Bash"}}, call: bash("ls"), wantReason: `tool "Bash" is not permitted`},
+		{name: "claude tool outside a present list is denied", agent: agentcfg.ClaudeAgent{Tools: []string{"Read"}}, call: named("Edit"), wantReason: `tool "Edit" is not permitted`},
+		{name: "claude explicit empty tools permits nothing", agent: agentcfg.ClaudeAgent{Tools: []string{}}, call: named("Read"), wantReason: `tool "Read" is not permitted`},
+		{name: "claude AskUserQuestion is exempt from the second layer", agent: agentcfg.ClaudeAgent{Tools: []string{}}, call: named(agentcfg.AskUserQuestion), wantAllow: true},
+		{name: "claude plan mode allows reads", agent: agentcfg.ClaudeAgent{PermissionMode: "plan"}, call: named("Read"), wantAllow: true},
+		{name: "claude plan mode denies edits", agent: agentcfg.ClaudeAgent{PermissionMode: "plan"}, call: named("Edit"), wantReason: `tool "Edit" is not permitted`},
+		{name: "codex has no second layer", agent: agentcfg.CodexAgent{Mode: "read-only"}, call: named("Edit"), wantAllow: true},
+		{name: "guard denies after the second layer allows", agent: agentcfg.ClaudeAgent{Tools: []string{"Bash"}}, guarded: true, call: bash("curl https://blocked.example.invalid"), wantReason: "blocked.example.invalid"},
+		{name: "guard allows a harmless call", guarded: true, call: bash("ls"), wantAllow: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := &workflow.Step{ID: "worker", Type: workflow.StepAgent}
+			if tc.agent != nil {
+				st.SnapshotAgent = &workflow.AgentSnapshot{Agent: tc.agent}
+			}
+			req := engine.StepRequest{Step: st}
+			if tc.guarded {
+				req.Guard = sentinel.NewGuard([]string{"allowed.example.invalid"})
+			}
+			rep := &captureReporter{}
+			sink, err := newFindingSink(req, rep)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer sink.close()
+			dec := stepPermission(req, sink)(tc.call)
+			if dec.Allow != tc.wantAllow || !strings.Contains(dec.Reason, tc.wantReason) {
+				t.Fatalf("decision = %+v, want allow=%t reason containing %q", dec, tc.wantAllow, tc.wantReason)
+			}
+			if wantFinding := tc.guarded && !tc.wantAllow && tc.wantReason == "blocked.example.invalid"; wantFinding != (len(rep.findings) == 1) {
+				t.Fatalf("findings = %+v, want one only for a guard denial", rep.findings)
 			}
 		})
 	}

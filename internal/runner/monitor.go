@@ -55,7 +55,7 @@ func newMonitorAdapter(factory func() monitorHarness) *MonitorAdapter {
 // is the actual enforcement boundary (Tier-1 rules remain the fail-closed
 // layer regardless of what a classifier's prompt claims).
 func monitorSessionSpec(spec sentinel.MonitorSpec, windowText string) harness.SessionSpec {
-	denyAll := func(toolName string, input map[string]any) harness.Decision {
+	denyAll := func(harness.ToolCall) harness.Decision {
 		return harness.Decision{Allow: false, Reason: "security classifiers cannot invoke tools"}
 	}
 	var prompt strings.Builder

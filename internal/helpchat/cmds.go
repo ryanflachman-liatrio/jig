@@ -171,12 +171,12 @@ func resultErrText(ev harness.Event) string {
 // "jig-help" MCP server name) and surfaces every other tool call to the
 // operator via the chat modal gate.
 func buildPermissionFn(dispatch DispatchFunc) harness.PermissionFn {
-	return func(toolName string, input map[string]any) harness.Decision {
-		if strings.HasPrefix(toolName, "mcp__jig-help__") {
+	return func(call harness.ToolCall) harness.Decision {
+		if strings.HasPrefix(call.Name, "mcp__jig-help__") {
 			return harness.Decision{Allow: true}
 		}
 		ansC := make(chan bool, 1)
-		dispatch(PermRequestMsg{ToolName: toolName, Input: input, AnsC: ansC})
+		dispatch(PermRequestMsg{ToolName: call.Name, Input: call.Input, AnsC: ansC})
 		if allow := <-ansC; allow {
 			return harness.Decision{Allow: true}
 		}

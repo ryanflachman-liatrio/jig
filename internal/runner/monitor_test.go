@@ -117,7 +117,7 @@ func TestMonitorAdapterIsolationAndLifecycle(t *testing.T) {
 	if sentSpec.Permission == nil {
 		t.Fatal("expected a deny-all permission callback")
 	}
-	decision := sentSpec.Permission("Read", map[string]any{"file_path": "secret"})
+	decision := sentSpec.Permission(harness.ToolCall{Name: "Read", Input: map[string]any{"file_path": "secret"}, InputResolved: true})
 	if decision.Allow {
 		t.Fatal("permission callback must deny every tool call")
 	}
@@ -275,7 +275,7 @@ func TestMonitorSessionSpec(t *testing.T) {
 		t.Fatal("monitor must not be able to ask the human a question")
 	}
 	for _, tool := range []string{"Read", "Bash", "WebFetch", agentcfg.AskUserQuestion} {
-		if decision := spec.Permission(tool, map[string]any{}); decision.Allow {
+		if decision := spec.Permission(harness.ToolCall{Name: tool, Input: map[string]any{}, InputResolved: true}); decision.Allow {
 			t.Fatalf("permission callback allowed %s, want deny-all", tool)
 		}
 	}

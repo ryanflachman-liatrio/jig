@@ -13,6 +13,7 @@ import (
 	acpsdk "github.com/coder/acp-go-sdk"
 
 	"jig/harness/acp"
+	"jig/internal/agentcfg"
 	"jig/internal/interaction"
 	"jig/internal/toolcall"
 )
@@ -68,12 +69,7 @@ func (h *AcpHarness) Open(ctx context.Context, spec SessionSpec) (Session, error
 	events := make(chan Event, 32)
 	sess := &acpSession{events: events, hasSchema: spec.Schema != nil, schema: spec.Schema, partial: spec.Partial}
 
-	var decide acp.Decider
-	if spec.Permission != nil {
-		decide = func(tc acpsdk.ToolCallUpdate) bool {
-			return spec.Permission(toolCallName(tc), toolCallInput(tc)).Allow
-		}
-	}
+	decide := permissionDecider(agentcfg.BackendClaude, &sess.calls, spec.Permission)
 
 	var elicit acp.Elicitor
 	if spec.Question != nil {
@@ -413,6 +409,10 @@ type acpSession struct {
 	// retain that merged state until a terminal update emits the final result.
 	pendingTools map[string]*toolcall.Activity
 
+	// calls caches tool-call notifications for permission decisions, which
+	// may arrive before the notification they refer to.
+	calls toolCalls
+
 	// hasTextSinceFlush is true whenever text or thinking events have been
 	// emitted since the last EventAssistantEnd. Used to decide whether to flush
 	// before the first new tool call, and to flush any trailing text after
@@ -643,6 +643,7 @@ func (s *acpSession) closeEvents() {
 // This groups all blocks within one assistant turn into a single transcript
 // entry via a single AssistantEnd.
 func (s *acpSession) onEvent(ev acp.Event) {
+	s.calls.observe(ev)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -752,27 +753,6 @@ func canonicalACPToolKind(kind string) string {
 
 func terminalACPStatus(status string) bool {
 	return status == "completed" || status == "failed" || status == "cancelled"
-}
-
-// toolCallName returns the human-readable tool name a permission decision is
-// keyed on. ACP's ToolCallUpdate carries only a Title (no separate machine
-// tool name), so Title stands in for both.
-func toolCallName(tc acpsdk.ToolCallUpdate) string {
-	if tc.Title != nil {
-		return *tc.Title
-	}
-	return ""
-}
-
-// toolCallInput extracts the tool call's raw input as a map, matching
-// PermissionFn's signature. A non-object RawInput (or none at all) yields an
-// empty map rather than an error — the permission decision still runs, just
-// without argument detail to inspect.
-func toolCallInput(tc acpsdk.ToolCallUpdate) map[string]any {
-	if m, ok := tc.RawInput.(map[string]any); ok {
-		return m
-	}
-	return map[string]any{}
 }
 
 var (

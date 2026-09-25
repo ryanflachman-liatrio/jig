@@ -13,7 +13,6 @@ import (
 	"jig/internal/datastore"
 	"jig/internal/engine"
 	"jig/internal/harness"
-	"jig/internal/operatorcfg"
 	"jig/internal/sentinel"
 	"jig/internal/step"
 	"jig/internal/toolcall"
@@ -102,24 +101,20 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 		}
 		spec.Question = rep.Question
 	}
-	if req.Guard != nil {
-		if !caps.Has(harness.CapPermissionCallback) {
-			return failResult(fmt.Sprintf("step is guarded but harness %q does not support permission callbacks (CapPermissionCallback)", h.Name()), start), nil
-		}
-		guard := req.Guard
-		spec.Permission = func(toolName string, input map[string]any) harness.Decision {
-			if req.NetworkRequest != nil && outboundToolCall(toolName, input) {
-				req.NetworkRequest()
-			}
-			// Findings and the SecurityFinding event are produced by captureStream
-			// when it processes the buffered assistant blocks. The callback only
-			// needs to return the decision so the backend feeds it back to the agent.
-			dec := guard.Check(toolName, input)
-			return harness.Decision{Allow: dec.Allow, Reason: dec.Reason}
-		}
+	// Every agent step installs jig's permission callback: the tool-list
+	// second layer, the ExitPlanMode denial and the Tier-1 guard all depend
+	// on it, so a harness that cannot call back fails closed.
+	if !caps.Has(harness.CapPermissionCallback) {
+		return failResult(fmt.Sprintf("agent steps require permission callbacks but harness %q does not support them (CapPermissionCallback)", h.Name()), start), nil
 	}
+	sink, err := newFindingSink(req, rep)
+	if err != nil {
+		return failResult(fmt.Sprintf("findings sink: %v", err), start), nil
+	}
+	defer sink.close()
+	spec.Permission = stepPermission(req, sink)
 	if req.Guard != nil {
-		if msg := checkOperatorAllowlist(req, spec.Cwd, rep); msg != "" {
+		if msg := checkOperatorAllowlist(req, spec.Cwd, sink); msg != "" {
 			return failResult(msg, start), nil
 		}
 	}
@@ -150,7 +145,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 	if req.ResumeSessionID != "" {
 		initialMsg = req.Message
 	}
-	return captureStream(sess.Messages(), req, rep, start, initialMsg)
+	return captureStreamWith(sess.Messages(), req, rep, start, initialMsg, sink)
 }
 
 // SupportsSessionResume reports whether the step's backend honors
@@ -182,66 +177,6 @@ func persistSessionID(req engine.StepRequest, sessionID string) error {
 		Iteration:  req.Iteration,
 		Generation: req.Generation,
 	})
-}
-
-// operatorAllowlistMonitor names the Tier-1 findings for operator-local
-// auto-approval config.
-const operatorAllowlistMonitor = "operator-allowlist"
-
-// checkOperatorAllowlist inspects the operator-local Codex or Cursor config a
-// guarded step would run under. Those sources auto-approve calls without a
-// permission prompt, so the guard never sees them, and ACP mode does not
-// override them. Blanket auto-approval fails the step (the returned message);
-// each narrow entry is recorded as an observed finding and the step runs.
-func checkOperatorAllowlist(req engine.StepRequest, cwd string, rep engine.Reporter) string {
-	backend := req.Step.Backend
-	findings, err := operatorcfg.Inspect(backend, req.RepoRoot, cwd, os.Getenv)
-	if err != nil {
-		return fmt.Sprintf("step is guarded and its operator config cannot be checked: %v", err)
-	}
-	for _, f := range findings {
-		if f.Class == operatorcfg.Blanket {
-			return fmt.Sprintf("step is guarded but %s auto-approves every %s tool call, so the Tier-1 guard never sees them; remove the setting, or set [step.security] tier1_enabled = false", f, backend)
-		}
-	}
-	if len(findings) == 0 {
-		return ""
-	}
-	fw, err := sentinel.NewWriter(req.FindingsPath)
-	if err != nil {
-		return fmt.Sprintf("findings sink: %v", err)
-	}
-	defer func() { _ = fw.Close() }()
-	for _, f := range findings {
-		evidenceKey := "operator-config:" + f.Location()
-		fp := sentinel.NewFingerprint(req.Step.ID, operatorAllowlistMonitor, evidenceKey)
-		_ = fw.Append(sentinel.Finding{
-			Ts:          time.Now().UTC(),
-			RunID:       req.RunID,
-			StepID:      req.Step.ID,
-			Iteration:   req.Iteration,
-			Tier:        sentinel.TierGuard,
-			Monitor:     operatorAllowlistMonitor,
-			Severity:    sentinel.SeverityLow,
-			Action:      sentinel.ActionObserved,
-			Detail:      fmt.Sprintf("%s auto-approves matching %s calls without a permission prompt, so the Tier-1 guard does not see them", f, backend),
-			Evidence:    evidenceKey,
-			Fingerprint: fp,
-		})
-		rep.Finding(engine.SecurityFinding{
-			RunID:       req.RunID,
-			StepID:      req.Step.ID,
-			Tier:        string(sentinel.TierGuard),
-			Monitor:     operatorAllowlistMonitor,
-			Severity:    string(sentinel.SeverityLow),
-			Action:      string(sentinel.ActionObserved),
-			Fingerprint: fp,
-			Iteration:   req.Iteration,
-			Attempt:     req.Attempt,
-			Generation:  req.Generation,
-		})
-	}
-	return ""
 }
 
 func outboundToolCall(tool string, input map[string]any) bool {
@@ -323,6 +258,24 @@ func captureStream(
 	start time.Time,
 	initialUserMsg string,
 ) (*step.Result, error) {
+	sink, err := newFindingSink(req, rep)
+	if err != nil {
+		return failResult(fmt.Sprintf("findings sink: %v", err), start), nil
+	}
+	defer sink.close()
+	return captureStreamWith(events, req, rep, start, initialUserMsg, sink)
+}
+
+// captureStreamWith is captureStream recording findings through sink, which
+// the step's permission callback shares so a violation is recorded once.
+func captureStreamWith(
+	events <-chan harness.Event,
+	req engine.StepRequest,
+	rep engine.Reporter,
+	start time.Time,
+	initialUserMsg string,
+	sink *findingSink,
+) (*step.Result, error) {
 	var w *transcript.Writer
 	if req.TranscriptPath != "" {
 		var err error
@@ -331,18 +284,6 @@ func captureStream(
 			return failResult(fmt.Sprintf("transcript open: %v", err), start), nil
 		}
 		defer func() { _ = w.Close() }()
-	}
-
-	// Open the findings sink when the guard is active and persistence is on.
-	// A nil guard or empty FindingsPath leaves fw nil (no-op path).
-	var fw *sentinel.Writer
-	if req.Guard != nil && req.FindingsPath != "" {
-		var err error
-		fw, err = sentinel.NewWriter(req.FindingsPath)
-		if err != nil {
-			return failResult(fmt.Sprintf("findings sink: %v", err), start), nil
-		}
-		defer func() { _ = fw.Close() }()
 	}
 
 	// append writes one entry and nudges the TUI. Empty-block entries (e.g. a
@@ -421,7 +362,7 @@ func captureStream(
 				Tool: eventToolActivity(ev, true),
 			})
 		case harness.EventAssistantEnd:
-			blocks := guardBlocks(buf, req, rep, fw)
+			blocks := guardBlocks(buf, req, sink)
 			buf = nil
 			appendEntry(transcript.RoleAssistant, blocks)
 			// Track the last substantive text turn. Tool-call-only turns yield no
@@ -535,7 +476,7 @@ func captureStream(
 	// surfaced one, in which case SessionID stays "" and resume degrades to a
 	// fresh restart.
 	if len(buf) > 0 {
-		appendEntry(transcript.RoleAssistant, guardBlocks(buf, req, rep, fw))
+		appendEntry(transcript.RoleAssistant, guardBlocks(buf, req, sink))
 	}
 	const errText = "agent connection closed unexpectedly"
 	appendEntry(transcript.RoleResult, []transcript.Block{{Type: transcript.BlockText, Text: errText}})
@@ -640,12 +581,12 @@ func redactRaw(req engine.StepRequest, raw json.RawMessage) json.RawMessage {
 }
 
 // guardBlocks scans every tool_use block's input for policy violations when
-// the guard is active. For each violation it produces a Finding (written to fw
-// and emitted as a SecurityFinding ctrl event), and redacts the block's Input
-// so that no raw secret lands in transcript.jsonl.
+// the guard is active. Each violation is recorded through sink (deduplicated
+// against the permission callback's findings), and the block's Input is
+// redacted so that no raw secret lands in transcript.jsonl.
 //
 // When req.Guard is nil blocks is returned unchanged.
-func guardBlocks(blocks []transcript.Block, req engine.StepRequest, rep engine.Reporter, fw *sentinel.Writer) []transcript.Block {
+func guardBlocks(blocks []transcript.Block, req engine.StepRequest, sink *findingSink) []transcript.Block {
 	if req.Guard == nil {
 		return blocks
 	}
@@ -661,39 +602,8 @@ func guardBlocks(blocks []transcript.Block, req engine.StepRequest, rep engine.R
 		if redacted := sentinel.RedactJSON(b.Tool.Title, b.Tool.Input); !bytes.Equal(redacted, b.Tool.Input) {
 			blocks[i].Tool.Input = redacted
 		}
-		dec := req.Guard.Check(b.Tool.Title, input)
-		if !dec.Allow {
-			evidenceKey := "tool:" + b.Tool.Title + ":" + b.Tool.ID
-			fp := sentinel.NewFingerprint(req.Step.ID, dec.Monitor, evidenceKey)
-			sev := sentinel.SeverityHigh
-			if dec.Action == sentinel.ActionEscalated {
-				sev = sentinel.SeverityCritical
-			}
-			f := sentinel.Finding{
-				Ts:          time.Now().UTC(),
-				RunID:       req.RunID,
-				StepID:      req.Step.ID,
-				Iteration:   req.Iteration,
-				Tier:        sentinel.TierGuard,
-				Monitor:     dec.Monitor,
-				Severity:    sev,
-				Action:      dec.Action,
-				Detail:      dec.Reason,
-				Evidence:    evidenceKey,
-				Fingerprint: fp,
-			}
-			if fw != nil {
-				_ = fw.Append(f)
-			}
-			rep.Finding(engine.SecurityFinding{
-				RunID:       req.RunID,
-				StepID:      req.Step.ID,
-				Tier:        string(sentinel.TierGuard),
-				Monitor:     dec.Monitor,
-				Severity:    string(sev),
-				Action:      string(dec.Action),
-				Fingerprint: fp,
-			})
+		if dec := req.Guard.Check(b.Tool.Title, input); !dec.Allow {
+			sink.recordGuard(b.Tool.Title, b.Tool.ID, dec)
 		}
 	}
 	return blocks

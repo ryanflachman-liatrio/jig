@@ -4,9 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	acpsdk "github.com/coder/acp-go-sdk"
-
 	"jig/harness/acp"
+	"jig/internal/agentcfg"
 )
 
 // CursorHarness drives Cursor over the Agent Client Protocol by spawning
@@ -45,12 +44,7 @@ func (h *CursorHarness) Open(ctx context.Context, spec SessionSpec) (Session, er
 	events := make(chan Event, 32)
 	sess := &acpSession{events: events, hasSchema: spec.Schema != nil, schema: spec.Schema, partial: spec.Partial}
 
-	var decide acp.Decider
-	if spec.Permission != nil {
-		decide = func(tc acpsdk.ToolCallUpdate) bool {
-			return spec.Permission(toolCallName(tc), toolCallInput(tc)).Allow
-		}
-	}
+	decide := permissionDecider(agentcfg.BackendCursor, &sess.calls, spec.Permission)
 
 	// Without a question function no handler is installed, and the client
 	// answers Cursor questions as skipped.

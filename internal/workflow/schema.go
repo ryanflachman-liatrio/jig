@@ -619,6 +619,15 @@ func (s *Step) isMutating() bool {
 // question mid-run (ask_user = true).
 func (s *Step) AskUserEnabled() bool { return s.AskUser != nil && *s.AskUser }
 
+// Tier1Enabled reports whether the step runs under the Tier-1 guard: an agent
+// step with security and tier1_enabled both on (the defaults), after
+// [defaults.security] has been applied.
+func (s *Step) Tier1Enabled() bool {
+	return s.Type == StepAgent &&
+		(s.Security.Enabled == nil || *s.Security.Enabled) &&
+		(s.Security.Tier1Enabled == nil || *s.Security.Tier1Enabled)
+}
+
 // Input is one entry of a step's `inputs` array. It is either a reference to a
 // prior step's output (Ref, from "@stepid") or a literal file path (Path).
 // RefField, from "@stepid.field.sub", selects a field out of that step's
