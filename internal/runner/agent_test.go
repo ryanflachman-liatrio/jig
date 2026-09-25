@@ -1072,6 +1072,27 @@ func TestBuildAgentPromptEmptyContext(t *testing.T) {
 	}
 }
 
+// TestBuildAgentPromptAgentAppendSystemPrompt proves an agent-level
+// append_system_prompt reaches the prompt, ahead of the step's own, rather
+// than being accepted and dropped.
+func TestBuildAgentPromptAgentAppendSystemPrompt(t *testing.T) {
+	for _, agent := range []agentcfg.Agent{
+		agentcfg.ClaudeAgent{Common: agentcfg.Common{AppendSystemPrompt: "Never touch prod config."}},
+		agentcfg.CodexAgent{Common: agentcfg.Common{AppendSystemPrompt: "Never touch prod config."}},
+		agentcfg.CursorAgent{Common: agentcfg.Common{AppendSystemPrompt: "Never touch prod config."}},
+	} {
+		t.Run(agent.Backend(), func(t *testing.T) {
+			req := engine.StepRequest{Step: &workflow.Step{
+				AppendSystemPrompt: "Be concise.",
+				SnapshotAgent:      &workflow.AgentSnapshot{Agent: agent},
+			}}
+			if got, want := buildAgentPrompt(req), "Never touch prod config.\n\nBe concise."; got != want {
+				t.Errorf("prompt = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 // TestBuildAgentPromptPrependsContext verifies a non-empty WorkflowContext is
 // prepended at the very front, ended by its `---` delimiter, ahead of the body —
 // and that it leaves the remaining four pieces byte-identical to the no-context

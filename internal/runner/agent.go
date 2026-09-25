@@ -650,6 +650,12 @@ func buildAgentPrompt(req engine.StepRequest) string {
 		b.WriteString("\n\n")
 	}
 
+	// The agent's append_system_prompt (from its profile or inline table) is
+	// the standing instruction; the step's own follows it and so refines it.
+	if a := req.Step.ResolvedAgent(); a != nil && a.Base().AppendSystemPrompt != "" {
+		b.WriteString(a.Base().AppendSystemPrompt)
+		b.WriteString("\n\n")
+	}
 	if req.Step.AppendSystemPrompt != "" {
 		b.WriteString(req.Step.AppendSystemPrompt)
 		b.WriteString("\n\n")

@@ -319,7 +319,10 @@ at load; the resolved agent is stored in the run snapshot, and resume never
 re-resolves it, so later edits to profile files cannot change a running step.
 
 Every agent accepts `backend`, `model`, `append_system_prompt` and `extends`.
-`backend` defaults to `claude`. The backend-specific keys are:
+`backend` defaults to `claude`. An agent's `append_system_prompt` is appended
+after the skill or agent-file prompt, ahead of the step's own
+`append_system_prompt`, so a profile can carry a standing instruction that
+each step refines. The backend-specific keys are:
 
 | Backend | Keys |
 |---|---|
