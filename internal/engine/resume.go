@@ -122,9 +122,18 @@ func DecodeWorkflowSnapshot(data []byte) (*workflow.Workflow, error) {
 		}
 		wf = restored
 	} else {
+		// Every snapshot written since the agent schema carries
+		// ExpandedSteps. Rebuilding one without them would re-resolve each
+		// agent from [defaults] and the profiles on disk, so an agent step
+		// here fails closed like a snapshot with no persisted agent.
 		decoded, err := workflow.DecodeLocked(snap.TOML, snap.BaseDir, snap.SourcePath, snap.ModuleSources)
 		if err != nil {
 			return nil, err
+		}
+		for _, s := range decoded.Steps {
+			if s.Type == workflow.StepAgent {
+				return nil, fmt.Errorf("workflow snapshot predates the agent schema (step %q); start a new run", s.ID)
+			}
 		}
 		wf = decoded
 	}

@@ -3,6 +3,7 @@ package engine
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -118,6 +119,34 @@ func TestWorkflowSnapshotRejectsPreAgentSchema(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), `workflow snapshot predates the agent schema (step "worker"); start a new run`) {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+// TestWorkflowSnapshotWithoutExpandedStepsRejectsAgentSteps proves the
+// TOML fallback, taken only by snapshots older than ExpandedSteps, never
+// re-resolves an agent from the current [defaults] or profiles on disk.
+func TestWorkflowSnapshotWithoutExpandedStepsRejectsAgentSteps(t *testing.T) {
+	base := t.TempDir()
+	skill := filepath.Join(base, "skills", "s", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(skill), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(skill, []byte("---\nname: s\ndescription: fixture\n---\nDo the task.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const source = "[workflow]\nname = \"old\"\nversion = \"1\"\n\n[[step]]\nid = \"worker\"\ntype = \"agent\"\nskill = \"skills/s\"\nisolation = \"none\"\n"
+	snap, err := json.Marshal(map[string]any{
+		"source_path": filepath.Join(base, "wf.toml"),
+		"base_dir":    base,
+		"sha256":      sha256Hex(source),
+		"toml":        source,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = DecodeWorkflowSnapshot(snap)
+	if err == nil || !strings.Contains(err.Error(), `workflow snapshot predates the agent schema (step "worker")`) {
+		t.Fatalf("err = %v, want the pre-agent schema error", err)
 	}
 }
 
