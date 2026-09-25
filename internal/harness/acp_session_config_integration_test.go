@@ -227,6 +227,21 @@ func TestClaudeAgentSessionMeta(t *testing.T) {
 			},
 		},
 		{
+			name: "limits are sent under their SDK names",
+			agent: agentcfg.ClaudeAgent{
+				Tools: []string{}, MaxTurns: 3, MaxBudgetUSD: 0.5, MaxThinkingTokens: 2048, FallbackModel: "haiku",
+			},
+			askUser: true,
+			want: map[string]any{
+				"tools":             []any{"AskUserQuestion"},
+				"maxTurns":          float64(3),
+				"maxBudgetUsd":      0.5,
+				"maxThinkingTokens": float64(2048),
+				"fallbackModel":     "haiku",
+				"settingSources":    []any{"project"},
+			},
+		},
+		{
 			name:    "omitted tools keeps the full built-in set",
 			agent:   agentcfg.ClaudeAgent{},
 			askUser: true,

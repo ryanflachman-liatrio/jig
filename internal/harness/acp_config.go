@@ -97,6 +97,20 @@ func (claudeACPConfigPolicy) SessionMeta(spec SessionSpec) (map[string]any, erro
 	if len(disallowed) > 0 {
 		options["disallowedTools"] = disallowed
 	}
+	// The adapter applies these limits to the whole session, not per prompt,
+	// and rejects session/prompt once one is reached.
+	if agent.MaxTurns > 0 {
+		options["maxTurns"] = agent.MaxTurns
+	}
+	if agent.MaxBudgetUSD > 0 {
+		options["maxBudgetUsd"] = agent.MaxBudgetUSD
+	}
+	if agent.MaxThinkingTokens > 0 {
+		options["maxThinkingTokens"] = agent.MaxThinkingTokens
+	}
+	if agent.FallbackModel != "" {
+		options["fallbackModel"] = agent.FallbackModel
+	}
 	return map[string]any{"claudeCode": map[string]any{"options": options}}, nil
 }
 
