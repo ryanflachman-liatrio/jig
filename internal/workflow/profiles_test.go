@@ -9,7 +9,7 @@ import (
 
 func TestLoadProfilesAbsent(t *testing.T) {
 	dir := t.TempDir()
-	profiles, err := loadProfiles(dir)
+	profiles, _, err := loadProfiles(dir)
 	if err != nil {
 		t.Fatalf("loadProfiles with no .agents dir: %v", err)
 	}
@@ -19,7 +19,7 @@ func TestLoadProfilesAbsent(t *testing.T) {
 }
 
 func TestLoadProfilesStructuralMode(t *testing.T) {
-	profiles, err := loadProfiles("")
+	profiles, _, err := loadProfiles("")
 	if err != nil {
 		t.Fatalf("loadProfiles(\"\") should be a no-op: %v", err)
 	}
@@ -47,7 +47,7 @@ effort = "low"
 		t.Fatal(err)
 	}
 
-	profiles, err := loadProfiles(dir)
+	profiles, _, err := loadProfiles(dir)
 	if err != nil {
 		t.Fatalf("loadProfiles: %v", err)
 	}
@@ -94,7 +94,7 @@ id = "@myprofile"
 		t.Fatal(err)
 	}
 
-	_, err := loadProfiles(dir)
+	_, _, err := loadProfiles(dir)
 	if err == nil {
 		t.Fatal("expected error for duplicate id, got nil")
 	}
@@ -117,7 +117,7 @@ model = "claude-haiku-4-5-20251001"
 		t.Fatal(err)
 	}
 
-	_, err := loadProfiles(dir)
+	_, _, err := loadProfiles(dir)
 	if err == nil {
 		t.Fatal("expected error for shadowing built-in, got nil")
 	}
@@ -139,7 +139,7 @@ id = "noatsign"
 		t.Fatal(err)
 	}
 
-	_, err := loadProfiles(dir)
+	_, _, err := loadProfiles(dir)
 	if err == nil {
 		t.Fatal("expected error for missing '@', got nil")
 	}
@@ -161,7 +161,7 @@ model = "claude-haiku-4-5-20251001"
 		t.Fatal(err)
 	}
 
-	_, err := loadProfiles(dir)
+	_, _, err := loadProfiles(dir)
 	if err == nil {
 		t.Fatal("expected error for missing id, got nil")
 	}
@@ -184,7 +184,7 @@ typo_field = "oops"
 		t.Fatal(err)
 	}
 
-	_, err := loadProfiles(dir)
+	_, _, err := loadProfiles(dir)
 	if err == nil {
 		t.Fatal("expected error for unknown key, got nil")
 	}

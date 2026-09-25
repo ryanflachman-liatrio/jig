@@ -123,13 +123,16 @@ func decodePrepared(data, baseDir string) (*Workflow, error) {
 	// Load built-in and project-local profiles, then apply them. Profiles run
 	// after agent_file resolution (explicit step fields and file-derived values
 	// both outrank the profile) and before applyDefaults ([defaults] is weakest).
-	localProfiles, err := loadProfiles(baseDir)
+	localProfiles, agentProfiles, err := loadProfiles(baseDir)
 	if err != nil {
 		return nil, err
 	}
 	all := append(builtinProfiles(), localProfiles...)
 	wf.profileIndex = buildProfileIndex(all)
 	wf.applyProfiles()
+	if err := wf.resolveAgents(&agentResolver{profiles: agentProfiles}); err != nil {
+		return nil, err
+	}
 
 	wf.applyDefaults()
 	return &wf, nil

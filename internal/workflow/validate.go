@@ -158,6 +158,15 @@ func (v *validator) checkStep(s *Step) {
 		}
 	}
 
+	if s.Type != StepAgent {
+		if s.Agent != nil {
+			v.errf("step %q: `agent` is only valid on agent steps", s.ID)
+		}
+		if s.AskUser != nil {
+			v.errf("step %q: `ask_user` is only valid on agent steps", s.ID)
+		}
+	}
+
 	switch s.Type {
 	case StepAgent:
 		v.checkAgent(s)

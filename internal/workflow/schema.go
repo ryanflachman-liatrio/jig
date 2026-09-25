@@ -370,6 +370,10 @@ type Defaults struct {
 	// Per-step values override this; see Step.Backend.
 	Backend string `toml:"backend"`
 
+	// Agent is the workflow-wide agent used whole by agent steps that set no
+	// agent of their own.
+	Agent *AgentRef `toml:"agent"`
+
 	// Security is the workflow-wide security monitoring configuration. Security
 	// is on by default when this block is absent.
 	Security SecurityConfig `toml:"security"`
@@ -406,11 +410,23 @@ type Step struct {
 	Secrets []string `toml:"secrets"`
 
 	// Agent-only.
-	Skill     string    `toml:"skill"`
-	AgentFile string    `toml:"agent_file"` // xor with Skill: a Claude agent .md file
-	Profile   string    `toml:"profile"`    // "@id" references a named AgentProfile
-	Inputs    []Input   `toml:"inputs"`
-	Isolation Isolation `toml:"isolation"`
+	Skill     string `toml:"skill"`
+	AgentFile string `toml:"agent_file"` // xor with Skill: a Claude agent .md file
+	Profile   string `toml:"profile"`    // "@id" references a named AgentProfile
+	// Agent is the step's single-backend agent: a profile reference or an
+	// inline [step.agent] table. It wins whole over [defaults] agent.
+	Agent *AgentRef `toml:"agent"`
+	// AskUser lets the agent pause mid-run to ask the human a question.
+	AskUser *bool `toml:"ask_user"`
+	// SnapshotAgent is the resolved agent. It is exported so the run snapshot
+	// (JSON) persists it and resume never re-resolves it.
+	SnapshotAgent *AgentSnapshot `toml:"-" json:"snapshot_agent,omitempty"`
+	// agentFileTools/agentFileModel are an agent_file's frontmatter values,
+	// the Claude base layer beneath the step's agent.
+	agentFileTools []string
+	agentFileModel string
+	Inputs         []Input   `toml:"inputs"`
+	Isolation      Isolation `toml:"isolation"`
 
 	// InjectContext toggles the engine-assembled "Workflow context" preamble
 	// for this agent step. Parsed as *bool so an unset value (inherit from
