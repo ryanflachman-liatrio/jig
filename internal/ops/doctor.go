@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -223,6 +224,50 @@ func optionalBackendChecks(lookPath func(string) (string, error)) []Check {
 }
 
 func backendChecks(backend string, required bool, lookPath func(string) (string, error)) []Check {
+	checks := backendExecutableChecks(backend, required, lookPath)
+	if backend == "claude" {
+		checks = append(checks, claudeUserSettingsChecks()...)
+	}
+	return checks
+}
+
+// claudeUserSettingsChecks warns when ~/.claude/settings.json sets keys an
+// operator may rely on for authentication. jig runs Claude with
+// settingSources: ["project"], so user-level settings do not apply. The
+// warning names the keys only, never their values or env variable names.
+func claudeUserSettingsChecks() []Check {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil
+	}
+	path := filepath.Join(home, ".claude", "settings.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var settings map[string]json.RawMessage
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return []Check{{ID: "backend.claude.user_settings", Status: CheckWarn, Scope: path, Message: "user settings could not be parsed, so jig cannot check them for env or apiKeyHelper"}}
+	}
+	var keys []string
+	for _, key := range []string{"env", "apiKeyHelper"} {
+		if _, ok := settings[key]; ok {
+			keys = append(keys, key)
+		}
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	return []Check{{
+		ID:          "backend.claude.user_settings",
+		Status:      CheckWarn,
+		Scope:       path,
+		Message:     "user settings set " + strings.Join(keys, " and ") + ", but jig runs Claude with settingSources: [\"project\"], so user-level auth and env settings do not apply",
+		Remediation: "provide Claude credentials through your login or the process environment rather than user settings",
+	}}
+}
+
+func backendExecutableChecks(backend string, required bool, lookPath func(string) (string, error)) []Check {
 	id := "backend." + backend
 	tools := []string{}
 	login := ""

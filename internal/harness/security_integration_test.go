@@ -39,6 +39,7 @@ func (*fixtureAgent) Authenticate(context.Context, acpsdk.AuthenticateRequest) (
 }
 func (*fixtureAgent) NewSession(_ context.Context, req acpsdk.NewSessionRequest) (acpsdk.NewSessionResponse, error) {
 	fixtureRecord("new-session")
+	fixtureRecordMeta("new", req.Meta)
 	for _, s := range req.McpServers {
 		if s.Stdio != nil {
 			fixtureRecord("mcp-server:" + s.Stdio.Name + ":" + s.Stdio.Command)
@@ -48,6 +49,7 @@ func (*fixtureAgent) NewSession(_ context.Context, req acpsdk.NewSessionRequest)
 }
 func (a *fixtureAgent) LoadSession(ctx context.Context, req acpsdk.LoadSessionRequest) (acpsdk.LoadSessionResponse, error) {
 	fixtureRecord("load-session")
+	fixtureRecordMeta("load", req.Meta)
 	_ = a.conn.SessionUpdate(ctx, acpsdk.SessionNotification{
 		SessionId: req.SessionId,
 		Update:    acpsdk.UpdateAgentMessageText("historical replay must stay suppressed"),
@@ -61,9 +63,26 @@ func (*fixtureAgent) SetSessionConfigOption(_ context.Context, req acpsdk.SetSes
 	return acpsdk.SetSessionConfigOptionResponse{ConfigOptions: fixtureConfigOptions()}, nil
 }
 
+// fixtureRecordMeta logs a session request's _meta as one JSON line so tests
+// can assert what jig sent under _meta.claudeCode.options.
+func fixtureRecordMeta(kind string, meta map[string]any) {
+	if meta == nil {
+		return
+	}
+	data, err := json.Marshal(meta)
+	if err != nil {
+		return
+	}
+	fixtureRecord("meta:" + kind + ":" + string(data))
+}
+
 // fixtureConfigOptions mirrors each real adapter's semantic selectors: every
 // backend advertises a model selector, while Cursor exposes no thought_level
-// selector (its reasoning parameters use a Cursor-specific category).
+// selector (its reasoning parameters use a Cursor-specific category). Each
+// backend advertises its own mode values; Codex also advertises
+// collaboration_mode under its own category. JIG_ACP_FIXTURE_OMIT_MODE drops
+// one mode value, modelling an adapter that cannot honor it (for example
+// Claude bypassPermissions when running as root).
 func fixtureConfigOptions() []acpsdk.SessionConfigOption {
 	selector := func(id string, category acpsdk.SessionConfigOptionCategory, values ...string) acpsdk.SessionConfigOption {
 		options := make(acpsdk.SessionConfigSelectOptionsUngrouped, len(values))
@@ -82,7 +101,28 @@ func fixtureConfigOptions() []acpsdk.SessionConfigOption {
 	if fixtureWorker() != "cursor" {
 		options = append(options, selector("effort", acpsdk.SessionConfigOptionCategoryThoughtLevel, "default", "low", "high"))
 	}
-	return options
+	var modes []string
+	switch fixtureWorker() {
+	case "codex":
+		modes = []string{"read-only", "agent", "agent-full-access"}
+		options = append(options, selector("collaboration_mode", "_collaboration_mode", fixtureWithout("default", "plan")...))
+	case "cursor":
+		modes = []string{"agent", "plan", "ask"}
+	default:
+		modes = []string{"default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"}
+	}
+	return append(options, selector("mode", acpsdk.SessionConfigOptionCategoryMode, fixtureWithout(modes...)...))
+}
+
+func fixtureWithout(values ...string) []string {
+	omit := os.Getenv("JIG_ACP_FIXTURE_OMIT_MODE")
+	out := values[:0:0]
+	for _, value := range values {
+		if value != omit {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 func (*fixtureAgent) Cancel(context.Context, acpsdk.CancelNotification) error {
 	fixtureRecord("cancel")
@@ -91,6 +131,11 @@ func (*fixtureAgent) Cancel(context.Context, acpsdk.CancelNotification) error {
 
 func (a *fixtureAgent) Prompt(ctx context.Context, req acpsdk.PromptRequest) (acpsdk.PromptResponse, error) {
 	fixtureRecord("prompt")
+	if message := os.Getenv("JIG_ACP_FIXTURE_PROMPT_ERROR"); message != "" {
+		// The Claude adapter rejects session/prompt with a JSON-RPC internal
+		// error when a turn or budget limit is hit.
+		return acpsdk.PromptResponse{}, &acpsdk.RequestError{Code: -32603, Message: message}
+	}
 	update := func(value acpsdk.SessionUpdate) {
 		_ = a.conn.SessionUpdate(ctx, acpsdk.SessionNotification{SessionId: req.SessionId, Update: value})
 	}

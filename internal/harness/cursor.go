@@ -38,6 +38,10 @@ func (*CursorHarness) PreviewPrompt(spec SessionSpec) string {
 // and starts the prompt turn in the background. Capability gating happens
 // before Open, in the runner (runner.AgentExecutor.Execute).
 func (h *CursorHarness) Open(ctx context.Context, spec SessionSpec) (Session, error) {
+	sessionOpts, err := sessionOptions(cursorACPConfig, spec)
+	if err != nil {
+		return nil, fmt.Errorf("cursor: %w", err)
+	}
 	events := make(chan Event, 32)
 	sess := &acpSession{events: events, hasSchema: spec.Schema != nil, schema: spec.Schema, partial: spec.Partial}
 
@@ -58,13 +62,13 @@ func (h *CursorHarness) Open(ctx context.Context, spec SessionSpec) (Session, er
 
 	var sessionID string
 	if spec.Resume != "" {
-		if err := conn.LoadSession(ctx, spec.Cwd, spec.Resume); err != nil {
+		if err := conn.LoadSession(ctx, spec.Cwd, spec.Resume, sessionOpts...); err != nil {
 			_ = conn.Close()
 			return nil, fmt.Errorf("cursor: %w", err)
 		}
 		sessionID = spec.Resume
 	} else {
-		sessionID, err = conn.NewSession(ctx, spec.Cwd)
+		sessionID, err = conn.NewSession(ctx, spec.Cwd, sessionOpts...)
 	}
 	if err != nil {
 		_ = conn.Close()

@@ -1683,3 +1683,35 @@ func TestFanOutPromptDoesNotLeakIntoRedaction(t *testing.T) {
 		t.Error("redaction must not strip the fan-out heading itself")
 	}
 }
+
+// TestClaudeLimitFailure proves a Claude turn or budget limit, which the
+// adapter reports by rejecting session/prompt, becomes a failed step whose
+// error carries the adapter's message verbatim.
+func TestClaudeLimitFailure(t *testing.T) {
+	for _, message := range []string{"Reached maximum number of turns (3)", "Reached maximum budget ($0.50)"} {
+		t.Run(message, func(t *testing.T) {
+			dir := t.TempDir()
+			// acpSession.run reports a rejected prompt as the wrapped JSON-RPC
+			// error text.
+			errText := `prompt: {"code":-32603,"message":"` + message + `"}`
+			events := []harness.Event{
+				{Type: harness.EventSessionID, SessionID: "limited"},
+				{Type: harness.EventResult, IsError: true, ErrText: errText, SessionID: "limited"},
+			}
+			req := engine.StepRequest{
+				Step:           &workflow.Step{ID: "worker", Type: workflow.StepAgent},
+				TranscriptPath: filepath.Join(dir, "transcript.jsonl"),
+			}
+			res, err := captureStream(scriptChan(events...), req, &captureReporter{}, time.Now(), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if res.Status != step.StatusFailed || !strings.Contains(res.Err, message) {
+				t.Fatalf("result = %s %q, want a failure carrying %q", res.Status, res.Err, message)
+			}
+			if res.SessionID != "limited" {
+				t.Fatalf("session id = %q, want the limited session kept for recovery", res.SessionID)
+			}
+		})
+	}
+}

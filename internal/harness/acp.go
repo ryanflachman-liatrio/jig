@@ -25,11 +25,12 @@ import (
 // confinement — see the spec's success metric 5).
 type AcpHarness struct{}
 
-// claudeACPConfig applies model and effort through the adapter's semantic
-// selectors. Model is set first because the adapter only advertises an
-// effort selector for models that support one. The adapter resolves full
-// model IDs onto its alias options, so it validates the model value.
-var claudeACPConfig = semanticACPConfigPolicy{model: true, effort: true, adapterResolvesModel: true}
+// claudeACPConfig enforces the step's ClaudeAgent. Model and effort go
+// through the adapter's semantic selectors, model first because the adapter
+// only advertises an effort selector for models that support one. The adapter
+// resolves full model IDs onto its alias options, so it validates the model
+// value.
+var claudeACPConfig = claudeACPConfigPolicy{semantic: semanticACPConfigPolicy{model: true, effort: true, adapterResolvesModel: true}}
 
 // NewAcpHarness returns an AcpHarness ready to use.
 func NewAcpHarness() *AcpHarness { return &AcpHarness{} }
@@ -60,6 +61,10 @@ func (*AcpHarness) PreviewPrompt(spec SessionSpec) string {
 // (runner.AgentExecutor.Execute and buildSessionSpec), which fails closed on
 // opted-in features this harness does not advertise.
 func (h *AcpHarness) Open(ctx context.Context, spec SessionSpec) (Session, error) {
+	sessionOpts, err := sessionOptions(claudeACPConfig, spec)
+	if err != nil {
+		return nil, fmt.Errorf("acp: %w", err)
+	}
 	events := make(chan Event, 32)
 	sess := &acpSession{events: events, hasSchema: spec.Schema != nil, schema: spec.Schema, partial: spec.Partial}
 
@@ -82,16 +87,15 @@ func (h *AcpHarness) Open(ctx context.Context, spec SessionSpec) (Session, error
 	}
 	sess.conn = conn
 
-	mcpServers := toACPMcpServers(spec.MCPServers)
 	var sessionID string
 	if spec.Resume != "" {
-		if err := conn.LoadSession(ctx, spec.Cwd, spec.Resume, mcpServers...); err != nil {
+		if err := conn.LoadSession(ctx, spec.Cwd, spec.Resume, sessionOpts...); err != nil {
 			_ = conn.Close()
 			return nil, fmt.Errorf("acp: %w", err)
 		}
 		sessionID = spec.Resume
 	} else {
-		sessionID, err = conn.NewSession(ctx, spec.Cwd, mcpServers...)
+		sessionID, err = conn.NewSession(ctx, spec.Cwd, sessionOpts...)
 	}
 	if err != nil {
 		_ = conn.Close()

@@ -43,7 +43,8 @@ func integrationResolutionPrompt(paths []string) string {
 }
 
 // resolverAgent is a write-capable agent on the conflicted step's backend and
-// model. Per-backend enforcement details are refined with the adapters.
+// model. The Claude agent auto-approves its edits (acceptEdits) so resolution
+// does not stall on per-edit prompts; its tool list stays narrow.
 func resolverAgent(st *workflow.Step) agentcfg.Agent {
 	var common agentcfg.Common
 	backend := agentcfg.BackendClaude
@@ -57,5 +58,5 @@ func resolverAgent(st *workflow.Step) agentcfg.Agent {
 	case agentcfg.BackendCursor:
 		return agentcfg.CursorAgent{Common: common, Mode: "agent"}
 	}
-	return agentcfg.ClaudeAgent{Common: common, Tools: []string{"Read", "Grep", "Glob", "Write", "Edit", "Bash"}}
+	return agentcfg.ClaudeAgent{Common: common, Tools: []string{"Read", "Grep", "Glob", "Write", "Edit", "Bash"}, PermissionMode: "acceptEdits"}
 }

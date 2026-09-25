@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -255,4 +256,27 @@ func TestMonitorAdapterTimeoutAndConnectFailure(t *testing.T) {
 			t.Fatalf("AcpHarness's own exhausted structured-output retries are still a decode-shaped failure eligible for Dispatch's single retry, got %d Open calls", len(h.specs))
 		}
 	})
+}
+
+// TestMonitorSessionSpec pins the Tier-2 classifier's agent: a Claude agent
+// with no built-in tools, a single turn, no questions, and a deny-all
+// permission callback, whatever the step backend is.
+func TestMonitorSessionSpec(t *testing.T) {
+	spec := monitorSessionSpec(sentinel.MonitorSpec{Model: monitorModel, Prompt: "policy"}, "window")
+	claude, ok := spec.Agent.(agentcfg.ClaudeAgent)
+	if !ok {
+		t.Fatalf("agent = %#v, want a Claude agent", spec.Agent)
+	}
+	want := agentcfg.ClaudeAgent{Common: agentcfg.Common{Model: monitorModel}, Tools: []string{}, MaxTurns: 1}
+	if !reflect.DeepEqual(claude, want) {
+		t.Fatalf("agent = %#v, want %#v", claude, want)
+	}
+	if spec.AskUser || spec.Question != nil {
+		t.Fatal("monitor must not be able to ask the human a question")
+	}
+	for _, tool := range []string{"Read", "Bash", "WebFetch", agentcfg.AskUserQuestion} {
+		if decision := spec.Permission(tool, map[string]any{}); decision.Allow {
+			t.Fatalf("permission callback allowed %s, want deny-all", tool)
+		}
+	}
 }
