@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/interaction"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // questionExec drives a single step through reporter.Question. It closes

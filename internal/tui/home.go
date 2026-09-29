@@ -8,9 +8,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"jig/internal/tui/detail"
-	"jig/internal/tui/shared"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/detail"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // homePane identifies which Home dual-pane region owns keys.

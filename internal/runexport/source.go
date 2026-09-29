@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 )
 
 type request struct {

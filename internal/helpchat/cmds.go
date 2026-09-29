@@ -7,9 +7,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/agentcfg"
-	"jig/internal/engine"
-	"jig/internal/harness"
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/harness"
 )
 
 const helpModelID = "claude-haiku-4-5-20251001"

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 type recordingSender struct {

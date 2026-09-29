@@ -3,7 +3,7 @@ package monitor
 import (
 	"time"
 
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // Liveness pulse consumer (omp-transcript-parity slice 13).

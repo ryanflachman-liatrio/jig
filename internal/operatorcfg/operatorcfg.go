@@ -18,7 +18,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
-	"jig/internal/sentinel"
+	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
 )
 
 // Class says how much a finding widens auto-approval.

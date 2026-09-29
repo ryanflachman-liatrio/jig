@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // sddAcceptanceExec makes the fixture's scheduling and check protocol

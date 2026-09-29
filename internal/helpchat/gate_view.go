@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // renderGate returns the bottom-of-modal string for the active pendingGateEntry.

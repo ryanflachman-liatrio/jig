@@ -7,9 +7,9 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	domain "jig/internal/review"
-	"jig/internal/tui/diffview"
-	"jig/internal/tui/shared"
+	domain "github.com/ryanflachman-liatrio/jig/internal/review"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/diffview"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 type sourceViewRow struct {

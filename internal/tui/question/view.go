@@ -6,8 +6,8 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"jig/internal/interaction"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 func (m Model) View() string {

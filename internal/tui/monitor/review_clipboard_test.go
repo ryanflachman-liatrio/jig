@@ -6,10 +6,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/engine"
-	domainreview "jig/internal/review"
-	reviewworkspace "jig/internal/tui/review"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	domainreview "github.com/ryanflachman-liatrio/jig/internal/review"
+	reviewworkspace "github.com/ryanflachman-liatrio/jig/internal/tui/review"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // waitForRequest drains a batched command and returns the first

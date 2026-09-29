@@ -11,15 +11,14 @@ Use synthetic data and temporary repositories/directories. See
 Run from the repository root unless a subshell changes directory:
 
 ```bash
-go version                           # must satisfy both go.mod files
+go version                           # must satisfy go.mod
 go build ./cmd/jig
 go test ./...
 go vet ./...
-(cd harness/acp && go test ./... && go vet ./...)
 ```
 
-Root `./...` does not include tests in the nested ACP module or the Rust crate.
-The root module tests do include `internal/harness`. For Go source changes,
+Root `./...` covers every Go package, including `harness/acp` and
+`internal/harness`. For Go source changes,
 format the changed files with `gofmt -w <files>`; use `gofmt -l <files>` to check
 without rewriting unrelated files. Use `git diff --check` to catch whitespace
 errors in any change.
@@ -29,10 +28,9 @@ Focused examples:
 ```bash
 go test ./internal/workflow -run TestDecodeInvalid -v
 go test ./internal/engine ./internal/runner -count=1
-go test -race ./internal/engine ./internal/runner ./internal/harness
+go test -race ./internal/engine ./internal/runner ./internal/harness ./harness/acp/...
 go test -race ./internal/tui/... ./internal/helpchat
 go test -race ./internal/runexport ./cmd/jig -count=1
-(cd harness/acp && go test -race ./...)
 go test ./internal/workflow -coverprofile=/tmp/jig-workflow-coverage.out
 go tool cover -func=/tmp/jig-workflow-coverage.out
 ```
@@ -60,22 +58,25 @@ Validation does not run workflow agents, checks, or notification senders.
 | Change | Required evidence |
 |---|---|
 | Guidance/docs only | Review code claims and relative links, `git diff --check`; validate changed runnable examples. No new tests for prose. |
-| Go implementation | Focused behavioral tests, root build/tests/vet; nested module checks if affected. |
+| Go implementation | Focused behavioral tests, root build/tests/vet. |
 | Schema/defaults/modules/conditions | Valid and invalid decode cases, precedence, filesystem-backed Load cases as needed; root workflow/example validation. |
 | Scheduler/runner/concurrency | Relevant lifecycle tests and targeted `-race`; use real temp Git repositories for integration/reset behavior. |
-| ACP lifecycle/protocol | Root harness tests plus nested ACP tests/vet; race and helper-process shutdown tests for lifecycle changes. |
+| ACP lifecycle/protocol | Harness and `harness/acp` tests/vet; race and helper-process shutdown tests for lifecycle changes. |
 | TUI behavior | Model/update/render assertions, focus/text capture/resize cases; targeted race tests for async changes and a terminal smoke for visual behavior when feasible. |
 | Persistence/reopen/reset | Journal/snapshot/lease failure cases, interrupted-write recovery, persistence-off coverage; cross-process tests where process boundaries matter. |
 | Export/lease/shared budgets | `go test -race ./internal/runexport ./cmd/jig -count=1`, disclosure scans, damaged input and bounds cases. |
 | Notification/telemetry | Fake or local test receivers, sanitization, bounded queues and shutdown; verify delivery/exporter failure cannot alter run outcomes. |
-| Rust crate | Run its local fmt/clippy/tests; Go checks cannot establish Rust parity. |
 
 For SDD quality-check workflows, the declared
 [quality profiles](quality-profiles.md) add their own applicability and evidence
 contracts, including the coverage threshold. They do not replace behavioral
-tests or automatically apply to a prose-only task. No repository CI workflow is
-currently checked in under `.github/workflows`; do not report an assumed CI job
-as validation.
+tests or automatically apply to a prose-only task.
+
+[CI](../.github/workflows/ci.yml) runs `go build ./cmd/jig`, `go vet ./...`,
+`go test ./...`, and a `gofmt -l` check on `ubuntu-latest` and `macos-latest`
+for pushes to `main` and for pull requests. It does not run `-race`,
+authenticated integration probes, or workflow TOML validation; those remain
+local evidence, so do not report them as covered by CI.
 
 ## Test design
 
@@ -151,8 +152,8 @@ seeded private values. Cover bounds, damaged storage, missing artifacts,
 sanitization, and separate-process leases. Never attach raw real run archives
 or seeded credential-shaped fixture values to proof documents.
 
-Authenticated probes are opt-in: `JIG_CODEX_ACP_INTEGRATION=1` enables nested
-Codex probes, and `JIG_ACP_QUESTION_INTEGRATION` enables the live question probe
+Authenticated probes are opt-in: `JIG_CODEX_ACP_INTEGRATION=1` enables the
+`harness/acp` Codex probes, and `JIG_ACP_QUESTION_INTEGRATION` enables the live question probe
 in `internal/harness`. Inspect their source and prerequisites before enabling;
 they may use accounts, network, and model budget. These flags control tests,
 not workflow backend selection. Most files named `integration_test.go` use

@@ -12,7 +12,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
 )
 
 // EventType is the discriminator for an Event, mirroring transcript.BlockType

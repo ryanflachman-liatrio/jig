@@ -11,8 +11,8 @@ import (
 
 	acpsdk "github.com/coder/acp-go-sdk"
 
-	"jig/harness/acp"
-	"jig/internal/agentcfg"
+	"github.com/ryanflachman-liatrio/jig/harness/acp"
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
 )
 
 func strPtr(s string) *string { return &s }

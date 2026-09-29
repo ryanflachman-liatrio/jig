@@ -5,7 +5,7 @@ import (
 	"os"
 	"syscall"
 
-	"jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 )
 
 // RunLease is the scheduler ownership descriptor. Keeping its file open is

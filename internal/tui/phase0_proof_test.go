@@ -10,11 +10,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"jig/internal/engine"
-	"jig/internal/runner"
-	"jig/internal/tui"
-	"jig/internal/tui/monitor"
-	"jig/internal/tui/selector"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/runner"
+	"github.com/ryanflachman-liatrio/jig/internal/tui"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/monitor"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/selector"
 )
 
 // TestPhase0HomeProofArtifact writes a stripped Home frame for walkthrough

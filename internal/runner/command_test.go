@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/engine"
-	"jig/internal/interaction"
-	"jig/internal/step"
-	"jig/internal/transcript"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // noopReporter satisfies engine.Reporter, recording the output deltas it sees

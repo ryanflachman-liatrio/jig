@@ -11,16 +11,16 @@ import (
 	keybind "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/datastore"
-	"jig/internal/engine"
-	"jig/internal/runner"
-	"jig/internal/step"
-	"jig/internal/tui/detail"
-	"jig/internal/tui/monitor"
-	runspane "jig/internal/tui/runs"
-	"jig/internal/tui/selector"
-	"jig/internal/tui/shared"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/runner"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/detail"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/monitor"
+	runspane "github.com/ryanflachman-liatrio/jig/internal/tui/runs"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/selector"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 func TestHydrateRunsMarksOrphansTerminal(t *testing.T) {

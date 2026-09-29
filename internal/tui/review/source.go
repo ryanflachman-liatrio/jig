@@ -8,8 +8,8 @@ import (
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
 
-	"jig/internal/tui/diffview"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/diffview"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 type sourcePresentation struct {

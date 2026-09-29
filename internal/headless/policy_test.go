@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/engine"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 func TestInventoryGates(t *testing.T) {

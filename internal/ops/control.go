@@ -7,12 +7,12 @@ import (
 	"os"
 	"path/filepath"
 
-	"jig/internal/datastore"
-	"jig/internal/engine"
-	"jig/internal/harness"
-	"jig/internal/headless"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/harness"
+	"github.com/ryanflachman-liatrio/jig/internal/headless"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 type ControlError struct {

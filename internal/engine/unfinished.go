@@ -1,6 +1,6 @@
 package engine
 
-import "jig/internal/step"
+import "github.com/ryanflachman-liatrio/jig/internal/step"
 
 // UnfinishedKind classifies an unfinished historical run for Runs-list copy
 // (Spec 20): review-paused vs crash-interrupted vs other unfinished parks.

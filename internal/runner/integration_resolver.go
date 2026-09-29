@@ -4,11 +4,11 @@ import (
 	"context"
 	"strings"
 
-	"jig/internal/agentcfg"
-	"jig/internal/engine"
-	"jig/internal/harness"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/harness"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // IntegrationResolver runs an operator-requested resolution through the same

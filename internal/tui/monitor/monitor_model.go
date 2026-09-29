@@ -10,15 +10,15 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 
-	"jig/internal/config"
-	"jig/internal/engine"
-	"jig/internal/helpchat"
-	"jig/internal/sentinel"
-	"jig/internal/step"
-	"jig/internal/transcript"
-	questionpanel "jig/internal/tui/question"
-	reviewworkspace "jig/internal/tui/review"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/config"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/helpchat"
+	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
+	questionpanel "github.com/ryanflachman-liatrio/jig/internal/tui/question"
+	reviewworkspace "github.com/ryanflachman-liatrio/jig/internal/tui/review"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // focusRegion is which of the monitor's three regions currently holds keyboard

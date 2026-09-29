@@ -8,8 +8,8 @@ import (
 	"math"
 	"sort"
 
-	"jig/internal/engine"
-	"jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
 )
 
 // decodedRecord is one accepted journal line: its envelope plus the typed

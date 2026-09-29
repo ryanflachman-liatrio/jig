@@ -8,7 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // Bounded content limits shared by every adapter. Deviations from these must

@@ -11,13 +11,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"jig/internal/engine"
-	domainreview "jig/internal/review"
-	"jig/internal/runner"
-	"jig/internal/step"
-	"jig/internal/tui"
-	"jig/internal/tui/monitor"
-	"jig/internal/tui/selector"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	domainreview "github.com/ryanflachman-liatrio/jig/internal/review"
+	"github.com/ryanflachman-liatrio/jig/internal/runner"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/tui"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/monitor"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/selector"
 )
 
 // TestGoldenPathProofFrames writes the six SCRIPT.md reference frames as

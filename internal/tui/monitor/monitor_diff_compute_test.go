@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/toolcall"
-	"jig/internal/tui/diffview"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/diffview"
 )
 
 func stringPtr(s string) *string { return &s }

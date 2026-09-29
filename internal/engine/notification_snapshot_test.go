@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/datastore"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // buildSnapshotWorkflow returns a workflow with a resolved notification

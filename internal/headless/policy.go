@@ -3,7 +3,7 @@ package headless
 import (
 	"fmt"
 
-	"jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
 )
 
 // Policy decides how to answer park-path events. Recovery/conflict defaults

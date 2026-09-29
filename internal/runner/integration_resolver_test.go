@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"jig/internal/agentcfg"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // TestIntegrationResolverAgent pins the resolver's per-backend agent: it runs

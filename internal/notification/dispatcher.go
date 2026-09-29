@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 const (

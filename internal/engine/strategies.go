@@ -3,8 +3,8 @@ package engine
 import (
 	"context"
 
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // stepDispatchStrategy is the Strategy pattern's contract for starting a step

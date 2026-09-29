@@ -5,8 +5,8 @@ import (
 	"slices"
 	"strings"
 
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // buildStepContext assembles the deterministic StepContext for an agent step

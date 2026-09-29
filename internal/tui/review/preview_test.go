@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	domain "jig/internal/review"
+	domain "github.com/ryanflachman-liatrio/jig/internal/review"
 )
 
 func TestPreviewMapsTopLevelMarkdownBlocksToSourceLines(t *testing.T) {

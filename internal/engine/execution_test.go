@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 func TestSchedulerAcquireExecutionWorkspaceLifecycle(t *testing.T) {

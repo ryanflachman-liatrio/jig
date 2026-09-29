@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/datastore"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // fanOutExec is a general-purpose executor for foreach engine tests. Any step

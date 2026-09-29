@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/step"
-	"jig/internal/toolcall"
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 // runningExchange builds a fabricated tool-use whose result has not

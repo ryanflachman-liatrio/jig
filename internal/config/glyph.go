@@ -1,6 +1,6 @@
 package config
 
-import "jig/internal/tui/shared"
+import "github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 
 // GlyphFlag is the tri-state result of scanning os.Args for --ascii: whether
 // the flag was passed at all, and if so, which value it carried. This is

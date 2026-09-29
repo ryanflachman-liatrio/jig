@@ -7,10 +7,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"jig/internal/engine"
-	"jig/internal/interaction"
-	"jig/internal/step"
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 // TestInputQueueIngest verifies that three InputRequest events for distinct steps

@@ -16,9 +16,9 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 
-	"jig/internal/engine"
-	"jig/internal/interaction"
-	"jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
 )
 
 // TelemetryReporter wraps an engine.Reporter and increments the per-tool

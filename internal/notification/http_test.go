@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 func newTestBinding(url string, typ DestinationType, bearer string) Binding {

@@ -3,7 +3,7 @@ package monitor
 import (
 	keybind "charm.land/bubbles/v2/key"
 
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // monitorKeys covers the two-panel run monitor. Focus moves between the Steps

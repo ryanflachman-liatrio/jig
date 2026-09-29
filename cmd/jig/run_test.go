@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/headless"
+	"github.com/ryanflachman-liatrio/jig/internal/headless"
 )
 
 func TestParseOutputMode(t *testing.T) {

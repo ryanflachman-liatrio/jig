@@ -5,10 +5,10 @@ import (
 	"sync"
 	"testing"
 
-	"jig/internal/engine"
-	"jig/internal/headless"
-	"jig/internal/runner"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/headless"
+	"github.com/ryanflachman-liatrio/jig/internal/runner"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 type stubRegistrar struct {

@@ -21,12 +21,12 @@ import (
 	keybind "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/engine"
-	domainreview "jig/internal/review"
-	"jig/internal/runner"
-	"jig/internal/tui/monitor"
-	runspane "jig/internal/tui/runs"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	domainreview "github.com/ryanflachman-liatrio/jig/internal/review"
+	"github.com/ryanflachman-liatrio/jig/internal/runner"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/monitor"
+	runspane "github.com/ryanflachman-liatrio/jig/internal/tui/runs"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // dispatchProbe hides the concrete model type so a single table can drive

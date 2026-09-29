@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // GateWarning describes a construct that will fail-closed if hit at runtime.

@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
 )
 
 // DefaultMaxBlockBytes is the write-time hard cap applied to a block's text,

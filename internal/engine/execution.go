@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 type executionWorkspaceKind uint8

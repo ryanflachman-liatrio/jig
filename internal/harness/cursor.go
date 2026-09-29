@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"jig/harness/acp"
-	"jig/internal/agentcfg"
+	"github.com/ryanflachman-liatrio/jig/harness/acp"
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
 )
 
 // CursorHarness drives Cursor over the Agent Client Protocol by spawning

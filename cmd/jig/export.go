@@ -10,7 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"jig/internal/runexport"
+	"github.com/ryanflachman-liatrio/jig/internal/runexport"
 )
 
 const exportUsage = `usage: jig export RUN_ID --destination PATH [--root PATH] [--include-text]

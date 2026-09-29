@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
 )
 
 func testRequest() interaction.QuestionRequest {

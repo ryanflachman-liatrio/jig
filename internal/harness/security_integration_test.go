@@ -15,14 +15,14 @@ import (
 
 	acpsdk "github.com/coder/acp-go-sdk"
 
-	"jig/internal/datastore"
-	"jig/internal/engine"
-	"jig/internal/harness"
-	"jig/internal/interaction"
-	"jig/internal/runner"
-	"jig/internal/sentinel"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/harness"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/runner"
+	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 type fixtureAgent struct {

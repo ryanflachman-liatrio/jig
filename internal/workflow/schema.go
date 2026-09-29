@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"jig/internal/agentcfg"
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
 )
 
 // StepType is the kind of work a step performs.

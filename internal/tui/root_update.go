@@ -4,15 +4,15 @@ import (
 	keybind "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/datastore"
-	"jig/internal/engine"
-	"jig/internal/tui/detail"
-	"jig/internal/tui/monitor"
-	"jig/internal/tui/palette"
-	"jig/internal/tui/runs"
-	"jig/internal/tui/selector"
-	"jig/internal/tui/shared"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/detail"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/monitor"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/palette"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/runs"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/selector"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // clipboardStateProbe is exported through this package's internal tests to

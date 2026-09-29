@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/interaction"
-	"jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
 )
 
 func TestJournalRoundTrip(t *testing.T) {

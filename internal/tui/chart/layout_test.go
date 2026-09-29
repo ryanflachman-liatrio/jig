@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // mustDecode parses a workflow from TOML with structural-only validation (no

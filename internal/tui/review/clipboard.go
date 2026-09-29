@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"strings"
 
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // CopyItemRequest builds a request for the current selectable unit. The

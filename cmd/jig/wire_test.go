@@ -5,9 +5,9 @@ import (
 	"context"
 	"testing"
 
-	"jig/internal/config"
-	"jig/internal/notification"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/config"
+	"github.com/ryanflachman-liatrio/jig/internal/notification"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 func TestNewManagerUsesPortableBuiltinRoster(t *testing.T) {

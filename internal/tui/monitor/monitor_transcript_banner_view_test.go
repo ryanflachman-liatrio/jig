@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 // fourCoordPage returns a fixture that steps through every banner

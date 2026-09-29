@@ -10,12 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"jig/internal/datastore"
-	"jig/internal/interaction"
-	"jig/internal/manifest"
-	"jig/internal/review"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/manifest"
+	"github.com/ryanflachman-liatrio/jig/internal/review"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 type workflowSnapshot struct {

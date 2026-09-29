@@ -8,8 +8,8 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/interaction"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 type phase uint8

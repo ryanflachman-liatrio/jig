@@ -7,7 +7,7 @@ import (
 
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
 
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 type RowKind uint8

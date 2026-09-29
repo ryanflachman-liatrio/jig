@@ -8,8 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"jig/internal/engine"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // writer emits progress to stderr and the final payload to stdout per OutputMode.

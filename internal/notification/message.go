@@ -3,7 +3,7 @@ package notification
 import (
 	"time"
 
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // Notification is one logical outbound notification ready for dispatch. It is

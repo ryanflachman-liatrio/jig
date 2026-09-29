@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // TestParseStaleWorktreePath verifies the parser that extracts the stale worktree

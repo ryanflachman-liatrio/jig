@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 type errorDispatcher struct{ calls atomic.Int32 }

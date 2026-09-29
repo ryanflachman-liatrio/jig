@@ -12,7 +12,7 @@ import (
 	"time"
 
 	acpsdk "github.com/coder/acp-go-sdk"
-	acp "jig/harness/acp"
+	acp "github.com/ryanflachman-liatrio/jig/harness/acp"
 )
 
 func main() {

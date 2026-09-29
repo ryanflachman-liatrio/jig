@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"jig/harness/acp"
-	"jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/harness/acp"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
 )
 
 func TestCursorQuestionTranslationUsesStableOptionIDs(t *testing.T) {

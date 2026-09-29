@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/toolcall"
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 // TestDiffRenderGallery writes deterministic ANSI captures of the

@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 
-	"jig/internal/interaction"
-	"jig/internal/sentinel"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // Executor is defined in engine (the consumer) and implemented in runner.

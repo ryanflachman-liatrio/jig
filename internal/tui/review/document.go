@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	domain "jig/internal/review"
+	domain "github.com/ryanflachman-liatrio/jig/internal/review"
 )
 
 type document struct {

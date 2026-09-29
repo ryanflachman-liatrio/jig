@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/interaction"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // singleChildTOML declares a discover -> analyze family whose producer emits

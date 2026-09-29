@@ -3,9 +3,9 @@ package monitor
 import (
 	"time"
 
-	"jig/internal/engine"
-	"jig/internal/interaction"
-	"jig/internal/review"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/review"
 )
 
 // ShowHomeMsg asks the root to return to Home (workflows + runs).

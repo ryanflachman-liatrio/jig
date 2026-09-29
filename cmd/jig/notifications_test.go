@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"jig/internal/notification"
+	"github.com/ryanflachman-liatrio/jig/internal/notification"
 )
 
 // isolateGlobalConfigFlagPath points the --config-equivalent global at a

@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/engine"
-	"jig/internal/interaction"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 type fakeDispatcher struct {

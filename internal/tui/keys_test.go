@@ -7,7 +7,7 @@ import (
 	keybind "charm.land/bubbles/v2/key"
 	"charm.land/lipgloss/v2"
 
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // TestHintStringSkipsDisabled locks in the property that makes footers unable to

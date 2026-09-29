@@ -8,9 +8,9 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"jig/internal/engine"
-	"jig/internal/transcript"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 func manyTranscriptEntries(n int) []transcript.Entry {

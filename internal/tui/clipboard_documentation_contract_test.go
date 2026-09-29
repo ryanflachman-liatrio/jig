@@ -13,7 +13,7 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // clipboardDocPath is the operator-facing documentation the contract test

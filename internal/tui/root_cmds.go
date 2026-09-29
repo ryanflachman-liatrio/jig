@@ -3,8 +3,8 @@ package tui
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/engine"
-	"jig/internal/tui/monitor"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/monitor"
 )
 
 // hydrateRunsCmd reads persisted runs off the UI goroutine. ReplayJournal keeps

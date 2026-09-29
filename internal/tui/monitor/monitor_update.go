@@ -8,10 +8,10 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/helpchat"
-	domainreview "jig/internal/review"
-	reviewworkspace "jig/internal/tui/review"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/helpchat"
+	domainreview "github.com/ryanflachman-liatrio/jig/internal/review"
+	reviewworkspace "github.com/ryanflachman-liatrio/jig/internal/tui/review"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {

@@ -10,9 +10,9 @@
 // "Architecture and ownership"):
 //
 //   - This is the only package that imports "go.opentelemetry.io/otel/**".
-//   - It imports "jig/internal/engine" (event types), "jig/internal/workflow"
-//     (Telemetry config type), and "jig/internal/step" (status enum). It does
-//     not import "jig/internal/tui".
+//   - It imports "github.com/ryanflachman-liatrio/jig/internal/engine" (event types), "github.com/ryanflachman-liatrio/jig/internal/workflow"
+//     (Telemetry config type), and "github.com/ryanflachman-liatrio/jig/internal/step" (status enum). It does
+//     not import "github.com/ryanflachman-liatrio/jig/internal/tui".
 //   - It never mutates engine state. The exporter attaches as a subscriber
 //     (Manager.Subscribe) and never applies backpressure.
 //   - Persistence-off (root == "") remains valid: prefs writes no-op, metric

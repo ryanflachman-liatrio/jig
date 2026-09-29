@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/toolcall"
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 // diffExchangeEntries builds a two-entry tool exchange whose result

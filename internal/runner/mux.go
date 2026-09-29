@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"jig/internal/engine"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // Mux is an engine.Executor that routes each step to the appropriate

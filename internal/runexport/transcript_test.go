@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 func TestDecodeTranscriptPrefixSkipsMalformedAndContinues(t *testing.T) {

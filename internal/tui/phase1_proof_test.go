@@ -9,12 +9,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/engine"
-	"jig/internal/step"
-	"jig/internal/tui/monitor"
-	"jig/internal/tui/palette"
-	"jig/internal/tui/runs"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/monitor"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/palette"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/runs"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 func TestPhase1ProofFrames(t *testing.T) {

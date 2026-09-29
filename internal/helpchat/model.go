@@ -11,11 +11,11 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 
-	"jig/internal/engine"
-	"jig/internal/harness"
-	"jig/internal/interaction"
-	questionpanel "jig/internal/tui/question"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/harness"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	questionpanel "github.com/ryanflachman-liatrio/jig/internal/tui/question"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 type helpFocus int

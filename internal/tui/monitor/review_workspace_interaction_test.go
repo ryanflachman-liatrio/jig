@@ -7,10 +7,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"jig/internal/engine"
-	domainreview "jig/internal/review"
-	"jig/internal/step"
-	reviewworkspace "jig/internal/tui/review"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	domainreview "github.com/ryanflachman-liatrio/jig/internal/review"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	reviewworkspace "github.com/ryanflachman-liatrio/jig/internal/tui/review"
 )
 
 func monitorWithReviewWorkspace(t *testing.T) Model {

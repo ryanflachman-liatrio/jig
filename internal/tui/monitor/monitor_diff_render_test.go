@@ -6,7 +6,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"jig/internal/tui/diffview"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/diffview"
 )
 
 // mustCompute is a small helper so table cases can construct

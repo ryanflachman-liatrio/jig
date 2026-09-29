@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // chart_layout.go turns a validated *workflow.Workflow into a pure, deterministic

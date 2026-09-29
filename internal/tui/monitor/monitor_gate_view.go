@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // clipReason wraps s to width and truncates to at most maxLines, appending an

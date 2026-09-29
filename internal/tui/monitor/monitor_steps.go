@@ -7,8 +7,8 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"jig/internal/step"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // listBodyHeaderLines is the number of lines listBody renders above the step

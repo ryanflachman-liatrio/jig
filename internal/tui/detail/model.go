@@ -3,7 +3,7 @@ package detail
 import (
 	"charm.land/bubbles/v2/viewport"
 
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // Model is the read-only view of one workflow: its steps, their kinds,

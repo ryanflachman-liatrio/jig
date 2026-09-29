@@ -5,9 +5,9 @@ import (
 
 	"charm.land/bubbles/v2/viewport"
 
-	"jig/internal/step"
-	"jig/internal/tui/shared"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // Model is the run-list screen: one row per active/completed run, updated in

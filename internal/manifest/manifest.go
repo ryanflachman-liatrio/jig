@@ -33,8 +33,8 @@ import (
 	"io"
 	"os"
 
-	"jig/internal/datastore"
-	"jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
 )
 
 // Writer appends events to journal.jsonl and materializes per-step result.json.

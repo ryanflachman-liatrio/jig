@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"jig/internal/engine"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // CheckExecutor runs quality tools under the check evidence protocol. Process

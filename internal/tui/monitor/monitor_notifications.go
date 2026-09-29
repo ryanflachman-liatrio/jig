@@ -3,7 +3,7 @@ package monitor
 import (
 	"charm.land/lipgloss/v2"
 
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // DiagnosticsRenderer produces a pre-formatted, secret-free dump of the

@@ -1,6 +1,6 @@
 package selector
 
-import "jig/internal/tui/shared"
+import "github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 
 const mouseWheelItems = 3
 

@@ -9,8 +9,8 @@ import (
 
 	acpsdk "github.com/coder/acp-go-sdk"
 
-	"jig/harness/acp"
-	"jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/harness/acp"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
 )
 
 func TestAcpHarnessCapabilities(t *testing.T) {

@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	"jig/internal/headless"
-	"jig/internal/ops"
+	"github.com/ryanflachman-liatrio/jig/internal/headless"
+	"github.com/ryanflachman-liatrio/jig/internal/ops"
 )
 
 type controlFlags struct {

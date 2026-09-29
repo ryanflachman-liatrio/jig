@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/agentcfg"
-	"jig/internal/datastore"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 const agentSnapshotTOML = `

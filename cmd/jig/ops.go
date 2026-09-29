@@ -14,7 +14,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"jig/internal/ops"
+	"github.com/ryanflachman-liatrio/jig/internal/ops"
 )
 
 func runStatus(args []string) int {

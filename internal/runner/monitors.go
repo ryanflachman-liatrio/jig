@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"jig/internal/sentinel"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 const monitorModel = "claude-haiku-4-5-20251001"

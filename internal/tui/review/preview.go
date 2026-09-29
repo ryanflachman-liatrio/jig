@@ -10,8 +10,8 @@ import (
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/text"
 
-	domain "jig/internal/review"
-	"jig/internal/tui/shared"
+	domain "github.com/ryanflachman-liatrio/jig/internal/review"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 type previewBlock struct {
