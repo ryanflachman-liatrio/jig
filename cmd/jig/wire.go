@@ -8,13 +8,13 @@ import (
 	"strings"
 	"sync"
 
-	"jig/internal/config"
-	"jig/internal/engine"
-	"jig/internal/harness"
-	"jig/internal/notification"
-	"jig/internal/runner"
-	"jig/internal/telemetry"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/config"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/harness"
+	"github.com/ryanflachman-liatrio/jig/internal/notification"
+	"github.com/ryanflachman-liatrio/jig/internal/runner"
+	"github.com/ryanflachman-liatrio/jig/internal/telemetry"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // Runtime bundles the process-wide state that owns cross-run behavior: the

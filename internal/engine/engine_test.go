@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/datastore"
-	"jig/internal/manifest"
-	domainreview "jig/internal/review"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/manifest"
+	domainreview "github.com/ryanflachman-liatrio/jig/internal/review"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // capturingExec records the Inputs slice received per step and delegates

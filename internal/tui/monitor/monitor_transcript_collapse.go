@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // collapseSummaryLabel derives an oversized user-role text block's summary

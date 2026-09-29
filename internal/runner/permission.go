@@ -6,11 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"jig/internal/agentcfg"
-	"jig/internal/engine"
-	"jig/internal/harness"
-	"jig/internal/operatorcfg"
-	"jig/internal/sentinel"
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/harness"
+	"github.com/ryanflachman-liatrio/jig/internal/operatorcfg"
+	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
 )
 
 // stepPermission is the permission callback installed on every agent step.

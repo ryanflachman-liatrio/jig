@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"jig/internal/headless"
+	"github.com/ryanflachman-liatrio/jig/internal/headless"
 )
 
 // runRun is the non-interactive CI / scripting entry point (Spec 19).

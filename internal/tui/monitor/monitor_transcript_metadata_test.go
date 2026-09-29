@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/step"
-	"jig/internal/transcript"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 func timeAt(t *testing.T, s string) time.Time {

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"jig/internal/datastore"
-	"jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
 )
 
 func TestStepOutputFiles(t *testing.T) {

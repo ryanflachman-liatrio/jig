@@ -16,10 +16,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"jig/internal/engine"
-	"jig/internal/step"
-	"jig/internal/toolcall"
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 // selectionSyntheticPage returns a fabricated multi-kind page: text, system,

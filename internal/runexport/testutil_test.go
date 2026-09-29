@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/agentcfg"
-	"jig/internal/engine"
-	"jig/internal/toolcall"
-	"jig/internal/transcript"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 const fixtureRunID = "run-1"

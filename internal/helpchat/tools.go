@@ -10,10 +10,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/datastore"
-	"jig/internal/engine"
-	"jig/internal/interaction"
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 // DispatchFunc enqueues a typed monitor message without blocking the tool handler.

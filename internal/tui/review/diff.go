@@ -3,7 +3,7 @@ package review
 import (
 	"github.com/bluekeyes/go-gitdiff/gitdiff"
 
-	"jig/internal/tui/diffview"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/diffview"
 )
 
 type diffRowKind = diffview.RowKind

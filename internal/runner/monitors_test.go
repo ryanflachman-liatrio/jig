@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"jig/internal/sentinel"
+	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
 )
 
 type noCallDispatcher struct{}

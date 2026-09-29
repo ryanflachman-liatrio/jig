@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
 )
 
 // TestPrometheusListenerServesMetricsFamilies boots a real Provider with

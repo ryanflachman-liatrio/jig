@@ -12,10 +12,10 @@ import (
 
 	acpsdk "github.com/coder/acp-go-sdk"
 
-	"jig/harness/acp"
-	"jig/internal/agentcfg"
-	"jig/internal/interaction"
-	"jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/harness/acp"
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
 )
 
 // AcpHarness drives Claude over the Agent Client Protocol via Zed's npx

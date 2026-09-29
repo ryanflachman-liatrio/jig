@@ -3,8 +3,8 @@ package harness
 import (
 	"context"
 
-	"jig/internal/agentcfg"
-	"jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
 )
 
 // Capability is one optional behavior a Harness may advertise before Open is

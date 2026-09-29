@@ -9,8 +9,8 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"jig/internal/tui/diffview"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/diffview"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // diffTabWidth is the visible width of a leading tab (matching omp's

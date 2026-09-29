@@ -10,7 +10,7 @@ import (
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // workflowItem is one row in the selector: a discovered workflow file, shown

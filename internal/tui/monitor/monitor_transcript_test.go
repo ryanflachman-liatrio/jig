@@ -8,7 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 // denseTranscriptFixture deliberately keeps each migration edge case in one

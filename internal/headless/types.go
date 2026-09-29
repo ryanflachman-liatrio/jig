@@ -6,8 +6,8 @@ import (
 	"io"
 	"time"
 
-	"jig/internal/engine"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // Exit codes frozen by Spec 19 (docs/headless.md).

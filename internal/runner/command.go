@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"jig/internal/engine"
-	"jig/internal/step"
-	"jig/internal/transcript"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // CommandExecutor runs a workflow command step via the system shell.

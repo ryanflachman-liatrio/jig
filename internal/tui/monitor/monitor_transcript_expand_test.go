@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 // FR-09.6: toggling the expand control on a collapsed item renders the full

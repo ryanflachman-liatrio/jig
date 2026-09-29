@@ -7,10 +7,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/engine"
-	"jig/internal/step"
-	"jig/internal/tui/monitor"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/monitor"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // TestRuns verifies the runs screen renders inside a "Runs" panel and that

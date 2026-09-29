@@ -7,8 +7,8 @@ import (
 	"context"
 	"time"
 
-	"jig/internal/engine"
-	"jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
 )
 
 // FakeOutcome describes the scripted result for one step.

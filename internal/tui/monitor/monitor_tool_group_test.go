@@ -8,9 +8,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"jig/internal/toolcall"
-	"jig/internal/transcript"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 func toolExchange(id, kind string, args map[string]any, generation, iteration, attempt int, failed bool) []transcript.Entry {

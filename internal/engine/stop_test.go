@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // stopTestExec is a controllable executor for stop/resume tests. A "blocker"

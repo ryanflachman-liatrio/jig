@@ -6,9 +6,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/engine"
-	"jig/internal/tui/monitor"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/monitor"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // TestClipboardRunID verifies that y on the runs list emits a

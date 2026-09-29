@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // Per-turn metadata row (omp-transcript-parity slice 11).

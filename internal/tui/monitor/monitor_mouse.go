@@ -3,7 +3,7 @@ package monitor
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 const mouseScrollRows = 3

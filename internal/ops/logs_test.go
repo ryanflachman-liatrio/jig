@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/datastore"
-	"jig/internal/engine"
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 func TestReadLogsMergesAndBounds(t *testing.T) {

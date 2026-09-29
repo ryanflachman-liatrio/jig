@@ -8,15 +8,15 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/config"
-	"jig/internal/engine"
-	"jig/internal/tui/detail"
-	"jig/internal/tui/monitor"
-	"jig/internal/tui/palette"
-	"jig/internal/tui/runs"
-	"jig/internal/tui/selector"
-	"jig/internal/tui/shared"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/config"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/detail"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/monitor"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/palette"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/runs"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/selector"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // screen identifies which top-level surface is currently driving the UI.

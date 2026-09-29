@@ -13,9 +13,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"jig/internal/engine"
-	"jig/internal/ops"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/ops"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 var (

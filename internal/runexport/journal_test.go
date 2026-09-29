@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
 )
 
 func TestDecodeJournalPrefixTornRecord(t *testing.T) {

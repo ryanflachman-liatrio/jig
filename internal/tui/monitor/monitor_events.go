@@ -7,13 +7,13 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/datastore"
-	"jig/internal/engine"
-	domainreview "jig/internal/review"
-	"jig/internal/sentinel"
-	"jig/internal/step"
-	questionpanel "jig/internal/tui/question"
-	reviewworkspace "jig/internal/tui/review"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	domainreview "github.com/ryanflachman-liatrio/jig/internal/review"
+	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	questionpanel "github.com/ryanflachman-liatrio/jig/internal/tui/question"
+	reviewworkspace "github.com/ryanflachman-liatrio/jig/internal/tui/review"
 )
 
 func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {

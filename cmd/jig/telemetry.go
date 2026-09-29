@@ -7,9 +7,9 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 
-	"jig/internal/engine"
-	"jig/internal/telemetry"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/telemetry"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // stepLabelsFor returns the exporter's label set for (runID, stepID), or a

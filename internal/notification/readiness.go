@@ -9,7 +9,7 @@ import (
 	"slices"
 	"strings"
 
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 type ReadinessEntry struct {

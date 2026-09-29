@@ -3,7 +3,7 @@ package engine
 import (
 	"testing"
 
-	"jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
 )
 
 func TestClassifyUnfinished(t *testing.T) {

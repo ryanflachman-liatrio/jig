@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/headless"
-	"jig/internal/scaffold"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/headless"
+	"github.com/ryanflachman-liatrio/jig/internal/scaffold"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 func TestInit(t *testing.T) {

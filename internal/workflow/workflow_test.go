@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/agentcfg"
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
 )
 
 // validBugfix is the worked example from docs/workflow-schema.md. Skill dirs and

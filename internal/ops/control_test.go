@@ -9,10 +9,10 @@ import (
 	"reflect"
 	"testing"
 
-	"jig/internal/datastore"
-	"jig/internal/engine"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 func TestPreviewResetIsReadOnly(t *testing.T) {

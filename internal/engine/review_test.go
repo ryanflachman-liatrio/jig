@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/review"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/review"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 func TestPrepareReviewSnapshotsFileTarget(t *testing.T) {

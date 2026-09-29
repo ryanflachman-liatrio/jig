@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"jig/internal/engine"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // Run loads (if needed), starts, drains events under Policy, and returns a

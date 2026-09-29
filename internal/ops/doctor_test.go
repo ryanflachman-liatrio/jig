@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 func TestDoctorCIGatesAndSecrets(t *testing.T) {

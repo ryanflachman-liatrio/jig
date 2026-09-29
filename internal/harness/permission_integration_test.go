@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/agentcfg"
-	"jig/internal/sentinel"
-	"jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
+	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
 )
 
 // wirePermission is one scripted permission round-trip in each adapter's real

@@ -7,7 +7,7 @@ import (
 	keybind "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/tui/palette"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/palette"
 )
 
 func TestPaletteFilterAndEsc(t *testing.T) {

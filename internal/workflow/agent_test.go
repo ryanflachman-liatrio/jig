@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/agentcfg"
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
 )
 
 const agentWFHeader = `

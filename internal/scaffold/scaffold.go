@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // Options selects the target and embedded template for a scaffold plan.

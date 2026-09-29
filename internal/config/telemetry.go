@@ -1,6 +1,6 @@
 package config
 
-import "jig/internal/telemetry"
+import "github.com/ryanflachman-liatrio/jig/internal/telemetry"
 
 // telemetryDefaultsFromEnv builds the [telemetry] "built-in defaults" layer
 // by resolving telemetry.Config from process env only — no prefs file, no

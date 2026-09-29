@@ -8,11 +8,11 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"jig/internal/datastore"
-	"jig/internal/engine"
-	"jig/internal/step"
-	"jig/internal/transcript"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 const (

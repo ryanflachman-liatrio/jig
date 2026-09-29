@@ -6,8 +6,8 @@ import (
 
 	keybind "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
-	"jig/internal/review"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/review"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 func (m Model) Init() tea.Cmd { return nil }

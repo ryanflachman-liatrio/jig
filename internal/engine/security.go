@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"jig/internal/datastore"
-	"jig/internal/sentinel"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 type runSecurity struct {

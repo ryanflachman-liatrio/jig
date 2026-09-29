@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	domain "jig/internal/review"
-	"jig/internal/tui/shared"
+	domain "github.com/ryanflachman-liatrio/jig/internal/review"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 func extract(payload shared.ClipboardPayload) (string, error) {

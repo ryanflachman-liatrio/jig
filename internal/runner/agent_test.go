@@ -11,15 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/agentcfg"
-	"jig/internal/datastore"
-	"jig/internal/engine"
-	"jig/internal/harness"
-	"jig/internal/interaction"
-	"jig/internal/sentinel"
-	"jig/internal/step"
-	"jig/internal/transcript"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/harness"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // captureReporter records the liveness signals captureStream emits so tests can

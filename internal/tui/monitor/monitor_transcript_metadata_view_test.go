@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/step"
-	"jig/internal/transcript"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // twoTurnPage returns a two-turn synthetic page whose entries carry

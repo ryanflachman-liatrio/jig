@@ -9,10 +9,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"jig/internal/engine"
-	"jig/internal/step"
-	"jig/internal/tui/monitor"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/monitor"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {

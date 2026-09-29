@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"jig/internal/engine"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // Lifecycle is the engine Observer that normalizes ctrl-class events into

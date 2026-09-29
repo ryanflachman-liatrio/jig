@@ -3,7 +3,7 @@ package config
 import (
 	"testing"
 
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 func TestResolveGlyphPreset(t *testing.T) {

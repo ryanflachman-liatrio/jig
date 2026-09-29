@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/datastore"
-	"jig/internal/sentinel"
-	"jig/internal/step"
-	"jig/internal/transcript"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 type transcriptSecurityExec struct {

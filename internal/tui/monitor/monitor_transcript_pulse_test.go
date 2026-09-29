@@ -6,7 +6,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // FR-10.5: every frame in both the default and ASCII-fallback pulse glyph

@@ -3,8 +3,8 @@ package helpchat
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/harness"
-	"jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/harness"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
 )
 
 // ServerReadyMsg is returned once the local loopback tool server (the

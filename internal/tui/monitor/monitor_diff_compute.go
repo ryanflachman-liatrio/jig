@@ -8,8 +8,8 @@ import (
 	"github.com/hexops/gotextdiff/myers"
 	"github.com/hexops/gotextdiff/span"
 
-	"jig/internal/toolcall"
-	"jig/internal/tui/diffview"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/diffview"
 )
 
 // diffComputeMaxBytes caps the combined size of OldText + NewText handed to

@@ -3,7 +3,7 @@ package monitor
 import (
 	"time"
 
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 // buildTranscriptItems turns only the currently loaded page into immutable

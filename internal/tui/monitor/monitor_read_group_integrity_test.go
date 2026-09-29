@@ -11,8 +11,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"jig/internal/toolcall"
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 func threeMemberReadPage() transcript.Page {

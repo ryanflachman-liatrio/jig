@@ -9,11 +9,11 @@ import (
 	"sort"
 	"strings"
 
-	"jig/internal/datastore"
-	"jig/internal/engine"
-	"jig/internal/headless"
-	"jig/internal/operatorcfg"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/headless"
+	"github.com/ryanflachman-liatrio/jig/internal/operatorcfg"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 type CheckStatus string

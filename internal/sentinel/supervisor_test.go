@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 // stubDispatcher is a test double for MonitorDispatcher. It flags windows

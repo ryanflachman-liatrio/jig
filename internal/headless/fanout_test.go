@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/engine"
-	"jig/internal/headless"
-	"jig/internal/runner"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/headless"
+	"github.com/ryanflachman-liatrio/jig/internal/runner"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // fanOutWF is a minimal discover -> analyze foreach workflow, run entirely

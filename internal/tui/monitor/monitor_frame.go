@@ -5,8 +5,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/engine"
-	"jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
 )
 
 // monitorFrameInterval is the repaint cadence of the frame loop. It is fast

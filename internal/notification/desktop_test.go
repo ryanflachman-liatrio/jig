@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 func TestDesktopSenderMacOSInvokesOsascript(t *testing.T) {

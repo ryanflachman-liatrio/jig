@@ -6,8 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/config"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/config"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 func TestBreadcrumbTitlesSlimAtCommonWidths(t *testing.T) {

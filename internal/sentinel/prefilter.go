@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 
-	"jig/internal/toolcall"
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 // StuckLoopPrefilter returns true when the transcript window shows clear signs

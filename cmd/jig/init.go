@@ -7,8 +7,8 @@ import (
 	"io"
 	"os"
 
-	"jig/internal/headless"
-	"jig/internal/scaffold"
+	"github.com/ryanflachman-liatrio/jig/internal/headless"
+	"github.com/ryanflachman-liatrio/jig/internal/scaffold"
 )
 
 var initPlan = scaffold.Plan

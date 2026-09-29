@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"testing"
 
-	"jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
 )
 
 func TestResolveRequestRefusesUnsafeTargetsWithoutWrites(t *testing.T) {

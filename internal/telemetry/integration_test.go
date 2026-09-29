@@ -8,9 +8,9 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	tracenoop "go.opentelemetry.io/otel/trace/noop"
 
-	"jig/internal/engine"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // stubExecutor is a minimal engine.Executor used by the integration test.

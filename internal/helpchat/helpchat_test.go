@@ -16,10 +16,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/engine"
-	"jig/internal/harness"
-	"jig/internal/interaction"
-	"jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/harness"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
 )
 
 // TestBuildSystemPrompt verifies the rendered system prompt contains the

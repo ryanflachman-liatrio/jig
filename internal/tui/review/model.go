@@ -8,8 +8,8 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 
-	domain "jig/internal/review"
-	"jig/internal/tui/shared"
+	domain "github.com/ryanflachman-liatrio/jig/internal/review"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 type Mode uint8

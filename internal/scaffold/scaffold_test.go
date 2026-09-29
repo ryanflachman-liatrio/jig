@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 func TestTemplateAssetsEmbedded(t *testing.T) {

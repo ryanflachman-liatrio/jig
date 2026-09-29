@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"sync"
 
-	"jig/harness/acp"
-	"jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/harness/acp"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
 )
 
 // newCursorQuestionHandler keeps the native Cursor protocol isolated from the

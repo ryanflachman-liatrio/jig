@@ -1,8 +1,6 @@
-module jig
+module github.com/ryanflachman-liatrio/jig
 
 go 1.25.12
-
-replace jig/harness/acp => ./harness/acp
 
 require (
 	charm.land/bubbles/v2 v2.1.1
@@ -78,5 +76,4 @@ require (
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
-	jig/harness/acp v0.0.0
 )

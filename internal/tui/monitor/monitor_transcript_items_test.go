@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 func TestBuildTranscriptItemsScopedFIFO(t *testing.T) {

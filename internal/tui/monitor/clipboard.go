@@ -11,9 +11,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/datastore"
-	"jig/internal/transcript"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // fileReadChunk is the bounded read size used by copyOutputFile so a growing

@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
-	domain "jig/internal/review"
-	"jig/internal/tui/shared"
+	domain "github.com/ryanflachman-liatrio/jig/internal/review"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 func sourceDocument(source, format, content string) document {

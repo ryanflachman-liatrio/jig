@@ -7,8 +7,8 @@ import (
 	"io"
 	"time"
 
-	"jig/internal/toolcall"
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 // transcriptLine is one decoded (or malformed) source line, kept minimal so

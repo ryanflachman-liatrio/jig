@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
 )
 
 func TestACPAskUserQuestionIntegration(t *testing.T) {

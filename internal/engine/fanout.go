@@ -17,9 +17,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"jig/internal/datastore"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // fanOutFamily is the scheduler's runtime record of one foreach family's

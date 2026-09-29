@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
 )
 
 const systemPromptBase = `You are a workflow operator assistant for jig, a deterministic workflow orchestration tool.

@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/datastore"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // fanOutMutatingExec is an Executor for reset/route tests that need real git

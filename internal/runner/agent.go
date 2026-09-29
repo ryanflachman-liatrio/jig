@@ -10,14 +10,14 @@ import (
 	"strings"
 	"time"
 
-	"jig/internal/datastore"
-	"jig/internal/engine"
-	"jig/internal/harness"
-	"jig/internal/sentinel"
-	"jig/internal/step"
-	"jig/internal/toolcall"
-	"jig/internal/transcript"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/harness"
+	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // AgentExecutor runs agent steps via a harness.Harness backend. Each Execute

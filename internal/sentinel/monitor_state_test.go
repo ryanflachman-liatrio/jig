@@ -9,7 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 func TestMonitorStateRoundTripAndPersistenceOff(t *testing.T) {

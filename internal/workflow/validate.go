@@ -10,7 +10,7 @@ import (
 	"strings"
 	"unicode"
 
-	"jig/internal/agentcfg"
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
 )
 
 // telemetryPrefixRe / telemetryAttrKeyRe mirror internal/telemetry so the

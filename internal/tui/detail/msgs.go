@@ -1,6 +1,6 @@
 package detail
 
-import "jig/internal/workflow"
+import "github.com/ryanflachman-liatrio/jig/internal/workflow"
 
 // BackMsg is emitted when the user leaves the detail screen.
 type BackMsg struct{}

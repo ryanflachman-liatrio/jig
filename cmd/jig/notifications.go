@@ -6,8 +6,8 @@ import (
 	"io"
 	"os"
 
-	"jig/internal/notification"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/notification"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 func runNotifications(args []string) int {

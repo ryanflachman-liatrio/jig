@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // coalesceExec drives the parallel-loopers scenario: `implement` always

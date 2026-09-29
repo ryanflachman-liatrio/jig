@@ -28,7 +28,7 @@ package transcript
 import (
 	"encoding/json"
 
-	"jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
 )
 
 // Role identifies the source of an Entry's blocks.

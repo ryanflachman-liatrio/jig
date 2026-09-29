@@ -28,10 +28,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/engine"
-	"jig/internal/step"
-	"jig/internal/toolcall"
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 // twoTurnVisualPage is the timestamped multi-turn synthetic fixture the

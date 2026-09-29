@@ -1,9 +1,9 @@
 package engine
 
 import (
-	"jig/internal/interaction"
-	"jig/internal/review"
-	"jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/review"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
 )
 
 // Event is the sealed vocabulary of state transitions the engine emits.

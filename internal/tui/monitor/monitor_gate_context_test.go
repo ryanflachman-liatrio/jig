@@ -8,10 +8,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/datastore"
-	"jig/internal/engine"
-	domainreview "jig/internal/review"
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	domainreview "github.com/ryanflachman-liatrio/jig/internal/review"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 func ctrlO() tea.KeyPressMsg {

@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"jig/internal/telemetry"
+	"github.com/ryanflachman-liatrio/jig/internal/telemetry"
 )
 
 func TestLoadTelemetryEnvBaseOnly(t *testing.T) {

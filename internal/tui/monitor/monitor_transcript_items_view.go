@@ -10,9 +10,9 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"jig/internal/toolcall"
-	"jig/internal/transcript"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // itemTranscriptBody is the conversation renderer. It consumes the bounded

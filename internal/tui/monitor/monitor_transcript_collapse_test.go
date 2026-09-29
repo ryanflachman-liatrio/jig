@@ -6,7 +6,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 // FR-09.4/FR-09.5/FR-09.14: a user-role text block over chatTextCollapseBytes

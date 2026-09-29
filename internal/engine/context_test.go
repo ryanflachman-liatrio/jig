@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // fireLoopNow records the given route sources' intents and fires the coalesced rewind

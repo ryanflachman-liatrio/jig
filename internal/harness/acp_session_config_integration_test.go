@@ -10,13 +10,13 @@ import (
 	"strings"
 	"testing"
 
-	"jig/internal/agentcfg"
-	"jig/internal/engine"
-	"jig/internal/harness"
-	"jig/internal/runner"
-	"jig/internal/sentinel"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/harness"
+	"github.com/ryanflachman-liatrio/jig/internal/runner"
+	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // TestACPHarnessesApplyStepModelAndEffort drives each backend's real Open path

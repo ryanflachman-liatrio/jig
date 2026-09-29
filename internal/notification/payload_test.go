@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 func sampleAttention(count int) []AttentionDescriptor {

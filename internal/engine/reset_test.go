@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // buildScheduler constructs a minimal scheduler for testing pure DAG logic.

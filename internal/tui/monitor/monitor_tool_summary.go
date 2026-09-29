@@ -12,9 +12,9 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"jig/internal/toolcall"
-	"jig/internal/transcript"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // toolCallSummary is the sanitized, slot-shaped input the status-line

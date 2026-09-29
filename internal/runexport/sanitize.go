@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"jig/internal/sentinel"
+	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
 )
 
 // redactedMarker is the fixed replacement token for a detected secret or a

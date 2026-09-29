@@ -4,9 +4,9 @@ import (
 	"strings"
 	"time"
 
-	"jig/internal/interaction"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // command is the Command pattern's contract: every schedMsg knows how to

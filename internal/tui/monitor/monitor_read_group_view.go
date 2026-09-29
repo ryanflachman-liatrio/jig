@@ -6,8 +6,8 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"jig/internal/toolcall"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 func (m *Model) writeReadGroup(b *strings.Builder, item transcriptItem, selected, expanded bool) {

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"jig/internal/agentcfg"
-	"jig/internal/harness"
-	"jig/internal/sentinel"
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
+	"github.com/ryanflachman-liatrio/jig/internal/harness"
+	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
 )
 
 var monitorJSONSchema = map[string]any{

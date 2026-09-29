@@ -7,9 +7,9 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/engine"
-	reviewworkspace "jig/internal/tui/review"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	reviewworkspace "github.com/ryanflachman-liatrio/jig/internal/tui/review"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 type recoveryActionSpec struct {

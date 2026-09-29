@@ -13,15 +13,15 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"jig/internal/datastore"
-	"jig/internal/engine"
-	"jig/internal/helpchat"
-	"jig/internal/interaction"
-	domainreview "jig/internal/review"
-	"jig/internal/sentinel"
-	"jig/internal/step"
-	"jig/internal/transcript"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/helpchat"
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	domainreview "github.com/ryanflachman-liatrio/jig/internal/review"
+	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // writeTranscript writes entries to step's transcript.jsonl under a fresh

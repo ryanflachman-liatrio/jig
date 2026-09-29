@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"jig/internal/datastore"
-	"jig/internal/review"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/review"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 func TestReplayJournalRecordsPreservesEnvelopeMetadata(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"jig/internal/agentcfg"
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
 )
 
 // AgentRef is the raw `agent` key on a step or in [defaults]: either a

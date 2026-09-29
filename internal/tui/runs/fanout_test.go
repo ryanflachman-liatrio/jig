@@ -5,9 +5,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"jig/internal/engine"
-	"jig/internal/step"
-	"jig/internal/tui/monitor"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/monitor"
 )
 
 // TestRunsFanOutTotalIncreasesOnExpansion proves a live FanOutExpanded event

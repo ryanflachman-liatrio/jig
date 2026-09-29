@@ -3,11 +3,11 @@ package ops
 import (
 	"testing"
 
-	"jig/internal/datastore"
-	"jig/internal/engine"
-	"jig/internal/step"
-	"jig/internal/transcript"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // TestFoldStatusReportsChildProvenanceAndOrdering proves status folds a

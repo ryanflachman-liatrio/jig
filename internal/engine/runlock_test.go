@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 )
 
 func TestRunLeasePreservesExistingLockBytesAndIdentity(t *testing.T) {

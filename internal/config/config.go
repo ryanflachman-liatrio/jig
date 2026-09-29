@@ -4,7 +4,7 @@
 // file, and CLI flags into one effective value. See docs/ARCHITECTURE.md.
 package config
 
-import "jig/internal/notification"
+import "github.com/ryanflachman-liatrio/jig/internal/notification"
 
 // Config is the fully-typed, merged configuration surface. Each nested table
 // corresponds to one TOML table ([ui], [tui], [notifications], [telemetry]).

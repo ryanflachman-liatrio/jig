@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 )
 
 type fileKind int

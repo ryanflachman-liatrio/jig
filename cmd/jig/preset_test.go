@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"testing"
 
-	"jig/internal/config"
-	"jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/config"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // TestApplyGlobalPresetFlag_StripsFlag proves applyGlobalPresetFlag

@@ -6,8 +6,8 @@ import (
 
 	acpsdk "github.com/coder/acp-go-sdk"
 
-	"jig/harness/acp"
-	"jig/internal/agentcfg"
+	"github.com/ryanflachman-liatrio/jig/harness/acp"
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
 )
 
 // acpSessionConfigPolicy lets an ACP backend opt into only the session

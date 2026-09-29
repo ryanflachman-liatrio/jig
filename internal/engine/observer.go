@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // Observer is the non-blocking lifecycle contract for consumers that live at

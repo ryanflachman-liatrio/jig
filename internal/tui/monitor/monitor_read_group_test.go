@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"testing"
 
-	"jig/internal/toolcall"
-	"jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 )
 
 func readExchange(id, path string, generation, iteration, attempt int) []transcript.Entry {

@@ -7,9 +7,9 @@ import (
 	keybind "charm.land/bubbles/v2/key"
 	"charm.land/lipgloss/v2"
 
-	"jig/internal/tui/chart"
-	"jig/internal/tui/shared"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/chart"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 func (m Model) View() string {

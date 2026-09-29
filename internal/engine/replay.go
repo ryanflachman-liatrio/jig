@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"jig/internal/datastore"
-	"jig/internal/review"
-	"jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/review"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
 )
 
 // JournalRecord preserves the durable envelope metadata alongside its decoded

@@ -4,9 +4,9 @@ import (
 	"path"
 	"strings"
 
-	"jig/internal/datastore"
-	"jig/internal/step"
-	"jig/internal/workflow"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // postExecDecision is the Chain of Responsibility pattern's contract between
