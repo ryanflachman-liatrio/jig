@@ -27,7 +27,6 @@ not committed. Only the durable reference docs in the table are tracked.
 | Domain naming | [Vocabulary](CONTEXT.md) |
 | CLI automation or operational controls | [Headless contract](docs/headless.md), [operations](docs/operations.md) |
 | Security, export, or telemetry | [Security](docs/security-monitoring.md), [observability](docs/observability.md), `internal/runexport` |
-| Rust workflow crate | [Rust guidance](workflow-rs/Claude.md); this crate is separate from the Go runtime |
 
 Use workflow skills when the task calls for them; changing code does not by
 itself require running the SDD pipeline. `.agents/jig` contains executable
@@ -85,9 +84,8 @@ Required harness capabilities must fail closed.
 
 ## Commands and completion
 
-Use the toolchain required by [go.mod](go.mod) and
-[harness/acp/go.mod](harness/acp/go.mod); [mise.toml](mise.toml) selects the
-Go 1.25 series. Charm imports use `charm.land/*/v2`.
+Use the toolchain required by [go.mod](go.mod); [mise.toml](mise.toml) selects
+the Go 1.25 series. Charm imports use `charm.land/*/v2`.
 
 ```bash
 go build ./cmd/jig
@@ -95,12 +93,10 @@ go run ./cmd/jig                             # Home → Monitor TUI
 go run ./cmd/jig validate .agents/jig/sdd.toml
 go test ./...
 go vet ./...
-(cd harness/acp && go test ./... && go vet ./...)
 ```
 
-The nested ACP module is not covered by root `go test ./...`. Format changed
-Go files with `gofmt -w <files>`, then use the change-specific checks in
-[Testing](docs/TESTING.md). Avoid formatting unrelated files.
+Format changed Go files with `gofmt -w <files>`, then use the change-specific
+checks in [Testing](docs/TESTING.md). Avoid formatting unrelated files.
 
 A change is complete when its intended behavior and failure paths are covered,
 applicable checks pass (or blockers are reported precisely), examples and

@@ -106,8 +106,7 @@ sizes with benchmarks/profiles before adding complexity.
 Use the versions selected in `go.mod` and inspect their actual APIs. Prefer
 standard-library features when adequate. A dependency addition must justify
 its maintenance and runtime cost; a documentation refresh is not a dependency
-upgrade. The root module's local ACP replacement does not remove the nested
-module's independent dependency and test boundary.
+upgrade.
 
 ## Refactoring and completion
 

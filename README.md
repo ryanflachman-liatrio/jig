@@ -36,6 +36,13 @@ Requires the Go patch version declared in [`go.mod`](go.mod);
 [`mise.toml`](mise.toml) selects the Go 1.25 series.
 
 ```bash
+go install github.com/ryanflachman-liatrio/jig/cmd/jig@latest
+```
+
+No releases are tagged yet, so `@latest` installs the newest commit on `main`.
+To build from a checkout instead:
+
+```bash
 go build ./cmd/jig            # build ./jig
 
 jig init                                        # create a workflow in an empty repository

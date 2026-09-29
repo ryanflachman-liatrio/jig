@@ -7,12 +7,10 @@ plan. Start with [AGENTS.md](../AGENTS.md); use the
 
 ## Modules and entry points
 
-- The root Go module is `jig`; packages import `jig/internal/...`.
-- `harness/acp` is a nested Go module, used through the root module's local
-  `replace`. It needs its own test/vet invocation.
-- `workflow-rs` is a separate Rust workflow-model crate. It is not used by
-  `cmd/jig` and must not be assumed to have parity with the Go loader. Consult
-  its [local guidance](../workflow-rs/Claude.md) for work there.
+- The Go module is `github.com/ryanflachman-liatrio/jig`; packages import
+  `github.com/ryanflachman-liatrio/jig/internal/...`. It is the only module in the repository.
+- `harness/acp` is an ordinary package tree of the root module; root `./...`
+  builds, vets, and tests it.
 - `cmd/jig/main.go` dispatches `init`, `validate`, `run`, `status`, `logs`,
   `doctor`, `resume`, `reset`, `prune`, `export`, and `notifications`. With no
   subcommand it starts the Home/Monitor TUI.

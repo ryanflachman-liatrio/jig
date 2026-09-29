@@ -30,7 +30,7 @@ Fix any build or test failures before marking yourself done. The `lint`, `typech
 These come from CLAUDE.md and are enforced by the QA step:
 
 **Go style:**
-- Module path is `jig`; internal packages import as `jig/internal/...`
+- Module path is `github.com/ryanflachman-liatrio/jig`; internal packages import as `github.com/ryanflachman-liatrio/jig/internal/...`
 - Go 1.25 (pinned via `mise.toml`); Charm v2 stack for TUI (`charm.land/{lipgloss,bubbletea,bubbles,glamour}/v2`)
 - Run `gofmt -l -w .` and `go vet ./...` before finishing
 
