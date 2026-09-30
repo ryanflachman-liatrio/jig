@@ -256,6 +256,39 @@ an immutable base plus patch content strongly enough to reconstruct a reliable
 historical diff. A later contract must add durable provenance or patch snapshots
 instead of guessing from the current checkout.
 
+## Helper backends
+
+The in-monitor help chat and the Tier-2 security monitors run on Claude unless
+`config.toml` selects another backend. Both files are read: the user file
+(`$XDG_CONFIG_HOME/jig/config.toml`, else `~/.config/jig/config.toml`), then
+the project file (`<root>/config.toml`), with each non-empty project key
+overriding the user key. `jig config show` prints the merged result.
+
+```toml
+[helpchat]
+backend = "codex"        # claude | cursor | codex; default claude
+model   = "gpt-5-codex"  # optional
+
+[security]
+monitor_backend = "cursor"  # claude | cursor | codex; default claude
+monitor_model   = ""        # optional
+```
+
+When a model is unset, Claude uses `claude-haiku-4-5-20251001` for both
+helpers; Codex and Cursor send no model, so the backend's own default applies.
+The chosen backend needs its own working login, just like a workflow agent on
+that backend.
+
+Any other backend value makes config loading fail. The error names the key
+(`helpchat.backend` or `security.monitor_backend`) and lists the accepted
+values; it never echoes the configured value.
+
+The help chat requires partial streaming, the permission callback, and session
+resume from its backend. If the backend lacks one, the help panel shows an
+"unavailable" message naming the backend and the missing capability, and no
+agent session or tool server starts. The monitor requirements are described in
+[security monitoring](security-monitoring.md#classifier-isolation-and-prerequisites).
+
 ## Notification readiness
 
 `jig notifications check WORKFLOW.toml [--root PATH]` validates author policy and

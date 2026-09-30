@@ -57,7 +57,7 @@ OpenCode, Crush, Aider).
 | A13 | **Help agent on historical runs** — read-only journal/transcript analysis | S | Open. Replayed runs get `helpchat.NewUnavailable()`; helpchat tools require a live `*engine.Run`. |
 | A14 | **Packaging + CI** — release artifacts, brew/`go install` docs, GitHub Actions | C | Open. No `.github/`, goreleaser, or version ldflags; README is build-from-source. **Blocker:** `go.mod` declares `module jig`, so `go install …@latest` cannot work until the module path is renamed. |
 | A15 | **Narrow / mobile terminal contract** — responsive all screens + display sanitization | S | Partial. Monitor single-panel fallback, Review <90-col branches, Home stacks <100 cols, ASCII glyph preset. No cross-screen contract; sanitization limited to tool summaries, diffs, and clipboard. |
-| A16 | **Harness seam for help chat + Tier-2 monitors** | S | Partial. SDK coupling is gone; both use narrow harness seams (`internal/runner/monitor.go`, `internal/helpchat/cmds.go`) but are hard-wired to `harness.NewAcpHarness()` (Claude). Open: backend selection via `harness.For`. Standalone chat was removed (B14). |
+| A16 | **Harness seam for help chat + Tier-2 monitors** | S | **Done** (Spec 05). Both resolve their harness via `harness.For`: `[helpchat] backend`/`model` and `[security] monitor_backend`/`monitor_model` in `config.toml` (default `claude`), failing closed on missing capabilities. Live Codex smoke still pending a Codex login. Standalone chat was removed (B14). |
 
 ### P2
 

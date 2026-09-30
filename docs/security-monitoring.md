@@ -139,13 +139,25 @@ or PII detection.
 
 ## Classifier isolation and prerequisites
 
-Tier-2 classifiers run on the Claude ACP adapter even when the observed worker
-uses Cursor or Codex. The operator therefore needs a working Claude login in
-addition to any worker-backend login, and classifier calls incur separate
-Claude billing.
+Tier-2 classifiers run on the backend selected by `[security]
+monitor_backend` in `config.toml` (`claude`, `cursor`, or `codex`; default
+`claude`), independent of the backend the observed worker uses. The operator
+needs a working login for that backend in addition to any worker-backend
+login, and classifier calls are billed on that backend. `monitor_model`
+overrides the model; when unset, Claude uses `claude-haiku-4-5-20251001` and
+Codex/Cursor use the backend's default. The embedded monitors' `haiku` alias
+stands for this resolved model. See [operations](operations.md#helper-backends)
+for file locations and precedence.
 
-Each invocation is a Claude agent with `tools = []` (no built-in tools),
-`max_turns = 1`, no question handler, and a deny-all permission callback. ACP
+Before any run starts, jig requires the monitor backend to advertise structured
+output and the permission callback. A backend missing either fails manager
+construction with an error naming the backend and the missing capability,
+rather than running classifiers that could not be constrained.
+
+Every invocation carries a deny-all permission callback and no question
+handler; on every backend that callback is the tool boundary. On Claude the
+agent additionally has `tools = []` (no built-in tools) and `max_turns = 1`;
+Codex and Cursor have no equivalent settings. ACP
 has no separate system-prompt channel, so the embedded prompt and the bounded
 transcript, marked as untrusted, are sent as one delimited prompt. The result
 schema permits exactly the required `flagged`, `severity`, and `detail` fields,
