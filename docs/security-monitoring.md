@@ -239,7 +239,9 @@ Deterministic tests replace external ACP processes and classifier service calls;
 they do not establish real-model judgment. Before a release, use synthetic local
 fixtures and a small positive `fleet_budget_usd` to run each worker selection
 (`claude/acp`, `cursor/acp`, and `codex/acp`) with a working worker login and
-Claude classifier login. Record CLI/adapter versions, elapsed time, classifier
+a login for the classifier backend (`[security] monitor_backend`, default
+Claude). `examples/helper-backend-smoke.toml` runs the monitors and help chat
+on a non-Claude backend. Record CLI/adapter versions, elapsed time, classifier
 cost, captured tool evidence, resulting finding, cancellation behavior, and the
 backend's supported reopen result. Also submit an adversarial transcript that
 asks the classifier to invoke a tool and confirm no tool executes. A row not run

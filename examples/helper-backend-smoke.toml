@@ -1,0 +1,51 @@
+# Live smoke for Spec 05 helper backend selection (Tier-2 monitors + help chat
+# on a non-Claude backend). Needs a machine with a logged-in `codex`.
+# Validate with: jig validate examples/helper-backend-smoke.toml
+#
+# 1. Select the helper backends in the project config (<root>/config.toml,
+#    default .jig/config.toml):
+#
+#      [security]
+#      monitor_backend = "codex"
+#      [helpchat]
+#      backend = "codex"
+#
+#    `jig config show` should print both. A missing codex login fails at the
+#    first classifier/help turn, not at load.
+#
+# 2. Tier-2 monitor (task 2.8): `jig run examples/helper-backend-smoke.toml
+#    --discard-merge --timeout 10m`. The fixture file contains a synthetic
+#    prompt-injection line, so the prompt-injection classifier should record a
+#    finding in .jig/runs/<run-id>/findings.jsonl with tier = "monitor". A
+#    `monitor-unavailable/<id>` health finding instead means the codex
+#    classifier call failed; capture its message.
+#
+# 3. Help chat (task 3.6): run `jig`, start this workflow, open the help panel
+#    while the run is live, ask "what is the summarize step doing?", then ask a
+#    follow-up that depends on the first answer (e.g. "and what did it read?").
+#    Expect streamed replies, a follow-up answered in context (resume), and a
+#    jig-help tool call. Setting `backend = "bogus"` should instead fail config
+#    load naming helpchat.backend.
+#
+# Scrub JIG_MCP_TOKEN and any auth values before saving transcripts.
+[workflow]
+name        = "helper-backend-smoke"
+version     = "1"
+description = "Synthetic run that exercises Tier-2 monitors and help chat on the configured helper backend."
+
+[defaults]
+cwd = "."
+
+[defaults.agent]
+backend = "codex"
+
+[defaults.security]
+enabled          = true
+tier2_enabled    = true
+fleet_budget_usd = 0
+
+[[step]]
+id        = "summarize"
+type      = "agent"
+skill     = "skills/helper-backend-smoke"
+isolation = "none"
