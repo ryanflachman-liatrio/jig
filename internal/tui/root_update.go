@@ -463,7 +463,7 @@ func (m rootModel) startRun(wf *workflow.Workflow) (tea.Model, tea.Cmd) {
 	m.handles[run.ID] = run
 	m.runs = m.runs.WithWorkflow(wf)
 	// Navigate straight to the monitor so prompts and review gates are visible immediately.
-	m.monitor = monitor.New(run.ID).WithTUIConfig(m.tuiConfig).WithDiagnostics(m.diagnostics).WithTelemetryMode(m.telemetryMode)
+	m.monitor = monitor.New(run.ID).WithTUIConfig(m.tuiConfig).WithDiagnostics(m.diagnostics).WithTelemetryMode(m.telemetryMode).WithWorkflow(wf)
 	m.monitor.RunDir = m.manager.RunDir(run.ID)
 	m.monitor.SetRun(run)
 	m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})

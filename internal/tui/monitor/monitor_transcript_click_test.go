@@ -1,10 +1,14 @@
 package monitor
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
+	"github.com/ryanflachman-liatrio/jig/internal/step"
 	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
@@ -487,5 +491,112 @@ func TestTranscriptClickBannerLineTargetsPreviousItem(t *testing.T) {
 	}
 	if !m.chatItemExpand[first.key] {
 		t.Fatal("banner-line click collapsed the expanded previous item")
+	}
+}
+
+// pinnedChromeEntries is a synthetic six-entry assistant transcript: one
+// short text item per entry, so every item has a single header row.
+func pinnedChromeEntries() []transcript.Entry {
+	entries := make([]transcript.Entry, 6)
+	for i := range entries {
+		entries[i] = transcript.Entry{
+			Seq:    i + 1,
+			Role:   transcript.RoleAssistant,
+			Blocks: []transcript.Block{{Type: transcript.BlockText, Text: fmt.Sprintf("synthetic reply %02d", i+1)}},
+		}
+	}
+	return entries
+}
+
+// failStep marks step a failed with a synthetic error and repaints.
+func failStep(m Model, err string) Model {
+	i := m.index["a"]
+	m.steps[i].status = step.StatusFailed
+	m.steps[i].err = err
+	m.refreshPanels()
+	return m
+}
+
+// Bug 3: the failed-step error and compact notice are pinned chrome, so the
+// viewport holds exactly the item body and the recorded ranges match it.
+func TestTranscriptChromePinsFailureAndCompactNotice(t *testing.T) {
+	m := newTranscriptClickModel(t, pinnedChromeEntries())
+	m.compactToolNotice = "compact tool groups: on"
+	m = failStep(m, "synthetic backend failure")
+
+	if got, want := m.chatBody(), m.itemTranscriptBody(); got != want {
+		t.Fatalf("chatBody has a prefix over itemTranscriptBody:\n got=%q\nwant=%q", got, want)
+	}
+	chrome := m.transcriptChrome()
+	if len(chrome) < 3 {
+		t.Fatalf("chrome=%q, want error row, notice row, spacer", chrome)
+	}
+	if first := ansi.Strip(chrome[0]); !strings.Contains(first, shared.IconError+" synthetic backend failure") {
+		t.Fatalf("chrome[0]=%q, want the pinned error row", first)
+	}
+	if second := ansi.Strip(chrome[1]); !strings.Contains(second, "compact tool groups: on") {
+		t.Fatalf("chrome[1]=%q, want the compact notice row", second)
+	}
+	if got, want := m.chatVP.Height(), m.transcriptInnerH-len(chrome); got != want {
+		t.Fatalf("chatVP height=%d, want %d (inner height less chrome)", got, want)
+	}
+}
+
+func TestTranscriptChromeFailureRowShortPanel(t *testing.T) {
+	m := newTranscriptClickModel(t, pinnedChromeEntries())
+	m.compactToolNotice = "compact tool groups: on"
+	m.transcriptInnerH = 3
+	m = failStep(m, strings.Repeat("synthetic failure detail ", 20))
+
+	if m.chatVP.Height() < 1 {
+		t.Fatalf("chatVP height=%d, want at least one row", m.chatVP.Height())
+	}
+	for i, row := range m.transcriptChrome() {
+		if w := ansi.StringWidth(row); w > m.transcriptInnerW {
+			t.Fatalf("chrome row %d width=%d exceeds panel width %d: %q", i, w, m.transcriptInnerW, row)
+		}
+	}
+}
+
+// assertClickSelectsEveryItem clicks the viewport row where each item's text
+// is actually rendered (not its recorded range), so a prefix that shifts the
+// rendered rows away from the ranges selects the wrong item.
+func assertClickSelectsEveryItem(t *testing.T, m Model) {
+	t.Helper()
+	for n, item := range m.chatVisibleItems {
+		text := fmt.Sprintf("synthetic reply %02d", n+1)
+		row := -1
+		for i, line := range strings.Split(ansi.Strip(m.chatBody()), "\n") {
+			if strings.Contains(line, text) {
+				row = i
+				break
+			}
+		}
+		if row < 0 {
+			t.Fatalf("%q not rendered", text)
+		}
+		m.ensureTranscriptRangeVisible(lineRange{start: row, end: row})
+		m, _ = m.Update(clickTranscriptLine(m, row))
+		sel, ok := m.selectedTranscriptItem()
+		if !ok || sel.key != item.key {
+			t.Fatalf("click on rendered row of %q selected %+v (ok=%v), want %+v", text, sel.key, ok, item.key)
+		}
+	}
+}
+
+func TestTranscriptClickFailedStepSelectsItemUnderPointer(t *testing.T) {
+	m := failStep(newTranscriptClickModel(t, pinnedChromeEntries()), "synthetic backend failure")
+	assertClickSelectsEveryItem(t, m)
+}
+
+func TestTranscriptClickCompactNoticeSelectsItemUnderPointer(t *testing.T) {
+	m := newTranscriptClickModel(t, pinnedChromeEntries())
+	m.compactToolNotice = "compact tool groups: on"
+	m.refreshPanels()
+	// The notice clears on the next transcript key, not on a mouse click, so
+	// it stays pinned for every click below.
+	assertClickSelectsEveryItem(t, m)
+	if m.compactToolNotice == "" {
+		t.Fatal("test premise: notice should still be showing")
 	}
 }

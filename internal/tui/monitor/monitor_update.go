@@ -480,7 +480,13 @@ func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 // the block cursor, enter/space toggle the cursored block, o toggles all, and
 // h/esc return focus to the Steps panel. Remaining viewport keys scroll.
 func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
-	m.compactToolNotice = ""
+	if m.compactToolNotice != "" {
+		// The notice is pinned chrome; re-derive the viewport height now it is gone.
+		m.compactToolNotice = ""
+		if m.ready {
+			m.setChatContent()
+		}
+	}
 	if m.searchOpen {
 		switch {
 		case msg.String() == "esc":

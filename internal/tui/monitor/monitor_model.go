@@ -19,6 +19,7 @@ import (
 	questionpanel "github.com/ryanflachman-liatrio/jig/internal/tui/question"
 	reviewworkspace "github.com/ryanflachman-liatrio/jig/internal/tui/review"
 	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // focusRegion is which of the monitor's three regions currently holds keyboard
@@ -283,8 +284,13 @@ type Model struct {
 	// the Detail field (redacted-secret preview) is always present.
 	secFindings []sentinel.Finding
 
-	// Phase 4: rolling output buffer per step (last outputMaxLines lines).
+	// stepOutput is the live output buffer per step, shown in the Transcript
+	// until finalized.
 	stepOutput map[string]*strings.Builder
+	// commandSteps marks workflow steps of type command, so the Transcript
+	// live block can pick the tool-output clamp. Nil when the host did not
+	// supply the workflow; every step then uses the agent clamp.
+	commandSteps map[string]bool
 
 	vp     viewport.Model // Steps panel scroll
 	chatVP viewport.Model // Transcript panel scroll — independent scroll position
@@ -433,9 +439,6 @@ const (
 	// small adjacent run of tool-only entries so the common batched use/result
 	// pair stays together without making memory proportional to transcript size.
 	chatBoundaryContextMax = 16
-
-	// outputMaxLines is the number of streaming output lines shown per step.
-	outputMaxLines = 10
 )
 
 // blockKey identifies one block within a step's transcript by entry seq (unique
@@ -652,6 +655,21 @@ func (m Model) WithTUIConfig(cfg config.TUIConfig) Model {
 	m.simpleMode = cfg.SimpleModeOrDefault()
 	m.compactToolGroups = cfg.CompactToolGroupsOrDefault()
 	m.bellEnabled = cfg.BellOrDefault()
+	return m
+}
+
+// WithWorkflow records which steps run shell commands, so live command output
+// in the Transcript is clamped like tool output rather than agent prose.
+func (m Model) WithWorkflow(wf *workflow.Workflow) Model {
+	if wf == nil {
+		return m
+	}
+	m.commandSteps = make(map[string]bool)
+	for _, st := range wf.Steps {
+		if st.Type == workflow.StepCommand {
+			m.commandSteps[st.ID] = true
+		}
+	}
 	return m
 }
 
