@@ -69,6 +69,14 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		if !ok {
 			return m, nil
 		}
+		if m.steps[i].status != ev.To {
+			// Live output belongs to one running attempt: leaving running drops
+			// text no StepMessage finalized, and re-entering running on a retry
+			// must not resurface the failed attempt's tail.
+			if buf, ok := m.stepOutput[ev.StepID]; ok {
+				buf.Reset()
+			}
+		}
 		m.steps[i].status = ev.To
 		m.steps[i].iteration = ev.Iteration
 		m.steps[i].attempt = ev.Attempt

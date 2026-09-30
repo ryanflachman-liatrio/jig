@@ -289,3 +289,112 @@ func TestTranscriptLiveBlockReplacesWaitingEmptyState(t *testing.T) {
 		t.Fatalf("live block missing from the empty transcript:\n%s", body)
 	}
 }
+
+// Spec 05 Unit 3: the live block hands off to the finalized entry and is the
+// only home for live output.
+
+// newDiskLiveModel is newLiveModel backed by an on-disk transcript, so a
+// StepMessage re-read picks up entries appended mid-test.
+func newDiskLiveModel(t *testing.T, entries []transcript.Entry) (Model, string) {
+	t.Helper()
+	runDir := writeTranscript(t, "a", entries)
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+	m = sendEvent(m, engine.StepStatus{RunID: "run-1", StepID: "a", To: step.StatusRunning})
+	return m, runDir
+}
+
+func TestTranscriptLiveHandoffOnStepMessage(t *testing.T) {
+	m, runDir := newDiskLiveModel(t, liveEntries(2))
+	m.chatAutoScroll = true
+	m = sendDelta(m, "a", "hello ")
+	m = sendDelta(m, "a", "world")
+	m = flushFrame(m)
+	if !strings.Contains(strippedBody(m), "hello world"+shared.LiveCursor) {
+		t.Fatalf("premise: live block missing:\n%s", strippedBody(m))
+	}
+
+	seq := appendTranscriptEntry(t, runDir, "a", transcript.Entry{
+		Role:   transcript.RoleAssistant,
+		Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "hello world"}},
+	})
+	m = sendEvent(m, engine.StepMessage{RunID: "run-1", StepID: "a", Seq: seq})
+	m = flushFrame(m)
+
+	body := strippedBody(m)
+	if n := strings.Count(body, "hello world"); n != 1 {
+		t.Fatalf("finalized text appears %d times, want 1:\n%s", n, body)
+	}
+	if strings.Contains(body, shared.LiveCursor) {
+		t.Fatalf("live cursor survived the handoff:\n%s", body)
+	}
+}
+
+func TestTranscriptLiveClearedWhenStepStopsRunning(t *testing.T) {
+	for _, to := range []step.Status{step.StatusFailed, step.StatusSucceeded, step.StatusStopped} {
+		t.Run(string(to), func(t *testing.T) {
+			m := newLiveModel(t, liveEntries(2))
+			m = sendDelta(m, "a", "unfinalized live text")
+			m = flushFrame(m)
+			m = sendEvent(m, engine.StepStatus{RunID: "run-1", StepID: "a", To: to, Err: "synthetic stop reason"})
+			m = flushFrame(m)
+			body := strippedBody(m)
+			if strings.Contains(body, "unfinalized live text") || strings.Contains(body, shared.LiveCursor) {
+				t.Fatalf("live block survived %s:\n%s", to, body)
+			}
+			chrome := ansi.Strip(strings.Join(m.transcriptChrome(), "\n"))
+			if to == step.StatusFailed && !strings.Contains(chrome, "synthetic stop reason") {
+				t.Fatalf("failed step has no pinned error row: %q", chrome)
+			}
+		})
+	}
+	t.Run("retry", func(t *testing.T) {
+		m := newLiveModel(t, liveEntries(2))
+		m = sendDelta(m, "a", "failed attempt text")
+		m = sendEvent(m, engine.StepStatus{RunID: "run-1", StepID: "a", To: step.StatusFailed, Err: "synthetic stop reason"})
+		m = sendEvent(m, engine.StepStatus{RunID: "run-1", StepID: "a", To: step.StatusRunning, Attempt: 1})
+		m = flushFrame(m)
+		if chrome := ansi.Strip(strings.Join(m.transcriptChrome(), "\n")); strings.Contains(chrome, "synthetic stop reason") {
+			t.Fatalf("pinned error row survived the retry: %q", chrome)
+		}
+		if body := strippedBody(m); strings.Contains(body, shared.LiveCursor) {
+			t.Fatalf("live block shown before any new delta:\n%s", body)
+		}
+		m = sendDelta(m, "a", "retry attempt text")
+		m = flushFrame(m)
+		body := strippedBody(m)
+		if strings.Contains(body, "failed attempt text") || !strings.Contains(body, "retry attempt text"+shared.LiveCursor) {
+			t.Fatalf("retry live block wrong:\n%s", body)
+		}
+	})
+}
+
+func TestTranscriptLiveBlockFollowsOpenStep(t *testing.T) {
+	m := newLiveModel(t, liveEntries(1))
+	m = sendEvent(m, engine.StepStatus{RunID: "run-1", StepID: "b", To: step.StatusRunning})
+	m = sendDelta(m, "a", "alpha live text")
+	m = sendDelta(m, "b", "bravo live text")
+	m = flushFrame(m)
+	if body := strippedBody(m); !strings.Contains(body, "alpha live text") || strings.Contains(body, "bravo live text") {
+		t.Fatalf("step a open: wrong live text:\n%s", body)
+	}
+	m.focus = focusSteps
+	m = enterChatStep(t, m, "b")
+	if body := strippedBody(m); !strings.Contains(body, "bravo live text") || strings.Contains(body, "alpha live text") {
+		t.Fatalf("step b open: wrong live text:\n%s", body)
+	}
+}
+
+func TestStepsPanelHasNoLiveTail(t *testing.T) {
+	m := newLiveModel(t, liveEntries(1))
+	m = sendDelta(m, "a", "steps panel must not show this")
+	m = flushFrame(m)
+	list := ansi.Strip(m.listBody())
+	if strings.Contains(list, "steps panel must not show this") {
+		t.Fatalf("Steps panel still renders the live tail:\n%s", list)
+	}
+	if !strings.Contains(list, shared.IconRunning) || !strings.Contains(list, "running") {
+		t.Fatalf("Steps panel lost the running status row:\n%s", list)
+	}
+}

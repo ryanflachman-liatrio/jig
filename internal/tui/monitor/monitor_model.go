@@ -433,9 +433,6 @@ const (
 	// small adjacent run of tool-only entries so the common batched use/result
 	// pair stays together without making memory proportional to transcript size.
 	chatBoundaryContextMax = 16
-
-	// outputMaxLines is the number of streaming output lines shown per step.
-	outputMaxLines = 10
 )
 
 // blockKey identifies one block within a step's transcript by entry seq (unique
