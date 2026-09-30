@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -48,5 +49,68 @@ func TestTUIUserOverridesDefaults(t *testing.T) {
 	}
 	if !cfg.TUI.SimpleModeOrDefault() {
 		t.Fatal("simple_mode unset anywhere should still resolve to the built-in true default")
+	}
+}
+
+func TestTUIBellOrDefault(t *testing.T) {
+	on, off := true, false
+	tests := []struct {
+		name string
+		cfg  TUIConfig
+		want bool
+	}{
+		{"unset defaults to off", TUIConfig{}, false},
+		{"explicit true", TUIConfig{Bell: &on}, true},
+		{"explicit false", TUIConfig{Bell: &off}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.BellOrDefault(); got != tt.want {
+				t.Fatalf("BellOrDefault() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTUIBellLoad(t *testing.T) {
+	tests := []struct {
+		name    string
+		user    string
+		project string
+		want    bool
+		wantErr bool
+	}{
+		{name: "unset anywhere", want: false},
+		{name: "user true", user: "[tui]\nbell = true\n", want: true},
+		{name: "user true, project unset", user: "[tui]\nbell = true\n", project: "[tui]\nsimple_mode = true\n", want: true},
+		{name: "project false overrides user true", user: "[tui]\nbell = true\n", project: "[tui]\nbell = false\n", want: false},
+		{name: "non-boolean rejected", user: "[tui]\nbell = \"yes\"\n", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			userPath := ""
+			if tt.user != "" {
+				userPath = writeConfigFile(t, dir, "user.toml", tt.user)
+			}
+			projectRoot := filepath.Join(dir, "project", ".jig")
+			if tt.project != "" {
+				writeConfigFile(t, dir, filepath.Join("project", ".jig", "config.toml"), tt.project)
+			}
+
+			cfg, err := Load(userPath, projectRoot)
+			if tt.wantErr {
+				if !errors.Is(err, ErrConfigInvalid) {
+					t.Fatalf("Load: err = %v, want errors.Is(err, ErrConfigInvalid)", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load: unexpected error %v", err)
+			}
+			if got := cfg.TUI.BellOrDefault(); got != tt.want {
+				t.Fatalf("BellOrDefault() = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }

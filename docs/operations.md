@@ -348,7 +348,9 @@ desktop session are needed. Other platforms report unsupported desktop delivery.
 These checks cannot verify a running notification service, OS permission,
 banner visibility, or that a person read anything. Network readiness checks do
 not verify TLS connectivity, receiver acceptance, or Slack channel access.
-The check command sends nothing. Terminal bell is a separate feature.
+The check command sends nothing. The terminal bell is separate: it is a
+monitor-only `[tui] bell` setting (see [TUI.md](TUI.md)), not a notification
+route.
 
 ### Live delivery
 

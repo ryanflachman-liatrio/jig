@@ -233,44 +233,7 @@ func (m Model) listBody() string {
 
 	// Human-in-the-loop gates (review/input/question/prompt) render in the
 	// focused overlay, not inline here — the gate remains a non-blocking focus
-	// region (ADR 0002).
-
-	// Streaming output: show last outputMaxLines lines for any running agent step.
-	for _, s := range m.steps {
-		if s.status != step.StatusRunning {
-			continue
-		}
-		buf, ok := m.stepOutput[s.id]
-		if !ok || buf.Len() == 0 {
-			continue
-		}
-		lines := strings.Split(buf.String(), "\n")
-		// Keep only the last outputMaxLines non-empty lines.
-		var recent []string
-		for _, l := range lines {
-			if strings.TrimSpace(l) != "" {
-				recent = append(recent, l)
-			}
-		}
-		dropped := 0
-		if len(recent) > outputMaxLines {
-			dropped = len(recent) - outputMaxLines
-			recent = recent[len(recent)-outputMaxLines:]
-		}
-		b.WriteString("\n  " + shared.Theme.Question.Render(shared.CollapsedMarker+" "+s.id) + "\n")
-		if dropped > 0 {
-			// Slice 06 FR-06.13: the Steps-panel live tail already tail-
-			// anchors by dropping leading rows; surface a shared-vocabulary
-			// hint so the operator sees the drop. No expand affordance is
-			// offered here (there is no per-item toggle for a streaming
-			// buffer), so ExpandHint is not called and the drop line has
-			// no key hint.
-			b.WriteString("    " + shared.Theme.Chat.Hint.Render(shared.EarlierItems(dropped, "line", "lines")) + "\n")
-		}
-		for _, l := range recent {
-			b.WriteString("    " + l + "\n")
-		}
-	}
+	// region (ADR 0002). Live step output streams in the Transcript, not here.
 
 	return b.String()
 }

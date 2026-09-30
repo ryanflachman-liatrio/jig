@@ -315,7 +315,7 @@ func TestCompactToolGroupInteractionSessionOnly(t *testing.T) {
 	if len(m.chatItems) != 1 || m.chatItems[0].kind != transcriptItemToolGroup {
 		t.Fatalf("toggle-on items=%+v, want one group", m.chatItems)
 	}
-	if !m.compactToolGroups || !m.simpleMode || !strings.Contains(ansi.Strip(m.chatBody()), "compact tool groups: on") {
+	if !m.compactToolGroups || !m.simpleMode || !strings.Contains(ansi.Strip(strings.Join(m.transcriptChrome(), "\n")), "compact tool groups: on") {
 		t.Fatal("toggle did not take effect for this session or show confirmation")
 	}
 	m, _ = m.Update(key("enter"))

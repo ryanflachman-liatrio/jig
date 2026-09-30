@@ -78,6 +78,9 @@ func mergeTUI(base, overlay TUIConfig) TUIConfig {
 	if overlay.CompactToolGroups != nil {
 		out.CompactToolGroups = overlay.CompactToolGroups
 	}
+	if overlay.Bell != nil {
+		out.Bell = overlay.Bell
+	}
 	return out
 }
 

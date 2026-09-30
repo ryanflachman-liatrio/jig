@@ -15,6 +15,12 @@ import (
 )
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+	hadGate, wasFocused := m.hasGate(), m.focus == focusGate
+	m, cmd := m.update(msg)
+	return m.withGateBell(hadGate, wasFocused, cmd)
+}
+
+func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -309,6 +315,17 @@ func (m Model) gateShouldPulse() bool {
 	return m.hasGate() && m.focus != focusGate
 }
 
+// gateShouldRing is the bell's counterpart to gateShouldPulse: "a gate waits
+// and the operator isn't looking", narrowed to the empty → non-empty edge so
+// a burst of gates rings once, and rate-limited by gateBellCooldown. Focus is
+// judged from before the update (wasFocused): the first gate after run entry
+// auto-focuses itself (consumeFirstWaitFocus), which says nothing about
+// whether the operator is actually watching this terminal.
+func (m Model) gateShouldRing(hadGate, wasFocused bool) bool {
+	return m.bellEnabled && !hadGate && !wasFocused && m.hasGate() &&
+		bellClock().Sub(m.lastBell) >= gateBellCooldown
+}
+
 // textareaActive reports whether the focused gate is currently capturing free
 // text in the shared textarea, in which case printable keys (including "?") are
 // literal input rather than commands. Mirrors the message-routing condition in
@@ -371,6 +388,9 @@ func (m Model) aliasPanelFocus(key string) focusRegion {
 func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	rows := m.visibleRows()
 	switch {
+	case keybind.Matches(msg, m.keys.ToggleBell):
+		m.toggleBell()
+		return m, nil
 	case keybind.Matches(msg, m.keys.Down):
 		if m.cursor < len(rows)-1 {
 			m.cursor++
@@ -460,7 +480,13 @@ func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 // the block cursor, enter/space toggle the cursored block, o toggles all, and
 // h/esc return focus to the Steps panel. Remaining viewport keys scroll.
 func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
-	m.compactToolNotice = ""
+	if m.compactToolNotice != "" {
+		// The notice is pinned chrome; re-derive the viewport height now it is gone.
+		m.compactToolNotice = ""
+		if m.ready {
+			m.setChatContent()
+		}
+	}
 	if m.searchOpen {
 		switch {
 		case msg.String() == "esc":
@@ -543,6 +569,9 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	case keybind.Matches(msg, m.keys.ClearView):
 		m.clearTranscriptView()
 		m.refreshPanels()
+		return m, nil
+	case keybind.Matches(msg, m.keys.ToggleBell):
+		m.toggleBell()
 		return m, nil
 	case keybind.Matches(msg, m.keys.CompactTools):
 		m.toggleCompactToolGroups()

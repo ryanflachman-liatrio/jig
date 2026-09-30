@@ -32,13 +32,16 @@ type UIConfig struct {
 
 // TUIConfig holds terminal-UI display preferences (formerly .jig/tui.json).
 //
-// Both fields are pointers so a lower layer's explicit false can be
+// All fields are pointers so a lower layer's explicit false can be
 // overridden by an explicit false at a higher layer without being confused
 // with "unset" (CONVENTIONS.md: distinguish absent values from explicit
 // false). This matters most for SimpleMode, whose built-in default is true.
 type TUIConfig struct {
 	SimpleMode        *bool `toml:"simple_mode"`
 	CompactToolGroups *bool `toml:"compact_tool_groups"`
+	// Bell rings the terminal bell when a run-monitor gate starts waiting.
+	// Opt-in because unrequested noise is worse than a missed pulse.
+	Bell *bool `toml:"bell"`
 }
 
 // SimpleModeOrDefault resolves SimpleMode, falling back to the built-in
@@ -56,6 +59,15 @@ func (c TUIConfig) SimpleModeOrDefault() bool {
 func (c TUIConfig) CompactToolGroupsOrDefault() bool {
 	if c.CompactToolGroups != nil {
 		return *c.CompactToolGroups
+	}
+	return false
+}
+
+// BellOrDefault resolves Bell, falling back to the built-in default (false)
+// when unset. Safe to call on a zero-value TUIConfig.
+func (c TUIConfig) BellOrDefault() bool {
+	if c.Bell != nil {
+		return *c.Bell
 	}
 	return false
 }
