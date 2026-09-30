@@ -91,7 +91,7 @@ func main() {
 	tel := setupTelemetry(ctx, ".jig")
 	defer tel.shutdown(context.Background())
 
-	rt, err := newRuntime(".jig", cfg.Notifications, tel)
+	rt, err := newRuntime(".jig", cfg.Notifications, cfg.Security, tel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing jig: %v\n", err)
 		os.Exit(1)

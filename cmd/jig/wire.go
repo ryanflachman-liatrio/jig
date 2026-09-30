@@ -44,15 +44,16 @@ type Runtime struct {
 // passed in here (loaded once by the caller via loadEffectiveConfig, Spec 28
 // Unit 3 — Runtime no longer reads operator configuration from disk itself).
 func NewRuntime(root string, notifications config.NotificationsConfig) (*Runtime, error) {
-	return newRuntime(root, notifications, nil)
+	return newRuntime(root, notifications, config.SecurityConfig{}, nil)
 }
 
-// newRuntime is [NewRuntime] with an optional telemetry handle. When tel is
+// newRuntime is [NewRuntime] with the operator's security settings and an
+// optional telemetry handle. When tel is
 // non-nil, the Manager's executor is wrapped in a telemetry.MetricMux so
 // every step reports OTel spans/metrics alongside the notification runtime.
 // cmd/jig's CLI entry points use this; tests use the exported NewRuntime.
-func newRuntime(root string, notifications config.NotificationsConfig, tel *telemetryHandle) (*Runtime, error) {
-	mgr, err := newManager(root, tel)
+func newRuntime(root string, notifications config.NotificationsConfig, security config.SecurityConfig, tel *telemetryHandle) (*Runtime, error) {
+	mgr, err := newManager(root, security, tel)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +165,10 @@ func (r *Runtime) ReleaseRun(runID string) {
 // telemetry.MetricMux so every step opens a jig.step span and reports a
 // jig.step.duration histogram. The wrap is a zero-cost pass-through when the
 // handle carries a noop Provider, so callers can invoke this unconditionally.
-func newManager(root string, tel *telemetryHandle) (*engine.Manager, error) {
+//
+// security selects the Tier-2 monitor backend and model; a backend that cannot
+// serve the monitors fails construction.
+func newManager(root string, security config.SecurityConfig, tel *telemetryHandle) (*engine.Manager, error) {
 	mux := runner.NewMux()
 	mux.Register(workflow.StepCommand, runner.NewCommandExecutor(""))
 	mux.Register(workflow.StepCheck, runner.NewCheckExecutor(""))
@@ -179,7 +183,7 @@ func newManager(root string, tel *telemetryHandle) (*engine.Manager, error) {
 	mgr := engine.NewManager(exec, root)
 	mgr.SetIntegrationResolver(runner.NewIntegrationResolver(harness.For))
 	mgr.SetSecretResolver(resolveNamedSecret)
-	monitors, err := runner.BuiltinMonitors()
+	monitors, err := runner.BuiltinMonitors(security)
 	if err != nil {
 		return nil, fmt.Errorf("load built-in security monitors: %w", err)
 	}

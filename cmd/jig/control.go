@@ -95,8 +95,12 @@ func parseControlRecoveryAction(s string) error {
 }
 
 func headlessOptions(ctx context.Context, f controlFlags, mode headless.OutputMode, mgrRoot string) (headless.Options, *telemetryHandle, error) {
+	cfg, err := loadEffectiveConfig(mgrRoot)
+	if err != nil {
+		return headless.Options{}, nil, err
+	}
 	tel := setupTelemetry(ctx, mgrRoot)
-	mgr, err := newManager(mgrRoot, tel)
+	mgr, err := newManager(mgrRoot, cfg.Security, tel)
 	if err != nil {
 		return headless.Options{}, tel, err
 	}

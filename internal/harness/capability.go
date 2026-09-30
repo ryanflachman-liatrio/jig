@@ -2,6 +2,8 @@ package harness
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
 	"github.com/ryanflachman-liatrio/jig/internal/interaction"
@@ -32,6 +34,40 @@ const (
 	// deltas as they are generated, not just the finalized block.
 	CapPartialStreaming
 )
+
+// String returns the capability's Go constant name, used in fail-closed errors.
+func (c Capability) String() string {
+	switch c {
+	case CapPermissionCallback:
+		return "CapPermissionCallback"
+	case CapUserQuestion:
+		return "CapUserQuestion"
+	case CapSessionResume:
+		return "CapSessionResume"
+	case CapStructuredOutput:
+		return "CapStructuredOutput"
+	case CapPartialStreaming:
+		return "CapPartialStreaming"
+	}
+	return fmt.Sprintf("Capability(%d)", uint8(c))
+}
+
+// Require fails closed when h does not advertise every one of caps. The error
+// names the harness and each missing capability so an operator can tell which
+// configured backend cannot serve the caller.
+func Require(h Harness, caps ...Capability) error {
+	have := h.Capabilities()
+	var missing []string
+	for _, c := range caps {
+		if !have.Has(c) {
+			missing = append(missing, c.String())
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("harness %s lacks required capabilities: %s", h.Name(), strings.Join(missing, ", "))
+}
 
 // CapabilitySet is the set of capabilities a Harness advertises via
 // Harness.Capabilities(), queryable before Open is ever called.

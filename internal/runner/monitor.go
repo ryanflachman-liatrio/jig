@@ -27,34 +27,36 @@ var monitorJSONSchema = map[string]any{
 // monitorHarness is the narrow seam MonitorAdapter needs from harness.Harness
 // (open one session, read its events) so this file depends on jig's own
 // harness.SessionSpec/harness.Session types rather than any ACP wire type.
-// *harness.AcpHarness satisfies this directly.
+// Every harness.Harness satisfies this directly.
 type monitorHarness interface {
 	Open(ctx context.Context, spec harness.SessionSpec) (harness.Session, error)
 }
 
+// MonitorAdapter dispatches Tier-2 classifier turns on one configured backend.
+// Each attempt opens a fresh session on a fresh harness from newHarness.
 type MonitorAdapter struct {
-	newHarness func() monitorHarness
+	backend    string
+	newHarness func() (monitorHarness, error)
 	timeout    time.Duration
 }
 
-func NewMonitorAdapter() *MonitorAdapter {
-	return &MonitorAdapter{
-		newHarness: func() monitorHarness { return harness.NewAcpHarness() },
-		timeout:    30 * time.Second,
-	}
+// NewMonitorAdapter returns an adapter whose sessions run on backend, resolved
+// through harness.For.
+func NewMonitorAdapter(backend string) *MonitorAdapter {
+	return newMonitorAdapter(backend, func() (monitorHarness, error) { return harness.For(backend) })
 }
 
-func newMonitorAdapter(factory func() monitorHarness) *MonitorAdapter {
-	return &MonitorAdapter{newHarness: factory, timeout: 30 * time.Second}
+func newMonitorAdapter(backend string, factory func() (monitorHarness, error)) *MonitorAdapter {
+	return &MonitorAdapter{backend: backend, newHarness: factory, timeout: 30 * time.Second}
 }
 
 // monitorSessionSpec builds the SessionSpec for one classification turn. ACP
 // has no separate system-prompt channel (see buildAgentPrompt's convention),
 // so the classifier policy and the untrusted transcript window are combined
 // into a single prompt, clearly delimited; the deny-all Permission callback
-// is the actual enforcement boundary (Tier-1 rules remain the fail-closed
-// layer regardless of what a classifier's prompt claims).
-func monitorSessionSpec(spec sentinel.MonitorSpec, windowText string) harness.SessionSpec {
+// is the actual enforcement boundary on every backend (Tier-1 rules remain
+// the fail-closed layer regardless of what a classifier's prompt claims).
+func monitorSessionSpec(backend string, spec sentinel.MonitorSpec, windowText string) harness.SessionSpec {
 	denyAll := func(harness.ToolCall) harness.Decision {
 		return harness.Decision{Allow: false, Reason: "security classifiers cannot invoke tools"}
 	}
@@ -63,20 +65,32 @@ func monitorSessionSpec(spec sentinel.MonitorSpec, windowText string) harness.Se
 	prompt.WriteString("\n\n## Untrusted Transcript Window\n\n")
 	prompt.WriteString(windowText)
 	return harness.SessionSpec{
-		Prompt: prompt.String(),
-		Model:  spec.Model,
-		Agent: agentcfg.ClaudeAgent{
-			Common:   agentcfg.Common{Model: spec.Model},
-			Tools:    []string{},
-			MaxTurns: 1,
-		},
+		Prompt:     prompt.String(),
+		Model:      spec.Model,
+		Agent:      monitorAgent(backend, spec.Model),
 		Schema:     monitorJSONSchema,
 		Permission: denyAll,
 	}
 }
 
+// monitorAgent builds the backend's agent for a classifier turn. Claude also
+// gets no built-in tools and a single turn; the other backends have no such
+// settings, so the deny-all Permission callback alone keeps them tool-less.
+func monitorAgent(backend, model string) agentcfg.Agent {
+	common := agentcfg.Common{Model: model}
+	switch backend {
+	case agentcfg.BackendCodex:
+		return agentcfg.CodexAgent{Common: common}
+	case agentcfg.BackendCursor:
+		return agentcfg.CursorAgent{Common: common}
+	default:
+		return agentcfg.ClaudeAgent{Common: common, Tools: []string{}, MaxTurns: 1}
+	}
+}
+
 func (a *MonitorAdapter) Dispatch(ctx context.Context, spec sentinel.MonitorSpec, windowText string) (sentinel.MonitorResult, error) {
-	if spec.Model == "" || spec.Prompt == "" {
+	// Model may be empty: codex and cursor then use the backend's own default.
+	if spec.Prompt == "" {
 		return sentinel.MonitorResult{}, fmt.Errorf("monitor definition is incomplete")
 	}
 	timeout := a.timeout
@@ -105,8 +119,11 @@ func (a *MonitorAdapter) Dispatch(ctx context.Context, spec sentinel.MonitorSpec
 // a non-nil err is a decode-shaped failure eligible for Dispatch's single
 // retry, as opposed to a connection/timeout failure.
 func (a *MonitorAdapter) attempt(ctx context.Context, spec sentinel.MonitorSpec, windowText string) (result sentinel.MonitorResult, launched, retryable bool, err error) {
-	h := a.newHarness()
-	sess, err := h.Open(ctx, monitorSessionSpec(spec, windowText))
+	h, err := a.newHarness()
+	if err != nil {
+		return sentinel.MonitorResult{}, false, false, fmt.Errorf("monitor harness: %w", err)
+	}
+	sess, err := h.Open(ctx, monitorSessionSpec(a.backend, spec, windowText))
 	if err != nil {
 		return sentinel.MonitorResult{}, false, false, fmt.Errorf("monitor open: %w", err)
 	}

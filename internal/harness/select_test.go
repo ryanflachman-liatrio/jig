@@ -51,3 +51,52 @@ func TestForResolvesEveryAgentcfgBackend(t *testing.T) {
 		}
 	}
 }
+
+func TestCapabilityString(t *testing.T) {
+	tests := map[Capability]string{
+		CapPermissionCallback: "CapPermissionCallback",
+		CapUserQuestion:       "CapUserQuestion",
+		CapSessionResume:      "CapSessionResume",
+		CapStructuredOutput:   "CapStructuredOutput",
+		CapPartialStreaming:   "CapPartialStreaming",
+		Capability(1 << 7):    "Capability(128)",
+	}
+	for c, want := range tests {
+		if got := c.String(); got != want {
+			t.Errorf("%d.String() = %q, want %q", uint8(c), got, want)
+		}
+	}
+}
+
+func TestRequire(t *testing.T) {
+	tests := []struct {
+		name    string
+		caps    CapabilitySet
+		require []Capability
+		wantErr []string
+	}{
+		{"all present", NewCapabilitySet(CapStructuredOutput, CapPermissionCallback), []Capability{CapStructuredOutput, CapPermissionCallback}, nil},
+		{"nothing required", 0, nil, nil},
+		{"one missing", NewCapabilitySet(CapPermissionCallback), []Capability{CapStructuredOutput, CapPermissionCallback}, []string{"fake-backend", "CapStructuredOutput"}},
+		{"two missing", 0, []Capability{CapSessionResume, CapPartialStreaming}, []string{"fake-backend", "CapSessionResume", "CapPartialStreaming"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := Require(&FakeHarness{NameVal: "fake-backend", Caps: tc.caps}, tc.require...)
+			if tc.wantErr == nil {
+				if err != nil {
+					t.Fatalf("Require = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("Require = nil, want error")
+			}
+			for _, want := range tc.wantErr {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not name %q", err, want)
+				}
+			}
+		})
+	}
+}

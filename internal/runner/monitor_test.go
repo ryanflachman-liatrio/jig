@@ -70,7 +70,7 @@ func scriptedSession(events ...harness.Event) *fakeMonitorSession {
 }
 
 func adapterWith(h *fakeMonitorHarness) *MonitorAdapter {
-	return newMonitorAdapter(func() monitorHarness { return h })
+	return newMonitorAdapter(agentcfg.BackendClaude, func() (monitorHarness, error) { return h, nil })
 }
 
 func TestMonitorAdapterIsolationAndLifecycle(t *testing.T) {
@@ -262,7 +262,7 @@ func TestMonitorAdapterTimeoutAndConnectFailure(t *testing.T) {
 // with no built-in tools, a single turn, no questions, and a deny-all
 // permission callback, whatever the step backend is.
 func TestMonitorSessionSpec(t *testing.T) {
-	spec := monitorSessionSpec(sentinel.MonitorSpec{Model: monitorModel, Prompt: "policy"}, "window")
+	spec := monitorSessionSpec(agentcfg.BackendClaude, sentinel.MonitorSpec{Model: monitorModel, Prompt: "policy"}, "window")
 	claude, ok := spec.Agent.(agentcfg.ClaudeAgent)
 	if !ok {
 		t.Fatalf("agent = %#v, want a Claude agent", spec.Agent)
@@ -278,5 +278,50 @@ func TestMonitorSessionSpec(t *testing.T) {
 		if decision := spec.Permission(harness.ToolCall{Name: tool, Input: map[string]any{}, InputResolved: true}); decision.Allow {
 			t.Fatalf("permission callback allowed %s, want deny-all", tool)
 		}
+	}
+}
+
+func TestMonitorSessionSpecPerBackend(t *testing.T) {
+	tests := []struct {
+		backend string
+		model   string
+		want    agentcfg.Agent
+	}{
+		{agentcfg.BackendClaude, monitorModel, agentcfg.ClaudeAgent{Common: agentcfg.Common{Model: monitorModel}, Tools: []string{}, MaxTurns: 1}},
+		{agentcfg.BackendCodex, "gpt-5-codex", agentcfg.CodexAgent{Common: agentcfg.Common{Model: "gpt-5-codex"}}},
+		{agentcfg.BackendCodex, "", agentcfg.CodexAgent{}},
+		{agentcfg.BackendCursor, "sonnet-4", agentcfg.CursorAgent{Common: agentcfg.Common{Model: "sonnet-4"}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.backend+"/"+tc.model, func(t *testing.T) {
+			h := &fakeMonitorHarness{sessions: []*fakeMonitorSession{
+				scriptedSession(resultEvent(map[string]any{"flagged": false, "severity": "low", "detail": ""}, nil)),
+			}}
+			adapter := newMonitorAdapter(tc.backend, func() (monitorHarness, error) { return h, nil })
+			if _, err := adapter.Dispatch(context.Background(), sentinel.MonitorSpec{Model: tc.model, Prompt: "p"}, "w"); err != nil {
+				t.Fatal(err)
+			}
+			spec := h.specs[0]
+			if !reflect.DeepEqual(spec.Agent, tc.want) {
+				t.Fatalf("agent = %#v, want %#v", spec.Agent, tc.want)
+			}
+			if spec.Model != tc.model {
+				t.Fatalf("model = %q, want %q", spec.Model, tc.model)
+			}
+			if !reflect.DeepEqual(spec.Schema, monitorJSONSchema) {
+				t.Fatalf("schema = %#v, want monitorJSONSchema", spec.Schema)
+			}
+			if spec.Permission == nil || spec.Permission(harness.ToolCall{Name: "Bash", InputResolved: true}).Allow {
+				t.Fatal("permission callback must exist and deny every tool call")
+			}
+		})
+	}
+}
+
+func TestMonitorAdapterHarnessFactoryError(t *testing.T) {
+	adapter := newMonitorAdapter(agentcfg.BackendClaude, func() (monitorHarness, error) { return nil, errors.New("no harness") })
+	got, err := adapter.Dispatch(context.Background(), sentinel.MonitorSpec{Prompt: "p"}, "w")
+	if err == nil || got.Launched {
+		t.Fatalf("Dispatch = %+v, %v; want unlaunched error", got, err)
 	}
 }

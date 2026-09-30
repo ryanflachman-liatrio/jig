@@ -15,6 +15,7 @@ import (
 
 	acpsdk "github.com/coder/acp-go-sdk"
 
+	"github.com/ryanflachman-liatrio/jig/internal/config"
 	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"github.com/ryanflachman-liatrio/jig/internal/engine"
 	"github.com/ryanflachman-liatrio/jig/internal/harness"
@@ -298,7 +299,7 @@ func TestACPManagerCrashFixture(t *testing.T) {
 	repo := os.Getenv("JIG_MANAGER_CRASH_REPO")
 	runIDPath := os.Getenv("JIG_MANAGER_CRASH_RUN_ID_PATH")
 	fleet := &recordingFleet{calls: make(map[string][]string), costUSD: 0.02}
-	defs, err := runner.BuiltinMonitors()
+	defs, err := runner.BuiltinMonitors(config.SecurityConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +403,7 @@ func TestTier2ObservesEveryACPHarness(t *testing.T) {
 			repo := t.TempDir()
 			initFixtureRepo(t, repo)
 			fleet := &recordingFleet{calls: make(map[string][]string)}
-			defs, err := runner.BuiltinMonitors()
+			defs, err := runner.BuiltinMonitors(config.SecurityConfig{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -621,7 +622,7 @@ func TestTier2ACPLiveStopResumeUsesBackendCapability(t *testing.T) {
 			repo := t.TempDir()
 			initFixtureRepo(t, repo)
 			fleet := &recordingFleet{calls: make(map[string][]string)}
-			defs, err := runner.BuiltinMonitors()
+			defs, err := runner.BuiltinMonitors(config.SecurityConfig{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -730,7 +731,7 @@ func TestTier2PersistedReopenAcrossEveryACPHarness(t *testing.T) {
 				t.Fatal(err)
 			}
 			fleet := &recordingFleet{calls: make(map[string][]string), costUSD: 0.02}
-			defs, err := runner.BuiltinMonitors()
+			defs, err := runner.BuiltinMonitors(config.SecurityConfig{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -817,7 +818,7 @@ func TestTier2MixedACPHarnessRunKeepsStepWindowsIsolated(t *testing.T) {
 	repo := t.TempDir()
 	initFixtureRepo(t, repo)
 	fleet := &recordingFleet{calls: make(map[string][]string)}
-	defs, err := runner.BuiltinMonitors()
+	defs, err := runner.BuiltinMonitors(config.SecurityConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -919,7 +920,7 @@ func TestTier2PolicyParityAcrossEveryACPHarness(t *testing.T) {
 					repo := t.TempDir()
 					initFixtureRepo(t, repo)
 					fleet := &recordingFleet{calls: make(map[string][]string)}
-					defs, err := runner.BuiltinMonitors()
+					defs, err := runner.BuiltinMonitors(config.SecurityConfig{})
 					if err != nil {
 						t.Fatal(err)
 					}

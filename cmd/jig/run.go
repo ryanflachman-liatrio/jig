@@ -117,7 +117,7 @@ func runRun(args []string) int {
 	tel := setupTelemetry(ctx, *root)
 	defer tel.shutdown(context.Background())
 
-	rt, err := newRuntime(*root, cfg.Notifications, tel)
+	rt, err := newRuntime(*root, cfg.Notifications, cfg.Security, tel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return headless.ExitFailed
