@@ -15,6 +15,12 @@ import (
 )
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+	hadGate, wasFocused := m.hasGate(), m.focus == focusGate
+	m, cmd := m.update(msg)
+	return m.withGateBell(hadGate, wasFocused, cmd)
+}
+
+func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -307,6 +313,17 @@ func (m Model) hasGate() bool {
 // focusGate) the pulse stops — they have already seen it.
 func (m Model) gateShouldPulse() bool {
 	return m.hasGate() && m.focus != focusGate
+}
+
+// gateShouldRing is the bell's counterpart to gateShouldPulse: "a gate waits
+// and the operator isn't looking", narrowed to the empty → non-empty edge so
+// a burst of gates rings once, and rate-limited by gateBellCooldown. Focus is
+// judged from before the update (wasFocused): the first gate after run entry
+// auto-focuses itself (consumeFirstWaitFocus), which says nothing about
+// whether the operator is actually watching this terminal.
+func (m Model) gateShouldRing(hadGate, wasFocused bool) bool {
+	return m.bellEnabled && !hadGate && !wasFocused && m.hasGate() &&
+		bellClock().Sub(m.lastBell) >= gateBellCooldown
 }
 
 // textareaActive reports whether the focused gate is currently capturing free

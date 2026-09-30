@@ -330,6 +330,12 @@ type Model struct {
 	// Default true; sourced from the merged [tui] config (WithTUIConfig).
 	simpleMode bool
 
+	// bellEnabled rings the terminal bell when a gate starts waiting; seeded
+	// from [tui] bell and flipped for the session by ToggleBell. lastBell
+	// anchors the gateBellCooldown window.
+	bellEnabled bool
+	lastBell    time.Time
+
 	// diagnostics renders a sanitized text dump of the process-wide
 	// notification diagnostic ring (spec 23-spec-run-notifications FR-17).
 	// Nil when notifications are not wired (tests) — the overlay is inert.
@@ -645,6 +651,7 @@ func New(runID string) Model {
 func (m Model) WithTUIConfig(cfg config.TUIConfig) Model {
 	m.simpleMode = cfg.SimpleModeOrDefault()
 	m.compactToolGroups = cfg.CompactToolGroupsOrDefault()
+	m.bellEnabled = cfg.BellOrDefault()
 	return m
 }
 
