@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/ryanflachman-liatrio/jig/internal/config"
 	"github.com/ryanflachman-liatrio/jig/internal/engine"
 	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/tui/palette"
 )
 
 // countBells runs cmd and counts tea.RawMsg{"\a"} results, flattening batches.
@@ -174,5 +176,98 @@ func TestGateBell(t *testing.T) {
 				t.Fatalf("bells = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+var bellKey = tea.KeyPressMsg{Code: 'B', Text: "B"}
+
+// bellHelp returns the bell binding's help label from the palette catalog,
+// or "" when absent.
+func bellHelp(m Model) string {
+	for _, sec := range m.PaletteSections() {
+		for _, c := range palette.FromBindings(sec.Title, sec.Bindings) {
+			if c.Binding == "B" {
+				return c.Title
+			}
+		}
+	}
+	return ""
+}
+
+func TestBellToggle(t *testing.T) {
+	on := true
+	tests := []struct {
+		name  string
+		focus focusRegion
+	}{
+		{"steps", focusSteps},
+		{"transcript", focusTranscript},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pinBellClock(t)
+			m := newBellMonitor(t, &on)
+			m.focus = tt.focus
+			if got := bellHelp(m); got != "bell: on" {
+				t.Fatalf("initial help = %q, want %q", got, "bell: on")
+			}
+
+			m, _ = m.Update(bellKey)
+			if m.bellEnabled {
+				t.Fatal("B did not turn the bell off")
+			}
+			if got := bellHelp(m); got != "bell: off" {
+				t.Fatalf("help after toggle = %q, want %q", got, "bell: off")
+			}
+			if _, cmd := m.Update(reviewGate("a")); countBells(t, cmd) != 0 {
+				t.Fatal("gate rang after the bell was toggled off")
+			}
+
+			m, _ = m.Update(bellKey)
+			if !m.bellEnabled {
+				t.Fatal("second B did not turn the bell back on")
+			}
+		})
+	}
+}
+
+func TestBellToggleIgnoredWhileTyping(t *testing.T) {
+	on := true
+	m := newBellMonitor(t, &on)
+	m, _ = m.Update(EngineEventMsg{Event: engine.PromptRequest{
+		RunID: "run-1", StepID: "a", Label: "First", As: "first",
+	}})
+	m.focus = focusGate
+	m.loadActiveTextarea()
+	if !m.textareaActive() {
+		t.Fatal("precondition: prompt textarea should be capturing text")
+	}
+
+	m, _ = m.Update(bellKey)
+	if !m.bellEnabled {
+		t.Fatal("B typed into the gate textarea toggled the bell")
+	}
+	if got := m.promptTextarea.Value(); !strings.Contains(got, "B") {
+		t.Fatalf("textarea value = %q, want the typed B", got)
+	}
+}
+
+// TestBellHelpVisibleInSimpleHelp checks the `?` overlay source (root renders
+// HelpSections), so the toggle is discoverable without the palette too.
+func TestBellHelpVisibleInSimpleHelp(t *testing.T) {
+	for _, f := range []focusRegion{focusSteps, focusTranscript} {
+		m := newBellMonitor(t, nil)
+		m.focus = f
+		found := false
+		for _, sec := range m.HelpSections() {
+			for _, b := range sec.Bindings {
+				if b.Help().Key == "B" && b.Help().Desc == "bell: off" {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Fatalf("focus %v: simple-mode help missing B bell: off", f)
+		}
 	}
 }

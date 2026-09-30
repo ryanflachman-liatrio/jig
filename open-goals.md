@@ -89,7 +89,7 @@ operator amenities.
 | ID | Goal | Who has it | jig today |
 |----|------|------------|-----------|
 | B1 | **Clipboard yank / OSC52** — copy run id, step output, selection | lazygit, Crush, nvim | **Done.** See [`docs/clipboard.md`](../clipboard.md). Open follow-up: Monitor output-file line selection (file copies whole). |
-| B2 | **Attention signal on gate wait** — terminal bell / optional notify | Claude Code, ops TUIs | **Partial.** Gate-bar pulse (`c0a6ca0`) + opt-in desktop/Slack/webhook on `attention_required` (A24). Open: terminal bell and a TUI-level toggle. |
+| B2 | **Attention signal on gate wait** — terminal bell / optional notify | Claude Code, ops TUIs | **Done.** Gate-bar pulse (`c0a6ca0`) + opt-in desktop/Slack/webhook on `attention_required` (A24) + opt-in terminal bell (`[tui] bell`, `B` session toggle; Spec 06). |
 | B3 | **Fuzzy command palette** + richer named actions | fzf, k9s, gum, Crush | **Partial.** Fuzzy ranking + highlights (`sahilm/fuzzy`, `8af22d4`). Open: named actions — the catalog is still built from bindings and re-dispatches keys. |
 | B4 | **Which-key / next-keys overlay** after prefixes | Helix, nvim | Open. Silent `gg` only. |
 | B5 | **Theme skins + light mode** | Almost all admired TUIs | Open. Single dark "Pantera" theme; `[ui] glyph_preset` switches symbols, not colors. |
@@ -209,7 +209,7 @@ Done since the first audit, struck through; open items keep their rank.
 3. ~~T2 Clipboard yank~~ **done**
 4. ~~A6 Restore Tier-2 monitors~~ **done** (G1 model fix landed)
 5. ~~A4 / A5 Cursor + Claude ACP resume parity~~ **done**
-6. B2 Gate attention — **partial**: pulse + opt-in notify landed; bell open
+6. ~~B2 Gate attention~~ **done**
 7. ~~A2 Thin ops CLI~~ **done**
 8. **T3 Open location**
 9. **T5 Smart burst folding** — partial; default-on + mixed-kind open

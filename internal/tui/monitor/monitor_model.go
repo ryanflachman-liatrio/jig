@@ -908,6 +908,7 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 				}
 			}
 		}
+		bindings = append(bindings, m.bellBinding())
 		if m.gateContext != nil {
 			contextKey := m.keys.GateContext
 			contextKey.SetHelp("ctrl+o", "return")
@@ -935,7 +936,7 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 		}
 		bindings := []keybind.Binding{
 			m.keys.OpenTranscript, stopKey, resetKey, resumeKey,
-			m.keys.StepsNav, treeKey, copyAll, m.keys.StepsLeave,
+			m.keys.StepsNav, treeKey, copyAll, m.bellBinding(), m.keys.StepsLeave,
 		}
 		if m.gateContext != nil {
 			contextKey := m.keys.GateContext

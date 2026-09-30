@@ -148,6 +148,18 @@ kind and execution coordinate. Failures, running or incomplete calls, malformed
 or targetless calls, unknown tools, and `askuserquestion` remain standalone and
 split a run.
 
+The run monitor can also ring the terminal bell (BEL) when a gate starts
+waiting, so an operator in another pane, tab, or tmux window notices a blocked
+run. It is off by default; set `bell = true` in `config.toml`'s `[tui]` table
+to opt in. Press `B` in Steps or Transcript, or choose the command-palette
+action, to toggle it for the current session; the footer/help label reads
+`bell: on` or `bell: off`, and the toggle is not written back to disk. The bell
+rings once when the gate queue goes from empty to non-empty, not for gates that
+join an already-waiting queue, never when the operator was already focused on
+the gate, and at most once per 5-second cooldown. BEL is emitted through
+`tea.Raw` so it stays sequenced with renderer output; terminals and tmux decide
+whether it sounds, flashes, or only flags the window.
+
 Compact non-read groups ignore settled reasoning hidden by the default view.
 Enabling the reasoning filter restores those items and splits groups at their
 original positions. Live reasoning and execution-coordinate changes still split

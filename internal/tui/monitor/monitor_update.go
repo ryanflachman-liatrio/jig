@@ -388,6 +388,9 @@ func (m Model) aliasPanelFocus(key string) focusRegion {
 func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	rows := m.visibleRows()
 	switch {
+	case keybind.Matches(msg, m.keys.ToggleBell):
+		m.toggleBell()
+		return m, nil
 	case keybind.Matches(msg, m.keys.Down):
 		if m.cursor < len(rows)-1 {
 			m.cursor++
@@ -560,6 +563,9 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	case keybind.Matches(msg, m.keys.ClearView):
 		m.clearTranscriptView()
 		m.refreshPanels()
+		return m, nil
+	case keybind.Matches(msg, m.keys.ToggleBell):
+		m.toggleBell()
 		return m, nil
 	case keybind.Matches(msg, m.keys.CompactTools):
 		m.toggleCompactToolGroups()

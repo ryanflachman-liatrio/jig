@@ -3,6 +3,7 @@ package monitor
 import (
 	"time"
 
+	keybind "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -33,4 +34,24 @@ func (m Model) withGateBell(hadGate, wasFocused bool, cmd tea.Cmd) (Model, tea.C
 	}
 	m.lastBell = bellClock()
 	return m, tea.Batch(cmd, bellCmd())
+}
+
+// toggleBell flips the gate bell for this session only; [tui] bell in
+// config.toml stays the persistent default. The footer's "bell: on/off"
+// label is the feedback.
+func (m *Model) toggleBell() {
+	m.bellEnabled = !m.bellEnabled
+	m.refreshPanels()
+}
+
+// bellBinding is ToggleBell labeled with the current session state, in the
+// same "name: on/off" form as the compact-tools toggle.
+func (m Model) bellBinding() keybind.Binding {
+	b := m.keys.ToggleBell
+	if m.bellEnabled {
+		b.SetHelp("B", "bell: on")
+	} else {
+		b.SetHelp("B", "bell: off")
+	}
+	return b
 }
