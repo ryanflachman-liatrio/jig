@@ -16,6 +16,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/ryanflachman-liatrio/jig/internal/config"
 	"github.com/ryanflachman-liatrio/jig/internal/engine"
 	"github.com/ryanflachman-liatrio/jig/internal/harness"
 	"github.com/ryanflachman-liatrio/jig/internal/interaction"
@@ -48,7 +49,7 @@ func TestBuildSystemPrompt(t *testing.T) {
 }
 
 func TestQuestionPanelRoundTrip(t *testing.T) {
-	m := New(nil, "", engine.RunSnapshot{})
+	m := New(nil, "", engine.RunSnapshot{}, config.HelpChatConfig{})
 	req := interaction.QuestionRequest{
 		ID: "help-q1",
 		Fields: []interaction.QuestionField{{
@@ -79,7 +80,7 @@ func TestQuestionPanelRoundTrip(t *testing.T) {
 }
 
 func TestQuestionEscapeOwnershipFollowsNestedPhase(t *testing.T) {
-	m := New(nil, "", engine.RunSnapshot{})
+	m := New(nil, "", engine.RunSnapshot{}, config.HelpChatConfig{})
 	req := interaction.QuestionRequest{
 		ID: "help-q1",
 		Fields: []interaction.QuestionField{{
@@ -244,7 +245,7 @@ func TestFinalMergeGate_ContextCancelledUnblocks(t *testing.T) {
 // Init returns a non-nil cmd, and CapturesText returns true initially.
 func TestModelInit(t *testing.T) {
 	snap := engine.RunSnapshot{ID: "r", Workflow: "wf"}
-	m := New(nil, "", snap)
+	m := New(nil, "", snap, config.HelpChatConfig{})
 
 	// nil run → Init returns nil (unavailable path).
 	cmd := m.Init()
@@ -585,9 +586,11 @@ func TestToolServerSurvivesSubprocessKillMidRequest(t *testing.T) {
 // uses for the same narrow-interface seam.
 type fakeHelpchatHarness struct {
 	events []harness.Event
+	specs  []harness.SessionSpec
 }
 
-func (h *fakeHelpchatHarness) Open(_ context.Context, _ harness.SessionSpec) (harness.Session, error) {
+func (h *fakeHelpchatHarness) Open(_ context.Context, spec harness.SessionSpec) (harness.Session, error) {
+	h.specs = append(h.specs, spec)
 	ch := make(chan harness.Event, len(h.events))
 	for _, ev := range h.events {
 		ch <- ev
@@ -619,13 +622,13 @@ func (s *fakeHelpchatSession) Close() error {
 // live subprocess.
 func TestModelTurnRoundTripThroughFakeHarness(t *testing.T) {
 	run := fakeRun("run-turn")
-	m := New(run, t.TempDir(), engine.RunSnapshot{ID: "run-turn", Workflow: "wf"})
-	m.newHarness = func() helpchatHarness {
+	m := New(run, t.TempDir(), engine.RunSnapshot{ID: "run-turn", Workflow: "wf"}, config.HelpChatConfig{})
+	m.newHarness = func() (helpchatHarness, error) {
 		return &fakeHelpchatHarness{events: []harness.Event{
 			{Type: harness.EventTextDelta, Text: "Hello"},
 			{Type: harness.EventTextDelta, Text: ", world"},
 			{Type: harness.EventResult, SessionID: "sess-1"},
-		}}
+		}}, nil
 	}
 
 	initCmd := m.Init()

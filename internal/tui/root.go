@@ -116,6 +116,10 @@ type rootModel struct {
 	// monitor.New(...) construction site.
 	diagnostics DiagnosticsRenderer
 
+	// helpChatConfig is the merged [helpchat] table, forwarded into every
+	// monitor.New(...) construction site so the help panel uses its backend.
+	helpChatConfig config.HelpChatConfig
+
 	width  int
 	height int
 }
@@ -215,6 +219,12 @@ func WithTelemetryMode(mode string) Option {
 // .jig/tui.json disk read.
 func WithTUIPrefs(cfg config.TUIConfig) Option {
 	return func(m *rootModel) { m.tuiConfig = cfg }
+}
+
+// WithHelpChatConfig installs the merged [helpchat] table that selects the
+// help chat's backend and model.
+func WithHelpChatConfig(cfg config.HelpChatConfig) Option {
+	return func(m *rootModel) { m.helpChatConfig = cfg }
 }
 
 // New returns jig's root TUI model. mgr is the engine manager; it must be

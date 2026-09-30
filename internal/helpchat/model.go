@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 
+	"github.com/ryanflachman-liatrio/jig/internal/config"
 	"github.com/ryanflachman-liatrio/jig/internal/engine"
 	"github.com/ryanflachman-liatrio/jig/internal/harness"
 	"github.com/ryanflachman-liatrio/jig/internal/interaction"
@@ -57,7 +58,9 @@ type Model struct {
 
 	// Harness state — replaced on each queryCmd ConnectedMsg (one session per
 	// turn, matching AcpHarness's one-Open()-per-turn convention).
-	newHarness func() helpchatHarness
+	newHarness func() (helpchatHarness, error)
+	backend    string
+	model      string
 	toolSrv    *toolServer
 	session    harness.Session
 	msgChan    <-chan harness.Event
@@ -92,13 +95,33 @@ type Model struct {
 	snap     engine.RunSnapshot
 }
 
-// New constructs a Model ready for Init() to fire connectCmd.
-func New(run *engine.Run, runDir string, snap engine.RunSnapshot) Model {
+// New constructs a Model ready for Init() to fire connectCmd, running on the
+// backend and model cfg selects. When that backend lacks a capability the help
+// chat requires, it returns an unavailable Model whose text names the backend
+// and the missing capability instead.
+func New(run *engine.Run, runDir string, snap engine.RunSnapshot, cfg config.HelpChatConfig) Model {
+	backend := cfg.BackendOrDefault()
+	h, err := harness.For(backend)
+	if err != nil {
+		return newUnavailable(fmt.Sprintf("Help agent unavailable: helpchat.backend: %v", err))
+	}
+	factory := func() (helpchatHarness, error) { return harness.For(backend) }
+	return newModel(run, runDir, snap, backend, resolveHelpModel(backend, cfg.Model), h, factory)
+}
+
+// newModel is New with the capability probe and per-turn harness factory
+// injected, so tests can drive any backend without a live CLI.
+func newModel(run *engine.Run, runDir string, snap engine.RunSnapshot, backend, model string, probe harness.Harness, factory func() (helpchatHarness, error)) Model {
+	if err := harness.Require(probe, helpCapabilities...); err != nil {
+		return newUnavailable(fmt.Sprintf("Help agent unavailable on backend %q: %v", backend, err))
+	}
 	return Model{
 		run:        run,
 		runDir:     runDir,
 		ctx:        context.Background(),
-		newHarness: newDefaultHarness,
+		newHarness: factory,
+		backend:    backend,
+		model:      model,
 		dispatchCh: make(chan tea.Msg, 64),
 		focus:      focusInput,
 		snap:       snap,
@@ -109,17 +132,27 @@ func New(run *engine.Run, runDir string, snap engine.RunSnapshot) Model {
 // NewUnavailable returns a Model pre-populated with a static "unavailable"
 // turn for journal-replayed runs where no live engine handle exists.
 func NewUnavailable() Model {
+	return newUnavailable("Help agent unavailable for completed runs. The help agent requires a live run to read step state.")
+}
+
+// newUnavailable returns a Model whose only turn is text; with no run it never
+// starts the tool server or an agent session.
+func newUnavailable(text string) Model {
 	m := Model{
 		dispatchCh: make(chan tea.Msg, 1),
 		focus:      focusInput,
 		ta:         shared.NewInputTextarea("Ask about this run…", 80, 3),
 	}
 	m.turns = []helpTurn{{
-		assistant: "Help agent unavailable for completed runs. The help agent requires a live run to read step state.",
+		assistant: text,
 		isError:   false,
 	}}
 	return m
 }
+
+// Backend reports the backend this help chat runs on; empty for an
+// unavailable Model.
+func (m Model) Backend() string { return m.backend }
 
 // SetChannels wires the final-merge rendezvous channels from the monitor.
 // Must be called before Init() so the MCP server has the channels.
@@ -303,7 +336,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.updateViewport()
 				sysPrompt := BuildSystemPrompt(m.snap.Workflow, m.snap)
 				cmds = append(cmds, queryCmd(
-					m.ctx, m.newHarness, m.toolSrv, m.dispatch,
+					m.ctx, m.newHarness, m.backend, m.model, m.toolSrv, m.dispatch,
 					m.sessionID, sysPrompt, userMsg,
 				))
 			}

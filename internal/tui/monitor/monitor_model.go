@@ -345,6 +345,9 @@ type Model struct {
 	// default" observability posture.
 	telemetryMode string
 
+	// helpChatConfig selects the help chat's backend and model.
+	helpChatConfig config.HelpChatConfig
+
 	// Help agent modal (ctrl+h). helpOpen/helpReady are the open/connected flags;
 	// helpModel is preserved across open/close cycles for the run's lifetime.
 	// helpGateReq/helpGateAns are the rendezvous channels for the final-merge gate.
@@ -653,6 +656,12 @@ func (m Model) WithTUIConfig(cfg config.TUIConfig) Model {
 // the badge (A18).
 func (m Model) WithTelemetryMode(mode string) Model {
 	m.telemetryMode = mode
+	return m
+}
+
+// WithHelpChatConfig sets the [helpchat] table the help panel is built from.
+func (m Model) WithHelpChatConfig(cfg config.HelpChatConfig) Model {
+	m.helpChatConfig = cfg
 	return m
 }
 
@@ -1170,4 +1179,10 @@ func (m Model) selectedLifecycleActions() lifecycleActions {
 		actions.canReset = !m.steps[i].isChild()
 	}
 	return actions
+}
+
+// newHelpModel builds the live help chat for this run on the configured
+// backend.
+func (m Model) newHelpModel(snap engine.RunSnapshot) helpchat.Model {
+	return helpchat.New(m.run, m.RunDir, snap, m.helpChatConfig)
 }

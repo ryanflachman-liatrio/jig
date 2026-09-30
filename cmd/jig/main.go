@@ -115,6 +115,7 @@ func main() {
 		tui.WithStartHook(tel.registerRun),
 		tui.WithTelemetryMode(tel.mode()),
 		tui.WithTUIPrefs(cfg.TUI),
+		tui.WithHelpChatConfig(cfg.HelpChat),
 	))
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running program: %v\n", err)

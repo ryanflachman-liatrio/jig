@@ -12,18 +12,45 @@ import (
 	"github.com/ryanflachman-liatrio/jig/internal/harness"
 )
 
+// helpModelID is the Claude default for the help chat. Codex and Cursor
+// default to an empty model, which lets the backend pick its own.
 const helpModelID = "claude-haiku-4-5-20251001"
 
 // helpchatHarness is the narrow seam helpchat needs from harness.Harness
 // (open one session, read its events), mirroring runner/monitor.go's
 // monitorHarness pattern so this package depends on jig's own
 // harness.SessionSpec/harness.Session types rather than any ACP wire type.
-// *harness.AcpHarness satisfies this directly.
+// Every harness.Harness satisfies this directly.
 type helpchatHarness interface {
 	Open(ctx context.Context, spec harness.SessionSpec) (harness.Session, error)
 }
 
-func newDefaultHarness() helpchatHarness { return harness.NewAcpHarness() }
+// helpCapabilities are what the help chat cannot work without: live typing,
+// the operator permission gate, and conversation continuity across turns.
+var helpCapabilities = []harness.Capability{
+	harness.CapPartialStreaming, harness.CapPermissionCallback, harness.CapSessionResume,
+}
+
+// resolveHelpModel applies the per-backend default when model is unset.
+func resolveHelpModel(backend, model string) string {
+	if model == "" && backend == agentcfg.BackendClaude {
+		return helpModelID
+	}
+	return model
+}
+
+// helpAgent builds the backend's agent for one help turn.
+func helpAgent(backend, model string) agentcfg.Agent {
+	common := agentcfg.Common{Model: model}
+	switch backend {
+	case agentcfg.BackendCodex:
+		return agentcfg.CodexAgent{Common: common}
+	case agentcfg.BackendCursor:
+		return agentcfg.CursorAgent{Common: common}
+	default:
+		return agentcfg.ClaudeAgent{Common: common, MaxTurns: 200}
+	}
+}
 
 // startServerCmd binds the local loopback tool server (BuildToolHandlers
 // dispatched against live *engine.Run state) and starts serving it in the
@@ -61,15 +88,16 @@ func startServerCmd(
 	}
 }
 
-// queryCmd opens a fresh AcpHarness session for one turn (following the same
+// queryCmd opens a fresh harness session for one turn (following the same
 // per-turn-fresh-session pattern runner/agent.go and MonitorAdapter already
 // use). When sessionID is set, SessionSpec.Resume carries conversation
-// continuity across turns (AcpHarness's CapSessionResume). MCPServers names
+// continuity across turns (CapSessionResume). MCPServers names
 // jig mcp-serve so the agent spawns it and forwards its jig-help tool calls
 // back to toolSrv over the loopback connection toolSrv is already serving.
 func queryCmd(
 	ctx context.Context,
-	newHarness func() helpchatHarness,
+	newHarness func() (helpchatHarness, error),
+	backend, model string,
 	toolSrv *toolServer,
 	dispatch DispatchFunc,
 	sessionID string,
@@ -83,8 +111,8 @@ func queryCmd(
 		}
 		spec := harness.SessionSpec{
 			Prompt:     prompt,
-			Model:      helpModelID,
-			Agent:      agentcfg.ClaudeAgent{Common: agentcfg.Common{Model: helpModelID}, MaxTurns: 200},
+			Model:      model,
+			Agent:      helpAgent(backend, model),
 			Partial:    true,
 			Resume:     sessionID,
 			Permission: buildPermissionFn(dispatch),
@@ -98,7 +126,10 @@ func queryCmd(
 				},
 			}},
 		}
-		h := newHarness()
+		h, err := newHarness()
+		if err != nil {
+			return TurnErrorMsg{err: fmt.Errorf("connect: %w", err)}
+		}
 		sess, err := h.Open(ctx, spec)
 		if err != nil {
 			return TurnErrorMsg{err: fmt.Errorf("connect: %w", err)}

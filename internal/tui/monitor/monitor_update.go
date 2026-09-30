@@ -713,7 +713,7 @@ func (m Model) toggleHelpChat() (Model, tea.Cmd) {
 	}
 
 	snap := m.run.Snapshot()
-	m.helpModel = helpchat.New(m.run, m.RunDir, snap)
+	m.helpModel = m.newHelpModel(snap)
 	m.helpModel.SetChannels(gateReq, gateAns)
 	initCmd := m.helpModel.Init()
 	m.helpReady = true
