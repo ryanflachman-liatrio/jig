@@ -572,16 +572,30 @@ func (m *Model) prunePageState() {
 	}
 }
 
-// transcriptChrome renders the search input, search/filter status, and filter
-// picker. They sit pinned above the Transcript viewport rather than inside
-// chatBody, so they stay visible however far the reader has scrolled and never
-// shift the item line ranges that navigation and mouse hit-testing index by.
-// It returns nil when there is nothing to show.
+// transcriptChrome renders the failed-step error, the compact-groups notice,
+// the search input, search/filter status, and filter picker. They sit pinned
+// above the Transcript viewport rather than inside chatBody, so they stay
+// visible however far the reader has scrolled and never shift the item line
+// ranges that navigation and mouse hit-testing index by. It returns nil when
+// there is nothing to show.
 func (m Model) transcriptChrome() []string {
 	if m.selKind == "file" {
 		return nil
 	}
 	var lines []string
+	if len(m.chatItems) > 0 {
+		// A transcript can end before the backend reports its terminal result.
+		// Keep the recovered failure visible beside that partial evidence. It
+		// keys on the current status, so a retry back to running drops it.
+		if i, ok := m.index[m.chatStep]; ok {
+			if s := m.steps[i]; s.status == step.StatusFailed && s.err != "" {
+				lines = append(lines, "  "+shared.Theme.Error.Render(shared.IconError+" "+s.err))
+			}
+		}
+		if m.compactToolNotice != "" {
+			lines = append(lines, "  "+shared.Theme.Chat.Hint.Render(m.compactToolNotice))
+		}
+	}
 	if m.searchOpen {
 		lines = append(lines, "  "+shared.Theme.Accent.Render("/")+" "+m.searchInput.View())
 	}
@@ -651,19 +665,7 @@ func (m *Model) chatBody() string {
 		return m.fileBody()
 	}
 	if len(m.chatItems) > 0 {
-		body := m.itemTranscriptBody()
-		if m.compactToolNotice != "" {
-			body = "  " + shared.Theme.Chat.Hint.Render(m.compactToolNotice) + "\n\n" + body
-		}
-		if i, ok := m.index[m.chatStep]; ok {
-			s := m.steps[i]
-			if s.status == step.StatusFailed && s.err != "" {
-				// A transcript can end before the backend reports its terminal result.
-				// Keep the recovered failure visible beside that partial evidence.
-				return "  " + shared.Theme.Error.Render(shared.IconError+" "+s.err) + "\n\n" + body
-			}
-		}
-		return body
+		return m.itemTranscriptBody()
 	}
 
 	var b strings.Builder
