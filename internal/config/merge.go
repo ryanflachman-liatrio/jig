@@ -57,6 +57,8 @@ func Merge(base, overlay Config) Config {
 		TUI:           mergeTUI(base.TUI, overlay.TUI),
 		Notifications: mergeNotifications(base.Notifications, overlay.Notifications),
 		Telemetry:     mergeTelemetry(base.Telemetry, overlay.Telemetry),
+		HelpChat:      mergeHelpChat(base.HelpChat, overlay.HelpChat),
+		Security:      mergeSecurity(base.Security, overlay.Security),
 	}
 }
 

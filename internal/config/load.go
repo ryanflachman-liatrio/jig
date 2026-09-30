@@ -77,6 +77,12 @@ func loadFile(path string) (Config, error) {
 		return Config{}, fmt.Errorf("%w: %s", ErrConfigInvalid, path)
 	}
 	if err := cfg.validate(); err != nil {
+		// A backendError names only a key and its accepted values, never file
+		// content, so it is the one validation error safe to surface.
+		var be backendError
+		if errors.As(err, &be) {
+			return Config{}, fmt.Errorf("%w: %s: %v", ErrConfigInvalid, path, be)
+		}
 		return Config{}, fmt.Errorf("%w: %s", ErrConfigInvalid, path)
 	}
 	return cfg, nil
@@ -92,5 +98,8 @@ func (c Config) validate() error {
 	if err := c.Notifications.validate(); err != nil {
 		return err
 	}
-	return nil
+	if err := validateBackend("helpchat.backend", c.HelpChat.Backend); err != nil {
+		return err
+	}
+	return validateBackend("security.monitor_backend", c.Security.MonitorBackend)
 }

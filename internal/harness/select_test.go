@@ -3,6 +3,8 @@ package harness
 import (
 	"strings"
 	"testing"
+
+	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
 )
 
 func TestFor(t *testing.T) {
@@ -37,5 +39,15 @@ func TestFor(t *testing.T) {
 				t.Errorf("For(%q).Name() = %q, want %q", tt.backend, h.Name(), tt.wantName)
 			}
 		})
+	}
+}
+
+// TestForResolvesEveryAgentcfgBackend keeps agentcfg.Backends (the list
+// config validation accepts) in lockstep with the backends For can build.
+func TestForResolvesEveryAgentcfgBackend(t *testing.T) {
+	for _, b := range agentcfg.Backends {
+		if _, err := For(b); err != nil {
+			t.Errorf("For(%q) = %v, want a harness", b, err)
+		}
 	}
 }

@@ -7,7 +7,8 @@ package config
 import "github.com/ryanflachman-liatrio/jig/internal/notification"
 
 // Config is the fully-typed, merged configuration surface. Each nested table
-// corresponds to one TOML table ([ui], [tui], [notifications], [telemetry]).
+// corresponds to one TOML table ([ui], [tui], [notifications], [telemetry],
+// [helpchat], [security]).
 // Fields are added to the nested structs by the unit that owns them; this
 // file only establishes the shape every layer merges against.
 type Config struct {
@@ -15,6 +16,8 @@ type Config struct {
 	TUI           TUIConfig           `toml:"tui"`
 	Notifications NotificationsConfig `toml:"notifications"`
 	Telemetry     TelemetryConfig     `toml:"telemetry"`
+	HelpChat      HelpChatConfig      `toml:"helpchat"`
+	Security      SecurityConfig      `toml:"security"`
 }
 
 // UIConfig holds general presentation defaults not owned by a more specific
