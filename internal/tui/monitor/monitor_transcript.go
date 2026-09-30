@@ -665,7 +665,13 @@ func (m *Model) chatBody() string {
 		return m.fileBody()
 	}
 	if len(m.chatItems) > 0 {
-		return m.itemTranscriptBody()
+		body := m.itemTranscriptBody()
+		if live := m.liveBlock(); live != "" {
+			// One blank row separates the live block from the last item, the
+			// same rhythm as between items. It sits after every line range.
+			body += "\n" + live
+		}
+		return body
 	}
 
 	var b strings.Builder
@@ -694,10 +700,8 @@ func (m *Model) chatBody() string {
 	b.WriteString("  " + header + "\n\n")
 
 	running := s.status == step.StatusRunning
-	hasTail := false
-	if buf, ok := m.stepOutput[m.chatStep]; ok && buf.Len() > 0 {
-		hasTail = true
-	}
+	live := m.liveBlock()
+	hasTail := live != ""
 
 	if len(m.chatEntries) == 0 {
 		// Review steps have no transcript. Their immutable document inventory is
@@ -706,17 +710,20 @@ func (m *Model) chatBody() string {
 			m.writeReviewOverview(&b, rev)
 			return b.String()
 		}
-		if m.RunDir == "" {
+		if hasTail {
+			// Live output streams even when persistence is off.
+			b.WriteString(live)
+		} else if m.RunDir == "" {
 			b.WriteString(shared.RenderEmptyState(shared.EmptyState{
 				Title: "Transcript unavailable",
 				Body:  "Persistence is off for this run — nothing was captured.",
 			}))
-		} else if running && !hasTail {
+		} else if running {
 			b.WriteString(shared.RenderEmptyState(shared.EmptyState{
 				Title: "Waiting for step to start",
 				Body:  "Output will appear here once the step begins writing.",
 			}))
-		} else if !running && !hasTail {
+		} else {
 			if s.err != "" {
 				b.WriteString("  " + shared.Theme.Error.Render(s.err) + "\n")
 			} else if s.status == step.StatusPending {
@@ -1112,5 +1119,85 @@ func (m Model) fileBody() string {
 		writeVerbatim(&b, content)
 	}
 
+	return b.String()
+}
+
+// liveIndent aligns the live block with the text column of rendered items
+// (two-column prefix, disclosure marker, space).
+const liveIndent = "    "
+
+// liveBlock renders the open step's not-yet-finalized output (agent text
+// deltas or command stdout) as verbatim rows ending in the typing cursor. It is
+// appended after itemTranscriptBody and recorded in no line range, so it is
+// never a navigation, search, copy, or click target. It returns "" unless the
+// step is running with a non-blank buffer.
+//
+// The block is tail-anchored so a long stream cannot grow the viewport without
+// limit: command steps use the tool-output clamp (transcriptDetailBytes /
+// transcriptDetailRows), agent steps only the chatTextCollapseBytes byte cap so
+// prose stays readable while typing. Dropped rows surface the shared
+// EarlierItems hint.
+func (m Model) liveBlock() string {
+	i, ok := m.index[m.chatStep]
+	if !ok || m.steps[i].status != step.StatusRunning {
+		return ""
+	}
+	buf, ok := m.stepOutput[m.chatStep]
+	if !ok {
+		return ""
+	}
+	text := strings.TrimRight(buf.String(), " \t\r\n")
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	s := m.steps[i]
+	command := m.commandSteps[s.id] || (s.parentID != "" && m.commandSteps[s.parentID])
+	byteLimit := chatTextCollapseBytes
+	if command {
+		byteLimit = transcriptDetailBytes
+	}
+	dropped := 0
+	if len(text) > byteLimit {
+		cut := len(text) - byteLimit
+		dropped = strings.Count(text[:cut], "\n")
+		partial := text[cut-1] != '\n'
+		text = clampRunesTail(text[cut:])
+		if j := strings.IndexByte(text, '\n'); partial && j >= 0 {
+			// Drop the line the cut lands in rather than show half of it.
+			text = text[j+1:]
+			dropped++
+		}
+	}
+	width := max(m.transcriptInnerW-len(liveIndent), 1)
+	var rows []string
+	for _, line := range strings.Split(text, "\n") {
+		for ansi.StringWidth(line) > width {
+			row, rest := splitDetailRow(line, width)
+			rows = append(rows, row)
+			line = rest
+		}
+		rows = append(rows, line)
+	}
+	if command && len(rows) > transcriptDetailRows {
+		dropped += len(rows) - transcriptDetailRows
+		rows = rows[len(rows)-transcriptDetailRows:]
+	}
+	// The cursor sits after the last glyph, or wraps to its own row when the
+	// last row already fills the panel.
+	cursor := shared.Theme.Accent.Render(shared.LiveCursor)
+	var b strings.Builder
+	if dropped > 0 {
+		b.WriteString(liveIndent + shared.Theme.Chat.Hint.Render(shared.EarlierItems(dropped, "line", "lines")) + "\n")
+	}
+	for n, row := range rows {
+		b.WriteString(liveIndent + row)
+		if n == len(rows)-1 {
+			if ansi.StringWidth(row)+ansi.StringWidth(shared.LiveCursor) > width {
+				b.WriteString("\n" + liveIndent)
+			}
+			b.WriteString(cursor)
+		}
+		b.WriteString("\n")
+	}
 	return b.String()
 }
