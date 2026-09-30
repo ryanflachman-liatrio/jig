@@ -1356,9 +1356,9 @@ func TestMonitorAgentQuestionClearsOnResume(t *testing.T) {
 	}
 }
 
-// primaryBorderSeq is the SGR truecolor foreground for the Charple primary token
-// (#6B50FF → 107;80;255), used to detect which panel's border is focused.
-const primaryBorderSeq = "\x1b[38;2;107;80;255m"
+// primaryBorderSeq is the SGR truecolor foreground for the Guac focus token
+// (#12C78F → 18;199;143), used to detect which panel's border is focused.
+const primaryBorderSeq = "\x1b[38;2;18;199;143m"
 
 // titleLineFor returns the top-edge (title) line of the panel whose title
 // contains want, from a rendered two-panel monitor View. Panels are joined

@@ -14,7 +14,7 @@ const BreadcrumbSeparator = " › "
 // border edge, lazygit-style: `╭─ Title ─────╮`. It is a *pure-presentation*
 // primitive — it never creates or sizes viewports and never wraps content. The
 // caller must pre-fit body to the panel's inner area (width-hFrame × height-vFrame,
-// see PanelFrame). focused selects the primary (Charple) vs. dim (Iron) border.
+// see PanelFrame). focused selects the focus (Guac green) vs. dim (Iron) border.
 //
 // lipgloss v2 has no native border-title API (Border carries only edge/corner
 // runes), so we omit the style's top border and hand-build the titled top line,

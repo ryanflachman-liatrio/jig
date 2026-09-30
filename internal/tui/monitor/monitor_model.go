@@ -24,7 +24,7 @@ import (
 
 // focusRegion is which of the monitor's three regions currently holds keyboard
 // input. Both the Steps panel and the Transcript panel are always visible; only
-// the focused region's border is drawn primary (Charple). A pending gate is a
+// the focused region's border is drawn in the focus color (Guac). A pending gate is a
 // third region: it auto-focuses on arrival but does not freeze navigation — the
 // user can tab away to read the transcript a verdict is about and tab back. See
 // docs/adr/0002-gates-are-nonblocking-focus-regions.md.
