@@ -55,6 +55,7 @@ func Merge(base, overlay Config) Config {
 	return Config{
 		UI:            mergeUI(base.UI, overlay.UI),
 		TUI:           mergeTUI(base.TUI, overlay.TUI),
+		Keys:          mergeKeys(base.Keys, overlay.Keys),
 		Notifications: mergeNotifications(base.Notifications, overlay.Notifications),
 		Telemetry:     mergeTelemetry(base.Telemetry, overlay.Telemetry),
 		HelpChat:      mergeHelpChat(base.HelpChat, overlay.HelpChat),
@@ -80,6 +81,22 @@ func mergeTUI(base, overlay TUIConfig) TUIConfig {
 	}
 	if overlay.Bell != nil {
 		out.Bell = overlay.Bell
+	}
+	return out
+}
+
+// mergeKeys merges per action ID: a project-level remap of one action leaves
+// the user's other remaps in place.
+func mergeKeys(base, overlay map[string]KeyChords) map[string]KeyChords {
+	if len(overlay) == 0 {
+		return base
+	}
+	out := make(map[string]KeyChords, len(base)+len(overlay))
+	for id, chords := range base {
+		out[id] = chords
+	}
+	for id, chords := range overlay {
+		out[id] = chords
 	}
 	return out
 }

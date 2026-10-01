@@ -206,7 +206,7 @@ func (m Model) renderGateReview(b *strings.Builder, entry *pendingInputEntry) {
 	for i, ch := range entry.review.Choices {
 		b.WriteString(fmt.Sprintf("    [%d] %s\n", i+1, ch))
 	}
-	b.WriteString("\n    " + shared.Theme.Chat.Hint.Render("[ctrl+o] view diff") + "\n")
+	b.WriteString("\n    " + shared.Theme.Chat.Hint.Render("["+m.keys.GateContext.Help().Key+"] view diff") + "\n")
 }
 
 func (m Model) renderGateRecovery(b *strings.Builder, entry *pendingInputEntry) {

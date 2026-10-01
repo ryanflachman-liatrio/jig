@@ -90,11 +90,11 @@ operator amenities.
 |----|------|------------|-----------|
 | B1 | **Clipboard yank / OSC52** — copy run id, step output, selection | lazygit, Crush, nvim | **Done.** See [`docs/clipboard.md`](../clipboard.md). Open follow-up: Monitor output-file line selection (file copies whole). |
 | B2 | **Attention signal on gate wait** — terminal bell / optional notify | Claude Code, ops TUIs | **Done.** Gate-bar pulse (`c0a6ca0`) + opt-in desktop/Slack/webhook on `attention_required` (A24) + opt-in terminal bell (`[tui] bell`, `B` session toggle; Spec 06). |
-| B3 | **Fuzzy command palette** + richer named actions | fzf, k9s, gum, Crush | **Partial.** Fuzzy ranking + highlights (`sahilm/fuzzy`, `8af22d4`). Open: named actions — the catalog is still built from bindings and re-dispatches keys. |
+| B3 | **Fuzzy command palette** + richer named actions | fzf, k9s, gum, Crush | **Partial.** Fuzzy ranking + highlights (`sahilm/fuzzy`, `8af22d4`). Named action registry (`shared.Action`, stable IDs per screen) landed with B7; the palette re-dispatches each action's current chord, so it follows remaps. Open: invoke actions by ID (needs an action-dispatch refactor of Monitor key handlers). |
 | B4 | **Which-key / next-keys overlay** after prefixes | Helix, nvim | Open. Silent `gg` only. |
 | B5 | **Theme skins + light mode** | Almost all admired TUIs | Open. Single dark "Pantera" theme; `[ui] glyph_preset` switches symbols, not colors. |
 | B6 | **Optional mouse** — click-to-focus + wheel (not mouse-first) | lazygit, k9s, yazi, btop | **Done** for Home (click + wheel) and Monitor (click focus, transcript click-to-toggle, wheel); Detail wheel only. Review, diffview, and question panels have no mouse. |
-| B7 | **Remappable keybindings** (config) | lazygit, k9s, Helix, Crush | Open. Hardcoded `*Keys`; no keys table in `config.toml`. |
+| B7 | **Remappable keybindings** (config) | lazygit, k9s, Helix, Crush | **Done** for global, Home, Detail, and Monitor actions: `[keys]` table, validated at TUI start (unknown/fixed IDs, region conflicts). See [`docs/TUI.md`](docs/TUI.md#remapping-keys). Open: review workspace, question forms, paired-direction bindings. |
 | B8 | **In-monitor run/session switcher** | Crush `ctrl+s`, OpenCode | Open. Esc → Home. |
 
 ### P1 / P2 — maturity
@@ -102,7 +102,7 @@ operator amenities.
 | ID | Goal | Notes |
 |----|------|-------|
 | B9 | Panel jump `1–n` + resize | Open. Digits are gate verdicts only. |
-| B10 | Richer TUI config | Partial. `config.toml` has `[ui] glyph_preset`, `[tui] simple_mode`, `[tui] compact_tool_groups`. Open: theme, keys, bell, density. |
+| B10 | Richer TUI config | Partial. `config.toml` has `[ui] glyph_preset`, `[tui] simple_mode`, `[tui] compact_tool_groups`. Open: theme, density. |
 | B11 | Custom commands / plugins | Open. |
 | B12 | Suspend `ctrl+z` | Open. |
 | B13 | In-TUI export / screendump | Open in the TUI. Nearby: CLI `jig export` (A22), `Y` copies a recorded transcript. |

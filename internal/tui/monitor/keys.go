@@ -94,7 +94,22 @@ type monitorKeys struct {
 	CopyAll  keybind.Binding
 }
 
+// defaultMonitorKeys is the effective keymap: the built-in bindings with the
+// validated [keys] overrides applied.
 func defaultMonitorKeys() monitorKeys {
+	k := baseMonitorKeys()
+	shared.ApplyKeymap(k.actions())
+	return k
+}
+
+// Actions lists the Monitor's named actions over the built-in bindings, for
+// keymap validation.
+func Actions() []shared.Action {
+	k := baseMonitorKeys()
+	return k.actions()
+}
+
+func baseMonitorKeys() monitorKeys {
 	return monitorKeys{
 		FocusNext:  keybind.NewBinding(keybind.WithKeys("tab"), keybind.WithHelp("tab", "focus")),
 		FocusPrev:  keybind.NewBinding(keybind.WithKeys("shift+tab"), keybind.WithHelp("shift+tab", "prev focus")),
@@ -159,5 +174,77 @@ func defaultMonitorKeys() monitorKeys {
 
 		CopyItem: keybind.NewBinding(keybind.WithKeys("y"), keybind.WithHelp("y", "copy")),
 		CopyAll:  keybind.NewBinding(keybind.WithKeys("Y"), keybind.WithHelp("Y", "copy all")),
+	}
+}
+
+// actions names every binding a Monitor handler matches. Display-only
+// bindings are omitted; they mirror a matched binding's keys. The
+// notification-diagnostics chord is the global action's value, so it is
+// registered once in shared.GlobalActions.
+func (k *monitorKeys) actions() []shared.Action {
+	const (
+		all        = "monitor"
+		steps      = "monitor.steps"
+		transcript = "monitor.transcript"
+		gate       = "monitor.gate"
+	)
+	a := func(id string, b *keybind.Binding, contexts ...string) shared.Action {
+		return shared.Action{ID: "monitor." + id, Contexts: contexts, Binding: b}
+	}
+	fixed := func(id string, b *keybind.Binding, contexts ...string) shared.Action {
+		act := a(id, b, contexts...)
+		act.Fixed = true
+		return act
+	}
+	return []shared.Action{
+		fixed("focus_next", &k.FocusNext, all),
+		fixed("focus_prev", &k.FocusPrev, all),
+		fixed("panel_focus", &k.PanelFocus, all),
+		a("toggle_help_agent", &k.ToggleHelp, all),
+		a("toggle_simple", &k.ToggleSimple, all),
+		a("gate_context", &k.GateContext, all),
+
+		a("down", &k.Down, steps),
+		a("up", &k.Up, steps),
+		a("open_transcript", &k.OpenTranscript, steps),
+		a("toggle_tree", &k.ToggleTree, steps),
+		a("steps_leave", &k.StepsLeave, steps),
+		a("stop_step", &k.StopStep, steps),
+		a("reset_step", &k.ResetStep, steps),
+		a("resume_step", &k.ResumeStep, steps),
+		a("toggle_bell", &k.ToggleBell, steps, transcript),
+		a("copy_all", &k.CopyAll, steps, transcript),
+
+		fixed("scroll", &k.Scroll, transcript),
+		fixed("scroll_fast", &k.ScrollFast, transcript),
+		fixed("block_nav", &k.BlockNav, transcript),
+		fixed("goto_top", &k.GotoTop, transcript),
+		a("transcript_to_steps", &k.TransToSteps, transcript),
+		a("transcript_leave", &k.TransLeave, transcript),
+		a("toggle", &k.Toggle, transcript),
+		a("expand_all", &k.ExpandAll, transcript),
+		a("follow", &k.Follow, transcript),
+		a("search", &k.Search, transcript),
+		a("filters", &k.Filters, transcript),
+		a("compact_tools", &k.CompactTools, transcript),
+		a("clear_view", &k.ClearView, transcript),
+		a("page_older", &k.PageOlder, transcript),
+		a("page_newer", &k.PageNewer, transcript),
+		a("copy_item", &k.CopyItem, transcript),
+
+		fixed("gate_submit", &k.Submit, gate+".request", gate+".prompt", gate+".recovery"),
+		fixed("gate_blur", &k.GateBlur, gate),
+		fixed("gate_entry_nav", &k.GateEntryNav, gate),
+		fixed("review_open", &k.ReviewOpen, gate+".review"),
+		a("recover_retry", &k.RecoverRetry, gate+".recovery"),
+		a("recover_guide", &k.RecoverGuide, gate+".recovery"),
+		a("recover_skip", &k.RecoverSkip, gate+".recovery"),
+		a("recover_abort", &k.RecoverAbort, gate+".recovery", gate+".integration"),
+		a("integration_resolve", &k.IntegrationResolve, gate+".integration"),
+		a("integration_agent", &k.IntegrationAgent, gate+".integration"),
+		a("final_merge_approve", &k.FinalMergeApprove, gate+".final_merge"),
+		a("final_merge_discard", &k.FinalMergeDiscard, gate+".final_merge"),
+		a("reset_confirm", &k.ResetConfirm, gate+".reset_confirm"),
+		a("reset_cancel", &k.ResetCancel, gate+".reset_confirm"),
 	}
 }

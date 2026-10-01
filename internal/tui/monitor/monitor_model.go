@@ -891,14 +891,14 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 		var bindings []keybind.Binding
 		if m.selKind == "file" {
 			copyAll := m.keys.CopyAll
-			copyAll.SetHelp("Y", "copy file")
+			copyAll = shared.Relabel(copyAll, "copy file")
 			bindings = []keybind.Binding{
 				m.keys.Scroll, m.keys.GotoTop, m.keys.ScrollFast, copyAll, m.keys.TransToSteps, m.keys.TransLeave,
 			}
 		} else {
 			blockNav := m.keys.BlockNav
 			if m.searchQuery != "" {
-				blockNav.SetHelp("n/N", "match")
+				blockNav = shared.Relabel(blockNav, "match")
 			}
 			pageOlder := m.keys.PageOlder
 			pageOlder.SetEnabled(m.chatPage.HasEarlier)
@@ -908,15 +908,15 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 			clearView.SetEnabled(m.searchQuery != "" || m.filters.active())
 			compactTools := m.keys.CompactTools
 			if m.compactToolGroups {
-				compactTools.SetHelp("c", "compact tools: on")
+				compactTools = shared.Relabel(compactTools, "compact tools: on")
 			} else {
-				compactTools.SetHelp("c", "compact tools: off")
+				compactTools = shared.Relabel(compactTools, "compact tools: off")
 			}
 			copyItem := m.keys.CopyItem
-			copyItem.SetHelp("y", contextualItemCopyLabel(m))
+			copyItem = shared.Relabel(copyItem, contextualItemCopyLabel(m))
 			copyItem.SetEnabled(len(m.chatVisibleItems) > 0)
 			copyAll := m.keys.CopyAll
-			copyAll.SetHelp("Y", "copy transcript")
+			copyAll = shared.Relabel(copyAll, "copy transcript")
 			if simple {
 				// Keep scroll / follow / expand / leave; hide paging, filters,
 				// search, expand-all, and block-nav from footer/help.
@@ -938,7 +938,7 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 		bindings = append(bindings, m.bellBinding())
 		if m.gateContext != nil {
 			contextKey := m.keys.GateContext
-			contextKey.SetHelp("ctrl+o", "return")
+			contextKey = shared.Relabel(contextKey, "return")
 			bindings = append([]keybind.Binding{contextKey}, bindings...)
 		}
 		sections = append(sections, shared.HelpSection{
@@ -957,9 +957,9 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 		treeKey.SetEnabled(!m.cursorIsFileRow())
 		copyAll := m.keys.CopyAll
 		if m.cursorIsFileRow() {
-			copyAll.SetHelp("Y", "copy file")
+			copyAll = shared.Relabel(copyAll, "copy file")
 		} else {
-			copyAll.SetHelp("Y", "copy transcript")
+			copyAll = shared.Relabel(copyAll, "copy transcript")
 		}
 		bindings := []keybind.Binding{
 			m.keys.OpenTranscript, stopKey, resetKey, resumeKey,
@@ -967,7 +967,7 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 		}
 		if m.gateContext != nil {
 			contextKey := m.keys.GateContext
-			contextKey.SetHelp("ctrl+o", "return")
+			contextKey = shared.Relabel(contextKey, "return")
 			bindings = append([]keybind.Binding{contextKey}, bindings...)
 		}
 		sections = append(sections, shared.HelpSection{
@@ -983,7 +983,7 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 		modeDesc = "enable simple"
 	}
 	toggleSimple := m.keys.ToggleSimple
-	toggleSimple.SetHelp("ctrl+shift+a", modeDesc)
+	toggleSimple = shared.Relabel(toggleSimple, modeDesc)
 	sections = append(sections, shared.HelpSection{
 		Title:    modeTitle,
 		Bindings: []keybind.Binding{toggleSimple},

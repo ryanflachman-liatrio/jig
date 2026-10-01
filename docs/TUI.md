@@ -83,6 +83,53 @@ empty, loading, disabled, error, and unknown states. Keep actions discoverable
 through help and the palette, and avoid rendering backend-specific jargon
 unless the operator needs it to act.
 
+### Remapping keys
+
+Every matched binding is a named action in its screen's keymap
+(`shared.Action`: a stable ID, the regions where it is live, and a pointer to
+the binding handlers match). `config.toml`'s `[keys]` table remaps actions by
+ID; each value is one chord or a list, and project entries override user
+entries per action:
+
+```toml
+[keys]
+"monitor.copy_item" = "ctrl+y"
+"global.palette" = ["ctrl+k", "ctrl+p"]
+```
+
+A remap replaces the action's default keys. Handlers, footers, the help
+overlay, and the command palette all read the same binding, so they show and
+accept the new chord. `tui.ConfigureKeymap` validates the table when the TUI
+starts and refuses to launch on an unknown ID, a fixed action, an empty chord
+list, or a chord that two actions would share in overlapping regions (a region
+encloses its dot-separated children; global chords are live everywhere). Keys
+may repeat across regions that are never live together, such as the Steps
+panel and a gate. Use `shared.Relabel` for a contextual description, never
+`SetHelp` with a literal key.
+
+Fixed actions keep their defaults but still block conflicting remaps: focus
+movement, paired-direction bindings whose handler reads the pressed key (j/k
+scroll, J/K, n/N, `[`/`]` entry navigation), the `gg` chord, gate submit and
+blur, the review-open key, the workflow list's own navigation and filter, and
+Detail's back key (chart mode drops `h`/`left` from it). Review workspaces,
+question forms, and overlay-internal keys (palette, help, filters) are not
+remappable yet.
+
+Remappable action IDs:
+
+| Scope | Actions |
+|---|---|
+| Global | `global.quit`, `global.help`, `global.help_typing`, `global.palette`, `global.notification_diagnostics` |
+| Home | `home.pane`, `home.detail`, `selector.open`, `runs.up`, `runs.down`, `runs.open`, `runs.new_run`, `runs.resume`, `runs.delete`, `runs.copy_id`, `runs.back` |
+| Detail | `detail.run`, `detail.runs`, `detail.toggle_chart` |
+| Monitor (all regions) | `monitor.toggle_help_agent`, `monitor.toggle_simple`, `monitor.gate_context` |
+| Monitor Steps | `monitor.down`, `monitor.up`, `monitor.open_transcript`, `monitor.toggle_tree`, `monitor.steps_leave`, `monitor.stop_step`, `monitor.reset_step`, `monitor.resume_step`, `monitor.toggle_bell`, `monitor.copy_all` |
+| Monitor Transcript | `monitor.transcript_to_steps`, `monitor.transcript_leave`, `monitor.toggle`, `monitor.expand_all`, `monitor.follow`, `monitor.search`, `monitor.filters`, `monitor.compact_tools`, `monitor.clear_view`, `monitor.page_older`, `monitor.page_newer`, `monitor.copy_item`, `monitor.toggle_bell`, `monitor.copy_all` |
+| Monitor gates | `monitor.recover_retry`, `monitor.recover_guide`, `monitor.recover_skip`, `monitor.recover_abort`, `monitor.integration_resolve`, `monitor.integration_agent`, `monitor.final_merge_approve`, `monitor.final_merge_discard`, `monitor.reset_confirm`, `monitor.reset_cancel` |
+
+The command palette still runs an entry by re-dispatching the action's current
+primary chord, so it follows remaps; it does not yet invoke actions by ID.
+
 ### Mouse navigation
 
 jig remains keyboard-primary: mouse navigation is optional, requires no configuration,

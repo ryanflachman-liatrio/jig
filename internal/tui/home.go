@@ -34,6 +34,12 @@ type homeKeys struct {
 }
 
 func defaultHomeKeys() homeKeys {
+	k := baseHomeKeys()
+	shared.ApplyKeymap(k.actions())
+	return k
+}
+
+func baseHomeKeys() homeKeys {
 	return homeKeys{
 		Pane:   keybind.NewBinding(keybind.WithKeys("tab", "shift+tab"), keybind.WithHelp("tab", "pane")),
 		Detail: keybind.NewBinding(keybind.WithKeys("d"), keybind.WithHelp("d", "detail")),
@@ -72,7 +78,7 @@ func (m rootModel) homeHelpSections() []shared.HelpSection {
 		return m.detail.HelpSections()
 	case m.homeFocus == homeRuns:
 		open := m.runs.Keys().Open
-		open.SetHelp("enter", "open run")
+		open = shared.Relabel(open, "open run")
 		newRun := m.runs.Keys().NewRun
 		resume := m.runs.Keys().Resume
 		del := m.runs.Keys().Delete
@@ -86,7 +92,7 @@ func (m rootModel) homeHelpSections() []shared.HelpSection {
 	default:
 		filter := m.selector.Keys().Filter
 		open := m.selector.Keys().Open
-		open.SetHelp("enter", "focus runs")
+		open = shared.Relabel(open, "focus runs")
 		newRun := m.runs.Keys().NewRun
 		return []shared.HelpSection{
 			{Title: "Workflows", Bindings: []keybind.Binding{
@@ -389,4 +395,13 @@ func (m rootModel) updateHomeMouse(msg tea.MouseMsg) (rootModel, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// actions names Home's own matched chords. Nav is display-only: the panes
+// match their own up/down bindings.
+func (k *homeKeys) actions() []shared.Action {
+	return []shared.Action{
+		{ID: "home.pane", Contexts: []string{"home.workflows", "home.runs"}, Binding: &k.Pane},
+		{ID: "home.detail", Contexts: []string{"home.workflows"}, Binding: &k.Detail},
+	}
 }
