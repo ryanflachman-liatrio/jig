@@ -179,8 +179,6 @@ func (m *Model) writeTranscriptItem(b *strings.Builder, item transcriptItem, sel
 		}
 	}
 	switch item.kind {
-	case transcriptItemReadGroup:
-		m.writeReadGroup(b, item, selected, expanded)
 	case transcriptItemText:
 		if item.role == transcript.RoleUser {
 			b.WriteString(m.renderUserText(prefix, item, block, expanded))

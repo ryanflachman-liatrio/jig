@@ -179,11 +179,15 @@ at the tail; new output must not steal the position of someone reading history.
 
 Every uninterrupted run of local-file read exchanges at one execution
 coordinate forms a page-local **grouped read**, including a run of one, so a
-lone read opens and collapses the same way. A single failed read is the
-exception: it stays standalone so its error detail renders inline. A grouped read is one navigation and expansion target; its compact tree
-retains every distinct loaded target, and a search or filter match on any member
-retains the complete group. Expansion and selected-item copy use only the
-members present on the loaded page, so grouping never implies off-page evidence.
+lone read opens and collapses the same way. A grouped read is a tool group
+(see below) whose policy is always on: it groups whether or not compact tool
+groups are enabled, and it admits running and failed members. A single failed
+read is the exception: it stays standalone so its error detail renders inline.
+Collapsed, its tree lists every distinct loaded target once with its line
+selectors instead of the first-three/last preview. Otherwise it shares every
+tool-group behavior below: expansion, navigation, search, filters, and copy.
+Expansion and copy use only the members present on the loaded page, so
+grouping never implies off-page evidence.
 
 Other recognized tools can use opt-in compact groups. Press `c` in Transcript
 or choose the command-palette action to toggle `compact_tool_groups` for the
@@ -207,15 +211,15 @@ the gate, and at most once per 5-second cooldown. BEL is emitted through
 `tea.Raw` so it stays sequenced with renderer output; terminals and tmux decide
 whether it sounds, flashes, or only flags the window.
 
-Compact non-read groups ignore settled reasoning hidden by the default view.
-Enabling the reasoning filter restores those items and splits groups at their
-original positions. Live reasoning and execution-coordinate changes still split
+Compact tool groups, including grouped reads in compact mode, ignore settled
+reasoning hidden by the default view. Enabling the reasoning filter restores
+those items and splits groups at their original positions. Live reasoning and execution-coordinate changes still split
 groups. Search and other filters run after grouping, so hiding prose, failures,
 or targetless calls with a filter cannot join calls across those boundaries.
 
-A collapsed non-read group shows at most the first three calls, an omitted-count
-row, and the final call. Expanding the group with `enter` or space reveals every
-member as its existing bordered summary card. The group header and visible child
+A collapsed group other than a grouped read shows at most the first three
+calls, an omitted-count row, and the final call. Expanding any group with
+`enter` or space reveals every member as its existing bordered summary card. The group header and visible child
 cards are independent `n`/`N` stops; `enter` or space on a child toggles its
 existing detail, and `o` applies global expansion. Search and filters inspect
 members but retain the complete group, while copying a child copies that exchange
