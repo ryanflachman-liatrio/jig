@@ -12,6 +12,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
+	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
 	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
 	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
@@ -207,7 +208,7 @@ func toolSummary(icon, action, detail, kind string) toolCallSummary {
 	return toolCallSummary{
 		icon:   sanitizeToolSummary(icon),
 		action: sanitizeToolSummary(action),
-		detail: sanitizeToolSummary(detail),
+		detail: previewText(detail),
 		kind:   strings.ToLower(strings.TrimSpace(kind)),
 	}
 }
@@ -298,6 +299,13 @@ func displayToolName(name string) string {
 		name = name[i+2:]
 	}
 	return sanitizeToolSummary(name)
+}
+
+// previewText is the collapsed-preview boundary: strip control characters,
+// then mask secrets. Expanded bodies and copy never call it, so they keep the
+// raw value.
+func previewText(s string) string {
+	return sentinel.RedactPreview(sanitizeToolSummary(s))
 }
 
 // sanitizeToolSummary keeps collapsed activity rows terminal-safe. Raw tool
@@ -534,7 +542,8 @@ func formatScalarArg(raw json.RawMessage, valueMaxLen int) string {
 		if json.Unmarshal(trimmed, &s) != nil {
 			return shared.TruncateTitle(string(trimmed), valueMaxLen)
 		}
-		escaped := strings.NewReplacer("\n", "\\n", "\t", "\\t").Replace(s)
+		// Mask before truncating so no prefix of a secret survives the cut.
+		escaped := sentinel.RedactPreview(strings.NewReplacer("\n", "\\n", "\t", "\\t").Replace(s))
 		return shared.TruncateTitle(`"`+escaped+`"`, valueMaxLen)
 	case '[':
 		var items []json.RawMessage

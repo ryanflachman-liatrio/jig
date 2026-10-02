@@ -199,6 +199,23 @@ kind and execution coordinate. Failures, running or incomplete calls, malformed
 or targetless calls, unknown tools, and `askuserquestion` remain standalone and
 split a run.
 
+With compact groups on, quiet exploration calls (`read`, `glob`, `grep`,
+`websearch`, `webfetch`) also fold across kinds: an uninterrupted run of
+settled, successful calls of those kinds forms one **Explore** group whose
+collapsed rows carry each call's kind as a muted label (`Search …`,
+`Read …`). A run of a single quiet kind keeps that kind's title and, for
+reads, the read tree. Any other kind, a failed or running call, or visible
+prose ends the run.
+
+Collapsed previews mask secrets. Error hints, collapsed call summaries
+(including bash command text), argument previews, and group or read-tree rows
+pass through `sentinel.RedactPreview`, which replaces known secret patterns
+and high-entropy values of key-looking assignments (`FOO_TOKEN=…`,
+`api_key: …`) with `<redacted>`. Free-standing SHAs, UUIDs and digests are not
+masked. Masking happens before truncation, so no prefix of a secret survives a
+narrow pane. Expanded detail bodies, `y` copy, and the transcript file on disk
+stay raw.
+
 The run monitor can also ring the terminal bell (BEL) when a gate starts
 waiting, so an operator in another pane, tab, or tmux window notices a blocked
 run. It is off by default; set `bell = true` in `config.toml`'s `[tui]` table

@@ -216,7 +216,7 @@ func compactToolGroupRows(item transcriptItem, entries []transcript.Entry) []com
 		if !ok {
 			return
 		}
-		row := compactToolRow{text: detail}
+		row := compactToolRow{text: previewText(detail)}
 		if mixed {
 			row.prefix = shared.Theme.Chat.ToolMeta.Render(memberPolicy.title) + " "
 		}
@@ -247,7 +247,9 @@ func readCompactRows(item transcriptItem, entries []transcript.Entry) []compactT
 			glyph, style := shared.ToolStatusIcon(target.state, readGroupPolicy.kind)
 			row.prefix = style.Render(glyph) + " "
 		}
-		row.text = shortFile(target.path)
+		// target.path stays raw: it is the read-tree merge key, and masking it
+		// could merge two distinct files. Only the displayed text is masked.
+		row.text = previewText(shortFile(target.path))
 		if selectors := compactReadSelectors(target.selectors); len(selectors) > 0 {
 			row.suffix = shared.Theme.Chat.ToolMeta.Render(":" + strings.Join(selectors, ", "))
 		}
