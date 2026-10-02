@@ -16,6 +16,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/ryanflachman-liatrio/jig/internal/config"
 	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
 	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
@@ -295,17 +296,43 @@ func TestCompactToolGroupPreviewBound(t *testing.T) {
 	}
 }
 
+func TestCompactToolGroupsDefaultOnAndSessionToggle(t *testing.T) {
+	entries := toolGroupEntries(
+		toolExchange("a", "bash", map[string]any{"command": "go test ./..."}, 0, 0, 0, false),
+		toolExchange("b", "bash", map[string]any{"command": "go vet ./..."}, 0, 0, 0, false),
+	)
+	m := newMonitorWithSteps(t).WithTUIConfig(config.TUIConfig{})
+	if !m.compactToolGroups {
+		t.Fatal("unset [tui] compact_tool_groups should start grouping on")
+	}
+	m.focus = focusTranscript
+	m.chatStep = "a"
+	m.setChatPage(transcript.Page{Entries: entries})
+	if len(m.chatItems) != 1 || m.chatItems[0].kind != transcriptItemToolGroup {
+		t.Fatalf("default items=%+v, want one group", m.chatItems)
+	}
+	m, _ = m.Update(key("c"))
+	if m.compactToolGroups || len(m.chatItems) != 2 {
+		t.Fatalf("after c: compact=%v items=%d, want off with two standalone calls", m.compactToolGroups, len(m.chatItems))
+	}
+	// The toggle is session-only: a fresh model from the same config is on.
+	if !New("run-1").WithTUIConfig(config.TUIConfig{}).compactToolGroups {
+		t.Fatal("a fresh model must not inherit the prior session's toggle")
+	}
+}
+
 func TestCompactToolGroupInteractionSessionOnly(t *testing.T) {
 	entries := toolGroupEntries(
 		toolExchange("a", "bash", map[string]any{"command": "go test ./..."}, 0, 0, 0, false),
 		toolExchange("b", "bash", map[string]any{"command": "go vet ./..."}, 0, 0, 0, false),
 	)
-	m := newMonitorWithSteps(t)
+	off := false
+	m := newMonitorWithSteps(t).WithTUIConfig(config.TUIConfig{CompactToolGroups: &off})
 	m.focus = focusTranscript
 	m.chatStep = "a"
 	m.setChatPage(transcript.Page{Entries: entries})
 	if len(m.chatItems) != 2 {
-		t.Fatalf("default-off items=%d, want 2", len(m.chatItems))
+		t.Fatalf("configured-off items=%d, want 2", len(m.chatItems))
 	}
 	foundPaletteAction := false
 	for _, section := range m.PaletteSections() {

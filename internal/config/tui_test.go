@@ -6,15 +6,15 @@ import (
 	"testing"
 )
 
-func TestTUIDefaultsMatchPrefsDefault(t *testing.T) {
-	// Matches internal/tui/prefs.Default()'s retired asymmetric pair
-	// exactly: simple_mode = true, compact_tool_groups = false.
+func TestTUIBuiltInDefaults(t *testing.T) {
+	// Both built-in defaults are on: simple_mode = true and
+	// compact_tool_groups = true (Spec 06: burst folding is default-on).
 	var zero TUIConfig
 	if !zero.SimpleModeOrDefault() {
 		t.Fatal("SimpleModeOrDefault() with unset [tui] = false, want true")
 	}
-	if zero.CompactToolGroupsOrDefault() {
-		t.Fatal("CompactToolGroupsOrDefault() with unset [tui] = true, want false")
+	if !zero.CompactToolGroupsOrDefault() {
+		t.Fatal("CompactToolGroupsOrDefault() with unset [tui] = false, want true")
 	}
 }
 
@@ -38,14 +38,14 @@ func TestTUIProjectOverridesUser(t *testing.T) {
 
 func TestTUIUserOverridesDefaults(t *testing.T) {
 	dir := t.TempDir()
-	userPath := writeConfigFile(t, dir, "user.toml", "[tui]\ncompact_tool_groups = true\n")
+	userPath := writeConfigFile(t, dir, "user.toml", "[tui]\ncompact_tool_groups = false\n")
 
 	cfg, err := Load(userPath, filepath.Join(dir, "project", ".jig"))
 	if err != nil {
 		t.Fatalf("Load: unexpected error %v", err)
 	}
-	if !cfg.TUI.CompactToolGroupsOrDefault() {
-		t.Fatal("user config's compact_tool_groups=true did not override the built-in false default")
+	if cfg.TUI.CompactToolGroupsOrDefault() {
+		t.Fatal("user config's compact_tool_groups=false did not override the built-in true default")
 	}
 	if !cfg.TUI.SimpleModeOrDefault() {
 		t.Fatal("simple_mode unset anywhere should still resolve to the built-in true default")

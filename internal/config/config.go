@@ -57,13 +57,13 @@ func (c TUIConfig) SimpleModeOrDefault() bool {
 }
 
 // CompactToolGroupsOrDefault resolves CompactToolGroups, falling back to
-// the built-in default (false) when unset. Safe to call on a zero-value
+// the built-in default (true) when unset. Safe to call on a zero-value
 // TUIConfig.
 func (c TUIConfig) CompactToolGroupsOrDefault() bool {
 	if c.CompactToolGroups != nil {
 		return *c.CompactToolGroups
 	}
-	return false
+	return true
 }
 
 // BellOrDefault resolves Bell, falling back to the built-in default (false)

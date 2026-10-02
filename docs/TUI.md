@@ -189,10 +189,10 @@ tool-group behavior below: expansion, navigation, search, filters, and copy.
 Expansion and copy use only the members present on the loaded page, so
 grouping never implies off-page evidence.
 
-Other recognized tools can use opt-in compact groups. Press `c` in Transcript
-or choose the command-palette action to toggle `compact_tool_groups` for the
-current session; the default (`false`) comes from `config.toml`'s `[tui]`
-table (`compact_tool_groups`), which a persistent default can override, but
+Other recognized tools fold into compact groups by default. Press `c` in
+Transcript or choose the command-palette action to toggle `compact_tool_groups`
+for the current session; the default (`true`) comes from `config.toml`'s
+`[tui]` table (`compact_tool_groups`), where `false` opts out persistently, but
 the in-session toggle itself is not written back to disk. Eligible groups
 contain one or more adjacent, settled, successful calls of the same canonical
 kind and execution coordinate. Failures, running or incomplete calls, malformed
