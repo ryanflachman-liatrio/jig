@@ -167,3 +167,10 @@ func TestMaskedBashRowCapture(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestUnknownToolTitleMasked(t *testing.T) {
+	got := summarizeActivity(&toolcall.Activity{Title: "mcp__srv__" + fakePreviewKey}, 80).action
+	if got != "<redacted>" {
+		t.Fatalf("action = %q, want <redacted>", got)
+	}
+}

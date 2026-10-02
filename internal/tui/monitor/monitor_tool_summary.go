@@ -207,7 +207,7 @@ func grepMetaArgs(args map[string]json.RawMessage, width int) []string {
 func toolSummary(icon, action, detail, kind string) toolCallSummary {
 	return toolCallSummary{
 		icon:   sanitizeToolSummary(icon),
-		action: sanitizeToolSummary(action),
+		action: previewText(action),
 		detail: previewText(detail),
 		kind:   strings.ToLower(strings.TrimSpace(kind)),
 	}
