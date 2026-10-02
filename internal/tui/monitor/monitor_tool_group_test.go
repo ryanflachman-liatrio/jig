@@ -1421,3 +1421,176 @@ func readGroupGalleryChrome() string {
 	}
 	return ""
 }
+
+func quietBurstShape(items []transcriptItem, entries []transcript.Entry) []string {
+	shape := make([]string, 0, len(items))
+	for _, item := range items {
+		switch item.kind {
+		case transcriptItemToolGroup:
+			policy, _ := compactToolGroupPolicy(item, entries)
+			shape = append(shape, fmt.Sprintf("%s(%d)", policy.title, len(item.groupMembers)))
+		case transcriptItemToolExchange:
+			shape = append(shape, "standalone")
+		default:
+			shape = append(shape, "other")
+		}
+	}
+	return shape
+}
+
+func TestQuietBurstGrouping(t *testing.T) {
+	grep := func(id string) []transcript.Entry {
+		return toolExchange(id, "grep", map[string]any{"pattern": "needle-" + id}, 0, 0, 0, false)
+	}
+	glob := func(id string) []transcript.Entry {
+		return toolExchange(id, "glob", map[string]any{"pattern": "*." + id}, 0, 0, 0, false)
+	}
+	read := func(id string) []transcript.Entry { return readExchange(id, "internal/"+id+".go", 0, 0, 0) }
+	failedRead := func(id string) []transcript.Entry {
+		return toolExchange(id, "read", map[string]any{"file_path": "internal/" + id + ".go"}, 0, 0, 0, true)
+	}
+	runningRead := func(id string) []transcript.Entry { return read(id)[:1] }
+	edit := func(id string) []transcript.Entry {
+		return toolExchange(id, "edit", map[string]any{"file_path": id + ".go"}, 0, 0, 0, false)
+	}
+	bash := func(id string) []transcript.Entry {
+		return toolExchange(id, "bash", map[string]any{"command": "echo " + id}, 0, 0, 0, false)
+	}
+	thinking := []transcript.Entry{{Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockThinking, Text: "synthetic reasoning"}}}}
+	prose := []transcript.Entry{{Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "synthetic narration"}}}}
+
+	tests := []struct {
+		name    string
+		parts   [][]transcript.Entry
+		compact bool
+		want    []string
+	}{
+		{"mixed quiet folds", [][]transcript.Entry{grep("a"), read("b"), glob("c"), grep("d")}, true, []string{"Explore(4)"}},
+		{"web calls join", [][]transcript.Entry{
+			toolExchange("a", "websearch", map[string]any{"query": "jig"}, 0, 0, 0, false),
+			toolExchange("b", "webfetch", map[string]any{"url": "https://example.test/docs"}, 0, 0, 0, false),
+			grep("c"),
+		}, true, []string{"Explore(3)"}},
+		{"edit splits", [][]transcript.Entry{grep("a"), read("b"), edit("c"), glob("d"), grep("e")}, true, []string{"Explore(2)", "Edit(1)", "Explore(2)"}},
+		{"bash splits", [][]transcript.Entry{grep("a"), bash("b"), grep("c")}, true, []string{"Search(1)", "Run(1)", "Search(1)"}},
+		{"same kind keeps title", [][]transcript.Entry{grep("a"), grep("b"), grep("c")}, true, []string{"Search(3)"}},
+		{"all reads keep tree", [][]transcript.Entry{read("a"), read("b")}, true, []string{"Read(2)"}},
+		{"failed read splits", [][]transcript.Entry{grep("a"), failedRead("b"), glob("c")}, true, []string{"Search(1)", "standalone", "Find(1)"}},
+		{"running read splits", [][]transcript.Entry{grep("a"), runningRead("b"), glob("c")}, true, []string{"Search(1)", "Read(1)", "Find(1)"}},
+		{"hidden reasoning bridges", [][]transcript.Entry{grep("a"), thinking, read("b")}, true, []string{"Explore(2)"}},
+		{"prose splits", [][]transcript.Entry{grep("a"), prose, read("b")}, true, []string{"Search(1)", "other", "Read(1)"}},
+		{"compact off is status quo", [][]transcript.Entry{grep("a"), read("b"), glob("c")}, false, []string{"standalone", "Read(1)", "standalone"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			entries := toolGroupEntries(tt.parts...)
+			m := newMonitorWithSteps(t)
+			m.chatStep = "a"
+			m.compactToolGroups = tt.compact
+			m.setChatPage(transcript.Page{Entries: entries})
+			if got := quietBurstShape(m.chatVisibleItems, entries); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("shape = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func mixedQuietBurstEntries() []transcript.Entry {
+	return toolGroupEntries(
+		toolExchange("a", "grep", map[string]any{"pattern": "needle"}, 0, 0, 0, false),
+		readExchange("b", "internal/alpha.go", 0, 0, 0),
+		toolExchange("c", "glob", map[string]any{"pattern": "*.md"}, 0, 0, 0, false),
+		toolExchange("d", "webfetch", map[string]any{"url": "https://example.test/docs"}, 0, 0, 0, false),
+		toolExchange("e", "grep", map[string]any{"pattern": "haystack"}, 0, 0, 0, false),
+		toolExchange("f", "websearch", map[string]any{"query": "jig monitor"}, 0, 0, 0, false),
+	)
+}
+
+func TestMixedQuietGroupCollapsedRender(t *testing.T) {
+	entries := mixedQuietBurstEntries()
+	m := newMonitorWithSteps(t)
+	m.chatStep = "a"
+	m.compactToolGroups = true
+	m.setChatPage(transcript.Page{Entries: entries})
+	if len(m.chatItems) != 1 {
+		t.Fatalf("items = %d, want one mixed group", len(m.chatItems))
+	}
+	out := ansi.Strip(m.renderCompactToolGroup(m.chatItems[0], transcriptItemKey{}).body)
+	lines := strings.Split(out, "\n")
+	if !strings.Contains(lines[0], "Explore") || !strings.Contains(lines[0], "(6)") {
+		t.Fatalf("header = %q, want Explore (6)", lines[0])
+	}
+	want := []string{"Search needle", "Read internal/alpha.go", "Find *.md", "… 2 more calls", "Search web jig monitor"}
+	if len(lines) != len(want)+1 {
+		t.Fatalf("rows:\n%s", out)
+	}
+	for i, row := range want {
+		if !strings.Contains(lines[i+1], row) {
+			t.Fatalf("row %d = %q, want %q", i, lines[i+1], row)
+		}
+	}
+}
+
+func TestMixedQuietGroupInteractions(t *testing.T) {
+	entries := toolGroupEntries(
+		toolExchange("a", "grep", map[string]any{"pattern": "needle"}, 0, 0, 0, false),
+		readExchange("b", "internal/alpha.go", 0, 0, 0),
+		toolExchange("c", "glob", map[string]any{"pattern": "*.md"}, 0, 0, 0, false),
+	)
+	m := newMonitorWithSteps(t)
+	m.RunDir = t.TempDir()
+	m.focus = focusTranscript
+	m.chatStep = "a"
+	m.compactToolGroups = true
+	m.setChatPage(transcript.Page{Entries: entries})
+	if len(m.chatVisibleItems) != 1 || len(m.chatVisibleItems[0].groupMembers) != 3 {
+		t.Fatalf("visible items = %+v, want one three-member group", m.chatVisibleItems)
+	}
+	group := m.chatVisibleItems[0]
+
+	m, _ = m.Update(key("enter"))
+	rendered := m.renderCompactToolGroup(group, group.key)
+	for _, member := range group.groupMembers {
+		if _, ok := rendered.ranges[member.key]; !ok {
+			t.Fatalf("expanded group missing member %+v", member.key)
+		}
+	}
+
+	m.searchQuery = "synthetic c output"
+	m.rerunSearch()
+	if len(m.searchHits) == 0 || len(m.chatVisibleItems) != 1 || len(m.chatVisibleItems[0].groupMembers) != 3 {
+		t.Fatalf("search hits=%d visible=%d, want a hit inside the intact group", len(m.searchHits), len(m.chatVisibleItems))
+	}
+	m.searchQuery = ""
+	m.rerunSearch()
+
+	m.chatItemCursor = 0
+	m.chatItemExpand = map[transcriptItemKey]bool{}
+	payload := m.copyTranscriptItemCmd()().(shared.ClipboardRequest).Loader()
+	if payload.Err != nil {
+		t.Fatal(payload.Err)
+	}
+	needle, alpha, md := strings.Index(payload.Payload, "needle"), strings.Index(payload.Payload, "internal/alpha.go"), strings.Index(payload.Payload, "*.md")
+	if needle < 0 || alpha < needle || md < alpha {
+		t.Fatalf("copy payload missing members or out of order: %q", payload.Payload)
+	}
+}
+
+func TestMixedQuietBurstCapture(t *testing.T) {
+	dir := os.Getenv("JIG_UI_SNAPSHOT_DIR")
+	if dir == "" {
+		t.Skip("set JIG_UI_SNAPSHOT_DIR to capture the mixed quiet burst")
+	}
+	entries := append([]transcript.Entry{{Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "before the exploration burst"}}}}, mixedQuietBurstEntries()...)
+	entries = append(entries, transcript.Entry{Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "after the exploration burst"}}})
+	m := newMonitorWithSteps(t).WithTUIConfig(config.TUIConfig{})
+	m.RunDir = writeTranscript(t, "a", entries)
+	m = enterChatStep(t, m, "a")
+	capture := fmt.Sprintf("Terminal: %dx%d; compact groups: %v (default config, no `c`)\n\n```text\n%s```\n", m.width, m.height, m.compactToolGroups, proofPlainText(m.chatBody()))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "06-task-02-mixed-burst.md"), []byte(capture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

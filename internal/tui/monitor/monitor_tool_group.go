@@ -25,6 +25,24 @@ type toolGroupPolicy struct {
 
 var readGroupPolicy = toolGroupPolicy{title: "Read", kind: "read", always: true}
 
+// quietRunKind is the run key shared by settled, successful exploration calls
+// while compact tool groups are on, so an uninterrupted read/search/fetch burst
+// folds into one group. A run whose members all share one kind keeps that
+// kind's policy; a mixed run renders under exploreGroupPolicy.
+const quietRunKind = "quiet"
+
+var exploreGroupPolicy = toolGroupPolicy{title: "Explore", kind: quietRunKind}
+
+var quietToolKinds = map[string]bool{
+	"read": true, "glob": true, "grep": true, "websearch": true, "webfetch": true,
+}
+
+// quietMember reports whether item may join a mixed quiet run. A running or
+// failed read is not quiet; it keeps the read policy and so ends the run.
+func quietMember(item transcriptItem, policy toolGroupPolicy) bool {
+	return quietToolKinds[policy.kind] && item.displayState == toolDisplaySuccess
+}
+
 var compactToolPolicies = map[string]toolGroupPolicy{
 	"edit":         {title: "Edit", kind: "edit"},
 	"write":        {title: "Write", kind: "write"},
@@ -111,14 +129,21 @@ func compactToolActivity(item transcriptItem, entries []transcript.Entry) *toolc
 // groupToolTranscriptItems wraps every uninterrupted run of same-policy calls
 // at one execution coordinate in a tool group, including singleton runs, so a
 // lone call opens and collapses the same way a multi-call group does. Only
-// always-on policies (reads) group when compact is false. A run of a single
+// always-on policies (reads) group when compact is false; when compact is on,
+// quiet exploration calls of different kinds share one run. A run of a single
 // failed call stays a standalone exchange so its full error detail keeps
 // rendering inline instead of collapsing behind a one-line group row.
 func groupToolTranscriptItems(items []transcriptItem, entries []transcript.Entry, compact bool) []transcriptItem {
 	return groupTranscriptItemRuns(items, runGroupSpec{
 		eligible: func(item transcriptItem) (string, bool) {
 			policy, _, ok := toolGroupCandidate(item, entries)
-			if !ok || !(compact || policy.always) {
+			if !ok {
+				return "", false
+			}
+			if compact && quietMember(item, policy) {
+				return quietRunKind, true
+			}
+			if !(compact || policy.always) {
 				return "", false
 			}
 			return policy.kind, true
@@ -163,22 +188,39 @@ func compactToolGroupPolicy(item transcriptItem, entries []transcript.Entry) (to
 	if item.kind != transcriptItemToolGroup || len(item.groupMembers) == 0 {
 		return toolGroupPolicy{}, false
 	}
-	policy, _, ok := toolGroupCandidate(item.groupMembers[0], entries)
-	return policy, ok
+	first, _, ok := toolGroupCandidate(item.groupMembers[0], entries)
+	if !ok {
+		return toolGroupPolicy{}, false
+	}
+	for _, member := range item.groupMembers[1:] {
+		if policy, _, ok := toolGroupCandidate(member, entries); !ok || policy.kind != first.kind {
+			return exploreGroupPolicy, true
+		}
+	}
+	return first, true
 }
 
 // compactToolGroupRows renders a collapsed group's preview. Read groups merge
 // members by path and list every target; other groups show at most the first
-// three calls, an omitted-count row, and the final call.
+// three calls, an omitted-count row, and the final call. Mixed Explore rows
+// carry each member's kind title as a muted label.
 func compactToolGroupRows(item transcriptItem, entries []transcript.Entry) []compactToolRow {
-	if policy, ok := compactToolGroupPolicy(item, entries); ok && policy.kind == readGroupPolicy.kind {
+	policy, ok := compactToolGroupPolicy(item, entries)
+	if ok && policy.kind == readGroupPolicy.kind {
 		return readCompactRows(item, entries)
 	}
+	mixed := ok && policy.kind == quietRunKind
 	rows := make([]compactToolRow, 0, min(len(item.groupMembers), 5))
 	appendMember := func(member transcriptItem) {
-		if _, detail, ok := toolGroupCandidate(member, entries); ok {
-			rows = append(rows, compactToolRow{text: detail})
+		memberPolicy, detail, ok := toolGroupCandidate(member, entries)
+		if !ok {
+			return
 		}
+		row := compactToolRow{text: detail}
+		if mixed {
+			row.prefix = shared.Theme.Chat.ToolMeta.Render(memberPolicy.title) + " "
+		}
+		rows = append(rows, row)
 	}
 	if len(item.groupMembers) < 5 {
 		for _, member := range item.groupMembers {
