@@ -32,13 +32,14 @@ type UIConfig struct {
 
 // TUIConfig holds terminal-UI display preferences (formerly .jig/tui.json).
 //
-// All fields are pointers so a lower layer's explicit false can be
+// Boolean preferences are pointers so a lower layer's explicit false can be
 // overridden by an explicit false at a higher layer without being confused
 // with "unset" (CONVENTIONS.md: distinguish absent values from explicit
 // false). This matters most for SimpleMode, whose built-in default is true.
 type TUIConfig struct {
-	SimpleMode        *bool `toml:"simple_mode"`
-	CompactToolGroups *bool `toml:"compact_tool_groups"`
+	Opener            OpenerConfig `toml:"opener"`
+	SimpleMode        *bool        `toml:"simple_mode"`
+	CompactToolGroups *bool        `toml:"compact_tool_groups"`
 	// Bell rings the terminal bell when a run-monitor gate starts waiting.
 	// Opt-in because unrequested noise is worse than a missed pulse.
 	Bell *bool `toml:"bell"`

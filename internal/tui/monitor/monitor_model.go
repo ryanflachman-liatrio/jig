@@ -140,15 +140,16 @@ func (r visibleRow) isFileRow() bool {
 // updated as engine events arrive. The user can press esc to return to the
 // runs list.
 type Model struct {
-	RunID      string
-	RunDir     string
-	workflow   string
-	keys       monitorKeys
-	steps      []monitorStep
-	index      map[string]int // stepID → steps position
-	done       bool
-	failed     bool
-	historical bool
+	locationInstance uint64
+	RunID            string
+	RunDir           string
+	workflow         string
+	keys             monitorKeys
+	steps            []monitorStep
+	index            map[string]int // stepID → steps position
+	done             bool
+	failed           bool
+	historical       bool
 	// interrupted is set for historical journals whose last durable worker
 	// status is running/validating (Spec 20 crash reopen).
 	interrupted bool
@@ -631,6 +632,7 @@ type lifecycleActions struct {
 func New(runID string) Model {
 	return Model{
 		RunID:                runID,
+		locationInstance:     nextLocationInstance.Add(1),
 		keys:                 defaultMonitorKeys(),
 		index:                make(map[string]int),
 		stepOutput:           make(map[string]*strings.Builder),
@@ -917,12 +919,17 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 			copyItem.SetEnabled(len(m.chatVisibleItems) > 0)
 			copyAll := m.keys.CopyAll
 			copyAll.SetHelp("Y", "copy transcript")
+			openLocation := m.keys.OpenLocation
+			if len(m.selectedLocationTargets()) == 0 {
+				openLocation.SetHelp("e", "open file: no recorded target")
+			}
+			openLocation.SetEnabled(!m.CapturesText() && !m.filterOpen)
 			if simple {
 				// Keep scroll / follow / expand / leave; hide paging, filters,
 				// search, expand-all, and block-nav from footer/help.
 				bindings = []keybind.Binding{
 					m.keys.Scroll, m.keys.Follow, m.keys.Toggle, m.keys.ScrollFast,
-					m.keys.GotoTop, copyItem, copyAll,
+					m.keys.GotoTop, copyItem, copyAll, openLocation,
 					m.keys.TransToSteps, m.keys.TransLeave,
 				}
 			} else {
@@ -930,7 +937,7 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 					m.keys.Scroll, m.keys.Follow, blockNav, m.keys.Toggle, m.keys.ScrollFast,
 					m.keys.GotoTop, pageOlder, pageNewer,
 					m.keys.Search, m.keys.Filters, clearView, compactTools, m.keys.ExpandAll,
-					copyItem, copyAll,
+					copyItem, copyAll, openLocation,
 					m.keys.TransToSteps, m.keys.TransLeave,
 				}
 			}

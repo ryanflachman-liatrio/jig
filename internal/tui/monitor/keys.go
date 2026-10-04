@@ -86,6 +86,9 @@ type monitorKeys struct {
 	// PaletteSections; never auto-opened by an arriving diagnostic.
 	NotificationDiagnostics keybind.Binding // matched (ctrl+g)
 
+	// Open a recorded local file through the root-owned editor launcher.
+	OpenLocation keybind.Binding
+
 	// Copy actions (spec 23-spec-clipboard-yank).
 	// CopyItem (y) copies the current transcript item / tool exchange.
 	// CopyAll (Y) copies the current source in full: the file for a file view,
@@ -157,7 +160,8 @@ func defaultMonitorKeys() monitorKeys {
 
 		NotificationDiagnostics: shared.KeyNotificationDiagnostics,
 
-		CopyItem: keybind.NewBinding(keybind.WithKeys("y"), keybind.WithHelp("y", "copy")),
-		CopyAll:  keybind.NewBinding(keybind.WithKeys("Y"), keybind.WithHelp("Y", "copy all")),
+		OpenLocation: keybind.NewBinding(keybind.WithKeys("e"), keybind.WithHelp("e", "open file in editor")),
+		CopyItem:     keybind.NewBinding(keybind.WithKeys("y"), keybind.WithHelp("y", "copy")),
+		CopyAll:      keybind.NewBinding(keybind.WithKeys("Y"), keybind.WithHelp("Y", "copy all")),
 	}
 }

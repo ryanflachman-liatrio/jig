@@ -108,6 +108,7 @@ type rootModel struct {
 	// request at a time and matches completions by id, so a stale loader
 	// finishing after navigation cannot overwrite a newer request.
 	clipboard clipboardState
+	opener    openerState
 
 	// diagnostics renders a text dump of the process-wide notification
 	// diagnostic ring. It is nil when notifications are not wired (tests).
@@ -284,6 +285,9 @@ func (m rootModel) View() tea.View {
 	}
 	if notice := m.clipboard.notice; notice != "" {
 		content = renderClipboardNoticeOverlay(content, notice, m.width, m.height)
+	}
+	if m.openLocationCurrent(m.opener.owner) && m.opener.notice != "" {
+		content = renderClipboardNoticeOverlay(content, m.opener.notice, m.width, m.height)
 	}
 	// The help overlay is a global modal: composite it over the active screen (via
 	// a lipgloss Canvas) so the screen shows through around the box, and the same

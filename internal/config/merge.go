@@ -72,6 +72,7 @@ func mergeUI(base, overlay UIConfig) UIConfig {
 
 func mergeTUI(base, overlay TUIConfig) TUIConfig {
 	out := base
+	out.Opener = mergeOpener(base.Opener, overlay.Opener)
 	if overlay.SimpleMode != nil {
 		out.SimpleMode = overlay.SimpleMode
 	}

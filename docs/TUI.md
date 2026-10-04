@@ -188,6 +188,63 @@ is not automatically concurrency-safe. Preserve raw evidence separately from
 ANSI decoration; use the existing display/clipboard normalization paths for
 terminal controls and hyperlinks.
 
+## Open a recorded file target
+
+In Transcript, press `e` or choose **open file in editor** in the `ctrl+k`
+palette to open the selected exchange's recorded location or edit path.
+The card may remain collapsed. A single target opens directly; selections
+without a recorded target show an explanation. Group selection and choosing
+among multiple targets are not yet available.
+
+The target must currently exist as a regular local file (ordinary symlinks
+are followed). Absolute paths outside the project are allowed. Relative paths
+are unavailable until their originating execution directory can be identified;
+jig does not guess from its current directory. Missing files, directories,
+URIs, and paths containing control characters are rejected without creating a
+file. Opening shows the **current local file**, which may differ from recorded
+transcript evidence. Spaces, Unicode, colons, and shell characters remain
+literal path data; a `:line` suffix is never parsed out of a filename.
+
+Configure an editor in user `config.toml` or project `.jig/config.toml`:
+
+```toml
+[tui.opener]
+argv = ["vim", "+{line}", "--", "{path}"]
+terminal = true
+```
+
+| Setting | Behavior |
+| --- | --- |
+| `argv` | Literal string array. Project argv replaces user argv as a whole. An explicit `[]` restores the `$EDITOR` fallback. |
+| `terminal` | Defaults to `true`; merged independently, including for `$EDITOR`. Use `false` for a GUI launcher. |
+| `{path}` | Required in configured arguments; substituted with the absolute file path without splitting the argument. |
+| `{line}`, `{column}` | Optional positive one-based positions; absent or nonpositive values expand to `1`. |
+
+Placeholders are forbidden in the executable (`argv[0]`); unknown placeholders,
+an empty executable, NUL bytes, and invalid field types fail configuration
+validation. For example, a GUI editor supporting a position argument can use
+`argv = ["code", "--goto", "{path}:{line}:{column}"]` with `terminal = false`.
+The editor determines whether it honors the supplied position.
+
+Without a nonempty configured argv, jig tokenizes `$EDITOR` as a command plus
+quoted/escaped arguments and appends the absolute path as one argument. It does
+not evaluate a shell: variables, substitutions, pipes, redirects, and globs
+stay literal. An unset fallback produces configuration guidance; there is no
+implicit operating-system opener. `$EDITOR` has no universal position flag, so
+when recorded coordinates are present the completion notice explains that the
+file opened without position navigation and recommends a configured template.
+
+Terminal mode yields the terminal to the editor and returns to Monitor when
+the editor exits. Nonterminal launchers run asynchronously with no terminal
+input/output. Both are waited for and reaped; unsuccessful exits and missing
+executables produce safe notices. Only one launch may be pending at a time.
+Navigation does not cancel a running GUI launcher, and stale preparation or
+completion cannot change a different selection. Opening does not cancel engine
+work or reset transcript selection, expansion, or viewport position. Search,
+text entry, modals, gates, review controls, and output-file view retain their
+own input behavior. Optional persistence is not needed to open an already-loaded
+absolute target.
+
 ## Review identity
 
 `internal/tui/review` presents immutable documents. Markdown preview, syntax

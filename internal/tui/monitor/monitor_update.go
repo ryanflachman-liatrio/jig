@@ -608,6 +608,11 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			return m, copyOutputFileCmd(m.selFile, kind)
 		}
 		return m, copyTranscriptCmd(m.RunDir, m.chatStep)
+	case keybind.Matches(msg, m.keys.OpenLocation):
+		if m.selKind == "file" {
+			return m, nil
+		}
+		return m, m.openLocationCmd()
 	case keybind.Matches(msg, m.keys.CopyItem):
 		// y in the Transcript panel copies the selected transcript item. It is
 		// intentionally unavailable in file view (files have no line cursor).
