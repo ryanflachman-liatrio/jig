@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
 	"github.com/ryanflachman-liatrio/jig/internal/transcript"
@@ -251,7 +253,7 @@ func (m *Model) writeTranscriptItem(b *strings.Builder, item transcriptItem, sel
 			b.WriteString(prefix + row + "\n")
 		}
 		if expanded {
-			m.writeToolActivityDetails(b, detailActivity, item.displayState == toolDisplaySuccess, anchorForState(item.displayState))
+			m.writeToolActivityDetails(b, item, detailActivity, item.displayState == toolDisplaySuccess, anchorForState(item.displayState))
 			if (item.toolUse != nil && use.Truncated) || (item.toolResult != nil && m.chatEntries[item.toolResult.entryIdx].Blocks[item.toolResult.blockIdx].Truncated) {
 				b.WriteString("      " + shared.Theme.Chat.Hint.Render(shared.CaptureTruncatedHint()) + "\n")
 			}
@@ -302,7 +304,7 @@ func (m *Model) renderToolExchangeCard(item transcriptItem, prefix, header strin
 	if available < 3 {
 		return ""
 	}
-	key := transcriptRenderKey{itemKey: item.key, surface: transcriptRenderCard, width: available, expanded: expanded, selected: selected, state: item.displayState, header: header}
+	key := transcriptRenderKey{source: m.sourceStates[m.sourceOwner(item)], itemKey: item.key, surface: transcriptRenderCard, width: available, expanded: expanded, selected: selected, state: item.displayState, header: header}
 	if cached, ok := m.chatItemRendered[key]; ok {
 		return prefixCardRows(prefix, cached)
 	}
@@ -506,11 +508,11 @@ func (m *Model) writeItemDetail(b *strings.Builder, label, content string, ancho
 	}
 }
 
-func (m *Model) writeToolActivityDetails(b *strings.Builder, activity *toolcall.Activity, completed bool, anchor detailAnchor) {
+func (m *Model) writeToolActivityDetails(b *strings.Builder, item transcriptItem, activity *toolcall.Activity, completed bool, anchor detailAnchor) {
 	if activity == nil {
 		return
 	}
-	if activity.IsEdit() && writeNewCodeCards(m, b, activity, anchor) {
+	if writeNewCodeCards(m, b, item, anchor) {
 		return
 	}
 	hasDetail := false
@@ -552,49 +554,37 @@ func (m *Model) writeToolActivityDetails(b *strings.Builder, activity *toolcall.
 	}
 }
 
-// writeNewCodeCards renders the diff section below an edit tool
-// exchange. When Diff.OldText is present and computation succeeds it
-// emits the before/after diff produced by renderDiffRows below a
-// `Diff · <path>` label; otherwise it falls back to the resulting-
-// source card (the historical behavior) below the `New code · <path>`
-// label. File creation renders no fallback hint; skipped or failed
-// computation prepends shared.DiffUnavailableHint(); a truncated
-// enclosing block prepends shared.DiffClampedHint() so the operator
-// sees the clamp before trusting the change spans.
-//
-// The anchor argument mirrors writeItemDetail: a running exchange
-// tail-anchors so the newest lines pin to the bottom of the visible
-// window.
-func writeNewCodeCards(m *Model, b *strings.Builder, activity *toolcall.Activity, anchor detailAnchor) bool {
-	wrote := false
-	blockTruncated := activityBlockTruncated(m, activity)
-	for _, content := range activity.Content {
-		if content.Diff == nil {
+// writeNewCodeCards preserves the existing diff fallback rules. Explicit
+// source mode renders only the chosen recorded section; other sections keep
+// their labels so a multi-file exchange never looks like a single-file edit.
+func writeNewCodeCards(m *Model, b *strings.Builder, item transcriptItem, anchor detailAnchor) bool {
+	sections := m.sourceSections(item)
+	state := m.sourceStates[m.sourceOwner(item)]
+	truncated := m.itemEvidenceTruncated(item)
+	for i, d := range sections {
+		if state.source && i != state.section {
+			b.WriteString("    " + shared.Theme.Chat.TranscriptLabel.Render(sourceChrome(m, "Recorded new source · "+sanitizeToolSummary(d.Path)+" (not selected)")) + "\n")
 			continue
 		}
-		wrote = true
-		proj, _, outcome := computeDiff(content.Diff)
-		switch outcome {
-		case computeOK:
-			if proj == nil || len(proj.Presentation.Hunks) == 0 {
-				// Identical inputs (no visible change): fall through to the
-				// resulting-source card so the operator still sees the file
-				// content the exchange wrote.
-				writeResultingSourceCard(m, b, content.Diff, "", anchor)
-				continue
-			}
-			hintText := ""
-			if blockTruncated {
-				hintText = shared.DiffClampedHint()
-			}
-			writeDiffSection(m, b, content.Diff, proj, hintText, anchor)
-		case computeFileCreation:
-			writeResultingSourceCard(m, b, content.Diff, "", anchor)
-		default:
-			writeResultingSourceCard(m, b, content.Diff, shared.DiffUnavailableHint(), anchor)
-		}
+		proj, _, outcome := computeDiff(d)
+		writeRecordedEditSection(m, b, d, proj, outcome, state.source, truncated, anchor)
 	}
-	return wrote
+	return len(sections) > 0
+}
+
+func writeRecordedEditSection(m *Model, b *strings.Builder, d *toolcall.Diff, proj *diffProjection, outcome computeOutcome, source, truncated bool, anchor detailAnchor) {
+	hint := ""
+	if outcome == computeSkippedOversize || outcome == computeFailed {
+		hint = shared.DiffUnavailableHint()
+	}
+	if !source && outcome == computeOK && proj != nil && len(proj.Presentation.Hunks) > 0 {
+		if truncated {
+			hint = shared.DiffClampedHint()
+		}
+		writeDiffSection(m, b, d, proj, hint, anchor)
+	} else {
+		writeResultingSourceCard(m, b, d, hint, anchor, truncated)
+	}
 }
 
 // writeDiffSection emits the diff-labeled section: an optional
@@ -631,62 +621,67 @@ func writeDiffSection(m *Model, b *strings.Builder, d *toolcall.Diff, proj *diff
 	}
 }
 
-// writeResultingSourceCard emits the historical "resulting source"
-// card. It preserves the pre-slice-07 shape verbatim so slice 07's
-// fallback path exercises the same rendering as file-creation cases
-// have always used. hintText, when non-empty, is prepended as a dim
-// row above the card so the operator learns why the diff view is not
-// being shown.
-func writeResultingSourceCard(m *Model, b *strings.Builder, d *toolcall.Diff, hintText string, anchor detailAnchor) {
-	shown, hidden := boundTranscriptDetail(d.NewText, max(m.transcriptInnerW-8, 1), anchor)
-	hint := shared.CopyFullHint(hidden > 0, m.keys.CopyItem.Help().Key)
-	b.WriteString("    " + shared.Theme.Chat.TranscriptLabel.Render("New code · "+d.Path) + "\n")
+// This checkpoint retains the bounded source preview. Parent 4 replaces its
+// permanent crop with navigable windows without widening generic detail caps.
+func writeResultingSourceCard(m *Model, b *strings.Builder, d *toolcall.Diff, hintText string, anchor detailAnchor, truncated bool) {
+	code := safeRecordedSource(d.NewText)
+	shown, hidden := boundTranscriptDetail(code, max(m.transcriptInnerW-8, 1), anchor)
+	limited := hidden > 0 || len(code) > transcriptDetailBytes
+	hint := shared.CopyFullHint(limited, m.keys.CopyItem.Help().Key)
+	b.WriteString("    " + shared.Theme.Chat.TranscriptLabel.Render(sourceChrome(m, "Recorded new source · "+sanitizeToolSummary(d.Path))) + "\n")
+	if truncated {
+		b.WriteString("    " + shared.Theme.Chat.Hint.Render(sourceChrome(m, "Recorded content truncated; only captured text is available")) + "\n")
+	}
 	if hintText != "" {
-		b.WriteString("    " + shared.Theme.Chat.Hint.Render(hintText) + "\n")
+		b.WriteString("    " + shared.Theme.Chat.Hint.Render(sourceChrome(m, hintText)) + "\n")
+	}
+	if d.NewText == "" {
+		b.WriteString("    " + shared.Theme.Chat.Hint.Render(sourceChrome(m, "Empty recorded result")) + "\n")
+		return
 	}
 	if hidden > 0 && anchor == detailAnchorTail {
-		line := shared.HintLine(shared.EarlierItems(hidden, "line", "lines"), hint)
-		b.WriteString("    " + shared.Theme.Chat.Hint.Render(line) + "\n")
+		b.WriteString("    " + shared.Theme.Chat.Hint.Render(sourceChrome(m, shared.HintLine(shared.EarlierItems(hidden, "line", "lines"), hint))) + "\n")
 	}
-	for _, line := range strings.Split(strings.TrimRight(m.renderNewCodeCard(d.Path, shown), "\n"), "\n") {
+	var render func(string) (string, error)
+	if m.insetRenderer != nil {
+		render = m.insetRenderer.Render
+	}
+	for _, line := range strings.Split(strings.TrimRight(renderRecordedSource(d.Path, shown, max(m.transcriptInnerW-4, 1), render), "\n"), "\n") {
 		b.WriteString("    " + line + "\n")
 	}
-	if hidden > 0 && anchor != detailAnchorTail {
-		line := shared.HintLine(shared.MoreItems(hidden, "line", "lines"), hint)
-		b.WriteString("    " + shared.Theme.Chat.Hint.Render(line) + "\n")
+	if limited && anchor != detailAnchorTail {
+		label := shared.MoreItems(hidden, "line", "lines")
+		if hidden == 0 {
+			label = "Source preview limited"
+		}
+		b.WriteString("    " + shared.Theme.Chat.Hint.Render(sourceChrome(m, shared.HintLine(label, hint))) + "\n")
 	}
 }
 
-// activityBlockTruncated reports whether the transcript block that
-// carries this activity's tool-use payload was clamped at write time.
-// It lets the diff section emit shared.DiffClampedHint before rows so
-// the operator sees the correctness label above the diff itself.
-func activityBlockTruncated(m *Model, activity *toolcall.Activity) bool {
-	if m == nil || activity == nil || activity.ID == "" {
-		return false
-	}
-	for _, entry := range m.chatEntries {
-		for _, block := range entry.Blocks {
-			if block.Tool == nil || block.Tool.ID != activity.ID {
-				continue
-			}
-			if block.Type == transcript.BlockToolUse && block.Truncated {
-				return true
-			}
+func sourceChrome(m *Model, text string) string {
+	return ansi.Truncate(text, max(0, m.transcriptInnerW-4), shared.EllipsisGlyph)
+}
+
+// Use ANSI stripping and control normalization only on the display copy. The
+// raw recorded payload remains available to copy and source version tracking.
+func safeRecordedSource(code string) string {
+	code = strings.ReplaceAll(ansi.Strip(code), "\r\n", "\n")
+	code = strings.ReplaceAll(code, "\t", "    ")
+	return strings.Map(func(r rune) rune {
+		if r != '\n' && unicode.IsControl(r) {
+			return '�'
+		}
+		return r
+	}, code)
+}
+
+func renderRecordedSource(path, code string, width int, render func(string) (string, error)) string {
+	if render != nil {
+		if rendered, err := render(fencedCode(path, code)); err == nil {
+			return stripBlankEdges(rendered)
 		}
 	}
-	return false
-}
-
-func (m *Model) renderNewCodeCard(path, code string) string {
-	if m.insetRenderer == nil {
-		return shared.Theme.Chat.CodeBlock.Width(max(m.transcriptInnerW-4, 1)).Render(code)
-	}
-	rendered, err := m.insetRenderer.Render(fencedCode(path, code))
-	if err != nil {
-		return shared.Theme.Chat.CodeBlock.Width(max(m.transcriptInnerW-4, 1)).Render(code)
-	}
-	return stripBlankEdges(rendered)
+	return shared.Theme.Chat.CodeBlock.Width(width).Render(code)
 }
 
 func fencedCode(path, code string) string {

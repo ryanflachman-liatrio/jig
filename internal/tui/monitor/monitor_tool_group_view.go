@@ -60,6 +60,7 @@ func (m *Model) renderCompactToolGroup(item transcriptItem, selected transcriptI
 		childWidth := max(0, m.transcriptInnerW-lipgloss.Width(branch))
 		nested := *m
 		nested.transcriptInnerW = childWidth
+		nested.insetRenderer = m.groupInsetRenderer
 		var child strings.Builder
 		nested.writeTranscriptItem(&child, member, selected == member.key)
 		body := trimStructuralBlankEdges(child.String())

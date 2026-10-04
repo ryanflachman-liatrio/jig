@@ -26,13 +26,13 @@ func (m openerSmokeModel) Init() tea.Cmd { return nil }
 // Opt-in real terminal fixture; no workflow, backend login, or real run data.
 // Build with go test -c ./internal/tui -o /tmp/jig-opener-smoke, then run
 // JIG_SDD26_SMOKE=terminal /tmp/jig-opener-smoke -test.run '^TestOpenLocationSmoke$'
-// Modes: terminal, gui, missing, grouped. Press e or ctrl+k, "open file", Enter; ctrl+c exits.
+// Modes: terminal, gui, missing, grouped, source. Press e or ctrl+k, "open file", Enter; ctrl+c exits.
 func TestOpenLocationSmoke(t *testing.T) {
 	mode := os.Getenv("JIG_SDD26_SMOKE")
 	if mode == "" {
-		t.Skip("set JIG_SDD26_SMOKE=terminal, gui, missing, or grouped in a terminal")
+		t.Skip("set JIG_SDD26_SMOKE=terminal, gui, missing, grouped, or source in a terminal")
 	}
-	if mode != "terminal" && mode != "gui" && mode != "missing" && mode != "grouped" {
+	if mode != "terminal" && mode != "gui" && mode != "missing" && mode != "grouped" && mode != "source" {
 		t.Fatal("unknown smoke mode")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -70,6 +70,9 @@ func newOpenerFixture(t *testing.T, ctx context.Context, mode string) (rootModel
 	if mode == "grouped" {
 		entries = groupedOpenerEntries(t, root)
 	}
+	if mode == "source" {
+		entries = sourceDemoEntries()
+	}
 	for _, entry := range entries {
 		if _, err := writer.Append(entry); err != nil {
 			t.Fatal(err)
@@ -95,7 +98,7 @@ func newOpenerFixture(t *testing.T, ctx context.Context, mode string) (rootModel
 	m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	m.monitor, _ = m.monitor.Update(monitor.EngineEventMsg{Event: engine.StepMessage{RunID: "synthetic-run", StepID: "edit", Seq: len(entries)}})
 	m.monitor, _ = m.monitor.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if mode == "grouped" {
+	if mode == "grouped" || mode == "source" {
 		m.monitor, _ = m.monitor.Update(tea.KeyPressMsg{Code: 'c', Text: "c"})
 	}
 	return m, root
@@ -135,6 +138,23 @@ func groupedOpenerEntries(t *testing.T, root string) []transcript.Entry {
 		entries = append(entries,
 			transcript.Entry{ExecutionDir: spec.origin, Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: use}}},
 			transcript.Entry{ExecutionDir: spec.origin, Role: transcript.RoleUser, Blocks: []transcript.Block{{Type: transcript.BlockToolResult, Tool: result}}},
+		)
+	}
+	return entries
+}
+
+func sourceDemoEntries() []transcript.Entry {
+	old := "package synthetic\n\nvar value = 1\n// unchanged context\n"
+	first := &toolcall.Activity{ID: "multi-edit", Kind: "edit", Status: "completed", Content: []toolcall.Content{
+		{Diff: &toolcall.Diff{Path: "first.go", OldText: &old, NewText: "package synthetic\n\nvar value = 2\n// unchanged context\n"}},
+		{Diff: &toolcall.Diff{Path: "context.go", OldText: &old, NewText: "package synthetic\n\nvar value = 3\n// recorded unchanged context\n"}},
+	}}
+	empty := &toolcall.Activity{ID: "empty-edit", Kind: "edit", Status: "completed", Content: []toolcall.Content{{Diff: &toolcall.Diff{Path: "empty.go", NewText: ""}}}}
+	var entries []transcript.Entry
+	for i, a := range []*toolcall.Activity{first, empty} {
+		entries = append(entries,
+			transcript.Entry{Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: a.ID, Kind: "edit", Title: "Synthetic recorded edit"}}}},
+			transcript.Entry{Role: transcript.RoleUser, Blocks: []transcript.Block{{Type: transcript.BlockToolResult, Tool: a, Truncated: i == 1}}},
 		)
 	}
 	return entries

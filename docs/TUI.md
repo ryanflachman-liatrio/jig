@@ -188,6 +188,43 @@ is not automatically concurrency-safe. Preserve raw evidence separately from
 ANSI decoration; use the existing display/clipboard normalization paths for
 terminal controls and hyperlinks.
 
+## Inspect recorded edit source
+
+In Transcript, `v` or **diff / recorded source** in the command palette switches
+an eligible edit between its default diff presentation and **Recorded new
+source**. The action expands a collapsed exchange. It uses only structured edit
+content captured in the transcript, including unchanged context in `NewText`;
+it never reads the current local file. Exchanges without structured edit
+content do not offer the action.
+
+A compact-group header first asks which eligible exchange to change. An edit
+with several source sections then asks which file section to show. Use `j`/`k`
+or arrows, Enter to select, and Esc to cancel without changing a mode. The
+selected child changes independently; other file sections retain their labels.
+Press `v` to return to diff, then `v` again to choose a different section. Mouse
+input cannot confirm a source picker. The nearest picker closes before Esc
+leaves Transcript; search, text entry, help, gate and review controls keep their
+input ownership.
+
+Diff remains the default when computation yields visible changes. Creation and
+identical input show recorded source; skipped or failed computation retains its
+unavailable-diff explanation. Empty new text shows **Empty recorded result**.
+If either participating use/result block was truncated, a warning above source
+says that only captured text is available. Even without that warning, this is
+the adapter's recorded text, not independently verified file completeness.
+Display strips terminal escapes and normalizes controls before highlighting;
+raw copied evidence remains separate.
+
+Mode and section are scoped to the loaded exchange's run, step and execution
+coordinate. They survive resize, collapse, grouping and temporary filters.
+Changed payloads, unloaded pages or replacement steps reset presentation state.
+Switching pauses follow and keeps the selected item visible. Item and whole-step
+copy remain based on recorded evidence regardless of mode or expansion.
+
+The current source preview remains bounded to 4096 bytes and 12 content rows;
+long source is still cropped, with a copy hint. Movable source windows and their
+navigation are not yet implemented.
+
 ## Open a recorded file target
 
 In Transcript, press `e` or choose **open file in editor** in the `ctrl+k`

@@ -20,6 +20,9 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	if m.locationPicker != nil && (m.locationPicker.owner != m.OpenLocationOwner() || m.focus != focusTranscript) {
 		m.locationPicker = nil
 	}
+	if m.sourcePicker != nil && (m.sourcePicker.owner != m.OpenLocationOwner() || m.focus != focusTranscript) {
+		m.sourcePicker = nil
+	}
 	return m.withGateBell(hadGate, wasFocused, cmd)
 }
 
@@ -195,6 +198,9 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 			return m, hCmd
 		}
 
+		if m.sourcePicker != nil {
+			return m.updateSourcePicker(msg)
+		}
 		if m.locationPicker != nil {
 			return m.updateLocationPicker(msg)
 		}
@@ -617,6 +623,8 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			return m, copyOutputFileCmd(m.selFile, kind)
 		}
 		return m, copyTranscriptCmd(m.RunDir, m.chatStep)
+	case keybind.Matches(msg, m.keys.SourceMode):
+		return m.toggleSource(), nil
 	case keybind.Matches(msg, m.keys.OpenLocation):
 		if m.selKind == "file" {
 			return m, nil

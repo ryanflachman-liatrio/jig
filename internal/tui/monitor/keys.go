@@ -88,6 +88,7 @@ type monitorKeys struct {
 
 	// Open a recorded local file through the root-owned editor launcher.
 	OpenLocation  keybind.Binding
+	SourceMode    keybind.Binding
 	PickerConfirm keybind.Binding
 	PickerCancel  keybind.Binding
 
@@ -162,6 +163,7 @@ func defaultMonitorKeys() monitorKeys {
 
 		NotificationDiagnostics: shared.KeyNotificationDiagnostics,
 
+		SourceMode:    keybind.NewBinding(keybind.WithKeys("v"), keybind.WithHelp("v", "diff / recorded source")),
 		PickerConfirm: keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "open target")),
 		PickerCancel:  keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "cancel")),
 		OpenLocation:  keybind.NewBinding(keybind.WithKeys("e"), keybind.WithHelp("e", "open file in editor")),

@@ -140,6 +140,8 @@ func (r visibleRow) isFileRow() bool {
 // updated as engine events arrive. The user can press esc to return to the
 // runs list.
 type Model struct {
+	sourceStates     map[sourceOwner]sourcePresentation
+	sourcePicker     *sourcePickerState
 	locationInstance uint64
 	locationPickerID uint64
 	locationPicker   *locationPickerState
@@ -224,8 +226,9 @@ type Model struct {
 
 	// fileRenderer removes document framing for output files. insetRenderer uses
 	// the same flush layout at the narrower width left inside a tool block's bar.
-	fileRenderer  *glamour.TermRenderer
-	insetRenderer *glamour.TermRenderer
+	fileRenderer       *glamour.TermRenderer
+	insetRenderer      *glamour.TermRenderer
+	groupInsetRenderer *glamour.TermRenderer
 
 	// msgCount tracks the latest transcript entry seq observed per step (via
 	// StepMessage liveness events), used as a message count in the list.
@@ -546,6 +549,7 @@ type transcriptCursorTarget struct {
 // formatted for the conversation body and a diff rendered under one
 // expansion state cannot be served under another.
 type transcriptRenderKey struct {
+	source   sourcePresentation
 	itemKey  transcriptItemKey
 	surface  transcriptRenderSurface
 	width    int
@@ -886,6 +890,9 @@ func (m Model) PaletteSections() []shared.HelpSection {
 }
 
 func (m Model) helpSections(simple bool) []shared.HelpSection {
+	if m.sourcePicker != nil {
+		return m.sourcePickerHelp()
+	}
 	if m.locationPicker != nil {
 		return m.pickerHelp()
 	}
@@ -924,6 +931,8 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 			copyItem.SetEnabled(len(m.chatVisibleItems) > 0)
 			copyAll := m.keys.CopyAll
 			copyAll.SetHelp("Y", "copy transcript")
+			sourceMode := m.keys.SourceMode
+			sourceMode.SetEnabled(m.sourceEligible() && !m.CapturesText() && !m.filterOpen)
 			openLocation := m.keys.OpenLocation
 			if len(m.selectedLocationTargets()) == 0 {
 				openLocation.SetHelp("e", "open file: no recorded target")
@@ -934,7 +943,7 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 				// search, expand-all, and block-nav from footer/help.
 				bindings = []keybind.Binding{
 					m.keys.Scroll, m.keys.Follow, m.keys.Toggle, m.keys.ScrollFast,
-					m.keys.GotoTop, copyItem, copyAll, openLocation,
+					m.keys.GotoTop, copyItem, copyAll, openLocation, sourceMode,
 					m.keys.TransToSteps, m.keys.TransLeave,
 				}
 			} else {
@@ -942,7 +951,7 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 					m.keys.Scroll, m.keys.Follow, blockNav, m.keys.Toggle, m.keys.ScrollFast,
 					m.keys.GotoTop, pageOlder, pageNewer,
 					m.keys.Search, m.keys.Filters, clearView, compactTools, m.keys.ExpandAll,
-					copyItem, copyAll, openLocation,
+					copyItem, copyAll, openLocation, sourceMode,
 					m.keys.TransToSteps, m.keys.TransLeave,
 				}
 			}

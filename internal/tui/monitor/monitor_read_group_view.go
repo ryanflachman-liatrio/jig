@@ -76,7 +76,7 @@ func (m *Model) writeReadGroup(b *strings.Builder, item transcriptItem, selected
 		continuation := shared.Theme.Chat.ReadGroupConnector.Render(shared.TreeContinuationPrefix(last))
 		activity := m.readGroupMemberActivity(member)
 		var detail strings.Builder
-		m.writeToolActivityDetails(&detail, activity, member.displayState == toolDisplaySuccess, anchorForState(member.displayState))
+		m.writeToolActivityDetails(&detail, member, activity, member.displayState == toolDisplaySuccess, anchorForState(member.displayState))
 		if (member.toolUse != nil && m.chatEntries[member.toolUse.entryIdx].Blocks[member.toolUse.blockIdx].Truncated) ||
 			(member.toolResult != nil && m.chatEntries[member.toolResult.entryIdx].Blocks[member.toolResult.blockIdx].Truncated) {
 			detail.WriteString("      " + shared.Theme.Chat.Hint.Render(shared.CaptureTruncatedHint()) + "\n")

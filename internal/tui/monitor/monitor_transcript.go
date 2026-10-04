@@ -66,6 +66,8 @@ func (m *Model) reloadTranscript() {
 		}
 		return
 	}
+	m.sourceStates = nil
+	m.sourcePicker = nil
 	m.chatStep = stepID
 	m.chatItems = nil
 	m.chatVisibleItems = nil
@@ -546,6 +548,7 @@ func toolOnlyEntry(entry transcript.Entry) bool {
 }
 
 func (m *Model) prunePageState() {
+	m.pruneSourceState()
 	loadedItems := make(map[transcriptItemKey]struct{}, len(m.chatItems))
 	for _, item := range m.chatItems {
 		loadedItems[item.key] = struct{}{}

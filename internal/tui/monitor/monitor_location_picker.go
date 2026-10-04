@@ -18,6 +18,8 @@ import (
 // File/source selection can share its movement, help and rendering contract.
 type selectionPicker struct {
 	title  string
+	noun   string
+	prompt string
 	rows   []selectionRow
 	cursor int
 }
@@ -144,7 +146,11 @@ func (p selectionPicker) overlay(base string, width, height int, keys monitorKey
 	rows := min(len(p.rows), max(0, innerH-5))
 	start := max(0, p.cursor-rows+1)
 	var lines []string
-	lines = append(lines, fmt.Sprintf("Target %d of %d", p.cursor+1, len(p.rows)))
+	noun := p.noun
+	if noun == "" {
+		noun = "Target"
+	}
+	lines = append(lines, fmt.Sprintf("%s %d of %d", noun, p.cursor+1, len(p.rows)))
 	for i := start; i < min(len(p.rows), start+rows); i++ {
 		prefix := "  "
 		if i == p.cursor {
@@ -170,7 +176,10 @@ func (p selectionPicker) overlay(base string, width, height int, keys monitorKey
 		// Keep the reason separate from the path so long paths cannot hide it.
 		reason := p.rows[p.cursor].disabled
 		if reason == "" {
-			reason = "Open the current file at this recorded target"
+			reason = p.prompt
+			if reason == "" {
+				reason = "Open the current file at this recorded target"
+			}
 		}
 		lines = append(lines, "", ansi.Truncate(reason, innerW, shared.EllipsisGlyph))
 	}
