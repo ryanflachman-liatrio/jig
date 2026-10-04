@@ -215,15 +215,35 @@ the adapter's recorded text, not independently verified file completeness.
 Display strips terminal escapes and normalizes controls before highlighting;
 raw copied evidence remains separate.
 
-Mode and section are scoped to the loaded exchange's run, step and execution
+Mode, section and source byte position are scoped to the loaded exchange's run, step and execution
 coordinate. They survive resize, collapse, grouping and temporary filters.
 Changed payloads, unloaded pages or replacement steps reset presentation state.
 Switching pauses follow and keeps the selected item visible. Item and whole-step
-copy remain based on recorded evidence regardless of mode or expansion.
+copy remain based on recorded evidence regardless of mode, window or expansion.
 
-The current source preview remains bounded to 4096 bytes and 12 content rows;
-long source is still cropped, with a copy hint. Movable source windows and their
-navigation are not yet implemented.
+Recorded source is browsable in contiguous windows of at most 4096 recorded
+bytes and 12 wrapped content rows. Labels, position, warnings and controls sit
+outside that content budget. Use these keys or their command-palette actions:
+
+| Key | Recorded source action |
+| --- | --- |
+| `alt+j` / `alt+k` | Next / previous window |
+| `alt+g` / `alt+G` | First / last window |
+
+Logical line numbers and continuation labels show where the window falls,
+including within a long line. All captured text remains reachable; these are
+window limits, not another capture limit. Ordinary `j`/`k` and viewport keys
+still scroll Transcript. Source browsing pauses follow; `G` resumes transcript
+follow. A single fallback source section can be browsed directly; use `v` to
+choose a section when an exchange has several.
+
+Resize reflows around the saved recorded-byte anchor. One-cell areas use a
+placeholder for a grapheme too wide to fit; widening restores its text. With
+no content width, widen the terminal to browse. Syntax highlighting operates
+on one window and may lack context from earlier windows; literal text remains
+available if highlighting fails. The recorded source does not change when the
+current file changes or an editor returns. `e` opens that current local file;
+`y` and `Y` still copy recorded evidence under the existing clipboard limits.
 
 ## Open a recorded file target
 

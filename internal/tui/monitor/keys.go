@@ -87,10 +87,14 @@ type monitorKeys struct {
 	NotificationDiagnostics keybind.Binding // matched (ctrl+g)
 
 	// Open a recorded local file through the root-owned editor launcher.
-	OpenLocation  keybind.Binding
-	SourceMode    keybind.Binding
-	PickerConfirm keybind.Binding
-	PickerCancel  keybind.Binding
+	OpenLocation   keybind.Binding
+	SourceMode     keybind.Binding
+	SourceNext     keybind.Binding
+	SourcePrevious keybind.Binding
+	SourceFirst    keybind.Binding
+	SourceLast     keybind.Binding
+	PickerConfirm  keybind.Binding
+	PickerCancel   keybind.Binding
 
 	// Copy actions (spec 23-spec-clipboard-yank).
 	// CopyItem (y) copies the current transcript item / tool exchange.
@@ -163,11 +167,15 @@ func defaultMonitorKeys() monitorKeys {
 
 		NotificationDiagnostics: shared.KeyNotificationDiagnostics,
 
-		SourceMode:    keybind.NewBinding(keybind.WithKeys("v"), keybind.WithHelp("v", "diff / recorded source")),
-		PickerConfirm: keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "open target")),
-		PickerCancel:  keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "cancel")),
-		OpenLocation:  keybind.NewBinding(keybind.WithKeys("e"), keybind.WithHelp("e", "open file in editor")),
-		CopyItem:      keybind.NewBinding(keybind.WithKeys("y"), keybind.WithHelp("y", "copy")),
-		CopyAll:       keybind.NewBinding(keybind.WithKeys("Y"), keybind.WithHelp("Y", "copy all")),
+		SourceNext:     keybind.NewBinding(keybind.WithKeys("alt+j"), keybind.WithHelp("alt+j", "next recorded source window")),
+		SourcePrevious: keybind.NewBinding(keybind.WithKeys("alt+k"), keybind.WithHelp("alt+k", "previous recorded source window")),
+		SourceFirst:    keybind.NewBinding(keybind.WithKeys("alt+g"), keybind.WithHelp("alt+g", "first recorded source window")),
+		SourceLast:     keybind.NewBinding(keybind.WithKeys("alt+G", "alt+shift+g"), keybind.WithHelp("alt+G", "last recorded source window")),
+		SourceMode:     keybind.NewBinding(keybind.WithKeys("v"), keybind.WithHelp("v", "diff / recorded source")),
+		PickerConfirm:  keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "open target")),
+		PickerCancel:   keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "cancel")),
+		OpenLocation:   keybind.NewBinding(keybind.WithKeys("e"), keybind.WithHelp("e", "open file in editor")),
+		CopyItem:       keybind.NewBinding(keybind.WithKeys("y"), keybind.WithHelp("y", "copy")),
+		CopyAll:        keybind.NewBinding(keybind.WithKeys("Y"), keybind.WithHelp("Y", "copy all")),
 	}
 }

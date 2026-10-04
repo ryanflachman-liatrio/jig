@@ -160,27 +160,3 @@ func projectionStats(p *diffProjection) diffStats {
 	}
 	return presentationStats(p.Presentation)
 }
-
-// activityDiffStats aggregates diff counts across every Content entry on
-// an activity that carries a computable Diff. It is used by the header
-// path to decide whether to emit the +N/-M badge; the projection itself
-// is discarded here so composeToolHeader stays free of rendering state.
-func activityDiffStats(a *toolcall.Activity) (diffStats, bool) {
-	if a == nil {
-		return diffStats{}, false
-	}
-	var total diffStats
-	var any bool
-	for _, content := range a.Content {
-		_, stats, outcome := computeDiff(content.Diff)
-		if outcome != computeOK {
-			continue
-		}
-		total.added += stats.added
-		total.removed += stats.removed
-		if stats.added > 0 || stats.removed > 0 {
-			any = true
-		}
-	}
-	return total, any
-}

@@ -208,3 +208,12 @@ func TestParseKey(t *testing.T) {
 		t.Fatalf("esc = %#v", got)
 	}
 }
+
+func TestRecordedSourceModifiedDispatch(t *testing.T) {
+	for _, chord := range []string{"alt+j", "alt+k", "alt+g", "alt+G"} {
+		msg := palette.DispatchKey(chord)().(tea.KeyPressMsg)
+		if msg.String() != chord {
+			t.Fatalf("dispatch %q became %q", chord, msg.String())
+		}
+	}
+}

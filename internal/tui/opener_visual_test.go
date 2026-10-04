@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -26,13 +27,13 @@ func (m openerSmokeModel) Init() tea.Cmd { return nil }
 // Opt-in real terminal fixture; no workflow, backend login, or real run data.
 // Build with go test -c ./internal/tui -o /tmp/jig-opener-smoke, then run
 // JIG_SDD26_SMOKE=terminal /tmp/jig-opener-smoke -test.run '^TestOpenLocationSmoke$'
-// Modes: terminal, gui, missing, grouped, source. Press e or ctrl+k, "open file", Enter; ctrl+c exits.
+// Modes: terminal, gui, missing, grouped, source, windows. Press e or ctrl+k, "open file", Enter; ctrl+c exits.
 func TestOpenLocationSmoke(t *testing.T) {
 	mode := os.Getenv("JIG_SDD26_SMOKE")
 	if mode == "" {
-		t.Skip("set JIG_SDD26_SMOKE=terminal, gui, missing, grouped, or source in a terminal")
+		t.Skip("set JIG_SDD26_SMOKE=terminal, gui, missing, grouped, source, or windows in a terminal")
 	}
-	if mode != "terminal" && mode != "gui" && mode != "missing" && mode != "grouped" && mode != "source" {
+	if mode != "terminal" && mode != "gui" && mode != "missing" && mode != "grouped" && mode != "source" && mode != "windows" {
 		t.Fatal("unknown smoke mode")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -73,6 +74,12 @@ func newOpenerFixture(t *testing.T, ctx context.Context, mode string) (rootModel
 	if mode == "source" {
 		entries = sourceDemoEntries()
 	}
+	if mode == "windows" {
+		old := "package synthetic\nvar value = 1\n"
+		text := "FIRST recorded source\n\n" + strings.Repeat("// unchanged synthetic context\n", 25) + "MIDDLE recorded source\n" + strings.Repeat("雪é👩‍💻", 900) + "\n\nFINAL without newline"
+		entries[1].Blocks[0].Tool.Content[0].Diff.OldText = &old
+		entries[1].Blocks[0].Tool.Content[0].Diff.NewText = text
+	}
 	for _, entry := range entries {
 		if _, err := writer.Append(entry); err != nil {
 			t.Fatal(err)
@@ -81,7 +88,7 @@ func newOpenerFixture(t *testing.T, ctx context.Context, mode string) (rootModel
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
-	terminal := mode == "terminal"
+	terminal := mode == "terminal" || mode == "windows"
 	argv := append(openerHelperArgv(t, "success", filepath.Join(root, "received.json")), "{path}", "{line}:{column}")
 	if terminal {
 		argv = append(argv, "interactive")

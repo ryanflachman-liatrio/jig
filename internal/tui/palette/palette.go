@@ -329,7 +329,7 @@ func ParseKey(chord string) tea.KeyPressMsg {
 	if strings.HasPrefix(chord, "alt+") && len(chord) > 4 {
 		r := []rune(strings.TrimPrefix(chord, "alt+"))
 		if len(r) == 1 {
-			return tea.KeyPressMsg{Code: r[0], Mod: tea.ModAlt, Text: string(r)}
+			return tea.KeyPressMsg{Code: r[0], Mod: tea.ModAlt}
 		}
 	}
 	r := []rune(chord)

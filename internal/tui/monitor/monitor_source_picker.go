@@ -79,7 +79,12 @@ func (m Model) applySourceMode(item transcriptItem, source bool, section int) Mo
 	if m.sourceStates == nil {
 		m.sourceStates = make(map[sourceOwner]sourcePresentation)
 	}
-	m.sourceStates[m.sourceOwner(item)] = sourcePresentation{source: source, section: section, version: m.sourceVersion(item)}
+	state := m.sourceStates[m.sourceOwner(item)]
+	if state.section != section {
+		state.offset = 0
+	}
+	state.source, state.section, state.version = source, section, m.sourceVersion(item)
+	m.sourceStates[m.sourceOwner(item)] = state
 	m.sourcePicker = nil
 	m.chatItemExpand[item.key] = true
 	for _, group := range m.chatItems {

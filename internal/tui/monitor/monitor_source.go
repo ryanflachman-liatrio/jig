@@ -17,6 +17,7 @@ type sourceOwner struct {
 type sourcePresentation struct {
 	source  bool
 	section int
+	offset  int
 	version [sha256.Size]byte
 }
 
@@ -75,7 +76,15 @@ func (m Model) itemEvidenceTruncated(item transcriptItem) bool {
 // Reconcile only against the complete loaded page, before view filters. A
 // payload change discards its selection; hidden loaded group children survive.
 func (m *Model) pruneSourceState() {
+	m.pruneSourceDiffs()
 	loaded := make(map[sourceOwner][sha256.Size]byte)
+	tracked := make(map[sourceOwner]bool)
+	for owner := range m.sourceStates {
+		tracked[owner] = true
+	}
+	for key := range m.sourceWindows {
+		tracked[key.owner] = true
+	}
 	var visit func(transcriptItem)
 	visit = func(item transcriptItem) {
 		if len(item.groupMembers) > 0 {
@@ -85,7 +94,7 @@ func (m *Model) pruneSourceState() {
 			return
 		}
 		owner := m.sourceOwner(item)
-		if _, tracked := m.sourceStates[owner]; tracked && len(m.sourceSections(item)) > 0 {
+		if tracked[owner] && len(m.sourceSections(item)) > 0 {
 			loaded[owner] = m.sourceVersion(item)
 		}
 	}
@@ -95,6 +104,11 @@ func (m *Model) pruneSourceState() {
 	for owner, state := range m.sourceStates {
 		if version, ok := loaded[owner]; !ok || version != state.version {
 			delete(m.sourceStates, owner)
+		}
+	}
+	for key, cache := range m.sourceWindows {
+		if version, ok := loaded[key.owner]; !ok || version != cache.version {
+			delete(m.sourceWindows, key)
 		}
 	}
 	// A picker contains references into this page; never carry them across a

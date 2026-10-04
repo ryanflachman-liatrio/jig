@@ -67,6 +67,8 @@ func (m *Model) reloadTranscript() {
 		return
 	}
 	m.sourceStates = nil
+	m.sourceWindows = nil
+	m.sourceDiffs = nil
 	m.sourcePicker = nil
 	m.chatStep = stepID
 	m.chatItems = nil

@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -39,6 +38,12 @@ import (
 // the row renders empty (all fields unavailable) the layout matches slice
 // 04 exactly.
 func (m *Model) itemTranscriptBody() string {
+	if m.sourceDiffs == nil {
+		m.sourceDiffs = make(map[*toolcall.Diff]recordedDiffCache)
+	}
+	if m.sourceWindows == nil {
+		m.sourceWindows = make(map[sourceWindowKey]*sourceWindowCache)
+	}
 	var b strings.Builder
 	m.chatItemLineRanges = make(map[transcriptLineKey]lineRange)
 	selectedKey := m.selectedTranscriptItemKey()
@@ -388,7 +393,7 @@ func diffStatsBadge(m *Model, item transcriptItem) string {
 	var any bool
 	if item.toolUse != nil {
 		if a := m.chatEntries[item.toolUse.entryIdx].Blocks[item.toolUse.blockIdx].Activity(); a != nil {
-			if s, ok := activityDiffStats(a); ok {
+			if s, ok := m.recordedActivityStats(a); ok {
 				stats.added += s.added
 				stats.removed += s.removed
 				any = true
@@ -397,7 +402,7 @@ func diffStatsBadge(m *Model, item transcriptItem) string {
 	}
 	if item.toolResult != nil {
 		if a := m.chatEntries[item.toolResult.entryIdx].Blocks[item.toolResult.blockIdx].Activity(); a != nil {
-			if s, ok := activityDiffStats(a); ok {
+			if s, ok := m.recordedActivityStats(a); ok {
 				stats.added += s.added
 				stats.removed += s.removed
 				any = true
@@ -566,13 +571,13 @@ func writeNewCodeCards(m *Model, b *strings.Builder, item transcriptItem, anchor
 			b.WriteString("    " + shared.Theme.Chat.TranscriptLabel.Render(sourceChrome(m, "Recorded new source · "+sanitizeToolSummary(d.Path)+" (not selected)")) + "\n")
 			continue
 		}
-		proj, _, outcome := computeDiff(d)
-		writeRecordedEditSection(m, b, d, proj, outcome, state.source, truncated, anchor)
+		proj, _, outcome := m.recordedDiff(d)
+		writeRecordedEditSection(m, b, item, i, d, proj, outcome, state.source, truncated, anchor)
 	}
 	return len(sections) > 0
 }
 
-func writeRecordedEditSection(m *Model, b *strings.Builder, d *toolcall.Diff, proj *diffProjection, outcome computeOutcome, source, truncated bool, anchor detailAnchor) {
+func writeRecordedEditSection(m *Model, b *strings.Builder, item transcriptItem, section int, d *toolcall.Diff, proj *diffProjection, outcome computeOutcome, source, truncated bool, anchor detailAnchor) {
 	hint := ""
 	if outcome == computeSkippedOversize || outcome == computeFailed {
 		hint = shared.DiffUnavailableHint()
@@ -583,7 +588,7 @@ func writeRecordedEditSection(m *Model, b *strings.Builder, d *toolcall.Diff, pr
 		}
 		writeDiffSection(m, b, d, proj, hint, anchor)
 	} else {
-		writeResultingSourceCard(m, b, d, hint, anchor, truncated)
+		writeResultingSourceCard(m, b, item, section, d, hint, truncated)
 	}
 }
 
@@ -621,67 +626,49 @@ func writeDiffSection(m *Model, b *strings.Builder, d *toolcall.Diff, proj *diff
 	}
 }
 
-// This checkpoint retains the bounded source preview. Parent 4 replaces its
-// permanent crop with navigable windows without widening generic detail caps.
-func writeResultingSourceCard(m *Model, b *strings.Builder, d *toolcall.Diff, hintText string, anchor detailAnchor, truncated bool) {
-	code := safeRecordedSource(d.NewText)
-	shown, hidden := boundTranscriptDetail(code, max(m.transcriptInnerW-8, 1), anchor)
-	limited := hidden > 0 || len(code) > transcriptDetailBytes
-	hint := shared.CopyFullHint(limited, m.keys.CopyItem.Help().Key)
+// Source windows never inherit the generic detail head/tail crop.
+func writeResultingSourceCard(m *Model, b *strings.Builder, item transcriptItem, section int, d *toolcall.Diff, hintText string, truncated bool) {
+	chrome := func(text string) { b.WriteString("    " + shared.Theme.Chat.Hint.Render(sourceChrome(m, text)) + "\n") }
 	b.WriteString("    " + shared.Theme.Chat.TranscriptLabel.Render(sourceChrome(m, "Recorded new source · "+sanitizeToolSummary(d.Path))) + "\n")
 	if truncated {
-		b.WriteString("    " + shared.Theme.Chat.Hint.Render(sourceChrome(m, "Recorded content truncated; only captured text is available")) + "\n")
+		chrome("Recorded content truncated; only captured text is available")
 	}
 	if hintText != "" {
-		b.WriteString("    " + shared.Theme.Chat.Hint.Render(sourceChrome(m, hintText)) + "\n")
+		chrome(hintText)
 	}
 	if d.NewText == "" {
-		b.WriteString("    " + shared.Theme.Chat.Hint.Render(sourceChrome(m, "Empty recorded result")) + "\n")
+		chrome("Empty recorded result")
 		return
 	}
-	if hidden > 0 && anchor == detailAnchorTail {
-		b.WriteString("    " + shared.Theme.Chat.Hint.Render(sourceChrome(m, shared.HintLine(shared.EarlierItems(hidden, "line", "lines"), hint))) + "\n")
+	cache := m.sourceIndex(item, section, d)
+	idx := cache.index
+	if len(idx.windows) == 0 {
+		chrome("Widen terminal to browse recorded source")
+		return
 	}
-	var render func(string) (string, error)
-	if m.insetRenderer != nil {
-		render = m.insetRenderer.Render
+	state := m.sourceStates[m.sourceOwner(item)]
+	offset := 0
+	if state.section == section {
+		offset = state.offset
 	}
-	for _, line := range strings.Split(strings.TrimRight(renderRecordedSource(d.Path, shown, max(m.transcriptInnerW-4, 1), render), "\n"), "\n") {
-		b.WriteString("    " + line + "\n")
+	window := idx.at(offset)
+	w := idx.windows[window]
+	chrome(fmt.Sprintf("Lines %d–%d · %d/%d · %s", w.firstLine, w.lastLine, window+1, len(idx.windows), sourceWindowPosition(idx, window)))
+	highlight := m.sourceHighlight
+	if highlight == nil {
+		highlight = highlightRecordedSource
 	}
-	if limited && anchor != detailAnchorTail {
-		label := shared.MoreItems(hidden, "line", "lines")
-		if hidden == 0 {
-			label = "Source preview limited"
-		}
-		b.WriteString("    " + shared.Theme.Chat.Hint.Render(sourceChrome(m, shared.HintLine(label, hint))) + "\n")
+	for _, row := range strings.Split(cache.render(window, d.Path, highlight), "\n") {
+		b.WriteString("    " + row + "\n")
+	}
+	if len(idx.windows) > 1 {
+		chrome(m.keys.SourcePrevious.Help().Key + "/" + m.keys.SourceNext.Help().Key + " prev/next")
+		chrome(m.keys.SourceFirst.Help().Key + "/" + m.keys.SourceLast.Help().Key + " first/last · " + m.keys.CopyItem.Help().Key + " copy item")
 	}
 }
 
 func sourceChrome(m *Model, text string) string {
 	return ansi.Truncate(text, max(0, m.transcriptInnerW-4), shared.EllipsisGlyph)
-}
-
-// Use ANSI stripping and control normalization only on the display copy. The
-// raw recorded payload remains available to copy and source version tracking.
-func safeRecordedSource(code string) string {
-	code = strings.ReplaceAll(ansi.Strip(code), "\r\n", "\n")
-	code = strings.ReplaceAll(code, "\t", "    ")
-	return strings.Map(func(r rune) rune {
-		if r != '\n' && unicode.IsControl(r) {
-			return '�'
-		}
-		return r
-	}, code)
-}
-
-func renderRecordedSource(path, code string, width int, render func(string) (string, error)) string {
-	if render != nil {
-		if rendered, err := render(fencedCode(path, code)); err == nil {
-			return stripBlankEdges(rendered)
-		}
-	}
-	return shared.Theme.Chat.CodeBlock.Width(width).Render(code)
 }
 
 func fencedCode(path, code string) string {

@@ -306,11 +306,12 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, taCmd
 	}
 
-	// Route remaining messages (scroll keys, mouse wheel) to the focused panel.
+	// Non-key viewport messages may update rendering, but must not resume
+	// follow merely because a short item fits. Keys and wheels update follow
+	// in their explicit navigation paths above.
 	var cmd tea.Cmd
 	if m.focus == focusTranscript {
 		m.chatVP, cmd = m.chatVP.Update(msg)
-		m.updateTranscriptFollow(m.chatVP.AtBottom())
 	} else {
 		m.vp, cmd = m.vp.Update(msg)
 	}
@@ -401,6 +402,10 @@ func (m Model) aliasPanelFocus(key string) focusRegion {
 // selection cursor (eagerly reloading the Transcript per Resolved Decision 10),
 // space toggles the file tree expand/collapse, and esc/q leave to Home.
 func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	// Modified Transcript chords must not become plain Steps navigation.
+	if msg.Mod&tea.ModAlt != 0 {
+		msg.Text = ""
+	}
 	rows := m.visibleRows()
 	switch {
 	case keybind.Matches(msg, m.keys.ToggleBell):
@@ -541,6 +546,12 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Terminals can supply both Alt and printable Text. Key.String prefers
+	// Text, which would turn alt+G into the ordinary follow key. Text capture
+	// has already handled its input above; match modified browsing chords here.
+	if msg.Mod&tea.ModAlt != 0 {
+		msg.Text = ""
+	}
 	// Process follow first so shift+G never starts a gg chord.
 	if keybind.Matches(msg, m.keys.Follow) {
 		m.pendingGPrefix = false
@@ -623,6 +634,14 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			return m, copyOutputFileCmd(m.selFile, kind)
 		}
 		return m, copyTranscriptCmd(m.RunDir, m.chatStep)
+	case keybind.Matches(msg, m.keys.SourceNext):
+		return m.browseSource("next"), nil
+	case keybind.Matches(msg, m.keys.SourcePrevious):
+		return m.browseSource("previous"), nil
+	case keybind.Matches(msg, m.keys.SourceFirst):
+		return m.browseSource("first"), nil
+	case keybind.Matches(msg, m.keys.SourceLast):
+		return m.browseSource("last"), nil
 	case keybind.Matches(msg, m.keys.SourceMode):
 		return m.toggleSource(), nil
 	case keybind.Matches(msg, m.keys.OpenLocation):

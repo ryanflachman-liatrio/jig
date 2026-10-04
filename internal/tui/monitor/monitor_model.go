@@ -15,6 +15,7 @@ import (
 	"github.com/ryanflachman-liatrio/jig/internal/helpchat"
 	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
 	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
 	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 	questionpanel "github.com/ryanflachman-liatrio/jig/internal/tui/question"
 	reviewworkspace "github.com/ryanflachman-liatrio/jig/internal/tui/review"
@@ -141,6 +142,9 @@ func (r visibleRow) isFileRow() bool {
 // runs list.
 type Model struct {
 	sourceStates     map[sourceOwner]sourcePresentation
+	sourceDiffs      map[*toolcall.Diff]recordedDiffCache
+	sourceWindows    map[sourceWindowKey]*sourceWindowCache
+	sourceHighlight  func(string, string) (string, error)
 	sourcePicker     *sourcePickerState
 	locationInstance uint64
 	locationPickerID uint64
@@ -932,6 +936,11 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 			copyAll := m.keys.CopyAll
 			copyAll.SetHelp("Y", "copy transcript")
 			sourceMode := m.keys.SourceMode
+			_, _, sourceAvailable := m.selectedSource()
+			sourceKeys := []keybind.Binding{m.keys.SourceNext, m.keys.SourcePrevious, m.keys.SourceFirst, m.keys.SourceLast}
+			for i := range sourceKeys {
+				sourceKeys[i].SetEnabled(sourceAvailable && !m.CapturesText() && !m.filterOpen)
+			}
 			sourceMode.SetEnabled(m.sourceEligible() && !m.CapturesText() && !m.filterOpen)
 			openLocation := m.keys.OpenLocation
 			if len(m.selectedLocationTargets()) == 0 {
@@ -955,6 +964,7 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 					m.keys.TransToSteps, m.keys.TransLeave,
 				}
 			}
+			bindings = append(bindings, sourceKeys...)
 		}
 		bindings = append(bindings, m.bellBinding())
 		if m.gateContext != nil {

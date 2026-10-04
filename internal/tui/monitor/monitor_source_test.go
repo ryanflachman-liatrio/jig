@@ -175,7 +175,7 @@ func TestTranscriptSourceModeRendering(t *testing.T) {
 	// A computation failure, separately from oversize, retains its explanation.
 	m := newMonitorWithSteps(t)
 	var b strings.Builder
-	writeRecordedEditSection(&m, &b, &toolcall.Diff{Path: "a.go", NewText: "recorded"}, nil, computeFailed, false, false, detailAnchorHead)
+	writeRecordedEditSection(&m, &b, transcriptItem{}, 0, &toolcall.Diff{Path: "a.go", NewText: "recorded"}, nil, computeFailed, false, false, detailAnchorHead)
 	if !strings.Contains(stripANSI(b.String()), "diff unavailable") || !strings.Contains(stripANSI(b.String()), "recorded") {
 		t.Fatal(b.String())
 	}
@@ -232,9 +232,9 @@ func TestTranscriptSourceEvidenceSafeHighlightFallback(t *testing.T) {
 	if m.sourceSections(item)[0].NewText != raw {
 		t.Fatal("mutated raw evidence")
 	}
-	safe := safeRecordedSource(raw)
+	cache := &sourceWindowCache{index: indexSourceWindows(raw, 60), renderedWindow: -1}
 	called := false
-	rendered := renderRecordedSource("a.go", safe, 60, func(input string) (string, error) {
+	rendered := cache.render(0, "a.go", func(_ string, input string) (string, error) {
 		called = true
 		if strings.Contains(input, "\x1b") || strings.Contains(input, "\x00") {
 			t.Fatal("unsafe highlighter input")
