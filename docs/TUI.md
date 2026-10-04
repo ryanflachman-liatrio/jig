@@ -191,19 +191,46 @@ terminal controls and hyperlinks.
 ## Open a recorded file target
 
 In Transcript, press `e` or choose **open file in editor** in the `ctrl+k`
-palette to open the selected exchange's recorded location or edit path.
-The card may remain collapsed. A single target opens directly; selections
-without a recorded target show an explanation. Group selection and choosing
-among multiple targets are not yet available.
+palette to open a recorded file target. Eligible targets come from normalized
+tool locations, edit-content paths, and recognized read/edit/write arguments
+(`file_path`, `path`) or notebook-edit arguments (`notebook_path`,
+`target_notebook`, `path`). Arbitrary prose, output, commands, search roots and
+glob-tool arguments are not file references.
+
+A selected exchange or compact-group child exposes only its targets. A group
+header collects its loaded members, without fetching another transcript page.
+Expansion is not required. Duplicate paths/positions collapse in their original
+order; explicit positions take precedence over path-only fallbacks. Different
+positions in the same file and equal relative paths from different execution
+directories remain separate choices.
+
+One target opens directly. Several targets open a keyboard picker: `j`/`k` or
+arrow keys select, Enter opens, and Esc cancels before leaving Transcript.
+The picker shows paths and positive recorded positions, checks file availability
+asynchronously, and disables unavailable targets with an explanation. A missing
+candidate never silently redirects to a valid sibling. Long labels retain their
+filename/position end, and the bounded list scrolls to every loaded candidate.
+Ordinary mouse selection does not open a file; mouse input is consumed while the
+picker is open. Cancel and editor return preserve transcript selection,
+expansion, focus and viewport position.
+
+Relative targets resolve against the **originating execution directory recorded
+on the same execution's transcript entries**. The runner records the absolute
+directory it actually supplies to the harness. It uses the configured repository
+root only when that is the session's directory. Paired use/result entries may
+share origin metadata within the same generation, iteration and attempt;
+conflicting or malformed origins remain unavailable. Historical records with no
+origin cannot resolve relative paths. A removed execution view never falls back
+to another checkout or jig's current directory. This internal origin metadata
+is excluded from exported transcript records and whole-step clipboard text.
 
 The target must currently exist as a regular local file (ordinary symlinks
-are followed). Absolute paths outside the project are allowed. Relative paths
-are unavailable until their originating execution directory can be identified;
-jig does not guess from its current directory. Missing files, directories,
-URIs, and paths containing control characters are rejected without creating a
-file. Opening shows the **current local file**, which may differ from recorded
-transcript evidence. Spaces, Unicode, colons, and shell characters remain
-literal path data; a `:line` suffix is never parsed out of a filename.
+are followed). Absolute paths retain their identity and may be outside the
+project. Missing files, directories, URIs, and paths containing control
+characters are rejected without creating a file. Opening shows the **current
+local file**, which may differ from recorded transcript evidence. Spaces,
+Unicode, colons, and shell characters remain literal path data; a `:line`
+suffix is never parsed out of a filename.
 
 Configure an editor in user `config.toml` or project `.jig/config.toml`:
 

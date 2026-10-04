@@ -3,6 +3,7 @@ package tui
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,13 +26,13 @@ func (m openerSmokeModel) Init() tea.Cmd { return nil }
 // Opt-in real terminal fixture; no workflow, backend login, or real run data.
 // Build with go test -c ./internal/tui -o /tmp/jig-opener-smoke, then run
 // JIG_SDD26_SMOKE=terminal /tmp/jig-opener-smoke -test.run '^TestOpenLocationSmoke$'
-// Modes: terminal, gui, missing. Press e or ctrl+k, "open file", Enter; ctrl+c exits.
+// Modes: terminal, gui, missing, grouped. Press e or ctrl+k, "open file", Enter; ctrl+c exits.
 func TestOpenLocationSmoke(t *testing.T) {
 	mode := os.Getenv("JIG_SDD26_SMOKE")
 	if mode == "" {
-		t.Skip("set JIG_SDD26_SMOKE=terminal, gui, or missing in a terminal")
+		t.Skip("set JIG_SDD26_SMOKE=terminal, gui, missing, or grouped in a terminal")
 	}
-	if mode != "terminal" && mode != "gui" && mode != "missing" {
+	if mode != "terminal" && mode != "gui" && mode != "missing" && mode != "grouped" {
 		t.Fatal("unknown smoke mode")
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -62,10 +63,14 @@ func newOpenerFixture(t *testing.T, ctx context.Context, mode string) (rootModel
 		t.Fatal(err)
 	}
 	line := 3
-	for _, entry := range []transcript.Entry{
+	entries := []transcript.Entry{
 		{Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "synthetic-edit", Kind: "edit", Title: "Synthetic edit", Locations: []toolcall.Location{{Path: target, Line: &line}}}}}},
 		{Role: transcript.RoleUser, Blocks: []transcript.Block{{Type: transcript.BlockToolResult, Tool: &toolcall.Activity{ID: "synthetic-edit", Kind: "edit", Status: "completed", Content: []toolcall.Content{{Diff: &toolcall.Diff{Path: target, NewText: "package synthetic\n"}}}}}}},
-	} {
+	}
+	if mode == "grouped" {
+		entries = groupedOpenerEntries(t, root)
+	}
+	for _, entry := range entries {
 		if _, err := writer.Append(entry); err != nil {
 			t.Fatal(err)
 		}
@@ -88,8 +93,11 @@ func newOpenerFixture(t *testing.T, ctx context.Context, mode string) (rootModel
 	m.monitor.RunDir = runDir
 	m.monitor = m.monitor.WithSnapshot(engine.RunSnapshot{ID: "synthetic-run", Workflow: "Opener smoke", Done: true, Steps: []step.State{{ID: "edit", Status: step.StatusSucceeded}}})
 	m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
-	m.monitor, _ = m.monitor.Update(monitor.EngineEventMsg{Event: engine.StepMessage{RunID: "synthetic-run", StepID: "edit", Seq: 2}})
+	m.monitor, _ = m.monitor.Update(monitor.EngineEventMsg{Event: engine.StepMessage{RunID: "synthetic-run", StepID: "edit", Seq: len(entries)}})
 	m.monitor, _ = m.monitor.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if mode == "grouped" {
+		m.monitor, _ = m.monitor.Update(tea.KeyPressMsg{Code: 'c', Text: "c"})
+	}
 	return m, root
 }
 
@@ -98,4 +106,36 @@ func openerInteractive(args []string) {
 		fmt.Printf("\nSynthetic terminal editor received argv: %q\nPress Enter to return to Monitor.\n", args)
 		_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
 	}
+}
+
+// The grouped scene mixes loaded reads, compact edits, a removed file and an
+// old relative target with no origin. It never touches an operator checkout.
+func groupedOpenerEntries(t *testing.T, root string) []transcript.Entry {
+	t.Helper()
+	var entries []transcript.Entry
+	for i, spec := range []struct {
+		kind, name, origin string
+		exists             bool
+	}{
+		{"read", "first.go", root, true},
+		{"read", "removed.go", root, false},
+		{"read", "historical.go", "", false},
+		{"edit", "first.go", root, true},
+		{"edit", "last.go", root, true},
+	} {
+		if spec.exists {
+			if err := os.WriteFile(filepath.Join(root, spec.name), []byte("synthetic"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		input, _ := json.Marshal(map[string]string{"path": spec.name})
+		line := i + 3
+		use := &toolcall.Activity{ID: fmt.Sprintf("group-%d", i), Kind: spec.kind, Title: spec.kind, Input: input, Locations: []toolcall.Location{{Path: spec.name, Line: &line}}}
+		result := &toolcall.Activity{ID: use.ID, Kind: spec.kind, Status: "completed"}
+		entries = append(entries,
+			transcript.Entry{ExecutionDir: spec.origin, Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: use}}},
+			transcript.Entry{ExecutionDir: spec.origin, Role: transcript.RoleUser, Blocks: []transcript.Block{{Type: transcript.BlockToolResult, Tool: result}}},
+		)
+	}
+	return entries
 }

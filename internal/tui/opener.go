@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -71,7 +70,7 @@ func (m rootModel) admitOpenLocation(req shared.OpenLocationRequest) (rootModel,
 
 func prepareOpenLocation(id uint64, req shared.OpenLocationRequest, cfg config.OpenerConfig, editor string) openerPreparedMsg {
 	msg := openerPreparedMsg{id: id, req: req, terminal: cfg.TerminalOrDefault()}
-	if err := validateOpenLocationPath(req.Target.Path); err != nil {
+	if err := shared.ValidateOpenLocationPath(req.Target.Path); err != nil {
 		msg.err = err
 		return msg
 	}
@@ -103,23 +102,6 @@ func prepareOpenLocation(id uint64, req shared.OpenLocationRequest, cfg config.O
 	}
 	msg.argv[0] = executable
 	return msg
-}
-
-func validateOpenLocationPath(path string) error {
-	if path == "" || !utf8.ValidString(path) || strings.ContainsFunc(path, unicode.IsControl) {
-		return errors.New("invalid local file path")
-	}
-	if !filepath.IsAbs(path) {
-		return errors.New("location is not an absolute local path; originating directory unavailable")
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return errors.New("file unavailable; it may have moved or been deleted")
-	}
-	if !info.Mode().IsRegular() {
-		return errors.New("target is not a regular file")
-	}
-	return nil
 }
 
 // tokenizeEditor handles quoting and escapes only. Shell operators, variables,
@@ -199,7 +181,7 @@ func launchOpenLocation(ctx context.Context, msg openerPreparedMsg, finished fun
 		if finished != nil {
 			defer finished()
 		}
-		notice := "Opened current local file" + msg.note
+		notice := "Opened current local file: " + msg.req.Target.Path + msg.note
 		if err != nil {
 			notice = "Open failed: editor could not start or finish"
 			var exit *exec.ExitError

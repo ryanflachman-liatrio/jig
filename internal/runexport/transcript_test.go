@@ -1,6 +1,7 @@
 package runexport
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -65,5 +66,20 @@ func TestSanitizeJSONPayloadHandlesMalformedAndNested(t *testing.T) {
 	got := sanitizeJSONPayload([]byte(`{"outer":{"inner":"has secret value"}}`), sanitize)
 	if strings.Contains(got, "secret") {
 		t.Fatalf("sanitizeJSONPayload did not sanitize a nested value: %q", got)
+	}
+}
+
+func TestOpenLocationOriginExcludedFromExport(t *testing.T) {
+	entry := transcript.Entry{Seq: 1, ExecutionDir: "/synthetic/private-execution-origin", Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "synthetic"}}}
+	record := projectTranscriptEntry("step-0001", entry, &timeAnchor{}, newAliasTable(), "scope", func(s string) string { return s })
+	data, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "execution_dir") || strings.Contains(string(data), entry.ExecutionDir) {
+		t.Fatalf("origin disclosed: %s", data)
+	}
+	if !strings.Contains(string(data), "synthetic") {
+		t.Fatal("projection dropped transcript content")
 	}
 }

@@ -21,7 +21,7 @@ func TestOpenLocationLaunchRunningCancellation(t *testing.T) {
 	if err := syscall.Mkfifo(fifo, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateOpenLocationPath(fifo); err == nil {
+	if err := shared.ValidateOpenLocationPath(fifo); err == nil {
 		t.Fatal("accepted FIFO target")
 	}
 	// RDWR avoids blocking on open. The helper's write is the readiness signal;

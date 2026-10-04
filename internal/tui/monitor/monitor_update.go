@@ -17,11 +17,16 @@ import (
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	hadGate, wasFocused := m.hasGate(), m.focus == focusGate
 	m, cmd := m.update(msg)
+	if m.locationPicker != nil && (m.locationPicker.owner != m.OpenLocationOwner() || m.focus != focusTranscript) {
+		m.locationPicker = nil
+	}
 	return m.withGateBell(hadGate, wasFocused, cmd)
 }
 
 func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case locationTargetsCheckedMsg:
+		return m.checkedLocationTargets(msg)
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.resize()
@@ -188,6 +193,10 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 			var hCmd tea.Cmd
 			m.helpModel, hCmd = m.helpModel.Update(msg)
 			return m, hCmd
+		}
+
+		if m.locationPicker != nil {
+			return m.updateLocationPicker(msg)
 		}
 
 		// A dedicated review workspace replaces the Monitor body and owns every
@@ -612,7 +621,7 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		if m.selKind == "file" {
 			return m, nil
 		}
-		return m, m.openLocationCmd()
+		return m.openLocation()
 	case keybind.Matches(msg, m.keys.CopyItem):
 		// y in the Transcript panel copies the selected transcript item. It is
 		// intentionally unavailable in file view (files have no line cursor).

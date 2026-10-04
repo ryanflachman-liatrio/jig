@@ -88,13 +88,18 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 		spec.Prompt = req.Message
 		spec.Resume = req.ResumeSessionID
 	}
-	if req.ExecutionDir != "" {
-		spec.Cwd = req.ExecutionDir
-	} else if req.RepoRoot != "" {
-		// Persistence-off execution has no run-owned snapshot, but the worker
-		// still needs the configured repository as its process/session CWD.
-		spec.Cwd = req.RepoRoot
+	// Resolve once on this request copy: harness setup, artifact resolution and
+	// transcript capture must agree even when the process cwd is unrelated.
+	executionDir := req.ExecutionDir
+	if executionDir == "" {
+		executionDir = req.RepoRoot
 	}
+	executionDir, err = filepath.Abs(executionDir)
+	if err != nil {
+		return failResult("execution directory unavailable", start), nil
+	}
+	req.ExecutionDir = executionDir
+	spec.Cwd = executionDir
 	if req.Step.AskUserEnabled() {
 		if !caps.Has(harness.CapUserQuestion) {
 			return failResult(fmt.Sprintf("step uses AskUserQuestion but harness %q does not support user questions (CapUserQuestion)", h.Name()), start), nil
@@ -295,11 +300,12 @@ func captureStreamWith(
 		}
 		blocks = redactTranscriptBlocks(req, blocks)
 		seq, err := w.Append(transcript.Entry{
-			Generation: req.Generation,
-			Iteration:  req.Iteration,
-			Attempt:    req.Attempt,
-			Role:       role,
-			Blocks:     blocks,
+			ExecutionDir: req.ExecutionDir,
+			Generation:   req.Generation,
+			Iteration:    req.Iteration,
+			Attempt:      req.Attempt,
+			Role:         role,
+			Blocks:       blocks,
 		})
 		if err == nil {
 			rep.Message(seq, req.Iteration)

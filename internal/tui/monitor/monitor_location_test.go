@@ -64,13 +64,14 @@ func TestOpenLocationSingleMissingAndMultiple(t *testing.T) {
 	m := locationModel(t)
 	m.chatEntries[0].Blocks[0].Tool.Locations = nil
 	m.chatEntries[1].Blocks[0].Tool.Content = nil
-	req := m.openLocationCmd()().(shared.OpenLocationRequest)
+	_, cmd := m.openLocation()
+	req := cmd().(shared.OpenLocationRequest)
 	if !strings.Contains(req.Unavailable, "no recorded") {
 		t.Fatalf("%+v", req)
 	}
 	m.chatEntries[0].Blocks[0].Tool.Locations = []toolcall.Location{{Path: "/one"}, {Path: "/two"}}
-	req = m.openLocationCmd()().(shared.OpenLocationRequest)
-	if req.Unavailable == "" || req.Target.Path != "" {
+	updated, cmd := m.openLocation()
+	if updated.locationPicker == nil || cmd == nil {
 		t.Fatal("ambiguous selection silently launched")
 	}
 }

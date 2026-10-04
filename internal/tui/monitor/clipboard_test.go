@@ -405,3 +405,25 @@ func TestClipboardTranscriptKeyReturnsCommand(t *testing.T) {
 		t.Fatalf("loader payload missing hello:\n%s", payload.Payload)
 	}
 }
+
+func TestOpenLocationOriginExcludedFromClipboard(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "transcript.jsonl")
+	writer, err := transcript.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := transcript.Entry{ExecutionDir: "/synthetic/private-execution-origin", Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "recorded synthetic evidence"}}}
+	if _, err := writer.Append(entry); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	text, _, err := exportRecordedTranscript(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(text, entry.ExecutionDir) || strings.Contains(text, "execution_dir") || !strings.Contains(text, "recorded synthetic evidence") {
+		t.Fatalf("clipboard text=%q", text)
+	}
+}

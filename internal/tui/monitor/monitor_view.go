@@ -557,6 +557,9 @@ func (m Model) View() string {
 	sec := fitBlock(m.securityView(layout.securityH), m.width, layout.securityH)
 	base := fitBlock(joinVertical(panels, sec, inputBar, status, footer), m.width, m.height)
 	base = m.gateOverlayView(base, layout)
+	if m.locationPicker != nil {
+		base = m.locationPicker.picker.overlay(base, m.width, m.height, m.keys)
+	}
 	if m.helpOpen {
 		return m.helpOverlay(base)
 	}

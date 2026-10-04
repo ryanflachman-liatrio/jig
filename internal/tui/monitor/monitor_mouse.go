@@ -46,7 +46,7 @@ func (m Model) mousePanels() monitorMousePanels {
 }
 
 func (m Model) mouseExcluded() bool {
-	return m.helpOpen || m.showDiagnostics || m.reviewOpen || m.searchOpen || m.textareaActive() || (m.focus == focusGate && m.hasGate())
+	return m.locationPicker != nil || m.helpOpen || m.showDiagnostics || m.reviewOpen || m.searchOpen || m.textareaActive() || (m.focus == focusGate && m.hasGate())
 }
 
 func (m *Model) selectVisibleRow(idx int) bool {

@@ -144,22 +144,22 @@ func TestOpenLocationLaunchFileValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, path := range []string{file, symlink} {
-		if err := validateOpenLocationPath(path); err != nil {
+		if err := shared.ValidateOpenLocationPath(path); err != nil {
 			t.Fatalf("%q: %v", path, err)
 		}
 	}
 	for _, path := range []string{"", "relative.go", "https://example.test/a", "file:///tmp/a", file + "\n", file + "\x1b", file + "\u0085", file + ":5", t.TempDir(), file + "missing"} {
-		if err := validateOpenLocationPath(path); err == nil {
+		if err := shared.ValidateOpenLocationPath(path); err == nil {
 			t.Fatalf("accepted %q", path)
 		}
 	}
 	if err := os.Remove(file); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateOpenLocationPath(file); err == nil {
+	if err := shared.ValidateOpenLocationPath(file); err == nil {
 		t.Fatal("accepted deleted file")
 	}
-	if err := validateOpenLocationPath(symlink); err == nil {
+	if err := shared.ValidateOpenLocationPath(symlink); err == nil {
 		t.Fatal("accepted dangling link")
 	}
 }

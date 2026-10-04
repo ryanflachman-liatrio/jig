@@ -87,7 +87,9 @@ type monitorKeys struct {
 	NotificationDiagnostics keybind.Binding // matched (ctrl+g)
 
 	// Open a recorded local file through the root-owned editor launcher.
-	OpenLocation keybind.Binding
+	OpenLocation  keybind.Binding
+	PickerConfirm keybind.Binding
+	PickerCancel  keybind.Binding
 
 	// Copy actions (spec 23-spec-clipboard-yank).
 	// CopyItem (y) copies the current transcript item / tool exchange.
@@ -160,8 +162,10 @@ func defaultMonitorKeys() monitorKeys {
 
 		NotificationDiagnostics: shared.KeyNotificationDiagnostics,
 
-		OpenLocation: keybind.NewBinding(keybind.WithKeys("e"), keybind.WithHelp("e", "open file in editor")),
-		CopyItem:     keybind.NewBinding(keybind.WithKeys("y"), keybind.WithHelp("y", "copy")),
-		CopyAll:      keybind.NewBinding(keybind.WithKeys("Y"), keybind.WithHelp("Y", "copy all")),
+		PickerConfirm: keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "open target")),
+		PickerCancel:  keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "cancel")),
+		OpenLocation:  keybind.NewBinding(keybind.WithKeys("e"), keybind.WithHelp("e", "open file in editor")),
+		CopyItem:      keybind.NewBinding(keybind.WithKeys("y"), keybind.WithHelp("y", "copy")),
+		CopyAll:       keybind.NewBinding(keybind.WithKeys("Y"), keybind.WithHelp("Y", "copy all")),
 	}
 }

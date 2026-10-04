@@ -141,6 +141,8 @@ func (r visibleRow) isFileRow() bool {
 // runs list.
 type Model struct {
 	locationInstance uint64
+	locationPickerID uint64
+	locationPicker   *locationPickerState
 	RunID            string
 	RunDir           string
 	workflow         string
@@ -884,6 +886,9 @@ func (m Model) PaletteSections() []shared.HelpSection {
 }
 
 func (m Model) helpSections(simple bool) []shared.HelpSection {
+	if m.locationPicker != nil {
+		return m.pickerHelp()
+	}
 	var sections []shared.HelpSection
 
 	switch {
