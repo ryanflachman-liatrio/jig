@@ -103,7 +103,7 @@ func (m Model) applySourceMode(item transcriptItem, source bool, section int) Mo
 
 func (m Model) sourcePickerKeys() monitorKeys {
 	keys := m.keys
-	keys.PickerConfirm.SetHelp("enter", "select")
+	keys.PickerConfirm = shared.Relabel(keys.PickerConfirm, "select")
 	return keys
 }
 

@@ -108,7 +108,7 @@ func (m Model) transcriptItemAtLine(line int) (transcriptHit, bool) {
 // toggles, and a text or reasoning row toggles only when it is oversized.
 func itemIsExpandable(item transcriptItem) bool {
 	switch item.kind {
-	case transcriptItemToolGroup, transcriptItemReadGroup:
+	case transcriptItemToolGroup:
 		return true
 	}
 	return itemHasDetail(item)

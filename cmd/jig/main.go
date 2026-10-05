@@ -87,6 +87,10 @@ func main() {
 		os.Exit(1)
 	}
 	applyResolvedGlyphPreset(cfg)
+	if err := tui.ConfigureKeymap(config.KeyOverrides(cfg.Keys)); err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading config: %v\n", err)
+		os.Exit(1)
+	}
 
 	tel := setupTelemetry(ctx, ".jig")
 	defer tel.shutdown(context.Background())

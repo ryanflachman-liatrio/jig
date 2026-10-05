@@ -199,7 +199,11 @@ func TestTranscriptSearchFiltersRenderedPageAndKeepsToolContext(t *testing.T) {
 	if len(m.chatVisibleItems) != 2 {
 		t.Fatalf("matching view has %d items, want prose plus one exchange", len(m.chatVisibleItems))
 	}
-	m.chatItemExpand[m.chatVisibleItems[1].key] = true
+	// The single read is wrapped in a tool group; its result context shows
+	// once both the group and its member card are expanded.
+	group := m.chatVisibleItems[1]
+	m.chatItemExpand[group.key] = true
+	m.chatItemExpand[group.groupMembers[0].key] = true
 	body = ansiStrip(m.chatBody())
 	if !strings.Contains(body, "unrelated tool result") {
 		t.Fatalf("matching tool group lost result context:\n%s", body)

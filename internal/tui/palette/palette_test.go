@@ -204,6 +204,11 @@ func TestParseKey(t *testing.T) {
 	if got.Code != 'r' || !got.Mod.Contains(tea.ModCtrl) {
 		t.Fatalf("ctrl+r = %#v", got)
 	}
+	for _, chord := range []string{"ctrl+r", "ctrl+shift+a", "alt+x", "r", "Y", "esc", "space"} {
+		if got := palette.ParseKey(chord).String(); got != chord {
+			t.Fatalf("ParseKey(%q).String() = %q, want the chord back", chord, got)
+		}
+	}
 	if got := palette.ParseKey("esc"); got.Code != tea.KeyEsc {
 		t.Fatalf("esc = %#v", got)
 	}

@@ -83,6 +83,54 @@ empty, loading, disabled, error, and unknown states. Keep actions discoverable
 through help and the palette, and avoid rendering backend-specific jargon
 unless the operator needs it to act.
 
+### Remapping keys
+
+Every matched binding is a named action in its screen's keymap
+(`shared.Action`: a stable ID, the regions where it is live, and a pointer to
+the binding handlers match). `config.toml`'s `[keys]` table remaps actions by
+ID; each value is one chord or a list, and project entries override user
+entries per action:
+
+```toml
+[keys]
+"monitor.copy_item" = "ctrl+y"
+"global.palette" = ["ctrl+k", "ctrl+p"]
+```
+
+A remap replaces the action's default keys. Handlers, footers, the help
+overlay, and the command palette all read the same binding, so they show and
+accept the new chord. `tui.ConfigureKeymap` validates the table when the TUI
+starts and refuses to launch on an unknown ID, a fixed action, an empty chord
+list, or a chord that two actions would share in overlapping regions (a region
+encloses its dot-separated children; global chords are live everywhere). Keys
+may repeat across regions that are never live together, such as the Steps
+panel and a gate. Use `shared.Relabel` for a contextual description, never
+`SetHelp` with a literal key.
+
+Fixed actions keep their defaults but still block conflicting remaps: focus
+movement, paired-direction bindings whose handler reads the pressed key (j/k
+scroll, J/K, n/N, `[`/`]` entry navigation), the `gg` chord, gate submit and
+blur, the review-open key, the workflow list's own navigation and filter, and
+Detail's back key (chart mode drops `h`/`left` from it). Review workspaces,
+question forms, and overlay-internal keys (palette, help, filters) are not
+remappable yet.
+
+Remappable action IDs:
+
+| Scope | Actions |
+|---|---|
+| Global | `global.quit`, `global.help`, `global.help_typing`, `global.palette`, `global.notification_diagnostics` |
+| Home | `home.pane`, `home.detail`, `selector.open`, `runs.up`, `runs.down`, `runs.open`, `runs.new_run`, `runs.resume`, `runs.delete`, `runs.copy_id`, `runs.back` |
+| Detail | `detail.run`, `detail.runs`, `detail.toggle_chart` |
+| Monitor (all regions) | `monitor.toggle_help_agent`, `monitor.toggle_simple`, `monitor.gate_context` |
+| Monitor Steps | `monitor.down`, `monitor.up`, `monitor.open_transcript`, `monitor.toggle_tree`, `monitor.steps_leave`, `monitor.stop_step`, `monitor.reset_step`, `monitor.resume_step`, `monitor.toggle_bell`, `monitor.copy_all` |
+| Monitor Transcript | `monitor.transcript_to_steps`, `monitor.transcript_leave`, `monitor.toggle`, `monitor.expand_all`, `monitor.follow`, `monitor.search`, `monitor.filters`, `monitor.compact_tools`, `monitor.clear_view`, `monitor.page_older`, `monitor.page_newer`, `monitor.copy_item`, `monitor.toggle_bell`, `monitor.copy_all` |
+| Monitor recorded evidence | `monitor.open_location`, `monitor.source_mode`, `monitor.source_next`, `monitor.source_previous`, `monitor.source_first`, `monitor.source_last` |
+| Monitor gates | `monitor.recover_retry`, `monitor.recover_guide`, `monitor.recover_skip`, `monitor.recover_abort`, `monitor.integration_resolve`, `monitor.integration_agent`, `monitor.final_merge_approve`, `monitor.final_merge_discard`, `monitor.reset_confirm`, `monitor.reset_cancel` |
+
+The command palette still runs an entry by re-dispatching the action's current
+primary chord, so it follows remaps; it does not yet invoke actions by ID.
+
 ### Mouse navigation
 
 jig remains keyboard-primary: mouse navigation is optional, requires no configuration,
@@ -132,21 +180,42 @@ at the tail; new output must not steal the position of someone reading history.
 
 Every uninterrupted run of local-file read exchanges at one execution
 coordinate forms a page-local **grouped read**, including a run of one, so a
-lone read opens and collapses the same way. A single failed read is the
-exception: it stays standalone so its error detail renders inline. A grouped read is one navigation and expansion target; its compact tree
-retains every distinct loaded target, and a search or filter match on any member
-retains the complete group. Expansion and selected-item copy use only the
-members present on the loaded page, so grouping never implies off-page evidence.
+lone read opens and collapses the same way. A grouped read is a tool group
+(see below) whose policy is always on: it groups whether or not compact tool
+groups are enabled, and it admits running and failed members. A single failed
+read is the exception: it stays standalone so its error detail renders inline.
+Collapsed, its tree lists every distinct loaded target once with its line
+selectors instead of the first-three/last preview. Otherwise it shares every
+tool-group behavior below: expansion, navigation, search, filters, and copy.
+Expansion and copy use only the members present on the loaded page, so
+grouping never implies off-page evidence.
 
-Other recognized tools can use opt-in compact groups. Press `c` in Transcript
-or choose the command-palette action to toggle `compact_tool_groups` for the
-current session; the default (`false`) comes from `config.toml`'s `[tui]`
-table (`compact_tool_groups`), which a persistent default can override, but
+Other recognized tools fold into compact groups by default. Press `c` in
+Transcript or choose the command-palette action to toggle `compact_tool_groups`
+for the current session; the default (`true`) comes from `config.toml`'s
+`[tui]` table (`compact_tool_groups`), where `false` opts out persistently, but
 the in-session toggle itself is not written back to disk. Eligible groups
 contain one or more adjacent, settled, successful calls of the same canonical
 kind and execution coordinate. Failures, running or incomplete calls, malformed
 or targetless calls, unknown tools, and `askuserquestion` remain standalone and
 split a run.
+
+With compact groups on, quiet exploration calls (`read`, `glob`, `grep`,
+`websearch`, `webfetch`) also fold across kinds: an uninterrupted run of
+settled, successful calls of those kinds forms one **Explore** group whose
+collapsed rows carry each call's kind as a muted label (`Search …`,
+`Read …`). A run of a single quiet kind keeps that kind's title and, for
+reads, the read tree. Any other kind, a failed or running call, or visible
+prose ends the run.
+
+Collapsed previews mask secrets. Error hints, collapsed call summaries
+(including bash command text), argument previews, and group or read-tree rows
+pass through `sentinel.RedactPreview`, which replaces known secret patterns
+and high-entropy values of key-looking assignments (`FOO_TOKEN=…`,
+`api_key: …`) with `<redacted>`. Free-standing SHAs, UUIDs and digests are not
+masked. Masking happens before truncation, so no prefix of a secret survives a
+narrow pane. Expanded detail bodies, `y` copy, and the transcript file on disk
+stay raw.
 
 The run monitor can also ring the terminal bell (BEL) when a gate starts
 waiting, so an operator in another pane, tab, or tmux window notices a blocked
@@ -160,15 +229,15 @@ the gate, and at most once per 5-second cooldown. BEL is emitted through
 `tea.Raw` so it stays sequenced with renderer output; terminals and tmux decide
 whether it sounds, flashes, or only flags the window.
 
-Compact non-read groups ignore settled reasoning hidden by the default view.
-Enabling the reasoning filter restores those items and splits groups at their
-original positions. Live reasoning and execution-coordinate changes still split
+Compact tool groups, including grouped reads in compact mode, ignore settled
+reasoning hidden by the default view. Enabling the reasoning filter restores
+those items and splits groups at their original positions. Live reasoning and execution-coordinate changes still split
 groups. Search and other filters run after grouping, so hiding prose, failures,
 or targetless calls with a filter cannot join calls across those boundaries.
 
-A collapsed non-read group shows at most the first three calls, an omitted-count
-row, and the final call. Expanding the group with `enter` or space reveals every
-member as its existing bordered summary card. The group header and visible child
+A collapsed group other than a grouped read shows at most the first three
+calls, an omitted-count row, and the final call. Expanding any group with
+`enter` or space reveals every member as its existing bordered summary card. The group header and visible child
 cards are independent `n`/`N` stops; `enter` or space on a child toggles its
 existing detail, and `o` applies global expansion. Search and filters inspect
 members but retain the complete group, while copying a child copies that exchange

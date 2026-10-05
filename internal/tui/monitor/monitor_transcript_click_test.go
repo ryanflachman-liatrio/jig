@@ -218,7 +218,7 @@ func TestTranscriptClickReadGroupHeaderToggles(t *testing.T) {
 		renumberEntries(readExchange("two", "internal/beta.go", 0, 0, 0), 3)...,
 	)
 	m := newTranscriptClickModel(t, entries)
-	if len(m.chatItems) != 1 || m.chatItems[0].kind != transcriptItemReadGroup {
+	if len(m.chatItems) != 1 || m.chatItems[0].kind != transcriptItemToolGroup {
 		t.Fatalf("chat items=%+v, want one read group", m.chatItems)
 	}
 	group := m.chatItems[0]
@@ -253,10 +253,15 @@ func TestTranscriptClickReadGroupBodyDoesNotCollapse(t *testing.T) {
 	}
 	m.refreshPanels()
 
-	// A body-line click should select-but-not-collapse.
-	m, _ = m.Update(clickTranscriptItemBody(t, m, group.key))
+	// A click inside the expanded group lands on a member card: it selects
+	// the member and must not collapse the enclosing group.
+	member := group.groupMembers[0]
+	m, _ = m.Update(clickTranscriptItem(t, m, member.key))
 	if !m.chatItemExpand[group.key] {
 		t.Fatal("body click collapsed expanded read group — reader trap regression")
+	}
+	if sel, ok := m.selectedTranscriptItem(); !ok || sel.key != member.key {
+		t.Fatalf("selected item=%+v, want the clicked member", sel.key)
 	}
 }
 

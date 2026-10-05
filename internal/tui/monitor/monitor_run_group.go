@@ -54,3 +54,7 @@ func groupTranscriptItemRuns(items []transcriptItem, spec runGroupSpec) []transc
 	flush()
 	return grouped
 }
+
+func sameExecutionCoordinate(a, b toolCorrelationKey) bool {
+	return a.generation == b.generation && a.iteration == b.iteration && a.attempt == b.attempt
+}

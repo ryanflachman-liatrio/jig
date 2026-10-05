@@ -19,6 +19,8 @@ var secretPatterns = []struct {
 	{"gcp-api-key", regexp.MustCompile(`AIza[0-9A-Za-z\-_]{35}`)},
 	{"github-token", regexp.MustCompile(`gh[pors]_[A-Za-z0-9_]{36,}`)},
 	{"pem-private-key", regexp.MustCompile(`-----BEGIN [\w ]* PRIVATE KEY-----`)},
+	{"openai-style-key", regexp.MustCompile(`\bsk-(?:proj-|ant-)?[A-Za-z0-9_\-]{20,}`)},
+	{"jwt", regexp.MustCompile(`eyJ[A-Za-z0-9_\-]+\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+`)},
 }
 
 // entropyThreshold is the Shannon bits-per-char threshold above which a
@@ -305,4 +307,42 @@ func RedactText(text string) string {
 		result = strings.ReplaceAll(result, m.Text, Redact(m.Category, m.Text))
 	}
 	return result
+}
+
+const previewRedacted = "<redacted>"
+
+// secretAssignmentRE matches a key-looking assignment (a name containing a
+// secret word, then = or :, then an optional quote) and captures its value.
+var secretAssignmentRE = regexp.MustCompile("(?i)\\b[\\w.-]*(?:token|key|secret|passw(?:or)?d|pwd|auth|credential)[\\w.-]*\\s*[:=]\\s*[\"']?([^\\s\"'`]+)")
+
+// RedactPreview masks secrets in one-line UI previews with "<redacted>".
+// Unlike RedactText it does not flag free-standing high-entropy tokens: in
+// tool previews those are mostly commit SHAs, digests and IDs. Entropy is
+// only trusted on the value of a key-looking assignment. Text with nothing
+// to mask is returned unchanged.
+func RedactPreview(text string) string {
+	out := text
+	for _, m := range DetectSecrets(text) {
+		if m.KnownPattern {
+			out = strings.ReplaceAll(out, m.Text, previewRedacted)
+		}
+	}
+	locs := secretAssignmentRE.FindAllStringSubmatchIndex(out, -1)
+	if len(locs) == 0 {
+		return out
+	}
+	var b strings.Builder
+	last := 0
+	for _, loc := range locs {
+		start, end := loc[2], loc[3]
+		value := out[start:end]
+		if value == previewRedacted || len(value) < minSecretLen || shannonEntropy(value) < entropyThreshold {
+			continue
+		}
+		b.WriteString(out[last:start])
+		b.WriteString(previewRedacted)
+		last = end
+	}
+	b.WriteString(out[last:])
+	return b.String()
 }

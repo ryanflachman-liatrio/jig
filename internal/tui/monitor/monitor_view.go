@@ -194,8 +194,7 @@ func (m Model) statusLabel() string {
 func (m Model) hintLabel(width int) string {
 	bindings := m.compactHelpBindings()
 	if m.hasGate() && m.focus != focusGate {
-		gate := m.keys.FocusNext
-		gate.SetHelp("tab", "gate")
+		gate := shared.Relabel(m.keys.FocusNext, "gate")
 		bindings = append([]keybind.Binding{gate}, bindings...)
 	}
 	palette := shared.KeyPalette

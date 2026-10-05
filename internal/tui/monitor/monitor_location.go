@@ -54,7 +54,7 @@ func (m Model) selectedLocationTargets() []locationCandidate {
 }
 
 func (m Model) itemLocationTargets(item transcriptItem) []locationCandidate {
-	if item.kind == transcriptItemReadGroup || item.kind == transcriptItemToolGroup {
+	if item.kind == transcriptItemToolGroup {
 		var out []locationCandidate
 		for _, member := range item.groupMembers {
 			out = append(out, m.itemLocationTargets(member)...)

@@ -5,6 +5,8 @@ import (
 
 	keybind "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+
+	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
 )
 
 // gateBellCooldown bounds how often the gate bell can ring. Fan-out steps can
@@ -49,9 +51,7 @@ func (m *Model) toggleBell() {
 func (m Model) bellBinding() keybind.Binding {
 	b := m.keys.ToggleBell
 	if m.bellEnabled {
-		b.SetHelp("B", "bell: on")
-	} else {
-		b.SetHelp("B", "bell: off")
+		return shared.Relabel(b, "bell: on")
 	}
-	return b
+	return shared.Relabel(b, "bell: off")
 }

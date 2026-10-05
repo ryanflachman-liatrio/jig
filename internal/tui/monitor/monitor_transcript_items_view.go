@@ -186,8 +186,6 @@ func (m *Model) writeTranscriptItem(b *strings.Builder, item transcriptItem, sel
 		}
 	}
 	switch item.kind {
-	case transcriptItemReadGroup:
-		m.writeReadGroup(b, item, selected, expanded)
 	case transcriptItemText:
 		if item.role == transcript.RoleUser {
 			b.WriteString(m.renderUserText(prefix, item, block, expanded))
@@ -724,7 +722,7 @@ func toolErrorHint(m *Model, item transcriptItem) string {
 			}
 		}
 	}
-	if line = sanitizeToolSummary(line); line != "" {
+	if line = previewText(line); line != "" {
 		return line
 	}
 	return "error"
