@@ -214,10 +214,17 @@ func (wf *Workflow) readAsset(s *Step, kind AssetKind, ref, base string) ([]byte
 		wf.authoring = &authoringLoad{}
 	}
 	data, b, err := wf.authoring.file(s.ID, kind, ref, base, s.declaring)
-	if err == nil {
-		s.assets = append(s.assets, b)
+	if err != nil {
+		// IDs are author-facing context, never a source path. Programmatic
+		// workflows may bypass validation, so bound and validate this label.
+		owner := s.ID
+		if len(owner) > 128 || !isIdent(owner) {
+			owner = "unknown"
+		}
+		return nil, fmt.Errorf("step %q %s: %w", owner, kind, err)
 	}
-	return data, err
+	s.assets = append(s.assets, b)
+	return data, nil
 }
 func (wf *Workflow) readSkill(s *Step, base string) ([]byte, error) {
 	for _, path := range []string{base, s.Skill} {

@@ -188,3 +188,6 @@ func (m Model) MoveSelectionAt(x, y, direction int) (Model, bool) {
 	}
 	return m.syncViewport(), true
 }
+
+// Notice returns the current operational notice for the embedding Home footer.
+func (m Model) Notice() string { return m.notice }

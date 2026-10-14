@@ -10,6 +10,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/transcript"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // readZip extracts every member of the archive at path into a name->bytes map.
@@ -260,4 +266,191 @@ func TestExportStepBackend(t *testing.T) {
 		return
 	}
 	t.Fatal("no agent step in exported run summary")
+}
+
+func TestAuthoringAssetsExcludedFromExport(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "PRIVATE_PROVENANCE_MARKER")
+	files := map[string]string{
+		"authored.sh":     "echo PRIVATE_SCRIPT_BYTES_MARKER\n",
+		"skill/SKILL.md":  "---\nname: synthetic\ndescription: Export fixture\n---\nPRIVATE_PROMPT_BYTES_MARKER\n",
+		"skill/helper.sh": "PRIVATE_HELPER_BYTES_MARKER\n",
+		"schema.json":     `{"type":"object","properties":{"result":{"type":"string","description":"PRIVATE_SCHEMA_BYTES_MARKER"}}}`,
+		"template.md":     "PRIVATE_TEMPLATE_BYTES_MARKER\n",
+		"workflow.toml": `[workflow]
+name='authoring-export'
+version='1'
+[[step]]
+id='worker'
+type='command'
+script='authored.sh'
+output_type={enum=['go','skip']}
+[[step]]
+id='unused'
+type='agent'
+skill='skill'
+schema_file='schema.json'
+output_template='template.md'
+depends_on=['worker']
+when="worker == 'skip'"
+`,
+	}
+	for name, body := range files {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wf, err := workflow.Load(filepath.Join(dir, "workflow.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), ".jig")
+	manager := engine.NewManager(authoringExportExecutor{}, root)
+	r, err := manager.Start(wf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Wait().Failed {
+		t.Fatal("fixture failed")
+	}
+	rd := manager.RunDir(r.ID)
+	entry := transcript.Entry{Seq: 1, Ts: fixtureBaseTime().Format(time.RFC3339), Role: transcript.RoleSystem, Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "benign synthetic output"}}}
+	encoded, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(rd, "steps/worker"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rd, "steps/worker/transcript.jsonl"), append(encoded, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rd, "scratch.txt"), []byte("PRIVATE_SCRATCH_MARKER"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	markers := []string{"PRIVATE_PROVENANCE_MARKER", "PRIVATE_SCRIPT_BYTES_MARKER", "PRIVATE_PROMPT_BYTES_MARKER", "PRIVATE_HELPER_BYTES_MARKER", "PRIVATE_SCHEMA_BYTES_MARKER", "PRIVATE_TEMPLATE_BYTES_MARKER", "PRIVATE_SCRATCH_MARKER"}
+	snapshotPath := filepath.Join(rd, "workflow.json")
+	original, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fixture must contain private snapshot values, not just private blobs.
+	if !bytes.Contains(original, []byte("PRIVATE_PROMPT_BYTES_MARKER")) || !bytes.Contains(original, []byte("PRIVATE_PROVENANCE_MARKER")) {
+		t.Fatal("missing private snapshot seeds")
+	}
+	for _, sourceState := range []string{"intact", "unavailable_captures", "hostile_reference"} {
+		t.Run(sourceState, func(t *testing.T) {
+			if sourceState == "unavailable_captures" {
+				if err := os.RemoveAll(filepath.Join(rd, "authoring")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if sourceState == "hostile_reference" {
+				var snap map[string]json.RawMessage
+				if err := json.Unmarshal(original, &snap); err != nil {
+					t.Fatal(err)
+				}
+				var reference map[string]any
+				if err := json.Unmarshal(snap["authoring"], &reference); err != nil {
+					t.Fatal(err)
+				}
+				reference["path"] = filepath.Join(dir, "PRIVATE_OUTSIDE_READ_MARKER")
+				snap["authoring"], err = json.Marshal(reference)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// The unsupported reference invalidates the locked payload;
+				// display decoding must reject it without attempting path IO.
+				data, err := json.Marshal(snap)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(snapshotPath, data, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			inv, err := collectInventory(rd)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, rec := range inv.files {
+				if strings.Contains(rec.name, "authoring") || rec.name == "scratch.txt" {
+					t.Fatalf("expanded selected-source inventory: %s", rec.name)
+				}
+			}
+			pinned, err := os.OpenRoot(rd)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(snapshotPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			budget := newBudget(maxTotalInput)
+			decoded, _, gap := readWorkflowSnapshot(pinned, inv, budget)
+			pinned.Close()
+			if budget.remaining != maxTotalInput-int64(len(data)) {
+				t.Fatal("snapshot reader followed an unselected source")
+			}
+			if sourceState == "hostile_reference" {
+				if decoded != nil || gap == nil {
+					t.Fatal("hostile path accepted")
+				}
+			} else if decoded == nil || gap != nil {
+				t.Fatalf("capture storage affected pure decode: %+v", gap)
+			}
+			for _, includeText := range []bool{false, true} {
+				destination := filepath.Join(t.TempDir(), "export.zip")
+				if _, err := Export(t.Context(), Options{Root: root, RunID: r.ID, Destination: destination, IncludeText: includeText}); err != nil {
+					t.Fatal(err)
+				}
+				raw, err := os.ReadFile(destination)
+				if err != nil {
+					t.Fatal(err)
+				}
+				members := readZip(t, destination)
+				var manifest Manifest
+				if err := json.Unmarshal(members[manifestMember], &manifest); err != nil {
+					t.Fatal(err)
+				}
+				wantCompleteness := "complete"
+				if sourceState == "hostile_reference" {
+					wantCompleteness = "partial"
+				}
+				if manifest.Completeness != wantCompleteness {
+					t.Fatalf("completeness=%s gaps=%+v", manifest.Completeness, manifest.Gaps)
+				}
+				for _, marker := range append(markers, "PRIVATE_OUTSIDE_READ_MARKER") {
+					if bytes.Contains(raw, []byte(marker)) {
+						t.Fatalf("raw ZIP disclosed %s", marker)
+					}
+					for name, data := range members {
+						if strings.Contains(name, marker) || bytes.Contains(data, []byte(marker)) {
+							t.Fatalf("ZIP member %s disclosed %s", name, marker)
+						}
+					}
+				}
+				var summary RunSummary
+				if err := json.Unmarshal(members[runMember], &summary); err != nil {
+					t.Fatal(err)
+				}
+				if summary.State != "succeeded" || !summary.StateAuthoritative || len(summary.Steps) == 0 {
+					t.Fatalf("lost useful run evidence: %+v", summary)
+				}
+				if includeText && !bytes.Contains(members[transcriptMember], []byte("benign synthetic output")) {
+					t.Fatal("lost allowlisted transcript")
+				}
+				t.Logf("%s text=%t: scanned %d ZIP members and raw bytes; seven private capture/scratch markers absent; selected snapshot bytes only", sourceState, includeText, len(members))
+			}
+		})
+	}
+}
+
+type authoringExportExecutor struct{}
+
+func (authoringExportExecutor) Execute(context.Context, engine.StepRequest, engine.Reporter) (*step.Result, error) {
+	return &step.Result{Status: step.StatusSucceeded, Verdict: "go"}, nil
 }

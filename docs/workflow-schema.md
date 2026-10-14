@@ -559,6 +559,32 @@ links must resolve inside their pinned anchor. Expanded graphs have at most
 1,024 static steps and 32 module import levels. Encoded manifests and workflow
 snapshots are bounded at 8 MiB and 32 MiB respectively.
 
+Capture visits at most 8,192 bundle directory entries. UTF-8 paths are limited
+to 4,096 bytes, components to 255 bytes, and paths to 64 components from the
+anchor. File-link resolution is bounded at 16 hops per file and 1,024 per
+capture. Bundle names must be NFC and cannot collide under case folding;
+ambiguous file/directory prefixes are rejected. These fixed limits have no
+TOML, CLI, or environment override.
+
+Excluded directory components are `.git`, `.jig`, `.ssh`, `.aws`, `.azure`,
+`.kube`, `.gnupg`, and `.docker`; `/dev`, `/proc`, `/sys`, and `.config/gcloud`
+credential trees are excluded too. Excluded filenames are `.env`, `.env.*`,
+`.netrc`, `.npmrc`, `.pypirc`, `auth.json`, and `credentials.json`. Matching is
+case folded and applies to declared and resolved paths. Encountering an
+excluded bundle member rejects the whole bundle. A bundle cannot be the
+project root, operator home, `/`, or an ancestor of the project or home.
+An explicit absolute script authorizes one regular file, not its neighbors.
+Absolute file-link targets are rejected. These rules do not scan permitted
+source content for secrets.
+
+See [the runnable example](../examples/frozen-authoring-assets.toml). Its
+upstream writer creates a separate workspace script; after integration,
+`run` consumes that file while `script` consumes the captured authoring file.
+A new Load plus Start captures edits; starting an already loaded workflow
+retains its Load-time prompts, templates, schemas, and skill bundles. Scripts
+and validation-schema files are captured at Start. The capture does not claim
+an atomic filesystem snapshot across all source files.
+
 With persistence enabled, required capture writes must succeed before any
 worker starts. Missing or damaged captures fail the entire run; retry, continue
 and operator step recovery cannot bypass that failure. Persistence-off retains

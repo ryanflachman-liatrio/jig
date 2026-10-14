@@ -1,0 +1,27 @@
+# Run from the project root:
+# jig run examples/frozen-authoring-assets.toml --ci
+# ORIGINAL comes from captured authoring bytes. GENERATED comes from a script
+# created in a private worktree and integrated before the workspace consumer.
+# --ci discards final landing; generated-authoring-example.sh stays on the run branch.
+[workflow]
+name = "frozen-authoring-assets"
+version = "1"
+description = "Captured authoring scripts and intentionally generated workspace scripts."
+
+[[step]]
+id = "generate"
+type = "command"
+isolation = "worktree"
+run = "printf 'echo GENERATED\\n' > generated-authoring-example.sh"
+
+[[step]]
+id = "frozen"
+type = "command"
+depends_on = ["generate"]
+script = "examples/scripts/frozen-authoring-assets.sh"
+
+[[step]]
+id = "workspace"
+type = "command"
+depends_on = ["frozen"]
+run = "sh generated-authoring-example.sh"

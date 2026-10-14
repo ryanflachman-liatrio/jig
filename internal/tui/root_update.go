@@ -464,13 +464,17 @@ func (m rootModel) startRun(wf *workflow.Workflow) (tea.Model, tea.Cmd) {
 	}
 	run, err := m.manager.Start(wf)
 	if err != nil {
+		m.runs = m.runs.SetNotice("Could not start run: " + err.Error())
+		m.active = screenHome
+		m.showDetailOverlay = false
+		m.homeFocus = homeRuns
 		return m, nil
 	}
 	if m.startHook != nil {
 		m.startHook(run.ID, wf)
 	}
 	m.handles[run.ID] = run
-	m.runs = m.runs.WithWorkflow(wf)
+	m.runs = m.runs.WithWorkflow(wf).SetNotice("")
 	// Navigate straight to the monitor so prompts and review gates are visible immediately.
 	m.monitor = monitor.New(run.ID).WithTUIConfig(m.tuiConfig).WithDiagnostics(m.diagnostics).WithTelemetryMode(m.telemetryMode).WithWorkflow(wf).WithHelpChatConfig(m.helpChatConfig)
 	m.monitor.RunDir = m.manager.RunDir(run.ID)

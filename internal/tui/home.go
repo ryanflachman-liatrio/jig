@@ -118,7 +118,11 @@ func (m rootModel) homeFooter() string {
 	if m.width > 0 {
 		f = f.MaxWidth(m.width)
 	}
-	return f.Render("  " + hint)
+	footer := f.Render("  " + hint)
+	if notice := m.runs.Notice(); notice != "" {
+		footer = shared.Theme.Error.MaxWidth(max(m.width, 1)).Render("  "+notice) + "\n" + footer
+	}
+	return footer
 }
 
 // homeLayout is the on-screen rectangle of each Home pane, in root-view
@@ -210,7 +214,10 @@ func (m rootModel) updateHome(msg tea.Msg) (rootModel, tea.Cmd) {
 			return m, nil
 		}
 		m.homeSelectedPath = msg.path
-		m.runs = m.runs.WithWorkflowContext(msg.name, msg.wf)
+		m.runs = m.runs.WithWorkflowContext(msg.name, msg.wf).SetNotice("")
+		if msg.err != nil {
+			m.runs = m.runs.SetNotice("Could not load workflow: " + msg.err.Error())
+		}
 		return m, nil
 
 	case detail.BackMsg:

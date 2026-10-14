@@ -117,6 +117,30 @@ without this capture contract. Persistence-off runs have no durable reopen.
 Once reopened, the same supervisor, gate policy, output envelope, timeout, and
 exit mapping as `jig run` apply.
 
+### Authoring capture failures
+
+`authoring capture: limit`, `forbidden_path`, `unsupported_file`,
+`unsupported_platform`, `missing_binding`, `integrity`, and `storage` are
+bounded diagnostic reasons. Step-owned file capture errors include the step
+and asset kind without source contents or private source paths. Startup
+errors appear in Home's notice or CLI stderr. Required storage failures never
+silently switch a configured run to persistence-off.
+
+Capture damage detected before dispatch, result acceptance, integration,
+completion, or final landing fails the run, cancels active workers, and fences
+later contributions. Earlier integrated work remains available on the run
+branch; ordinary retry, continue, and recovery cannot bypass the failure.
+Do not repair a run from edited checkout assets: start a new run. Capture
+verification occurs at these boundaries, not continuously while waiting at a
+human gate. Approval of final landing performs another verification.
+
+Persistence-off (`jig run WORKFLOW --root ''`) retains captures in memory,
+creates no authoring helper copies, and has no durable reopen. Explicit `run`
+commands consume their execution workspace, including upstream integrated
+files. The [frozen-authoring example](../examples/frozen-authoring-assets.toml)
+demonstrates the distinction. The capture implementation has Linux and macOS
+paths; local qualification evidence currently covers macOS only.
+
 ## Reset to a step
 
 Preview is the default and is read-only:

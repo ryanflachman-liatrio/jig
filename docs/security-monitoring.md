@@ -5,6 +5,28 @@ synchronous deterministic guard. Tier 2 is a retrospective classifier fleet:
 it observes durable transcript activity without putting classifier latency on
 the worker's execution path.
 
+## Captured authoring and local state
+
+Runs retain declared authoring source bytes and private provenance beneath
+`.jig/runs/<id>/authoring/`, alongside the locked workflow. Treat these as
+sensitive local state. Fixed [capture limits and exclusions](workflow-schema.md#command-step)
+reject known credential paths but do not detect secrets in otherwise permitted
+files. Capture diagnostics use bounded reasons; source bytes and provenance
+paths are not telemetry labels.
+
+`jig export` reads its existing selected journal, workflow, and transcript
+sources. It never follows authoring references or includes authoring manifests,
+blobs, or scratch files. Workflow projection omits captured prompts, schemas,
+templates, and private paths in both structural and text modes. Text already
+written into a transcript remains subject to export's existing sanitization;
+this capture exclusion does not promise to recognize every secret in text.
+
+Captured skill prompts and bundles do not provide frozen host helper execution
+or descendant termination guarantees. Host helper reads retain existing host
+behavior. Docker helper delivery and lifecycle qualification remain pending;
+Docker execution is not implemented. Validation-schema bytes are frozen, but
+the current validation gate does not enforce JSON Schema against output.
+
 ## Tier 1: deterministic guard
 
 `sentinel.Guard` runs before supported tool calls. It detects secret-shaped

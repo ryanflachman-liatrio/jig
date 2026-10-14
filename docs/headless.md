@@ -27,6 +27,24 @@ Fail-closed is **inherent** to `jig run` — there is no `--fail-on-gate`. Human
 gates (review, `from=user`, `block_on`, AskUserQuestion) Cancel the run and
 exit **3**. Never blocks on stdin.
 
+Authoring capture rejection or damage uses exit **1**. Load/start failures
+are reported on stderr before a run exists; they do not emit a settled stdout
+envelope. A live capture failure retains the existing `run_failed` result
+envelope; JSONL includes the bounded capture reason in a `run_error` event.
+`--on-recovery retry` cannot bypass fatal required-capture damage. See
+[operations](operations.md#authoring-capture-failures) for safe diagnostics,
+old-run refusal, and persistence-off behavior.
+
+```bash
+jig run examples/frozen-authoring-assets.toml --ci
+```
+
+The example prints `ORIGINAL` from captured authoring and `GENERATED` from an
+upstream-created workspace script. `--ci` discards final landing; the generated
+file remains on the run branch. Use `--root ''` for memory-only execution,
+which has no durable reopen and writes runtime workspace files in the fallback
+working directory.
+
 ## Flags
 
 ```text

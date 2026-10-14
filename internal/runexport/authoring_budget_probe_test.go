@@ -3,12 +3,13 @@ package runexport
 import (
 	"bytes"
 	"context"
-	"github.com/ryanflachman-liatrio/jig/internal/engine"
-	"github.com/ryanflachman-liatrio/jig/internal/step"
-	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // Exercise the selected-source budget with a production capture snapshot.
@@ -61,7 +62,20 @@ func TestAuthoringAssetSnapshotExportBudgetProbe(t *testing.T) {
 			t.Fatal("exhausted selected-source budget silently succeeded")
 		}
 	}
-	t.Logf("32 MiB snapshot fits 256 MiB aggregate reader; one-byte-short remaining budget reports gap; authoring reference not read")
+	// One byte beyond the decoder's 32 MiB snapshot limit must be an
+	// explicit workflow gap, even with aggregate read budget remaining.
+	if err := os.WriteFile(path, append(data, ' '), 0600); err != nil {
+		t.Fatal(err)
+	}
+	over, err := collectInventory(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wf, _, gap := readWorkflowSnapshot(root, over, newBudget(maxTotalInput))
+	if wf != nil || gap == nil || gap.Reason != GapCorruptSource {
+		t.Fatalf("oversized snapshot silently accepted: %+v", gap)
+	}
+	t.Logf("32 MiB snapshot fits 256 MiB aggregate reader; 32 MiB+1 and one-byte-short remaining budget report gaps; authoring reference not read")
 }
 
 type authoringBudgetExecutor struct{}

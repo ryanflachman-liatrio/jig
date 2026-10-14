@@ -662,3 +662,46 @@ func TestRootMouseIsConsumedByGlobalAndHomeInteractionSurfaces(t *testing.T) {
 		}
 	})
 }
+
+func TestHomeAuthoringCaptureErrorsVisible(t *testing.T) {
+	for _, mode := range []string{"load", "start"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			manager := engine.NewManager(runner.NewFakeExecutor(nil, runner.FakeOutcome{}), "")
+			var m tea.Model = New(t.Context(), manager)
+			m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 35})
+			if mode == "load" {
+				m, _ = m.Update(homeWorkflowLoadedMsg{err: workflow.CaptureForbidden})
+			} else {
+				path := filepath.Join(dir, "PRIVATE_PATH_MARKER.sh")
+				if err := os.WriteFile(path, []byte(strings.Repeat("PRIVATE_CONTENT_MARKER", 60000)), 0600); err != nil {
+					t.Fatal(err)
+				}
+				wf, err := workflow.Decode("[workflow]\nname='capture'\nversion='1'\n[[step]]\nid='worker'\ntype='command'\nscript='"+path+"'\n", "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				m, _ = m.Update(runspane.StartRunMsg{Wf: wf})
+			}
+			view := m.View().Content
+			reason := "forbidden_path"
+			if mode == "start" {
+				reason = "limit"
+			}
+			if !strings.Contains(view, "authoring capture: "+reason) {
+				t.Fatalf("Home hid error: %s", view)
+			}
+			if strings.Contains(view, "PRIVATE_PATH_MARKER") || strings.Contains(view, "PRIVATE_CONTENT_MARKER") {
+				t.Fatal("Home disclosed authoring data")
+			}
+			root := m.(rootModel)
+			if root.active != screenHome || len(manager.Runs()) != 0 || len(root.handles) != 0 {
+				t.Fatal("failed capture opened a monitor/run")
+			}
+			m, _ = m.Update(homeWorkflowLoadedMsg{})
+			if strings.Contains(m.View().Content, "authoring capture:") {
+				t.Fatal("successful workflow load retained stale failure notice")
+			}
+		})
+	}
+}
