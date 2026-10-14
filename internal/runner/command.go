@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -92,11 +91,17 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 	// Pipe combined stdout+stderr so the TUI can stream both without ordering
 	// surprises.  A separate goroutine forwards chunks to rep.Output so the
 	// engine can display live progress before the process exits.
-	pr, pw := io.Pipe()
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("create command output pipe: %w", err)
+	}
+	defer pr.Close()
 	cmd.Stdout = pw
 	cmd.Stderr = pw
 
 	if err := cmd.Start(); err != nil {
+		_ = pw.Close()
+		_ = pr.Close()
 		return &step.Result{
 			Status:   step.StatusFailed,
 			Err:      fmt.Sprintf("start command: %v", err),
@@ -106,7 +111,7 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 
 	// drainDone signals that the reader goroutine has finished, so we only
 	// read the final output after Wait returns.
-	var combined strings.Builder
+	var combined boundedCommandOutput
 	drainDone := make(chan struct{})
 	go func() {
 		defer close(drainDone)
@@ -115,7 +120,7 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 			n, readErr := pr.Read(buf)
 			if n > 0 {
 				chunk := string(buf[:n])
-				combined.WriteString(chunk)
+				_, _ = combined.Write([]byte(chunk))
 				rep.Output(redactSecrets(req, chunk))
 			}
 			if readErr != nil {
@@ -125,9 +130,20 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 	}()
 
 	waitErr := cmd.Wait()
+	terminationErr := finishProcessGroup(cmd)
 	// Close the write-end so the reader goroutine sees EOF and exits.
 	_ = pw.Close()
-	<-drainDone
+	// A pipe retained outside the known group cannot hold this attempt forever.
+	// Treat incomplete drainage as uncertainty and retain the workspace fence.
+	drainTimer := time.NewTimer(2 * time.Second)
+	select {
+	case <-drainDone:
+	case <-drainTimer.C:
+		_ = pr.Close()
+		<-drainDone
+		terminationErr = fmt.Errorf("command output stream remained open")
+	}
+	drainTimer.Stop()
 
 	duration := time.Since(start)
 
@@ -139,6 +155,12 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 	writeCommandTranscript(req, rep, output)
 	evidencePath := writeCheckEvidence(req, output)
 
+	if terminationErr != nil {
+		return &step.Result{Status: step.StatusFailed, ExecutionUncertain: true, Err: "managed command termination uncertain", Duration: duration}, nil
+	}
+	if combined.overflow {
+		return &step.Result{Status: step.StatusFailed, Err: "command output exceeds 32 MiB", Duration: duration}, nil
+	}
 	if waitErr != nil {
 		return &step.Result{
 			Status:     step.StatusFailed,
@@ -292,4 +314,22 @@ func resolveCommand(req engine.StepRequest) (string, error) {
 		return string(data), err
 	}
 	return "", fmt.Errorf("command step has neither run nor script")
+}
+
+// boundedCommandOutput keeps transcript/evidence capture finite while draining
+// all process output, so a full buffer cannot deadlock process termination.
+type boundedCommandOutput struct {
+	strings.Builder
+	overflow bool
+}
+
+func (b *boundedCommandOutput) Write(p []byte) (int, error) {
+	n := len(p)
+	left := (32 << 20) - b.Len()
+	if n > left {
+		b.overflow = true
+		p = p[:left]
+	}
+	_, _ = b.Builder.Write(p)
+	return n, nil
 }

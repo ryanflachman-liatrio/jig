@@ -58,11 +58,8 @@ func TestFrozenValidationSchema(t *testing.T) {
 					t.Fatalf("attempt=%d raw=%s err=%v", attempt, got, err)
 				}
 				got[0] = 'X'
-				if ok, detail := s.runGate(&wf.Steps[0], dir); !ok {
-					t.Fatalf("identity-only gate: %s", detail)
-				}
 			}
-			t.Logf("persisted=%v: deleted source; original frozen identity retained across lookup and snapshot restore; enforcement remains unavailable", persisted)
+			t.Logf("persisted=%v: deleted source; original frozen identity retained across lookup and snapshot restore", persisted)
 		})
 	}
 }

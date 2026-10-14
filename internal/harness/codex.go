@@ -52,7 +52,9 @@ func (h *CodexHarness) Open(ctx context.Context, spec SessionSpec) (Session, err
 	var sessionID string
 	if spec.Resume != "" {
 		if err := conn.LoadSession(ctx, spec.Cwd, spec.Resume, sessionOpts...); err != nil {
-			_ = conn.Close()
+			if closeErr := conn.Close(); closeErr != nil {
+				return nil, closeErr
+			}
 			return nil, fmt.Errorf("codex: %w", err)
 		}
 		sessionID = spec.Resume
@@ -60,11 +62,15 @@ func (h *CodexHarness) Open(ctx context.Context, spec SessionSpec) (Session, err
 		sessionID, err = conn.NewSession(ctx, spec.Cwd, sessionOpts...)
 	}
 	if err != nil {
-		_ = conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			return nil, closeErr
+		}
 		return nil, fmt.Errorf("codex: %w (log in with codex login first)", err)
 	}
 	if err := codexACPConfig.Apply(ctx, conn, sessionID, spec); err != nil {
-		_ = conn.Close()
+		if closeErr := conn.Close(); closeErr != nil {
+			return nil, closeErr
+		}
 		return nil, fmt.Errorf("codex: %w", err)
 	}
 	conn.ConfigurationCompleted()

@@ -2331,32 +2331,6 @@ func TestScheduler_ResolveAllInputsUsesExecutionDir(t *testing.T) {
 	}
 }
 
-func TestScheduler_RunGateUsesExecutionDirForOutputChecks(t *testing.T) {
-	executionDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(executionDir, "result.md"), []byte("expected content"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s := &scheduler{}
-
-	for _, validate := range []*workflow.Validate{
-		{OutputExists: true},
-		{OutputContains: "expected"},
-	} {
-		passed, detail := s.runGate(&workflow.Step{Output: "result.md", Validate: validate}, executionDir)
-		if !passed {
-			t.Errorf("runGate(%+v) = false, %q; want execution-directory output check to pass", validate, detail)
-		}
-	}
-
-	passed, detail := s.runGate(&workflow.Step{
-		Output:   "../outside.md",
-		Validate: &workflow.Validate{OutputExists: true},
-	}, executionDir)
-	if passed || !strings.Contains(detail, "must not traverse parent directories") {
-		t.Errorf("escaped output gate = %t, %q; want rejected execution-root escape", passed, detail)
-	}
-}
-
 // TestScheduler_BareRefInput verifies that a bare @step ref (no field path)
 // resolves to the upstream step's OutputPath.
 func TestScheduler_BareRefInput(t *testing.T) {
@@ -2489,116 +2463,6 @@ run = "true"
 }
 
 // ── Post-execution handler unit tests ────────────────────────────────────────
-
-// TestPostExecHandler_ValidateGate tests phRunValidateGate in isolation:
-// passing gate → decisionContinue, failing gate → decisionFailed.
-func TestPostExecHandler_ValidateGate(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	t.Run("gate passes", func(t *testing.T) {
-		const toml = `
-[workflow]
-name = "val-pass"
-version = "0.1"
-
-[[step]]
-id   = "check"
-type = "command"
-run  = "echo hi"
-
-[step.validate]
-command = "true"
-`
-		wf, err := workflow.Decode(toml, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, "", "", "", func(RunSnapshot) {})
-		s.states["check"].Status = step.StatusRunning
-		s.states["check"].Result = &step.Result{Status: step.StatusSucceeded}
-
-		m := stepDoneMsg{stepID: "check", result: s.states["check"].Result}
-		decision := phRunValidateGate(s, m, s.stepByID("check"))
-		if decision != decisionContinue {
-			t.Errorf("passing gate: want decisionContinue, got %v", decision)
-		}
-	})
-
-	t.Run("gate fails", func(t *testing.T) {
-		const toml = `
-[workflow]
-name = "val-fail"
-version = "0.1"
-
-[[step]]
-id   = "check"
-type = "command"
-run  = "echo hi"
-
-[step.validate]
-command = "false"
-`
-		wf, err := workflow.Decode(toml, "")
-		if err != nil {
-			t.Fatal(err)
-		}
-		s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, "", "", "", func(RunSnapshot) {})
-		s.states["check"].Status = step.StatusRunning
-		s.states["check"].Result = &step.Result{Status: step.StatusSucceeded}
-
-		m := stepDoneMsg{stepID: "check", result: s.states["check"].Result}
-		decision := phRunValidateGate(s, m, s.stepByID("check"))
-		if decision != decisionFailed {
-			t.Errorf("failing gate: want decisionFailed, got %v", decision)
-		}
-		if s.states["check"].Result.Err == "" {
-			t.Error("failing gate must record error detail in Result.Err")
-		}
-	})
-
-	t.Run("session flush failure fails closed", func(t *testing.T) {
-		wf, err := decodeEngineFixture(t, `
-[workflow]
-name = "val-session"
-version = "0.1"
-[[step]]
-id = "check"
-type = "agent"
-skill = "check"
-[step.validate]
-command = "true"
-`)
-		if err != nil {
-			t.Fatal(err)
-		}
-		runDir, err := datastore.RunDir(t.TempDir(), "test")
-		if err != nil {
-			t.Fatal(err)
-		}
-		stepDir, err := datastore.StepDir(runDir, "check")
-		if err != nil {
-			t.Fatal(err)
-		}
-		sessionDir := filepath.Join(stepDir, "session.json")
-		if err := os.MkdirAll(sessionDir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(sessionDir, "occupied"), []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, runDir, "", "", func(RunSnapshot) {})
-		s.states["check"].Status = step.StatusRunning
-		s.states["check"].Result = &step.Result{Status: step.StatusSucceeded, SessionID: "sess"}
-
-		decision := phRunValidateGate(s, stepDoneMsg{stepID: "check"}, s.stepByID("check"))
-		if decision != decisionFailed || !strings.Contains(s.states["check"].Result.Err, "persist session before validation") {
-			t.Fatalf("decision = %v, result = %+v", decision, s.states["check"].Result)
-		}
-	})
-
-	_ = ctx
-}
 
 func TestDispatchClearsStaleSessionBeforeJournalingRunning(t *testing.T) {
 	wf, err := decodeEngineFixture(t, `
@@ -3023,4 +2887,16 @@ func drainChecked(t *testing.T, ctrl <-chan Event, timeout time.Duration, pred f
 			t.Fatal("timeout waiting for run to finish")
 		}
 	}
+}
+
+// Scripted validation outcomes isolate the scheduler's lifecycle contract.
+// Real executable/predicate validation is covered by runner acceptance tests.
+func (e *testExec) Validate(ctx context.Context, req StepRequest, _ Reporter) (bool, string, error) {
+	if err := ctx.Err(); err != nil {
+		return false, "cancelled", err
+	}
+	if req.Step.Validate.Command == "false" {
+		return false, "scripted gate failure", nil
+	}
+	return true, "scripted gate passed", nil
 }

@@ -75,8 +75,11 @@ type State struct {
 // Result is what execution produced; serialized as result.json by the manifest
 // writer (Phase 2+).
 type Result struct {
-	Status     Status `json:"status"`
-	OutputPath string `json:"output_path,omitempty"`
+	// ExecutionUncertain fences acceptance and workspace replacement when the
+	// owned main/validator workload could not be confirmed terminated.
+	ExecutionUncertain bool   `json:"execution_uncertain,omitempty"`
+	Status             Status `json:"status"`
+	OutputPath         string `json:"output_path,omitempty"`
 	// Artifacts maps a declared export name to its immutable, engine-owned
 	// snapshot path. It is empty when persistence is disabled.
 	Artifacts    map[string]string `json:"artifacts,omitempty"`

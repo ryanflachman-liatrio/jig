@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
@@ -31,6 +32,10 @@ type executionWorkspace struct {
 // views are replaced for every dispatch so a retry observes the current
 // integrated run state instead of a stale snapshot.
 func (s *scheduler) acquireExecutionWorkspace(st *workflow.Step) (executionWorkspace, error) {
+	return s.acquireExecutionWorkspaceContext(context.Background(), st)
+}
+
+func (s *scheduler) acquireExecutionWorkspaceContext(ctx context.Context, st *workflow.Step) (executionWorkspace, error) {
 	kind := executionWorkspaceReadOnlyView
 	if st.Isolation == workflow.IsolationWorktree {
 		kind = executionWorkspaceMutation
@@ -51,7 +56,7 @@ func (s *scheduler) acquireExecutionWorkspace(st *workflow.Step) (executionWorks
 				workspace.BaseSHA = s.wtBaseSHAs[st.ID]
 				return workspace, nil
 			}
-			tip, err := currentHEAD(s.runWorktree)
+			tip, err := currentHEADContext(ctx, s.runWorktree)
 			if err != nil {
 				return executionWorkspace{}, fmt.Errorf("read run branch tip for step %q: %w", st.ID, err)
 			}
@@ -60,10 +65,10 @@ func (s *scheduler) acquireExecutionWorkspace(st *workflow.Step) (executionWorks
 				workspace.BaseSHA = tip
 				return workspace, nil
 			}
-			if err := removeWorktree(s.repoRoot, existing); err != nil {
+			if err := removeWorktreeContext(ctx, s.repoRoot, existing); err != nil {
 				return executionWorkspace{}, fmt.Errorf("replace stale mutation workspace for step %q: %w", st.ID, err)
 			}
-			if _, err := gitCmd(s.repoRoot, "branch", "-D", s.stepBranchName(st.ID)); err != nil {
+			if _, err := gitCmdContext(ctx, s.repoRoot, "branch", "-D", s.stepBranchName(st.ID)); err != nil {
 				return executionWorkspace{}, fmt.Errorf("delete stale mutation branch for step %q: %w", st.ID, err)
 			}
 			delete(s.worktrees, st.ID)
@@ -71,7 +76,7 @@ func (s *scheduler) acquireExecutionWorkspace(st *workflow.Step) (executionWorks
 		}
 
 		path := filepath.Join(s.jigRoot, "worktrees", s.runID, st.ID)
-		baseSHA, err := createWorktreeAt(s.repoRoot, path, s.stepBranchName(st.ID), s.runBranch)
+		baseSHA, err := createWorktreeAtContext(ctx, s.repoRoot, path, s.stepBranchName(st.ID), s.runBranch)
 		if err != nil {
 			return executionWorkspace{}, fmt.Errorf("create mutation workspace for step %q: %w", st.ID, err)
 		}
@@ -87,7 +92,7 @@ func (s *scheduler) acquireExecutionWorkspace(st *workflow.Step) (executionWorks
 	}
 
 	path := filepath.Join(s.jigRoot, "worktrees", s.runID, "views", st.ID)
-	baseSHA, err := createWorktreeAt(s.repoRoot, path, s.executionViewBranchName(st.ID), s.runBranch)
+	baseSHA, err := createWorktreeAtContext(ctx, s.repoRoot, path, s.executionViewBranchName(st.ID), s.runBranch)
 	if err != nil {
 		return executionWorkspace{}, fmt.Errorf("create read-only execution view for step %q: %w", st.ID, err)
 	}

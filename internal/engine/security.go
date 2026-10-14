@@ -64,8 +64,8 @@ func startRunSecurity(parent context.Context, wf *workflow.Workflow, runID, runD
 		}
 		fanOutCtrl(subs, sf)
 		select {
-		case inbox <- securityFindingMsg{sf: sf}:
-		default:
+		case inbox <- securityFindingMsg{sf: sf, execution: f.Execution}:
+		case <-ctx.Done():
 		}
 	}
 	findingsPath := datastore.FindingsPath(runDir)

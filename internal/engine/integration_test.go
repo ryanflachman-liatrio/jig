@@ -1257,3 +1257,11 @@ label = "Code changes"
 	}
 
 }
+
+func (e *composeExec) Validate(ctx context.Context, req StepRequest, _ Reporter) (bool, string, error) {
+	data, err := os.ReadFile(filepath.Join(req.ExecutionDir, "integrated.txt"))
+	if err != nil {
+		return false, "fixture snapshot unavailable", err
+	}
+	return strings.Contains(string(data), "from producer"), "fixture snapshot checked", ctx.Err()
+}

@@ -1008,6 +1008,9 @@ func (s *scheduler) parkInterruptedWorker(stepID string) []Event {
 // SessionID plus CapSessionResume when the executor can answer, and a present
 // mutator worktree when the step requires one (D5 / D10).
 func (s *scheduler) stepCanResume(stepID, sessionID string) bool {
+	if state := s.states[stepID]; state != nil && state.Result != nil && state.Result.ExecutionUncertain {
+		return false
+	}
 	if sessionID == "" {
 		return false
 	}

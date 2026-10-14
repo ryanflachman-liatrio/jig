@@ -25,6 +25,7 @@ const (
 )
 
 type ExecutionCoordinates struct {
+	Execution  uint64
 	Generation int
 	Iteration  int
 	Attempt    int
@@ -223,6 +224,12 @@ func compareExecution(left, right ExecutionCoordinates) int {
 		}
 		return 1
 	}
+	if left.Execution < right.Execution {
+		return -1
+	}
+	if left.Execution > right.Execution {
+		return 1
+	}
 	return 0
 }
 
@@ -308,7 +315,7 @@ func (s *Supervisor) flush(ctx context.Context, key executionKey) {
 		if result.Flagged {
 			s.recordFinding(Finding{
 				Ts: time.Now().UTC(), RunID: s.runID, StepID: key.stepID,
-				Generation: key.Generation, Iteration: key.Iteration, Attempt: key.Attempt,
+				Generation: key.Generation, Iteration: key.Iteration, Attempt: key.Attempt, Execution: key.Execution,
 				Tier: TierMonitor, Monitor: mon.Monitor,
 				Severity: Severity(result.Severity), Action: ActionObserved, Detail: result.Detail,
 				Evidence:    fmt.Sprintf("transcript seq %d-%d", entries[0].Seq, maxSeq),

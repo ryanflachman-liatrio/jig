@@ -1,12 +1,14 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // changedFiles returns every tracked or untracked path modified by a step
@@ -54,7 +56,11 @@ func createWorktree(repoRoot, wtPath, branchName string) (baseSHA string, err er
 // upstream step already integrated. The returned baseSHA is ref resolved to a
 // sha, used later to diff the step's changes.
 func createWorktreeAt(repoRoot, wtPath, branchName, ref string) (baseSHA string, err error) {
-	out, err := gitCmd(repoRoot, "rev-parse", ref)
+	return createWorktreeAtContext(context.Background(), repoRoot, wtPath, branchName, ref)
+}
+
+func createWorktreeAtContext(ctx context.Context, repoRoot, wtPath, branchName, ref string) (baseSHA string, err error) {
+	out, err := gitCmdContext(ctx, repoRoot, "rev-parse", ref)
 	if err != nil {
 		return "", fmt.Errorf("rev-parse %s: %w — %s", ref, err, strings.TrimSpace(out))
 	}
@@ -64,15 +70,15 @@ func createWorktreeAt(repoRoot, wtPath, branchName, ref string) (baseSHA string,
 		return "", fmt.Errorf("mkdir worktree parent: %w", err)
 	}
 
-	out, err = gitCmd(repoRoot, "worktree", "add", "-B", branchName, wtPath, ref)
+	out, err = gitCmdContext(ctx, repoRoot, "worktree", "add", "-B", branchName, wtPath, ref)
 	if err != nil {
 		// The branch may be checked out in a stale worktree left by a crashed run.
 		// Remove it and retry once; also prune phantom entries (directory gone but
 		// git metadata still present).
 		if stale := parseStaleWorktreePath(out); stale != "" {
-			_ = removeWorktree(repoRoot, stale)
-			_, _ = gitCmd(repoRoot, "worktree", "prune")
-			out, err = gitCmd(repoRoot, "worktree", "add", "-B", branchName, wtPath, ref)
+			_ = removeWorktreeContext(ctx, repoRoot, stale)
+			_, _ = gitCmdContext(ctx, repoRoot, "worktree", "prune")
+			out, err = gitCmdContext(ctx, repoRoot, "worktree", "add", "-B", branchName, wtPath, ref)
 		}
 		if err != nil {
 			return "", fmt.Errorf("git worktree add: %w — %s", err, strings.TrimSpace(out))
@@ -101,7 +107,11 @@ func parseStaleWorktreePath(gitOutput string) string {
 // branch — callers decide whether to keep it (run branch, kept as integration
 // history) or delete it (step branches, ephemeral per-run).
 func removeWorktree(repoRoot, wtPath string) error {
-	out, err := gitCmd(repoRoot, "worktree", "remove", "--force", wtPath)
+	return removeWorktreeContext(context.Background(), repoRoot, wtPath)
+}
+
+func removeWorktreeContext(ctx context.Context, repoRoot, wtPath string) error {
+	out, err := gitCmdContext(ctx, repoRoot, "worktree", "remove", "--force", wtPath)
 	if err != nil {
 		return fmt.Errorf("git worktree remove: %w — %s", err, strings.TrimSpace(out))
 	}
@@ -193,7 +203,11 @@ func captureDiff(wtPath, baseSHA string) string {
 // use it to branch a step worktree off the run branch's *current* HEAD at
 // dispatch time (Task 2.x), which is what lets steps compose on each other's code.
 func currentHEAD(dir string) (string, error) {
-	out, err := gitCmd(dir, "rev-parse", "HEAD")
+	return currentHEADContext(context.Background(), dir)
+}
+
+func currentHEADContext(ctx context.Context, dir string) (string, error) {
+	out, err := gitCmdContext(ctx, dir, "rev-parse", "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("rev-parse HEAD: %w — %s", err, strings.TrimSpace(out))
 	}
@@ -353,10 +367,22 @@ func sanitizeBranchName(s string) string {
 
 // gitCmd runs git with args in dir, returning combined stdout+stderr output.
 func gitCmd(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	if dir != "" {
-		cmd.Dir = dir
+	return gitCmdContext(context.Background(), dir, args...)
+}
+
+// Every infrastructure command has a finite sub-deadline, including cleanup
+// after an expired main deadline. Caller contexts may shorten this bound.
+func gitCmdContext(ctx context.Context, dir string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	cmd.WaitDelay = 2 * time.Second
+	out := &candidateBuffer{}
+	cmd.Stdout, cmd.Stderr = out, out
+	err := cmd.Run()
+	if out.overflow {
+		return "", fmt.Errorf("git output exceeds 32 MiB")
 	}
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	return out.String(), err
 }

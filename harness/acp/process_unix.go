@@ -3,8 +3,10 @@
 package acp
 
 import (
+	"github.com/ryanflachman-liatrio/jig/internal/processgroup"
 	"os/exec"
 	"syscall"
+	"time"
 )
 
 // configureProcess puts cmd in its own process group and wires cmd.Cancel to
@@ -16,6 +18,7 @@ import (
 // in turn wedges cmd.Wait() indefinitely. Killing the process group reaps the
 // entire tree so cmd.Wait() can complete.
 func configureProcess(cmd *exec.Cmd) {
+	cmd.WaitDelay = 2 * time.Second
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
 		return killProcess(cmd)
@@ -24,9 +27,4 @@ func configureProcess(cmd *exec.Cmd) {
 
 // killProcess sends SIGKILL to the process group led by cmd.Process, killing
 // npx and every child it has spawned (including the Node.js adapter).
-func killProcess(cmd *exec.Cmd) error {
-	if cmd.Process == nil {
-		return nil
-	}
-	return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-}
+func killProcess(cmd *exec.Cmd) error { return processgroup.Kill(cmd) }

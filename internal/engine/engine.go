@@ -8,10 +8,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -566,10 +566,15 @@ func newRunID() string {
 type schedMsg interface{ isSchedMsg() }
 
 type stepDoneMsg struct {
-	stepID   string
-	result   *step.Result
-	err      error
-	timedOut bool
+	execution  uint64
+	diff       string
+	collected  bool
+	gatePassed bool
+	gateDetail string
+	stepID     string
+	result     *step.Result
+	err        error
+	timedOut   bool
 }
 
 type reviewSubmissionMsg struct {
@@ -598,9 +603,10 @@ type agentInputMsg struct {
 }
 
 type agentQuestionRequestMsg struct {
-	stepID  string
-	request interaction.QuestionRequest
-	reply   chan<- interaction.QuestionResponse
+	execution uint64
+	stepID    string
+	request   interaction.QuestionRequest
+	reply     chan<- interaction.QuestionResponse
 }
 
 type agentQuestionAnswerMsg struct {
@@ -609,6 +615,7 @@ type agentQuestionAnswerMsg struct {
 }
 
 type agentQuestionAbandonMsg struct {
+	execution uint64
 	stepID    string
 	requestID string
 }
@@ -679,7 +686,10 @@ type resetReply struct {
 // remains pending while waiting, but nextReady observes retryNotBefore.
 type retryWakeMsg struct{ stepID string }
 
-type networkRequestMsg struct{ stepID string }
+type networkRequestMsg struct {
+	stepID    string
+	execution uint64
+}
 
 func (stepDoneMsg) isSchedMsg()                    {}
 func (reviewSubmissionMsg) isSchedMsg()            {}
@@ -703,7 +713,10 @@ func (networkRequestMsg) isSchedMsg()              {}
 // securityFindingMsg delivers a SecurityFinding to the scheduler inbox so the
 // scheduler can escalate critical findings to the recovery gate without
 // blocking the ctrl fan-out path.
-type securityFindingMsg struct{ sf SecurityFinding }
+type securityFindingMsg struct {
+	sf        SecurityFinding
+	execution uint64
+}
 
 func (securityFindingMsg) isSchedMsg() {}
 
@@ -713,11 +726,12 @@ func (securityFindingMsg) isSchedMsg() {}
 // It is created per-dispatch and passed to the executor; the executor
 // may call it from its own goroutine, so fanOutLive must not touch scheduler state.
 type reporter struct {
-	subs     []sub
-	ev       func(Event)
-	stepID   string
-	inbox    chan<- schedMsg
-	security func(int)
+	execution uint64
+	subs      []sub
+	ev        func(Event)
+	stepID    string
+	inbox     chan<- schedMsg
+	security  func(int)
 }
 
 func (r *reporter) Output(delta string)          { r.ev(StepOutput{Delta: delta}) }
@@ -738,7 +752,7 @@ func (r *reporter) Question(ctx context.Context, req interaction.QuestionRequest
 	}
 	reply := make(chan interaction.QuestionResponse, 1)
 	select {
-	case r.inbox <- agentQuestionRequestMsg{stepID: r.stepID, request: req, reply: reply}:
+	case r.inbox <- agentQuestionRequestMsg{stepID: r.stepID, execution: r.execution, request: req, reply: reply}:
 	case <-ctx.Done():
 		return interaction.QuestionResponse{RequestID: req.ID, Action: interaction.ActionCancel}
 	}
@@ -747,7 +761,7 @@ func (r *reporter) Question(ctx context.Context, req interaction.QuestionRequest
 		return response
 	case <-ctx.Done():
 		select {
-		case r.inbox <- agentQuestionAbandonMsg{stepID: r.stepID, requestID: req.ID}:
+		case r.inbox <- agentQuestionAbandonMsg{stepID: r.stepID, execution: r.execution, requestID: req.ID}:
 		default:
 		}
 		return interaction.QuestionResponse{RequestID: req.ID, Action: interaction.ActionCancel}
@@ -763,20 +777,23 @@ type pendingQuestion struct {
 // ── scheduler ────────────────────────────────────────────────────────────────
 
 type scheduler struct {
-	authoring       *runAuthoring
-	fatalCaptureErr error
-	wf              *workflow.Workflow
-	runID           string
-	states          map[string]*step.State
-	inbox           chan schedMsg
-	subs            []sub
-	exec            Executor
-	resolver        IntegrationResolver
-	cancel          context.CancelFunc        // cancels the run context; used by abort policy
-	writer          *manifest.Writer          // nil when persistence is disabled (root = "")
-	runDir          string                    // .jig/runs/<runID>/; "" when persistence is disabled
-	structured      map[string]map[string]any // cached JSON decode of step Result.Structured
-	stepFeedback    map[string]string         // gotoStepID → feedback for route replay
+	nextExecution    uint64
+	activeExecutions map[string]uint64
+	workerExits      map[string]*workerExit
+	authoring        *runAuthoring
+	fatalCaptureErr  error
+	wf               *workflow.Workflow
+	runID            string
+	states           map[string]*step.State
+	inbox            chan schedMsg
+	subs             []sub
+	exec             Executor
+	resolver         IntegrationResolver
+	cancel           context.CancelFunc        // cancels the run context; used by abort policy
+	writer           *manifest.Writer          // nil when persistence is disabled (root = "")
+	runDir           string                    // .jig/runs/<runID>/; "" when persistence is disabled
+	structured       map[string]map[string]any // cached JSON decode of step Result.Structured
+	stepFeedback     map[string]string         // gotoStepID → feedback for route replay
 	// rerunSource maps a route's goto target → the firing source step id. When a
 	// coalesced rewind has several contributors it names the first in
 	// declaration order. It lets buildStepContext name why a step is re-running.
@@ -999,7 +1016,6 @@ func newScheduler(
 		postExecChain: []postExecHandler{
 			phCaptureWorktreeDiff,
 			phValidateMutationPaths,
-			phRunValidateGate,
 			phCheckBlockOn,
 			phSquashMergeIntegration,
 		},
@@ -1479,6 +1495,15 @@ func (s *scheduler) setupRunBranch() error {
 // Callers must invoke this BEFORE emitting RunFinished so that the git
 // subprocesses finish before the caller's goroutine signals completion.
 func (s *scheduler) cleanupWorktrees() {
+	s.confirmWorkersBeforeCleanup()
+	// Unknown live managed work retains all run-owned storage. Deleting or
+	// rebuilding its roots would turn uncertainty into unsafe acceptance.
+	for _, state := range s.states {
+		if state.Result != nil && state.Result.ExecutionUncertain {
+			return
+		}
+	}
+
 	s.releaseExecutionWorkspaces()
 	if s.repoRoot == "" {
 		return
@@ -1535,7 +1560,23 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 // the shared implementation behind agentDispatchStrategy and
 // commandDispatchStrategy in strategies.go.
 func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
-	workspace, err := s.acquireExecutionWorkspace(st)
+	admittedAt := time.Now()
+	// Admission has already passed all capacity checks. Preparation consumes the
+	// same deadline as main, validation and collection, never a fresh timeout.
+	var stepCtx context.Context
+	var stepCancel context.CancelFunc
+	if st.Timeout.Duration > 0 {
+		stepCtx, stepCancel = context.WithTimeout(ctx, st.Timeout.Duration)
+	} else {
+		stepCtx, stepCancel = context.WithCancel(ctx)
+	}
+	admitted := false
+	defer func() {
+		if !admitted {
+			stepCancel()
+		}
+	}()
+	workspace, err := s.acquireExecutionWorkspaceContext(stepCtx, st)
 	if err != nil {
 		// A reader view is the persisted execution contract. Falling back to the
 		// caller's checkout here would let a failed snapshot silently read a
@@ -1544,7 +1585,14 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 			Status: step.StatusFailed,
 			Err:    fmt.Sprintf("acquire execution workspace for step %q: %v", st.ID, err),
 		}
-		s.enterRecovery(st.ID)
+		if stepCtx.Err() == context.DeadlineExceeded {
+			s.states[st.ID].Result.Err = "step timeout exceeded"
+			if !s.scheduleAutomaticRetry(st.ID, st, stepDoneMsg{stepID: st.ID, result: s.states[st.ID].Result, timedOut: true}) {
+				s.applyFailurePolicy(st.ID, st)
+			}
+		} else {
+			s.enterRecovery(st.ID)
+		}
 		return
 	}
 	worktreePath := ""
@@ -1611,13 +1659,16 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	runID, stepID := s.runID, st.ID
 	subs := s.subs
 	inbox := s.inbox
+	s.nextExecution++
+	execution := s.nextExecution
 	executionCoords := sentinel.ExecutionCoordinates{
+		Execution:  execution,
 		Generation: s.states[st.ID].Generation,
 		Iteration:  s.states[st.ID].Iteration,
 		Attempt:    s.states[st.ID].Attempt,
 	}
 	rep := &reporter{
-		subs:   subs,
+		execution: execution, subs: subs,
 		stepID: stepID,
 		inbox:  inbox,
 		ev: func(e Event) {
@@ -1637,12 +1688,10 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 				e.RunID, e.StepID = runID, stepID
 				e.Generation, e.Iteration, e.Attempt = executionCoords.Generation, executionCoords.Iteration, executionCoords.Attempt
 				fanOutCtrl(subs, e)
-				// Also notify the scheduler so critical findings can escalate
-				// to the recovery gate. Non-blocking: the scheduler's inbox is
-				// buffered (64) and rarely full.
+				// Reliable delivery to the state owner carries this dispatch identity.
 				select {
-				case inbox <- securityFindingMsg{sf: e}:
-				default:
+				case inbox <- securityFindingMsg{sf: e, execution: execution}:
+				case <-ctx.Done():
 				}
 			}
 		},
@@ -1665,45 +1714,21 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	secrets, err := s.resolveSecrets(st)
 	if err != nil {
 		releaseReaderView()
-		s.inFlight--
-		if st.Isolation == workflow.IsolationWorktree {
-			s.mutatingInFlight--
-		} else {
-			s.readOnlyInFlight--
-		}
-		if st.ResourceClass != "" {
-			s.classInFlight[st.ResourceClass]--
-		}
+		s.releaseWorkerCapacity(st.ID)
 		s.states[st.ID].Result = &step.Result{Status: step.StatusFailed, Err: err.Error()}
 		s.applyFailurePolicy(st.ID, st)
 		return
 	}
 	if err := s.resolveAllInputs(st, workspace.Dir); err != nil {
 		releaseReaderView()
-		s.inFlight--
-		if st.Isolation == workflow.IsolationWorktree {
-			s.mutatingInFlight--
-		} else {
-			s.readOnlyInFlight--
-		}
-		if st.ResourceClass != "" {
-			s.classInFlight[st.ResourceClass]--
-		}
+		s.releaseWorkerCapacity(st.ID)
 		s.states[st.ID].Result = &step.Result{Status: step.StatusFailed, Err: err.Error()}
 		s.applyFailurePolicy(st.ID, st)
 		return
 	}
 	if err := s.snapshotInputs(st.ID, s.preResolvedInputs[st.ID]); err != nil {
 		releaseReaderView()
-		s.inFlight--
-		if st.Isolation == workflow.IsolationWorktree {
-			s.mutatingInFlight--
-		} else {
-			s.readOnlyInFlight--
-		}
-		if st.ResourceClass != "" {
-			s.classInFlight[st.ResourceClass]--
-		}
+		s.releaseWorkerCapacity(st.ID)
 		s.states[st.ID].Result = &step.Result{Status: step.StatusFailed, Err: err.Error()}
 		s.applyFailurePolicy(st.ID, st)
 		return
@@ -1712,7 +1737,7 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	req.Secrets = secrets
 	req.NetworkRequest = func() {
 		select {
-		case s.inbox <- networkRequestMsg{stepID: st.ID}:
+		case s.inbox <- networkRequestMsg{stepID: st.ID, execution: rep.execution}:
 		default:
 		}
 	}
@@ -1738,14 +1763,66 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	// cancelled either by handleStop (a deliberate stop) or when the worker's
 	// stepDoneMsg is handled (normal completion) — the latter releases the context
 	// resources. Cancelling the run context still cascades to every child.
-	stepCtx, stepCancel := context.WithCancel(ctx)
-	if st.Timeout.Duration > 0 {
-		stepCtx, stepCancel = context.WithTimeout(ctx, st.Timeout.Duration)
-	}
 	s.stepCancels[st.ID] = stepCancel
+	admitted = true
+	if s.activeExecutions == nil {
+		s.activeExecutions = make(map[string]uint64)
+	}
+	s.activeExecutions[stepID] = execution
+	rep.execution = execution
+	validator, hasValidator := s.exec.(Validator)
+	baseSHA := workspace.BaseSHA
 
+	exit := &workerExit{done: make(chan struct{})}
+	if s.workerExits == nil {
+		s.workerExits = make(map[string]*workerExit)
+	}
+	s.workerExits[stepID] = exit
 	go func() {
-		result, err := s.exec.Execute(stepCtx, req, rep)
+		defer close(exit.done)
+		var result *step.Result
+		err := stepCtx.Err()
+		if err == nil {
+			result, err = s.exec.Execute(stepCtx, req, rep)
+		}
+		passed, detail := false, ""
+		if err == nil && result != nil && result.Status == step.StatusSucceeded && !result.ExecutionUncertain && req.Step.Validate != nil && stepCtx.Err() == nil {
+			err = acknowledgeValidation(stepCtx, inbox, stepID, execution, result)
+			if err == nil {
+				if hasValidator {
+					passed, detail, err = validator.Validate(stepCtx, req, rep)
+				} else {
+					detail = "executor does not support validation"
+				}
+				if !passed {
+					result.Status = step.StatusFailed
+					result.Err = detail
+				}
+			}
+		}
+		var uncertain *ExecutionUncertainError
+		if errors.As(err, &uncertain) && result != nil {
+			result.ExecutionUncertain = true
+		}
+		var diff string
+		collected := false
+		if result != nil && !result.ExecutionUncertain && stepCtx.Err() == nil && worktreePath != "" {
+			var files []string
+			var collectionErr error
+			diff, files, collectionErr = collectCandidate(stepCtx, worktreePath, baseSHA)
+			if collectionErr != nil && err == nil {
+				err = collectionErr
+			}
+			if collectionErr == nil {
+				result.ChangedFiles = files
+				collected = true
+			}
+		}
+
+		if result != nil {
+			result.Duration = time.Since(admittedAt)
+		}
+		exit.uncertain = result != nil && result.ExecutionUncertain
 		timedOut := stepCtx.Err() == context.DeadlineExceeded
 		// Deliver the result, but never block forever: once the run context is
 		// cancelled the scheduler has stopped draining the inbox, so an
@@ -1755,7 +1832,7 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 		// stepCtx while the run keeps draining — still delivers its stepDoneMsg
 		// and transitions the step to StatusStopped.
 		select {
-		case s.inbox <- stepDoneMsg{stepID: stepID, result: result, err: err, timedOut: timedOut}:
+		case s.inbox <- stepDoneMsg{stepID: stepID, execution: execution, result: result, err: err, timedOut: timedOut, diff: diff, collected: collected, gatePassed: passed, gateDetail: detail}:
 		case <-ctx.Done():
 		}
 	}()
@@ -2093,7 +2170,7 @@ func (s *scheduler) handleSecurityFinding(sf SecurityFinding) {
 		return
 	}
 	switch state.Status {
-	case step.StatusRunning, step.StatusNeedsInput:
+	case step.StatusRunning, step.StatusValidating, step.StatusNeedsInput:
 		// Blockable: set a descriptive error and park for human recovery decision.
 		if state.Result == nil {
 			state.Result = &step.Result{Status: step.StatusFailed}
@@ -2199,6 +2276,13 @@ func (s *scheduler) handleReset(m resetMsg) {
 		reply(ResetResult{}, &ResetError{Code: "fanout_child", Target: m.stepID,
 			Err: fmt.Errorf("%q is a fan-out child of %q; reset %q instead", m.stepID, childState.ParentID, childState.ParentID)})
 		return
+	}
+
+	for _, state := range s.states {
+		if state.Result != nil && state.Result.ExecutionUncertain {
+			reply(ResetResult{}, &ResetError{Code: "execution_uncertain", Target: m.stepID, Err: fmt.Errorf("managed workload termination uncertain")})
+			return
+		}
 	}
 
 	closure := s.closureOf(m.stepID)
@@ -2339,6 +2423,10 @@ func (s *scheduler) handleRecover(m recoverMsg) {
 	state := s.states[m.stepID]
 	if state == nil || state.Status != step.StatusAwaitingRecovery {
 		return // stale or duplicate
+	}
+
+	if state.Result != nil && state.Result.ExecutionUncertain && m.action != RecoverAbort {
+		return
 	}
 
 	if m.action != RecoverAbort {
@@ -2688,79 +2776,6 @@ func composeRecoveryMessage(errText, guidance string) string {
 	}
 	b.WriteString("Review what went wrong and take a different approach to complete the task.")
 	return b.String()
-}
-
-// runGate evaluates the [step.validate] block for wfStep synchronously.
-// Returns (true, detail) on pass, (false, detail) on failure.
-// executionDir, when non-empty, is the dispatch snapshot used by gate commands
-// and relative output checks. It is a mutation worktree for writers and a
-// read-only execution view for readers.
-func (s *scheduler) runGate(wfStep *workflow.Step, executionDir string) (bool, string) {
-	v := wfStep.Validate
-	if v.OutputSchema != "" {
-		if _, err := s.validationSchema(wfStep); err != nil {
-			s.failCapture(err)
-			return false, "validation schema capture unavailable"
-		}
-		// Captured identity is required here. JSON Schema enforcement is not
-		// implemented by this gate yet; it belongs to the validation slice.
-	}
-
-	// Command gate: run via sh -c, check exit code 0.
-	if v.Command != "" {
-		cmd := exec.Command("sh", "-c", v.Command)
-		if executionDir != "" {
-			cmd.Dir = executionDir
-		}
-		out, err := cmd.CombinedOutput()
-		outStr := strings.TrimSpace(string(out))
-		if err != nil {
-			return false, fmt.Sprintf("gate command failed: %v — %s", err, outStr)
-		}
-		return true, "gate command passed"
-	}
-
-	// OutputExists gate: verify the step's output file was written.
-	if v.OutputExists {
-		outputPath, err := gateOutputPath(executionDir, wfStep.Output)
-		if err != nil {
-			return false, fmt.Sprintf("output_exists gate: resolve output: %v", err)
-		}
-		if outputPath == "" {
-			return false, "output_exists gate: step has no output field"
-		}
-		if _, err := os.Stat(outputPath); err != nil {
-			return false, fmt.Sprintf("output_exists gate: %v", err)
-		}
-		// Fall through to also check OutputContains if set.
-	}
-
-	// OutputContains gate: check that the output file contains a substring.
-	if v.OutputContains != "" {
-		outputPath, err := gateOutputPath(executionDir, wfStep.Output)
-		if err != nil {
-			return false, fmt.Sprintf("output_contains gate: resolve output: %v", err)
-		}
-		if outputPath == "" {
-			return false, "output_contains gate: step has no output field"
-		}
-		data, err := os.ReadFile(outputPath)
-		if err != nil {
-			return false, fmt.Sprintf("output_contains gate: read file: %v", err)
-		}
-		if !strings.Contains(string(data), v.OutputContains) {
-			return false, fmt.Sprintf("output_contains gate: %q not found in output", v.OutputContains)
-		}
-	}
-
-	return true, "gate passed"
-}
-
-func gateOutputPath(executionDir, output string) (string, error) {
-	if output == "" {
-		return "", nil
-	}
-	return workflow.ExecutionPath(executionDir, output)
 }
 
 // evalGuard evaluates a when-guard condition against the current step results.

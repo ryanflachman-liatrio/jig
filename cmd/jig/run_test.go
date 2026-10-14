@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -322,6 +323,69 @@ func TestRunRun_AuthoringParseFailure(t *testing.T) {
 				}
 			}
 			t.Logf("%s: safe typed rejection; no private markers or worker dispatch", kind)
+		})
+	}
+}
+
+func TestRunRun_D02ProductionValidationWiring(t *testing.T) {
+	for _, predicate := range []string{"pass", "content", "schema"} {
+		t.Run(predicate, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Chdir(dir)
+			if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".jig/\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			for _, args := range [][]string{{"init", "-q"}, {"config", "user.name", "Fixture"}, {"config", "user.email", "fixture@example.invalid"}, {"add", "."}, {"commit", "-qm", "synthetic fixture"}} {
+				cmd := exec.Command("git", args...)
+				cmd.Dir = dir
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("git fixture: %s %v", out, err)
+				}
+			}
+			content := "REQUIRED"
+			schema := "true"
+			if predicate == "content" {
+				content = "MISSING"
+			}
+			if predicate == "schema" {
+				schema = "false"
+			}
+			if err := os.WriteFile(filepath.Join(dir, "schema.json"), []byte(schema), 0600); err != nil {
+				t.Fatal(err)
+			}
+			source := `[workflow]
+name='d02-cli'
+version='1'
+[[step]]
+id='worker'
+type='command'
+isolation='worktree'
+mutation_paths=['result.json']
+run="printf '%s' '{\"label\":\"REQUIRED\"}' > result.json"
+output='result.json'
+[step.validate]
+command='true'
+output_exists=true
+output_contains='` + content + `'
+output_schema='schema.json'
+[[step]]
+id='dependent'
+type='command'
+depends_on=['worker']
+run='cat result.json'
+`
+			path := filepath.Join(dir, "workflow.toml")
+			if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+				t.Fatal(err)
+			}
+			code, output := authoringCLIOutput(t, func() int { return runRun([]string{path, "--ci", "--discard-merge", "--timeout", "10s"}) })
+			want := headless.ExitOK
+			if predicate != "pass" {
+				want = headless.ExitFailed
+			}
+			if code != want {
+				t.Fatalf("production validation %s: exit=%d want=%d output=%s", predicate, code, want, output)
+			}
 		})
 	}
 }

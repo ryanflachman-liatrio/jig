@@ -435,3 +435,33 @@ selection stays the same. On active reopen the observer emits at most one
 filtered restored summary per (run, epoch, destination). Historical
 inspection (`jig status`, journal replay, TUI Runs hydration) creates no
 notification producer.
+
+## Complete worker attempts
+
+A worker's `timeout` starts after scheduling admission, before preparation,
+and continues through main work, validation, and final diff collection. It does
+not restart when the step enters `validating`. Queue waits and human parks are
+excluded; live questions count. The scheduler remains available for Stop and
+snapshots while the runner executes the validator. Stop parks the step only
+after its worker returns; timeout follows the existing failure/retry policy.
+
+ACP initialization, authentication, session open/load, and configuration calls
+have finite 30-second sub-deadlines even without a worker `timeout`. The main
+agent conversation keeps the original attempt context.
+
+A zero-exit validator must also satisfy every declared output predicate.
+`output_schema` enforces captured JSON Schema Draft 2020-12 with document-local
+references only. Output predicate reads are bounded to regular files at most
+8 MiB. The final isolated contribution includes validator edits and must pass
+`mutation_paths`; a rejected contribution is never partially integrated.
+Persistence-off validation uses the configured host CWD and cannot roll back
+edits. Readers do not integrate their changes.
+
+Managed host command groups are terminated and checked for remaining live group
+members before validation. ACP adapter Close uses the same bounded group check;
+confirmed killed exits are normal cleanup. Reported uncertain termination keeps
+capacity and run-owned storage fenced; retry, resume, skip, and reset cannot
+replace or accept it. Abort ends orchestration while retaining the uncertain
+storage. These checks do not certify arbitrary detached host descendants or
+provide Docker containment. Linux and macOS are the qualified host platforms;
+other platforms fail closed when group confirmation is unsupported.

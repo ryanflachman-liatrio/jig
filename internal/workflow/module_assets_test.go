@@ -100,7 +100,7 @@ func TestAuthoringAssetProvenance(t *testing.T) {
 func TestModuleAuthoringCaptureTiming(t *testing.T) {
 	dir, wf := moduleAssetFixture(t)
 	deep := filepath.Join(dir, "modules/deep")
-	for path, body := range map[string]string{"skill/SKILL.md": "---\nname: fixture\ndescription: Synthetic\n---\nEDITED prompt\n", "skill/helper.sh": "EDITED helper\n", "template.md": "EDITED template", "schema.json": `{"type":"object","properties":{"edited":{"type":"string"}}}`, "validation.json": "EDITED validation"} {
+	for path, body := range map[string]string{"skill/SKILL.md": "---\nname: fixture\ndescription: Synthetic\n---\nEDITED prompt\n", "skill/helper.sh": "EDITED helper\n", "template.md": "EDITED template", "schema.json": `{"type":"object","properties":{"edited":{"type":"string"}}}`, "validation.json": `{"title":"EDITED validation"}`} {
 		if err := os.WriteFile(filepath.Join(deep, path), []byte(body), 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -118,7 +118,7 @@ func TestModuleAuthoringCaptureTiming(t *testing.T) {
 				t.Fatal("load snapshot changed")
 			}
 			raw, _ := a.Bytes(s.ID, AssetValidationSchema)
-			if string(raw) != "EDITED validation" {
+			if string(raw) != `{"title":"EDITED validation"}` {
 				t.Fatal("validation not Start-captured")
 			}
 		}

@@ -1295,27 +1295,61 @@ output_type = { enum = ["approve", "revise"] }
 
 ## Validation (the deterministic gate)
 
-Any step may declare `[step.validate]`. Dependents wait until it passes.
+Agent, command, and check workers may declare `[step.validate]`. Dependents
+wait until the complete attempt passes. Review submission validation is a
+separate lifecycle and is not implemented by this worker gate.
 
 ```toml
 [step.validate]
 command         = "go build ./..."             # must exit 0 (runs in the step's worktree)
-output_schema   = "schemas/thing.json"         # schema file captured at Start; enforcement pending
+output_schema   = "schemas/thing.json"         # Draft 2020-12 schema captured at Start
 output_exists   = true
 output_contains = "APPROVED"
 ```
 
 `output_schema` names a workflow-relative schema file (module-relative when
 declared in a module). Its bytes are captured at Start and verified by the
-validation owner across attempts and snapshot restore. The current gate does
-**not** validate output JSON against that schema; schema enforcement is pending.
+validation owner across attempts and snapshot restore. Schemas are compiled
+before dispatch. The supported dialect is JSON Schema Draft 2020-12; an absent
+`$schema` selects that draft, and explicit other/custom dialects fail closed.
+References within the captured document are supported. External file/network
+references are disabled. Formats and content encodings have annotation
+semantics, not optional assertions. The producer output must be valid JSON and
+match the captured schema after the executable validator has completed.
 Producer agent schemas use `[step.schema]` / `schema_file` and are supplied to
 the selected harness through its structured-output capability. Prompts, producer
 schemas, and output templates are captured at Load. Captured skill bundles
 preserve identity but provide no frozen host helper execution root.
 
-Capture failures fail the entire run. Other gate failures use the step's
-`on_failure` policy.
+Validation is conjunction: the executable command must exit zero, then every
+declared file/content/schema predicate must pass on the resulting output.
+Predicate inputs must be regular files at most 8 MiB. Agent-derived declared
+output is materialized into the execution directory before validation, including
+the configured CWD fallback when persistence is off. The main normalized
+result/session identity is preserved before the engine durably acknowledges
+`validating`; the runner then owns the cancellable validator subprocess.
+
+One attempt deadline starts at admission before preparation and covers main
+work, validation and final diff collection. Queue waits and human parks are
+excluded; live agent questions are included. Worker capacity is held until the
+worker has returned after managed process/stream cleanup. Command output and
+final diff retention are limited to 32 MiB; Git infrastructure sub-deadlines
+are 30 seconds, ACP initialization/session/configuration calls have 30-second
+sub-deadlines, process-group confirmation has an independent 2-second bound,
+and adapter wait has a 4-second bound. Run-wide
+shutdown waits at most 30 seconds for admitted workers before fencing storage.
+
+For an isolated writer, final diff collection and `mutation_paths` checks cover
+both main and validator edits before integration. Any forbidden edit rejects
+the entire candidate. Reader views never integrate. Persistence-off execution
+keeps configured CWD behavior and provides no rollback/isolation guarantee.
+
+Capture failures fail the entire run. Other gate failures use existing retry
+and `on_failure` policies. Stop parks the step; timeout is a classified failure.
+Reported managed termination uncertainty fences acceptance, capacity release,
+workspace deletion and retry/resume/reset; abort remains available. Host
+process-group checks do not certify descendants that detach from the managed
+group or frozen host helper ownership.
 
 ---
 

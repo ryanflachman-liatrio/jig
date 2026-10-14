@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"github.com/ryanflachman-liatrio/jig/internal/engine"
 	"github.com/ryanflachman-liatrio/jig/internal/harness"
+	"github.com/ryanflachman-liatrio/jig/internal/processgroup"
 	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
 	"github.com/ryanflachman-liatrio/jig/internal/step"
 	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
@@ -48,7 +50,7 @@ func NewAgentExecutorFixed(h harness.Harness) *AgentExecutor {
 //  3. Derives the output artifact (if step.Output is set) from the final
 //     assistant text blocks — one capture path, no drift from the transcript.
 //  4. Returns a Result that summarises the outcome.
-func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep engine.Reporter) (*step.Result, error) {
+func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep engine.Reporter) (result *step.Result, resultErr error) {
 	start := time.Now()
 	if req.Assets != nil {
 		if err := req.Assets.VerifyStep(req.AssetOwner, req.Step); err != nil {
@@ -147,15 +149,29 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 
 	sess, err := h.Open(ctx, spec)
 	if err != nil {
-		return failResult(fmt.Sprintf("agent open: %v", err), start), nil
+		result := failResult(fmt.Sprintf("agent open: %v", err), start)
+		var uncertain *processgroup.UncertainError
+		if errors.As(err, &uncertain) {
+			result.ExecutionUncertain = true
+		}
+		return result, nil
 	}
-	defer func() { _ = sess.Close() }()
+	defer func() {
+		if err := sess.Close(); err != nil {
+			if result == nil {
+				result = failResult("managed agent termination uncertain", start)
+			}
+			result.ExecutionUncertain = true
+			result.Status = step.StatusFailed
+			result.Err = "managed agent termination uncertain"
+		}
+	}()
 
 	initialMsg := ""
 	if req.ResumeSessionID != "" {
 		initialMsg = req.Message
 	}
-	return captureStreamWith(sess.Messages(), req, rep, start, initialMsg, sink)
+	return captureStreamWith(ctx, sess.Messages(), req, rep, start, initialMsg, sink)
 }
 
 // SupportsSessionResume reports whether the step's backend honors
@@ -273,12 +289,13 @@ func captureStream(
 		return failResult(fmt.Sprintf("findings sink: %v", err), start), nil
 	}
 	defer sink.close()
-	return captureStreamWith(events, req, rep, start, initialUserMsg, sink)
+	return captureStreamWith(context.Background(), events, req, rep, start, initialUserMsg, sink)
 }
 
 // captureStreamWith is captureStream recording findings through sink, which
 // the step's permission callback shares so a violation is recorded once.
 func captureStreamWith(
+	ctx context.Context,
 	events <-chan harness.Event,
 	req engine.StepRequest,
 	rep engine.Reporter,
@@ -351,7 +368,17 @@ func captureStreamWith(
 	// SDK message" grouping the pre-harness capture path produced.
 	var buf []transcript.Block
 
-	for ev := range events {
+	for {
+		var ev harness.Event
+		var ok bool
+		select {
+		case ev, ok = <-events:
+		case <-ctx.Done():
+			ok = false
+		}
+		if !ok {
+			break
+		}
 		switch ev.Type {
 		case harness.EventSessionID:
 			if err := noteSession(ev.SessionID); err != nil {
@@ -456,24 +483,36 @@ func captureStreamWith(
 					lastAssistantText = redactSecrets(req, lastAssistantText)
 					if err := os.WriteFile(rawPath, []byte(lastAssistantText), 0o644); err == nil {
 						result.OutputPath = rawPath
-						// Also write to the step's declared output path when set.
-						if req.Step.Output != "" {
-							outputPath, err := explicitOutputPath(req)
-							if err != nil {
-								return failResult(fmt.Sprintf("resolve declared output: %v", err), start), nil
-							}
-							if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
-								return failResult(fmt.Sprintf("create declared output directory: %v", err), start), nil
-							}
-							if err := os.WriteFile(outputPath, []byte(lastAssistantText), 0o644); err != nil {
-								return failResult(fmt.Sprintf("write declared output: %v", err), start), nil
-							}
-						}
 					}
 				} else if md := structuredToMarkdown(result.Structured); md != "" {
 					result.OutputPath = filepath.Join(stepDir, "output.md")
 				}
 				writeAgentAttemptArtifacts(req, result.Structured, lastAssistantText)
+			}
+
+			// Declared output is execution input to validation even without optional
+			// transcript persistence. Prefer final prose, then structured JSON.
+			if req.Step.Output != "" {
+				content := []byte(redactSecrets(req, lastAssistantText))
+				if len(content) == 0 {
+					content = result.Structured
+				}
+				if len(content) > validationOutputLimit {
+					return failResult("declared output exceeds 8 MiB", start), nil
+				}
+				outputPath, err := explicitOutputPath(req)
+				if err != nil {
+					return failResult("resolve declared output: "+err.Error(), start), nil
+				}
+				if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+					return failResult("create declared output directory", start), nil
+				}
+				if err := os.WriteFile(outputPath, content, 0o644); err != nil {
+					return failResult("materialize declared output", start), nil
+				}
+				if result.OutputPath == "" {
+					result.OutputPath = outputPath
+				}
 			}
 
 			return result, nil

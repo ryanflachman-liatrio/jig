@@ -81,7 +81,10 @@ func (e *moduleExecutor) Execute(ctx context.Context, req engine.StepRequest, re
 		}
 		return &step.Result{Status: step.StatusSucceeded, Verdict: verdict}, nil
 	}
-	req.ExecutionDir = e.cwd
+	req.ExecutionDir = filepath.Join(e.cwd, req.Step.ID)
+	if err := os.MkdirAll(req.ExecutionDir, 0700); err != nil {
+		return nil, err
+	}
 	ev := harness.Event{Type: harness.EventResult, SessionID: "synthetic-session", Structured: json.RawMessage(`{"original":"value","items":["one","two"],"status":"complete"}`)}
 	if e.mode == "retry" && req.Attempt == 0 {
 		ev.IsError = true
@@ -163,7 +166,7 @@ func TestFrozenModuleAuthoringAssets(t *testing.T) {
 			for i := 0; i < count; i++ {
 				o := <-e.observed
 				req, spec := o.req, o.spec
-				if spec.Cwd != cwd || spec.Agent.Backend() != backend || !strings.Contains(spec.Prompt, "ORIGINAL prompt {{skill_dir}}") || strings.Contains(spec.Prompt, "CALLER") {
+				if spec.Cwd != filepath.Join(cwd, req.Step.ID) || spec.Agent.Backend() != backend || !strings.Contains(spec.Prompt, "ORIGINAL prompt {{skill_dir}}") || strings.Contains(spec.Prompt, "CALLER") {
 					t.Fatalf("host spec: %+v", spec)
 				}
 				if strings.HasSuffix(req.AssetOwner, "__worker") {
@@ -257,8 +260,8 @@ func TestHostSkillExecutionPreserved(t *testing.T) {
 				} else if !strings.Contains(spec.Prompt, "ORIGINAL prompt {{skill_dir}}") || spec.Resume != "" {
 					t.Fatal("fresh prompt changed")
 				}
-				if entries, err := os.ReadDir(cwd); err != nil || len(entries) != 0 {
-					t.Fatal("new helper root or persistence")
+				if entries, err := os.ReadDir(cwd); err != nil || len(entries) != 1 || entries[0].Name() != "result.md" {
+					t.Fatal("expected only materialized declared output, no helper root")
 				}
 				t.Logf("backend=%s resume=%v cwd=execution_dir prompt preserved; no helper roots", backend, resume)
 				// Required capabilities still fail closed, independently of capture support.
@@ -285,4 +288,9 @@ func TestHostSkillExecutionPreserved(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (e *moduleExecutor) Validate(ctx context.Context, req engine.StepRequest, rep engine.Reporter) (bool, string, error) {
+	req.ExecutionDir = filepath.Join(e.cwd, req.Step.ID)
+	return validateAttempt(ctx, req, rep, e.cwd)
 }

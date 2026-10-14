@@ -4,7 +4,6 @@ import (
 	"path"
 	"strings"
 
-	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"github.com/ryanflachman-liatrio/jig/internal/step"
 	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
@@ -34,6 +33,10 @@ type postExecHandler func(s *scheduler, m stepDoneMsg, wfStep *workflow.Step) po
 // phCaptureWorktreeDiff snapshots the worktree diff after every execution
 // so downstream review steps always see the most-recent state.
 func phCaptureWorktreeDiff(s *scheduler, m stepDoneMsg, _ *workflow.Step) postExecDecision {
+	if m.collected {
+		s.diffs[m.stepID] = m.diff
+		return decisionContinue
+	}
 	if path, ok := s.worktrees[m.stepID]; ok {
 		s.diffs[m.stepID] = captureDiff(path, s.wtBaseSHAs[m.stepID])
 		if result := s.states[m.stepID].Result; result != nil {
@@ -79,52 +82,6 @@ func mutationPathAllowed(changed string, allowed []string) bool {
 		}
 	}
 	return false
-}
-
-// phRunValidateGate runs [step.validate] synchronously when present.
-// It transitions the step to StatusValidating, emits GateResult, and
-// records the gate detail as the failure reason when the gate rejects.
-func phRunValidateGate(s *scheduler, m stepDoneMsg, wfStep *workflow.Step) postExecDecision {
-	if wfStep == nil || wfStep.Validate == nil {
-		return decisionContinue
-	}
-	// Spec 20 D9: flush SessionID to session.json before entering validating so a
-	// crash in this narrow window still leaves a durable resume identity.
-	if res := s.states[m.stepID].Result; res != nil && res.SessionID != "" && s.runDir != "" {
-		if err := datastore.WriteSession(s.runDir, m.stepID, datastore.SessionInfo{
-			SessionID:  res.SessionID,
-			Backend:    wfStep.Backend,
-			Attempt:    s.states[m.stepID].Attempt,
-			Iteration:  s.states[m.stepID].Iteration,
-			Generation: s.states[m.stepID].Generation,
-		}); err != nil {
-			res.Status = step.StatusFailed
-			res.Err = "persist session before validation: " + err.Error()
-			return decisionFailed
-		}
-	}
-	from := s.states[m.stepID].Status
-	if !s.transition(m.stepID, from, step.StatusValidating) {
-		return decisionNeedsInput
-	}
-	passed, detail := s.runGate(wfStep, s.executionDirForStep(m.stepID))
-	if s.fatalCaptureErr != nil {
-		return decisionNeedsInput
-	}
-	s.emit(GateResult{RunID: s.runID, StepID: m.stepID, Passed: passed, Detail: detail})
-	if !passed {
-		res := s.states[m.stepID].Result
-		if res == nil {
-			res = &step.Result{}
-			s.states[m.stepID].Result = res
-		}
-		res.Status = step.StatusFailed
-		if res.Err == "" {
-			res.Err = detail
-		}
-		return decisionFailed
-	}
-	return decisionContinue
 }
 
 // phSquashMergeIntegration squash-merges a successfully-completed mutating step's

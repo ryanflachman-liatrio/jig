@@ -1,0 +1,26 @@
+# Run in a temporary Git project with:
+# jig run /absolute/path/to/examples/complete-validation-attempt.toml --ci --discard-merge
+[workflow]
+name = "complete-validation-attempt"
+version = "0.1"
+
+[[step]]
+id = "produce"
+type = "command"
+isolation = "worktree"
+mutation_paths = ["validation-result.json", "validation-proof.txt"]
+timeout = "30s"
+run = "printf '%s' '{\"ok\":true,\"label\":\"APPROVED\"}' > validation-result.json"
+output = "validation-result.json"
+
+[step.validate]
+command = "printf 'checked\\n' > validation-proof.txt"
+output_exists = true
+output_contains = "APPROVED"
+output_schema = "schemas/validated-output.json"
+
+[[step]]
+id = "consume"
+type = "command"
+depends_on = ["produce"]
+run = "cat validation-result.json && test -s validation-proof.txt"

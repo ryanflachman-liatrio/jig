@@ -3,6 +3,7 @@
 package runner
 
 import (
+	"github.com/ryanflachman-liatrio/jig/internal/processgroup"
 	"os/exec"
 	"syscall"
 )
@@ -27,3 +28,7 @@ func configureProcessGroup(cmd *exec.Cmd) {
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
 }
+
+// Revoke the managed group even after a successful shell exit. Background
+// children with redirected streams must not write into validation's workspace.
+func finishProcessGroup(cmd *exec.Cmd) error { return processgroup.Confirm(cmd) }

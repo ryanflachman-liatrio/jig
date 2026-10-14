@@ -44,6 +44,7 @@ const (
 // Finding is one security event recorded by either tier. It never carries a raw
 // secret: the Redact helper enforces this at construction.
 type Finding struct {
+	Execution  uint64    `json:"-"`
 	Ts         time.Time `json:"ts"`
 	RunID      string    `json:"run_id"`
 	StepID     string    `json:"step_id"`

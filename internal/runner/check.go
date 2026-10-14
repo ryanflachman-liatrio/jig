@@ -55,6 +55,9 @@ func (e *CheckExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 	if result == nil {
 		return e.protocolError(req, "check executor returned no result", true), nil
 	}
+	if result.ExecutionUncertain {
+		return result, nil
+	}
 	if ctx.Err() != nil {
 		return e.protocolError(req, fmt.Sprintf("check command did not complete: %v", ctx.Err()), false), nil
 	}

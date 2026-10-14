@@ -383,3 +383,10 @@ func TestFrozenAuthoringAssetsReopen(t *testing.T) {
 		})
 	}
 }
+
+func (e *parkedCaptureExecutor) Validate(ctx context.Context, req engine.StepRequest, rep engine.Reporter) (bool, string, error) {
+	return e.normal.Validate(ctx, req, rep)
+}
+func (e *reopenedCaptureExecutor) Validate(ctx context.Context, req engine.StepRequest, rep engine.Reporter) (bool, string, error) {
+	return e.normal.Validate(ctx, req, rep)
+}

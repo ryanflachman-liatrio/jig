@@ -26,27 +26,24 @@ type command interface {
 // early-exit paths (parked for recovery, deliberately stopped) or the normal
 // post-exec chain / failure-policy path.
 func (m stepDoneMsg) execute(s *scheduler) {
+	// Reject stale or duplicate reports before touching capacity, contexts,
+	// costs, state, or execution views.
+	if !s.matchesExecution(m.stepID, m.execution) {
+		return
+	}
+	if m.result != nil && m.result.ExecutionUncertain {
+		s.states[m.stepID].Result = m.result
+		s.enterRecovery(m.stepID)
+		return
+	}
+	delete(s.activeExecutions, m.stepID)
+	delete(s.workerExits, m.stepID)
 	// Validation runs on the dispatch snapshot too, so defer release until every
 	// post-execution handler has consumed it. A retry always acquires a fresh
 	// view of the current run branch.
 	defer s.releaseExecutionViewForStep(m.stepID)
 
-	s.inFlight--
-	if wfStep := s.stepByID(m.stepID); wfStep != nil && wfStep.ResourceClass != "" {
-		s.classInFlight[wfStep.ResourceClass]--
-	}
-	if wfStep := s.stepByID(m.stepID); wfStep != nil && wfStep.Isolation == workflow.IsolationWorktree {
-		s.mutatingInFlight--
-	} else {
-		s.readOnlyInFlight--
-	}
-	// A fan-out child releases its family's local slot symmetrically with the
-	// acquisition in dispatchWorker.
-	if state := s.states[m.stepID]; state != nil && state.ParentID != "" {
-		if fam := s.fanOutFamilies[state.ParentID]; fam != nil {
-			fam.InFlight--
-		}
-	}
+	s.releaseWorkerCapacity(m.stepID)
 	delete(s.pendingQuestions, m.stepID)
 	// Accrue this attempt's cost/tokens once, before any early-return branch
 	// (stopped, recovery-parked, failed) — every executor invocation was paid
@@ -66,6 +63,10 @@ func (m stepDoneMsg) execute(s *scheduler) {
 	if cancel, ok := s.stepCancels[m.stepID]; ok {
 		cancel()
 		delete(s.stepCancels, m.stepID)
+	}
+
+	if m.gateDetail != "" {
+		s.emit(GateResult{RunID: s.runID, StepID: m.stepID, Passed: m.gatePassed, Detail: m.gateDetail})
 	}
 
 	if s.fatalCaptureErr != nil {
@@ -136,6 +137,7 @@ func (m stepDoneMsg) execute(s *scheduler) {
 			res = &step.Result{Status: step.StatusFailed}
 			s.states[m.stepID].Result = res
 		}
+		res.Status = step.StatusFailed
 		if res.Err == "" {
 			res.Err = m.err.Error()
 		}
@@ -237,13 +239,25 @@ func (m resolveIntegrationMsg) execute(s *scheduler) { s.handleResolveIntegratio
 func (m resolveIntegrationWithAgentMsg) execute(s *scheduler) {
 	s.handleResolveIntegrationWithAgent(m)
 }
-func (m finalMergeMsg) execute(s *scheduler)      { s.handleFinalMerge(m) }
-func (m stopMsg) execute(s *scheduler)            { s.handleStop(m) }
-func (m resumeMsg) execute(s *scheduler)          { s.handleResume(m) }
-func (m resetMsg) execute(s *scheduler)           { s.handleReset(m) }
-func (m securityFindingMsg) execute(s *scheduler) { s.handleSecurityFinding(m.sf) }
-func (m retryWakeMsg) execute(s *scheduler)       { delete(s.retryNotBefore, m.stepID) }
+func (m finalMergeMsg) execute(s *scheduler) { s.handleFinalMerge(m) }
+func (m stopMsg) execute(s *scheduler)       { s.handleStop(m) }
+func (m resumeMsg) execute(s *scheduler)     { s.handleResume(m) }
+func (m resetMsg) execute(s *scheduler)      { s.handleReset(m) }
+func (m securityFindingMsg) execute(s *scheduler) {
+	if m.execution == 0 {
+		s.emit(m.sf)
+		return
+	} // historical/non-worker observations cannot escalate active work
+	if !s.matchesExecution(m.sf.StepID, m.execution) {
+		return
+	}
+	s.handleSecurityFinding(m.sf)
+}
+func (m retryWakeMsg) execute(s *scheduler) { delete(s.retryNotBefore, m.stepID) }
 func (m networkRequestMsg) execute(s *scheduler) {
+	if !s.matchesExecution(m.stepID, m.execution) {
+		return
+	}
 	s.networkRequests++
 	cap := s.wf.Defaults.MaxNetworkRequests
 	if cap <= 0 || s.networkRequests <= cap {
@@ -325,6 +339,10 @@ func retryDelay(policy *workflow.RetryPolicy, attempt int) time.Duration {
 }
 
 func (m agentQuestionRequestMsg) execute(s *scheduler) {
+	if !s.matchesExecution(m.stepID, m.execution) {
+		m.reply <- interaction.QuestionResponse{RequestID: m.request.ID, Action: interaction.ActionCancel}
+		return
+	}
 	state := s.states[m.stepID]
 	if state == nil || (state.Status != step.StatusRunning && state.Status != step.StatusNeedsInput) {
 		m.reply <- interaction.QuestionResponse{RequestID: m.request.ID, Action: interaction.ActionCancel}
@@ -396,6 +414,9 @@ func (m agentQuestionAnswerMsg) execute(s *scheduler) {
 }
 
 func (m agentQuestionAbandonMsg) execute(s *scheduler) {
+	if !s.matchesExecution(m.stepID, m.execution) {
+		return
+	}
 	pending := s.pendingQuestions[m.stepID]
 	if _, ok := pending[m.requestID]; !ok {
 		return

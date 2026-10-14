@@ -69,6 +69,16 @@ TOMLs are not independently runnable workflows.
 One scheduler owns a run's state. Workers execute through `Executor`, report
 through `Reporter`, and return messages; TUI/headless clients send commands.
 Keep the scheduler responsive while workers, gates, or external services wait.
+Executable success gates belong to the runner's admitted worker lifecycle.
+The engine durably acknowledges validating after retaining the normalized main
+result and session identity. Only that acknowledgement authorizes the validator;
+journal failure or a stale dispatch report cannot do so. Completion and live
+question control reports carry dispatch identity and are rejected before they
+can change state or release a replacement worker's capacity. The original
+attempt deadline continues through validation and final candidate collection.
+Collect the diff after the validator, then check the combined mutation allowlist
+before integration. Reported managed termination uncertainty retains capacity
+and storage and fences acceptance/replacement, with abort still available.
 Preserve global, read-only/mutating, class, and family capacity accounting;
 release capacity on success, failure, cancellation, stop, and recovery paths.
 

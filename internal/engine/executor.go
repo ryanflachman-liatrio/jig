@@ -16,6 +16,14 @@ type Executor interface {
 	Execute(ctx context.Context, req StepRequest, report Reporter) (*step.Result, error)
 }
 
+// Validator executes the complete success gate in the admitted worker. The
+// engine acknowledges validating durably before invoking it; no scheduler
+// goroutine runs validator subprocesses. Executors with declared validators
+// must provide this capability.
+type Validator interface {
+	Validate(context.Context, StepRequest, Reporter) (bool, string, error)
+}
+
 // SessionResumeSupport reports whether an Executor can honor a resumed backend
 // session for a given backend. Executors that do not implement it are
 // treated as unable to resume sessions.

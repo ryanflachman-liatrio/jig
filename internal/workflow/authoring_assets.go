@@ -482,7 +482,7 @@ func RestoreAuthoring(wf *Workflow, m AssetManifest, blobs map[string][]byte) (*
 
 func (a *AuthoringAssets) validateEffective(wf *Workflow) error {
 	for _, s := range wf.Steps {
-		for _, kind := range []AssetKind{AssetSkill, AssetAgentFile, AssetOutputTemplate, AssetSchema} {
+		for _, kind := range []AssetKind{AssetSkill, AssetAgentFile, AssetOutputTemplate, AssetSchema, AssetValidationSchema} {
 			var data []byte
 			present := false
 			for _, b := range a.manifest.Bindings {
@@ -496,6 +496,10 @@ func (a *AuthoringAssets) validateEffective(wf *Workflow) error {
 				continue
 			}
 			switch kind {
+			case AssetValidationSchema:
+				if _, err := CompileValidationSchema(data); err != nil {
+					return assetCaptureError(s.ID, kind, CaptureIntegrity)
+				}
 			case AssetSkill:
 				prompt, err := parseSkillFile(data)
 				if err != nil || prompt != s.AgentPrompt() {

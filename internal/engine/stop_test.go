@@ -22,6 +22,7 @@ import (
 // blocks again (used to prove a run re-enters quiescence after stop→resume→stop).
 // Every dispatch's StepRequest is recorded so tests can inspect ResumeSessionID.
 type stopTestExec struct {
+	started         chan string
 	mu              sync.Mutex
 	reqs            map[string][]StepRequest
 	blockers        map[string]bool
@@ -32,6 +33,7 @@ type stopTestExec struct {
 func newStopTestExec() *stopTestExec {
 	return &stopTestExec{
 		reqs:     make(map[string][]StepRequest),
+		started:  make(chan string, 64),
 		blockers: make(map[string]bool),
 	}
 }
@@ -48,6 +50,7 @@ func (e *stopTestExec) Execute(ctx context.Context, req StepRequest, _ Reporter)
 	e.mu.Lock()
 	e.reqs[req.Step.ID] = append(e.reqs[req.Step.ID], req)
 	e.mu.Unlock()
+	e.started <- req.Step.ID
 
 	if e.blockers[req.Step.ID] && (req.Attempt == 0 || e.resumeBlocks) {
 		<-ctx.Done()
@@ -279,7 +282,8 @@ run = "true"
 	s.stepCancels["a"] = func() {}
 	s.stopping["a"] = true
 
-	s.handle(stepDoneMsg{stepID: "a", result: &step.Result{Status: step.StatusFailed, Err: "stopped"}})
+	s.activeExecutions = map[string]uint64{"a": 1}
+	s.handle(stepDoneMsg{stepID: "a", execution: 1, result: &step.Result{Status: step.StatusFailed, Err: "stopped"}})
 
 	if got := s.states["a"].Status; got != step.StatusStopped {
 		t.Fatalf("step status = %q after stop, want stopped", got)
@@ -323,6 +327,11 @@ run = "sleep 10"
 	}
 
 	waitForStepStatus(t, run, "a", step.StatusRunning, 2*time.Second)
+	select {
+	case <-exec.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("initial worker did not start")
+	}
 	run.Stop("a")
 	waitForStepStatus(t, run, "a", step.StatusStopped, 2*time.Second)
 
@@ -369,6 +378,11 @@ run = "sleep 10"
 	}
 
 	waitForStepStatus(t, run, "a", step.StatusRunning, 2*time.Second)
+	select {
+	case <-exec.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("initial worker did not start")
+	}
 	run.Stop("a")
 	waitForStepStatus(t, run, "a", step.StatusStopped, 2*time.Second)
 

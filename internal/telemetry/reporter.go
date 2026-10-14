@@ -280,6 +280,16 @@ func (m *MetricMux) SupportsSessionResume(backend string) bool {
 	return sr.SupportsSessionResume(backend)
 }
 
+// Validate preserves the runner's worker-lifecycle capability through the
+// telemetry decorator used by the CLI and TUI.
+func (m *MetricMux) Validate(ctx context.Context, req engine.StepRequest, rep engine.Reporter) (bool, string, error) {
+	validator, ok := m.inner.(engine.Validator)
+	if !ok {
+		return false, "executor does not support validation", nil
+	}
+	return validator.Validate(ctx, req, rep)
+}
+
 // stepID extracts the step id from a StepRequest without a nil dereference
 // if the request was constructed with a nil Step (never happens in
 // production but useful for tests).

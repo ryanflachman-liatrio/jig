@@ -3,6 +3,7 @@ package harness_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -32,6 +33,10 @@ type fixtureAgent struct {
 }
 
 func (a *fixtureAgent) Initialize(_ context.Context, req acpsdk.InitializeRequest) (acpsdk.InitializeResponse, error) {
+	if raw := os.Getenv("JIG_ACP_FIXTURE_INITIALIZE_DELAY_MS"); raw != "" {
+		ms, _ := strconv.Atoi(raw)
+		time.Sleep(time.Duration(ms) * time.Millisecond)
+	}
 	fixtureRecord(fmt.Sprintf("init:elicitation=%t", req.ClientCapabilities.Elicitation != nil))
 	return acpsdk.InitializeResponse{ProtocolVersion: req.ProtocolVersion, AgentCapabilities: acpsdk.AgentCapabilities{LoadSession: true}}, nil
 }
@@ -1071,4 +1076,32 @@ func initFixtureRepo(t *testing.T, dir string) {
 			t.Fatalf("%v: %v: %s", args, err, output)
 		}
 	}
+}
+
+// This opt-in synthetic probe exercises the real 30-second infrastructure bound
+// without slowing every root suite or using an authenticated agent.
+func TestD02ACPInitializationBoundWithoutAttemptDeadline(t *testing.T) {
+	if os.Getenv("JIG_D02_RPC_DEADLINE_PROBE") != "1" {
+		t.Skip("opt-in 30-second synthetic infrastructure deadline probe")
+	}
+	dir := t.TempDir()
+	writeACPWrapper(t, filepath.Join(dir, "npx"))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("JIG_ACP_FIXTURE", "1")
+	t.Setenv("JIG_ACP_FIXTURE_BIN", os.Args[0])
+	t.Setenv("JIG_ACP_ARGS_LOG", filepath.Join(dir, "args.log"))
+	t.Setenv("JIG_ACP_RPC_LOG", filepath.Join(dir, "rpc.log"))
+	t.Setenv("JIG_ACP_FIXTURE_INITIALIZE_DELAY_MS", "40000")
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	if _, ok := ctx.Deadline(); ok {
+		t.Fatal("probe unexpectedly has a main deadline")
+	}
+	started := time.Now()
+	_, err := harness.NewAcpHarness().Open(ctx, harness.SessionSpec{Cwd: dir, Prompt: "synthetic"})
+	elapsed := time.Since(started)
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) || elapsed >= 36*time.Second {
+		t.Fatalf("unbounded initialization: elapsed=%v err=%v", elapsed, err)
+	}
+	t.Logf("no main deadline; actual ACP initialization failed with infrastructure deadline after %v", elapsed)
 }

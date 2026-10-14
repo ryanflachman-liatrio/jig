@@ -68,13 +68,19 @@ func Connect(ctx context.Context, decide Decider, onUpdate func(Event), elicit E
 	client := &Client{Decide: decide, OnUpdate: onUpdate, Elicit: elicit}
 	rpc := acpsdk.NewClientSideConnection(client, stdin, stdout)
 
-	initResp, err := rpc.Initialize(ctx, acpsdk.InitializeRequest{
+	initCtx, cancelInit := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelInit()
+	initResp, err := rpc.Initialize(initCtx, acpsdk.InitializeRequest{
 		ProtocolVersion:    acpsdk.ProtocolVersionNumber,
 		ClientCapabilities: clientCapabilities(elicit),
 	})
 	if err != nil {
-		_ = killProcess(cmd)
-		_ = cmd.Wait()
+		if initCtx.Err() != nil {
+			err = initCtx.Err()
+		}
+		if _, closeErr := closeAdapterProcess(cmd); closeErr != nil {
+			return nil, closeErr
+		}
 		if msg := strings.TrimSpace(stderrBuf.String()); msg != "" {
 			return nil, fmt.Errorf("initialize: %w\nadapter output: %s", err, msg)
 		}
@@ -131,13 +137,20 @@ func ConnectCodexWithDiagnostics(ctx context.Context, decide Decider, onUpdate f
 
 	client := &Client{Decide: decide, OnUpdate: onUpdate, Elicit: elicit}
 	rpc := acpsdk.NewClientSideConnection(client, stdin, stdout)
-	initResp, err := rpc.Initialize(ctx, acpsdk.InitializeRequest{
+	initCtx, cancelInit := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelInit()
+	initResp, err := rpc.Initialize(initCtx, acpsdk.InitializeRequest{
 		ProtocolVersion:    acpsdk.ProtocolVersionNumber,
 		ClientCapabilities: clientCapabilities(elicit),
 	})
 	if err != nil {
-		_ = killProcess(cmd)
-		waitErr := cmd.Wait()
+		if initCtx.Err() != nil {
+			err = initCtx.Err()
+		}
+		waitErr, closeErr := closeAdapterProcess(cmd)
+		if closeErr != nil {
+			return nil, closeErr
+		}
 		fields := map[string]any{"rpc_error": errorKind(err), "adapter_exit_error": errorKind(waitErr)}
 		addExitStatus(fields, cmd)
 		diagnostics.Event("initialize_failed", fields)
@@ -204,10 +217,15 @@ func collectSessionOptions(opts []SessionOption) sessionOptions {
 
 // NewSession creates a new ACP session rooted at cwd and returns its id.
 func (c *Conn) NewSession(ctx context.Context, cwd string, opts ...SessionOption) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	o := collectSessionOptions(opts)
 	c.diagnostic("new_session_started", map[string]any{"cwd": cwd})
 	resp, err := c.rpc.NewSession(ctx, acpsdk.NewSessionRequest{Cwd: cwd, McpServers: o.mcpServers, Meta: o.meta})
 	if err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		c.diagnostic("new_session_failed", errorFields(err))
 		return "", fmt.Errorf("new session: %w", err)
 	}
@@ -219,6 +237,8 @@ func (c *Conn) NewSession(ctx context.Context, cwd string, opts ...SessionOption
 
 // LoadSession restores a previously-created ACP session into this connection.
 func (c *Conn) LoadSession(ctx context.Context, cwd, sessionID string, opts ...SessionOption) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	if !c.SupportsLoadSession {
 		return fmt.Errorf("adapter did not advertise session/load")
 	}
@@ -232,6 +252,9 @@ func (c *Conn) LoadSession(ctx context.Context, cwd, sessionID string, opts ...S
 		Meta:       o.meta,
 	})
 	if err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		return fmt.Errorf("load session: %w", err)
 	}
 	c.setSessionConfig(sessionID, resp.ConfigOptions)
@@ -245,6 +268,8 @@ func (c *Conn) SetSelectConfig(ctx context.Context, sessionID, configID, value s
 }
 
 func (c *Conn) setSelectConfig(ctx context.Context, sessionID, configID, value string, checkValue bool) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	if value == "" {
 		return nil
 	}
@@ -264,6 +289,9 @@ func (c *Conn) setSelectConfig(ctx context.Context, sessionID, configID, value s
 		},
 	})
 	if err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
 		c.diagnostic("set_config_failed", errorFields(err))
 		return fmt.Errorf("set %s %q: %w", configID, value, err)
 	}
@@ -407,18 +435,23 @@ func (c *Conn) PermissionRequests() []acpsdk.RequestPermissionRequest {
 // Close terminates the adapter subprocess and all its children.
 func (c *Conn) Close() error {
 	c.diagnostic("adapter_close_requested", nil)
-	_ = killProcess(c.cmd)
-	err := c.cmd.Wait()
+	err, closeErr := closeAdapterProcess(c.cmd)
 	fields := errorFields(err)
 	if fields == nil {
 		fields = make(map[string]any)
 	}
-	addExitStatus(fields, c.cmd)
-	c.diagnostic("adapter_exited", fields)
+	if closeErr == nil || err != nil {
+		addExitStatus(fields, c.cmd)
+	}
+	event := "adapter_exited"
+	if closeErr != nil {
+		event = "adapter_termination_uncertain"
+	}
+	c.diagnostic(event, fields)
 	if c.diagnostics != nil {
 		_ = c.diagnostics.Close()
 	}
-	return err
+	return closeErr
 }
 
 func (c *Conn) diagnostic(event string, fields map[string]any) {
@@ -489,18 +522,28 @@ func ConnectCursor(ctx context.Context, decide Decider, onUpdate func(Event), qu
 	client := &Client{Decide: decide, OnUpdate: onUpdate, CursorQuestion: question}
 	rpc := acpsdk.NewClientSideConnection(client, stdin, newCursorWireReader(stdout))
 
-	initResp, err := rpc.Initialize(ctx, acpsdk.InitializeRequest{
+	initCtx, cancelInit := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelInit()
+	initResp, err := rpc.Initialize(initCtx, acpsdk.InitializeRequest{
 		ProtocolVersion: acpsdk.ProtocolVersionNumber,
 	})
 	if err != nil {
-		_ = killProcess(cmd)
-		_ = cmd.Wait()
+		if initCtx.Err() != nil {
+			err = initCtx.Err()
+		}
+		if _, closeErr := closeAdapterProcess(cmd); closeErr != nil {
+			return nil, closeErr
+		}
 		return nil, fmt.Errorf("initialize: %w", err)
 	}
 
-	if _, err := rpc.Authenticate(ctx, acpsdk.AuthenticateRequest{MethodId: "cursor_login"}); err != nil {
-		_ = killProcess(cmd)
-		_ = cmd.Wait()
+	if _, err := rpc.Authenticate(initCtx, acpsdk.AuthenticateRequest{MethodId: "cursor_login"}); err != nil {
+		if initCtx.Err() != nil {
+			err = initCtx.Err()
+		}
+		if _, closeErr := closeAdapterProcess(cmd); closeErr != nil {
+			return nil, closeErr
+		}
 		return nil, fmt.Errorf("cursor authenticate: %w (run: cursor-agent login)", err)
 	}
 
