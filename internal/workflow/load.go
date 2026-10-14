@@ -44,29 +44,6 @@ func Decode(data, baseDir string) (*Workflow, error) {
 }
 
 func decodeWorkflow(data, baseDir, sourcePath string) (*Workflow, error) {
-	return decodeWorkflowLocked(data, baseDir, sourcePath, nil)
-}
-
-// DecodeLocked rebuilds a persisted workflow from its root source and the
-// module sources captured when the run began. It is deliberately separate from
-// Decode: callers restoring a run must never silently substitute a changed
-// module from the checkout for the version that produced the journal.
-func DecodeLocked(data, baseDir, sourcePath string, sources []ModuleSource) (*Workflow, error) {
-	locked := make(map[string]ModuleSource, len(sources))
-	for _, source := range sources {
-		if source.Path == "" || source.TOML == "" || source.SHA256 == "" {
-			return nil, fmt.Errorf("invalid locked module source")
-		}
-		path, err := filepath.Abs(source.Path)
-		if err != nil {
-			return nil, fmt.Errorf("resolve locked module %q: %w", source.Path, err)
-		}
-		locked[filepath.Clean(path)] = source
-	}
-	return decodeWorkflowLocked(data, baseDir, sourcePath, locked)
-}
-
-func decodeWorkflowLocked(data, baseDir, sourcePath string, locked map[string]ModuleSource) (*Workflow, error) {
 	if baseDir != "" {
 		var err error
 		baseDir, err = filepath.Abs(baseDir)
@@ -74,7 +51,50 @@ func decodeWorkflowLocked(data, baseDir, sourcePath string, locked map[string]Mo
 			return nil, CaptureStorage
 		}
 	}
-	return decodeWorkflowCaptured(data, baseDir, sourcePath, locked, &authoringLoad{})
+	return decodeWorkflowCaptured(data, baseDir, sourcePath, nil, &authoringLoad{})
+}
+
+// DecodeLockedMetadata reconstructs legacy display metadata from supplied TOML
+// and module records only. It never resolves files, profiles or agent sessions.
+func DecodeLockedMetadata(data, baseDir, sourcePath string, sources []ModuleSource) (*Workflow, error) {
+	wf, err := decodeMetadataTOML(data)
+	if err != nil {
+		return nil, err
+	}
+	locked := make(map[string]ModuleSource, len(sources))
+	for _, source := range sources {
+		if source.Path == "" || source.TOML == "" || source.SHA256 == "" {
+			return nil, fmt.Errorf("invalid locked module source")
+		}
+		if !filepath.IsAbs(source.Path) || locked[source.Path].Path != "" {
+			return nil, CaptureIntegrity
+		}
+		locked[source.Path] = source
+	}
+	wf.publicSteps = cloneSteps(wf.Steps)
+	e := &moduleExpansion{metadataOnly: true, locked: locked, sources: map[string]ModuleSource{}}
+	if err := e.expand(wf, baseDir, sourcePath, "", nil); err != nil {
+		return nil, err
+	}
+	wf.moduleSources = append([]ModuleSource(nil), sources...)
+	wf.lockedMetadata = true
+	wf.sourcePath, wf.sourceTOML = sourcePath, data
+	wf.applyDefaults()
+	return wf, nil
+}
+
+func decodeMetadataTOML(data string) (*Workflow, error) {
+	if len(data) > captureFileLimit {
+		return nil, CaptureLimit
+	}
+	var wf Workflow
+	if _, err := toml.Decode(data, &wf); err != nil {
+		return nil, CaptureIntegrity
+	}
+	if len(wf.Steps) > 1024 {
+		return nil, CaptureLimit
+	}
+	return &wf, nil
 }
 
 func decodeWorkflowCaptured(data, baseDir, sourcePath string, locked map[string]ModuleSource, capture *authoringLoad) (*Workflow, error) {
@@ -98,6 +118,7 @@ func decodeWorkflowCaptured(data, baseDir, sourcePath string, locked map[string]
 	}
 	wf.sourcePath = sourcePath
 	wf.sourceTOML = data
+	wf.sourceBaseDir = baseDir
 	return wf, nil
 }
 

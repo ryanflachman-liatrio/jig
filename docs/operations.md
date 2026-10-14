@@ -107,6 +107,13 @@ merge parks require the TUI and fail before `Manager.Resume` appends anything.
 `resume` requires a durable session and backend resume capability. A competing
 scheduler wins through `scheduler.lock`; the CLI never attaches to its inbox.
 
+Strict reopen requires the version-1 authoring manifest and every captured
+asset, including future routes and fan-out templates. Missing, corrupt,
+unsupported, or incomplete captures refuse execution before workers start.
+Start a new run from authoring TOML; edited checkout files cannot repair a
+captured run. Older supported snapshots remain inspectable but cannot execute
+without this capture contract. Persistence-off runs have no durable reopen.
+
 Once reopened, the same supervisor, gate policy, output envelope, timeout, and
 exit mapping as `jig run` apply.
 

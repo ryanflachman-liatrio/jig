@@ -46,7 +46,7 @@ func TestFrozenValidationSchema(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				authority, err = restoreRunAuthoring(rd, wf)
+				wf, authority, err = loadAuthoringSnapshot(rd)
 				if err != nil {
 					t.Fatal(err)
 				}

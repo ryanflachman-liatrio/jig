@@ -70,14 +70,19 @@ func (a *runAuthoring) verify(dir, owner string) error {
 	if dir == "" {
 		return nil
 	}
-	manifest, err := datastore.ReadAuthoringFile(dir, "authoring/manifest.json", 8<<20)
+	reader, err := datastore.OpenAuthoringReader(dir)
+	if err != nil {
+		return workflow.CaptureStorage
+	}
+	defer reader.Close()
+	manifest, err := reader.Read("authoring/manifest.json", 8<<20)
 	if err != nil {
 		return workflow.CaptureStorage
 	}
 	if !bytes.Equal(manifest, a.manifest) {
 		return workflow.CaptureIntegrity
 	}
-	snapshot, err := datastore.ReadAuthoringFile(dir, "workflow.json", 32<<20)
+	snapshot, err := reader.Read("workflow.json", 32<<20)
 	if err != nil {
 		return workflow.CaptureStorage
 	}
@@ -90,7 +95,7 @@ func (a *runAuthoring) verify(dir, owner string) error {
 			continue
 		}
 		seen[b.SHA256] = true
-		data, err := datastore.ReadAuthoringFile(dir, "authoring/blobs/"+b.SHA256, 1<<20)
+		data, err := reader.Read("authoring/blobs/"+b.SHA256, 1<<20)
 		if err != nil {
 			return workflow.CaptureStorage
 		}
@@ -150,52 +155,79 @@ func (s *scheduler) failCapture(err error) {
 	}
 }
 
-func restoreRunAuthoring(dir string, wf *workflow.Workflow) (*runAuthoring, error) {
-	data, err := datastore.ReadAuthoringFile(dir, "workflow.json", 32<<20)
+// loadAuthoringSnapshot pins the run once, decodes metadata without source IO,
+// and verifies the complete capture contract before returning execution authority.
+func loadAuthoringSnapshot(dir string) (*workflow.Workflow, *runAuthoring, error) {
+	reader, err := datastore.OpenAuthoringReader(dir)
 	if err != nil {
-		return nil, workflow.CaptureStorage
+		return nil, nil, workflow.CaptureStorage
+	}
+	defer reader.Close()
+	data, err := reader.Read("workflow.json", 32<<20)
+	if err != nil {
+		return nil, nil, workflow.CaptureStorage
+	}
+	wf, err := DecodeWorkflowSnapshot(data)
+	if err != nil {
+		return nil, nil, fmt.Errorf("decode locked workflow: %w", err)
 	}
 	var snapshot workflowSnapshot
-	if err := datastore.DecodeAuthoringRecord(data, 32<<20, &snapshot); err != nil {
-		return nil, workflow.CaptureIntegrity
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return nil, nil, workflow.CaptureIntegrity
 	}
 	ref := snapshot.Authoring
 	if ref == nil || ref.Version != 1 || ref.Path != "authoring/manifest.json" {
-		return nil, fmt.Errorf("workflow snapshot lacks authoring captures; start a new run")
+		return nil, nil, fmt.Errorf("workflow snapshot lacks a supported authoring capture contract; start a new run: %w", workflow.CaptureMissing)
 	}
-	raw, err := datastore.ReadAuthoringFile(dir, ref.Path, 8<<20)
+	if ref.Bindings < 0 || ref.Bindings > 2048 || ref.Blobs < 0 || ref.Blobs > 1024 || ref.Bytes < 0 || ref.Bytes > 16<<20 {
+		return nil, nil, workflow.CaptureLimit
+	}
+	raw, err := reader.Read(ref.Path, 8<<20)
 	if err != nil {
-		return nil, workflow.CaptureStorage
+		return nil, nil, workflow.CaptureStorage
 	}
 	if authoringDigest(raw) != ref.SHA256 {
-		return nil, workflow.CaptureIntegrity
+		return nil, nil, workflow.CaptureIntegrity
 	}
 	var m workflow.AssetManifest
 	if err := datastore.DecodeAuthoringRecord(raw, 8<<20, &m); err != nil {
-		return nil, workflow.CaptureIntegrity
+		return nil, nil, workflow.CaptureIntegrity
+	}
+	if err := workflow.ValidateAuthoringManifest(wf, m); err != nil {
+		return nil, nil, err
+	}
+	if len(m.Bindings) != ref.Bindings || len(m.Blobs) != ref.Blobs {
+		return nil, nil, workflow.CaptureIntegrity
+	}
+	total := 0
+	for _, b := range m.Blobs {
+		total += b.Size
+	}
+	if total != ref.Bytes {
+		return nil, nil, workflow.CaptureIntegrity
 	}
 	blobs := map[string][]byte{}
-	if len(m.Blobs) > 1024 || len(m.Bindings) > 2048 {
-		return nil, workflow.CaptureLimit
-	}
 	for _, b := range m.Blobs {
-		content, err := datastore.ReadAuthoringFile(dir, "authoring/blobs/"+b.SHA256, 1<<20)
+		content, err := reader.Read("authoring/blobs/"+b.SHA256, 1<<20)
 		if err != nil {
-			return nil, workflow.CaptureStorage
+			return nil, nil, workflow.CaptureStorage
+		}
+		if len(content) != b.Size || authoringDigest(content) != b.SHA256 {
+			return nil, nil, workflow.CaptureIntegrity
 		}
 		blobs[b.SHA256] = content
 	}
 	assets, err := workflow.RestoreAuthoring(wf, m, blobs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	a, err := newRunAuthoring(assets)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if *a.reference() != *ref || !bytes.Equal(raw, a.manifest) {
-		return nil, workflow.CaptureIntegrity
+		return nil, nil, workflow.CaptureIntegrity
 	}
 	a.snapshot = data
-	return a, nil
+	return wf, a, nil
 }

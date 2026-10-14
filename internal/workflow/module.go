@@ -12,10 +12,11 @@ import (
 const FieldArtifact FieldType = "artifact"
 
 type moduleExpansion struct {
-	capture  *authoringLoad
-	expanded int
-	sources  map[string]ModuleSource
-	locked   map[string]ModuleSource
+	metadataOnly bool
+	capture      *authoringLoad
+	expanded     int
+	sources      map[string]ModuleSource
+	locked       map[string]ModuleSource
 }
 
 type expandedModule struct {
@@ -93,7 +94,12 @@ func (e *moduleExpansion) expand(wf *Workflow, baseDir, sourcePath, prefix strin
 		if err != nil {
 			return fmt.Errorf("step %q: read module %q: %w", raw.ID, raw.Module, err)
 		}
-		child, err := decodePreparedCaptured(string(data), filepath.Dir(modulePath), absModulePath, e.capture)
+		var child *Workflow
+		if e.metadataOnly {
+			child, err = decodeMetadataTOML(string(data))
+		} else {
+			child, err = decodePreparedCaptured(string(data), filepath.Dir(modulePath), absModulePath, e.capture)
+		}
 		if err != nil {
 			return fmt.Errorf("step %q: module %q: %w", raw.ID, raw.Module, err)
 		}

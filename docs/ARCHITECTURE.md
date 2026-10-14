@@ -91,6 +91,13 @@ fails the run. File scripts consume captured bytes across retry, routes and
 fan-out; explicit `run` commands still read their execution workspace. Captured
 skill bundles do not provide frozen host helper delivery.
 
+Snapshot display decoding reads no authoring files or capture store. Display
+graphs cannot authorize Start. Resume pins its run directory, requires the
+version-1 capture contract, validates complete graph coverage and bounds, then
+verifies all blobs before registration. Supported older snapshots remain
+inspectable but require a new run for execution; restored work never repairs
+required captures from the checkout.
+
 Content follows a separate path: harness → runner → `transcript.jsonl`.
 `StepMessage` signals progress by sequence number. Live deltas and tool signals
 may be lossy; finalized content and operational decisions must remain

@@ -58,11 +58,15 @@ func persistWorkflowSnapshot(runDir string, wf *workflow.Workflow) error {
 
 func encodeWorkflowSnapshot(wf *workflow.Workflow, ref *authoringReference) ([]byte, error) {
 	path, source := wf.Source()
+	base := wf.AuthoringBase()
+	if base == "" {
+		base = filepath.Dir(path)
+	}
 	sum := sha256.Sum256([]byte(source))
 	snap := workflowSnapshot{
 		Authoring:     ref,
 		SourcePath:    path,
-		BaseDir:       filepath.Dir(path),
+		BaseDir:       base,
 		SHA256:        hex.EncodeToString(sum[:]),
 		TOML:          source,
 		ModuleSources: wf.ModuleSources(),
@@ -96,7 +100,7 @@ func encodeWorkflowSnapshot(wf *workflow.Workflow, ref *authoringReference) ([]b
 }
 
 func loadWorkflowSnapshot(runDir string) (*workflow.Workflow, error) {
-	data, err := os.ReadFile(datastore.WorkflowSnapshotPath(runDir))
+	data, err := datastore.ReadAuthoringFile(runDir, "workflow.json", 32<<20)
 	if err != nil {
 		return nil, err
 	}
@@ -136,11 +140,17 @@ func DecodeWorkflowSnapshot(data []byte) (*workflow.Workflow, error) {
 		}
 		snap.Checksum = checksum
 	}
+	if len(snap.TOML) > 1<<20 || len(snap.ExpandedSteps) > 1024 || len(snap.PublicSteps) > 1024 || len(snap.ModuleSources) > 2048 {
+		return nil, workflow.CaptureLimit
+	}
 	sum := sha256.Sum256([]byte(snap.TOML))
 	if hex.EncodeToString(sum[:]) != snap.SHA256 {
 		return nil, fmt.Errorf("workflow snapshot checksum mismatch")
 	}
 	for _, source := range snap.ModuleSources {
+		if len(source.TOML) > 1<<20 {
+			return nil, workflow.CaptureLimit
+		}
 		sum := sha256.Sum256([]byte(source.TOML))
 		if source.Path == "" || source.SHA256 == "" || hex.EncodeToString(sum[:]) != source.SHA256 {
 			return nil, fmt.Errorf("workflow snapshot module checksum mismatch")
@@ -164,7 +174,7 @@ func DecodeWorkflowSnapshot(data []byte) (*workflow.Workflow, error) {
 		// ExpandedSteps. Rebuilding one without them would re-resolve each
 		// agent from [defaults] and the profiles on disk, so an agent step
 		// here fails closed like a snapshot with no persisted agent.
-		decoded, err := workflow.DecodeLocked(snap.TOML, snap.BaseDir, snap.SourcePath, snap.ModuleSources)
+		decoded, err := workflow.DecodeLockedMetadata(snap.TOML, snap.BaseDir, snap.SourcePath, snap.ModuleSources)
 		if err != nil {
 			return nil, err
 		}
@@ -175,6 +185,7 @@ func DecodeWorkflowSnapshot(data []byte) (*workflow.Workflow, error) {
 		}
 		wf = decoded
 	}
+	wf.RestoreSourceMetadata(snap.SourcePath, snap.TOML, snap.BaseDir)
 	// Overwrite the workflow's notification policy with the frozen snapshot
 	// value: reopen must never re-read current profile files. When no
 	// notification policy was persisted we still call SetResolvedNotificationPolicy
@@ -233,13 +244,9 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 			return fail(fmt.Errorf("run has a fatal authoring capture failure; start a new run: %w", failure.CaptureReason))
 		}
 	}
-	wf, err := loadWorkflowSnapshot(runDir)
+	wf, authority, err := loadAuthoringSnapshot(runDir)
 	if err != nil {
 		return fail(fmt.Errorf("resume workflow: %w", err))
-	}
-	authority, err := restoreRunAuthoring(runDir, wf)
-	if err != nil {
-		return fail(err)
 	}
 	checkpoint, err := restoreUnfinishedCheckpoint(runDir, wf, events)
 	if err != nil {

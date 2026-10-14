@@ -257,6 +257,9 @@ func PrepareAuthoring(wf *Workflow, base string) (*Workflow, *AuthoringAssets, e
 	if wf == nil {
 		return nil, nil, CaptureMissing
 	}
+	if wf.lockedMetadata {
+		return nil, nil, fmt.Errorf("display workflow is not execution authority; start a new run from authoring TOML: %w", CaptureMissing)
+	}
 	if len(wf.Steps) > 1024 {
 		return nil, nil, CaptureLimit
 	}
@@ -285,6 +288,7 @@ func PrepareAuthoring(wf *Workflow, base string) (*Workflow, *AuthoringAssets, e
 		return nil, nil, CaptureIntegrity
 	}
 	out.sourcePath, out.sourceTOML = wf.sourcePath, wf.sourceTOML
+	out.sourceBaseDir = wf.sourceBaseDir
 	out.moduleSources = wf.ModuleSources()
 	public, err := json.Marshal(wf.PublicSteps())
 	if err != nil {
@@ -445,23 +449,14 @@ func (a *AuthoringAssets) validateLogicalBindings() error {
 // RestoreAuthoring restores only supplied captured content; it never opens an
 // authoring source. Durable readers own confinement and encoded input bounds.
 func RestoreAuthoring(wf *Workflow, m AssetManifest, blobs map[string][]byte) (*AuthoringAssets, error) {
-	if m.Version != 1 {
-		return nil, CaptureIntegrity
-	}
-	if len(m.Bindings) > 2048 || len(m.Blobs) > 1024 {
-		return nil, CaptureLimit
-	}
-	a := &AuthoringAssets{manifest: AssetManifest{Version: 1, Bindings: append([]AssetBinding{}, m.Bindings...), Blobs: append([]AssetBlob{}, m.Blobs...)}, blobs: map[string][]byte{}}
-	if err := a.validateLogicalBindings(); err != nil {
+	if err := ValidateAuthoringManifest(wf, m); err != nil {
 		return nil, err
 	}
-	total := 0
-	last := ""
+	if len(blobs) != len(m.Blobs) {
+		return nil, CaptureIntegrity
+	}
+	a := &AuthoringAssets{manifest: AssetManifest{Version: 1, Bindings: append([]AssetBinding{}, m.Bindings...), Blobs: append([]AssetBlob{}, m.Blobs...)}, blobs: map[string][]byte{}}
 	for _, b := range m.Blobs {
-		if b.SHA256 <= last || b.Size < 0 || b.Size > 1<<20 {
-			return nil, CaptureIntegrity
-		}
-		last = b.SHA256
 		data, ok := blobs[b.SHA256]
 		if !ok {
 			return nil, CaptureMissing
@@ -469,59 +464,7 @@ func RestoreAuthoring(wf *Workflow, m AssetManifest, blobs map[string][]byte) (*
 		if len(data) != b.Size || assetDigest(data) != b.SHA256 {
 			return nil, CaptureIntegrity
 		}
-		total += len(data)
-		if total > 16<<20 {
-			return nil, CaptureLimit
-		}
 		a.blobs[b.SHA256] = bytes.Clone(data)
-	}
-	seen := map[string]bool{}
-	used := map[string]bool{}
-	last = ""
-	for _, b := range m.Bindings {
-		key := bindingKey(b)
-		if key <= last {
-			return nil, CaptureIntegrity
-		}
-		last = key
-		switch b.Kind {
-		case AssetWorkflow, AssetModule, AssetScript, AssetSkill, AssetAgentFile, AssetSchema, AssetValidationSchema, AssetOutputTemplate:
-		default:
-			return nil, CaptureIntegrity
-		}
-		if b.Owner != "" {
-			found := false
-			for _, s := range wf.Steps {
-				if s.ID == b.Owner {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return nil, CaptureIntegrity
-			}
-		}
-		for _, path := range []string{b.Reference, b.Declaring, b.Anchor, b.Source, b.Relative} {
-			if err := captureValidatePath(path); err != nil {
-				return nil, err
-			}
-		}
-		used[b.SHA256] = true
-		seen[b.Owner+"\x00"+string(b.Kind)] = true
-	}
-	if len(used) != len(m.Blobs) {
-		return nil, CaptureIntegrity
-	}
-	for _, s := range wf.Steps {
-		required := map[AssetKind]bool{AssetScript: s.Script != "" && !strings.Contains(s.Script, "\n"), AssetSkill: s.Skill != "", AssetSchema: s.SchemaFile != "", AssetAgentFile: s.AgentFile != "", AssetOutputTemplate: s.OutputTemplate != "", AssetValidationSchema: s.Validate != nil && s.Validate.OutputSchema != ""}
-		for kind, yes := range required {
-			if yes && !seen[s.ID+"\x00"+string(kind)] {
-				return nil, CaptureMissing
-			}
-		}
-	}
-	if err := a.Verify(""); err != nil {
-		return nil, err
 	}
 	return a, a.validateEffective(wf)
 }

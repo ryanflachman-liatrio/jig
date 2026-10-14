@@ -9,13 +9,36 @@ import (
 	"strings"
 )
 
-// ReadAuthoringFile opens only fixed run-owned records. Every component below
-// the selected run directory rejects symlinks, including ordinary internal links.
-func ReadAuthoringFile(dir, name string, limit int64) ([]byte, error) {
-	if dir == "" || (name != "workflow.json" && name != "authoring/manifest.json" && !validBlobName(name)) {
+// AuthoringReader retains the pinned directory for fixed run-owned records.
+type AuthoringReader struct{ fd int }
+
+// OpenAuthoringReader pins one run directory for a complete verification pass.
+func OpenAuthoringReader(dir string) (*AuthoringReader, error) {
+	if dir == "" {
 		return nil, ErrAuthoringStorage
 	}
 	fd, err := unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, ErrAuthoringStorage
+	}
+	return &AuthoringReader{fd: fd}, nil
+}
+func (r *AuthoringReader) Close() error { err := unix.Close(r.fd); r.fd = -1; return err }
+
+// ReadAuthoringFile rejects symlinks in every component below the run directory.
+func ReadAuthoringFile(dir, name string, limit int64) ([]byte, error) {
+	r, err := OpenAuthoringReader(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return r.Read(name, limit)
+}
+func (r *AuthoringReader) Read(name string, limit int64) ([]byte, error) {
+	if limit < 0 || (name != "workflow.json" && name != "authoring/manifest.json" && !validBlobName(name)) {
+		return nil, ErrAuthoringStorage
+	}
+	fd, err := unix.FcntlInt(uintptr(r.fd), unix.F_DUPFD_CLOEXEC, 0)
 	if err != nil {
 		return nil, ErrAuthoringStorage
 	}
@@ -46,6 +69,7 @@ func ReadAuthoringFile(dir, name string, limit int64) ([]byte, error) {
 	}
 	return data, nil
 }
+
 func validBlobName(name string) bool {
 	const prefix = "authoring/blobs/"
 	if !strings.HasPrefix(name, prefix) || len(name) != len(prefix)+64 {

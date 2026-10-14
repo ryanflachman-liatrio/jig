@@ -28,6 +28,9 @@ func CheckAuthoringJSON(data []byte, limit int) error {
 		if err != nil {
 			return ErrAuthoringStorage
 		}
+		if value, ok := tok.(string); ok && len(value) > 1<<20 {
+			return ErrAuthoringStorage
+		}
 		if len(stack) > 0 {
 			f := &stack[len(stack)-1]
 			if f.kind == '{' && f.key {

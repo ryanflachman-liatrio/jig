@@ -1065,6 +1065,7 @@ func TestResetFanOut(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { run.Cancel(); run.Wait() })
 
 	runBranch := runBranchName("reset-fanout", run.ID)
 
@@ -1147,7 +1148,6 @@ func TestResetFanOut(t *testing.T) {
 		t.Error("B commit unchanged after reset+re-run; want new commit")
 	}
 
-	run.Cancel()
 }
 
 // TestResetLinearTip verifies that Reset("b") on a linear A→B workflow re-runs
@@ -1199,6 +1199,7 @@ label = "Code changes"
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { run.Cancel(); run.Wait() })
 
 	runBranch := runBranchName("reset-linear", run.ID)
 	waitForReviewRequest(t, ch, "gate", 10*time.Second)
@@ -1255,5 +1256,4 @@ label = "Code changes"
 		t.Error("B commit unchanged after reset+re-run; want new commit")
 	}
 
-	run.Cancel()
 }

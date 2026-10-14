@@ -174,7 +174,7 @@ func recordMake(bindings []recordBinding, blobs map[string][]byte, wf json.RawMe
 }
 
 // Pure: the only input is bytes. Require expanded graph data to avoid the
-// existing production decoder's legacy DecodeLocked/source-reading branch.
+// historical decoder's legacy source-reading branch, now replaced by pure metadata decoding.
 func recordDisplay(data []byte) (recordEnvelope, *workflow.Workflow, error) {
 	var e recordEnvelope
 	if err := recordDecode(data, recordSnapshotLimit, &e); err != nil {

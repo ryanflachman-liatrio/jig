@@ -86,9 +86,11 @@ type Workflow struct {
 	// validation and later execution can resolve references in O(1).
 	index map[string]int
 
-	authoring  *authoringLoad
-	sourcePath string
-	sourceTOML string
+	authoring      *authoringLoad
+	sourcePath     string
+	sourceBaseDir  string
+	lockedMetadata bool
+	sourceTOML     string
 
 	// publicSteps retains the author graph after Steps has been expanded for
 	// execution. It is not serialized; run snapshots contain the expansion.
@@ -135,6 +137,15 @@ func (wf *Workflow) Source() (path, toml string) {
 	return wf.sourcePath, wf.sourceTOML
 }
 
+// RestoreSourceMetadata attaches supplied provenance without opening its paths.
+func (wf *Workflow) RestoreSourceMetadata(path, toml, base string) {
+	wf.sourcePath, wf.sourceTOML = path, toml
+	wf.sourceBaseDir = base
+}
+
+// AuthoringBase is the captured declaration directory, independent of process CWD.
+func (wf *Workflow) AuthoringBase() string { return wf.sourceBaseDir }
+
 // PublicSteps returns the author-facing graph. Workflows without modules use
 // their executable steps directly, preserving existing callers.
 func (wf *Workflow) PublicSteps() []Step {
@@ -179,12 +190,13 @@ func RestoreExpandedWithTelemetry(meta Meta, defaults Defaults, telemetry Teleme
 		}
 	}
 	wf := &Workflow{
-		Meta:          meta,
-		Defaults:      defaults,
-		Telemetry:     telemetry,
-		Steps:         cloneSteps(steps),
-		publicSteps:   cloneSteps(publicSteps),
-		moduleSources: append([]ModuleSource(nil), sources...),
+		Meta:           meta,
+		Defaults:       defaults,
+		Telemetry:      telemetry,
+		Steps:          cloneSteps(steps),
+		publicSteps:    cloneSteps(publicSteps),
+		moduleSources:  append([]ModuleSource(nil), sources...),
+		lockedMetadata: true,
 	}
 	wf.applyDefaults()
 	return wf, nil
