@@ -69,7 +69,7 @@ depends_on = ["analyze"]
 when = "analyze.all_succeeded && analyze.count >= 1"
 run = "true"
 `
-			wf, err := workflow.Decode(source, "")
+			wf, err := decodeEngineFixture(t, source)
 			if err != nil {
 				t.Fatal(err)
 			}

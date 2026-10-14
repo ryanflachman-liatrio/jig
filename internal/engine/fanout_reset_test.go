@@ -114,7 +114,7 @@ func TestForEachReset_FamilyRemovesChildCommitsAndReExpands(t *testing.T) {
 	repo := t.TempDir()
 	initRepo(t, repo)
 
-	wf, err := workflow.Decode(foreachResetWorkflow, "")
+	wf, err := decodeEngineFixture(t, foreachResetWorkflow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,7 +241,7 @@ func TestForEachReset_RejectsDirectChildReset(t *testing.T) {
 	repo := t.TempDir()
 	initRepo(t, repo)
 
-	wf, err := workflow.Decode(foreachResetWorkflow, "")
+	wf, err := decodeEngineFixture(t, foreachResetWorkflow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +294,7 @@ func TestForEachReset_UpstreamProducerResetChangesCardinality(t *testing.T) {
 	repo := t.TempDir()
 	initRepo(t, repo)
 
-	wf, err := workflow.Decode(foreachResetWorkflow, "")
+	wf, err := decodeEngineFixture(t, foreachResetWorkflow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +387,7 @@ when = "quality != 'pass'"
 goto = "analyze"
 max_iterations = 2
 `
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}

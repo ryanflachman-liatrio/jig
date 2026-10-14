@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/ryanflachman-liatrio/jig/internal/step"
-	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // TestParseStaleWorktreePath verifies the parser that extracts the stale worktree
@@ -172,7 +171,7 @@ isolation = "worktree"
 agent = { tools = ["Write"] }
 skill = "skills/mutate"
 `
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +244,7 @@ output_type = { enum = ["approve", "reject"] }
 source = "diff"
 label = "Code changes"
 `
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +326,7 @@ isolation = "worktree"
 agent = { tools = ["Write"] }
 skill = "skills/mutate"
 `
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}

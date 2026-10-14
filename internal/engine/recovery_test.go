@@ -208,7 +208,7 @@ type = "agent"
 isolation = "none"
 skill = "chat"
 `
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,8 +2,6 @@ package workflow
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -35,9 +33,9 @@ func (wf *Workflow) resolveAgentFiles(baseDir string) error {
 		if s.AgentFile == "" {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(baseDir, s.AgentFile))
+		data, err := wf.readAsset(s, AssetAgentFile, s.AgentFile, baseDir)
 		if err != nil {
-			return fmt.Errorf("agent step %q: agent_file %q not found", s.ID, s.AgentFile)
+			return fmt.Errorf("agent step %q: agent_file capture: %w", s.ID, err)
 		}
 		af, err := parseAgentFile(data)
 		if err != nil {
@@ -63,9 +61,9 @@ func (wf *Workflow) resolveOutputTemplates(baseDir string) error {
 		if s.OutputTemplate == "" {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(baseDir, s.OutputTemplate))
+		data, err := wf.readAsset(s, AssetOutputTemplate, s.OutputTemplate, baseDir)
 		if err != nil {
-			return fmt.Errorf("agent step %q: output_template %q not found", s.ID, s.OutputTemplate)
+			return fmt.Errorf("agent step %q: output_template capture: %w", s.ID, err)
 		}
 		s.outputTemplateBody = strings.TrimSpace(string(data))
 		s.SnapshotOutputTemplate = s.outputTemplateBody

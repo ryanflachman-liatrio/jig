@@ -2,8 +2,6 @@ package workflow
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 )
 
 // resolveSkills snapshots skill instructions while loading the workflow so
@@ -19,13 +17,9 @@ func (wf *Workflow) resolveSkills(baseDir string) error {
 			continue
 		}
 
-		dir := filepath.Join(baseDir, s.Skill)
-		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
-			return fmt.Errorf("agent step %q: skill dir %q not found", s.ID, s.Skill)
-		}
-		data, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+		data, err := wf.readSkill(s, baseDir)
 		if err != nil {
-			return fmt.Errorf("agent step %q: %s/SKILL.md not found", s.ID, s.Skill)
+			return fmt.Errorf("agent step %q: skill capture: %w", s.ID, err)
 		}
 		prompt, err := parseSkillFile(data)
 		if err != nil {

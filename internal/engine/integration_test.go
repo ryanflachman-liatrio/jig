@@ -713,7 +713,7 @@ isolation = "worktree"
 func TestIntegrationConflictRaisesGate(t *testing.T) {
 	repo := t.TempDir()
 	initRepo(t, repo)
-	wf, err := workflow.Decode(conflictWorkflow, "")
+	wf, err := decodeEngineFixture(t, conflictWorkflow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -778,7 +778,7 @@ loop:
 func TestIntegrationConflictAbortFailsStep(t *testing.T) {
 	repo := t.TempDir()
 	initRepo(t, repo)
-	wf, err := workflow.Decode(conflictWorkflow, "")
+	wf, err := decodeEngineFixture(t, conflictWorkflow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -872,7 +872,7 @@ func TestFinalMergeApproveLandsCommits(t *testing.T) {
 	initRepo(t, repo)
 	baseBefore := strings.TrimSpace(mustGit(t, repo, "rev-parse", "HEAD"))
 
-	wf, err := workflow.Decode(landWorkflow, "")
+	wf, err := decodeEngineFixture(t, landWorkflow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -907,7 +907,7 @@ func TestFinalMergeDiscardLeavesBase(t *testing.T) {
 	initRepo(t, repo)
 	baseBefore := strings.TrimSpace(mustGit(t, repo, "rev-parse", "HEAD"))
 
-	wf, err := workflow.Decode(landWorkflow, "")
+	wf, err := decodeEngineFixture(t, landWorkflow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1050,7 +1050,7 @@ func TestResetFanOut(t *testing.T) {
 	repo := t.TempDir()
 	initRepo(t, repo)
 
-	wf, err := workflow.Decode(fanoutResetWorkflow, "")
+	wf, err := decodeEngineFixture(t, fanoutResetWorkflow)
 	if err != nil {
 		t.Fatal(err)
 	}

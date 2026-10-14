@@ -39,10 +39,13 @@ type IntegrationResolutionRequest struct {
 // StepRequest is the data a worker needs to execute one step.
 // @ref inputs are resolved to paths / inlined values before dispatch.
 type StepRequest struct {
-	RunID    string
-	Step     *workflow.Step
-	Inputs   []ResolvedInput
-	Feedback string // route feedback, when re-running after a bounded back-edge
+	// Assets is immutable run-owned authoring content; AssetOwner names the static template.
+	Assets     *workflow.AuthoringAssets
+	AssetOwner string
+	RunID      string
+	Step       *workflow.Step
+	Inputs     []ResolvedInput
+	Feedback   string // route feedback, when re-running after a bounded back-edge
 	// WorkflowContext is the pre-rendered "Workflow context" preamble, prepended
 	// at the front of the agent's single user turn. It is "" when there is none:
 	// a non-agent step, or an agent step with inject_context off (Unit 4). An
@@ -57,10 +60,8 @@ type StepRequest struct {
 	// It is empty when persistence is off, in which case executors use their
 	// configured working-directory fallback.
 	ExecutionDir string
-	// RepoRoot is the project root (the parent of .jig), used to resolve a
-	// command step's `script` file path — scripts are repo-root-relative, not
-	// relative to the execution cwd. "" on the persistence-off / non-git path,
-	// where the runner falls back to resolving the script against the cwd.
+	// RepoRoot is the execution project's root (the parent of .jig), or empty
+	// for persistence-off. Authoring content is supplied independently by Assets.
 	RepoRoot    string
 	ArtifactDir string // absolute path under .jig/runs/<runID>/artifacts; "" disables file writes
 

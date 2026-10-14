@@ -199,7 +199,7 @@ func childIDs(agg fanOutAggregate) []string {
 // barrier: the family settles immediately with count 0 and all_succeeded true,
 // and no child ever appears in the event stream.
 func TestForEach_EmptyList(t *testing.T) {
-	wf, err := workflow.Decode(foreachTOML(8, ""), "")
+	wf, err := decodeEngineFixture(t, foreachTOML(8, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestForEach_EmptyList(t *testing.T) {
 // TestForEach_SingleItem proves the one-child case produces exactly one
 // instance and a matching aggregate.
 func TestForEach_SingleItem(t *testing.T) {
-	wf, err := workflow.Decode(foreachTOML(8, ""), "")
+	wf, err := decodeEngineFixture(t, foreachTOML(8, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestForEach_SingleItem(t *testing.T) {
 // TestForEach_DuplicateItemsRemainDistinct proves two identical item values
 // still produce two distinct, independently identified children.
 func TestForEach_DuplicateItemsRemainDistinct(t *testing.T) {
-	wf, err := workflow.Decode(foreachTOML(8, ""), "")
+	wf, err := decodeEngineFixture(t, foreachTOML(8, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestForEach_DuplicateItemsRemainDistinct(t *testing.T) {
 // TestForEach_MaxSizedListSucceeds proves a producer list exactly at
 // max_items is accepted (the boundary is inclusive).
 func TestForEach_MaxSizedListSucceeds(t *testing.T) {
-	wf, err := workflow.Decode(foreachTOML(2, ""), "")
+	wf, err := decodeEngineFixture(t, foreachTOML(2, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +337,7 @@ on_failure = "continue"
   [step.schema]
   finding = "text"
 `
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +364,7 @@ on_failure = "continue"
 // TestForEach_NonListProducerFieldFailsClosed proves a producer field that
 // decodes but is not a JSON array fails the family closed with no children.
 func TestForEach_NonListProducerFieldFailsClosed(t *testing.T) {
-	wf, err := workflow.Decode(foreachTOML(8, ""), "")
+	wf, err := decodeEngineFixture(t, foreachTOML(8, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -393,7 +393,7 @@ func TestForEach_NonListProducerFieldFailsClosed(t *testing.T) {
 // Results are ordered by source index even when children finish in reverse
 // completion order (first-dispatched child is scripted to finish last).
 func TestForEach_SourceOrderRegardlessOfCompletionOrder(t *testing.T) {
-	wf, err := workflow.Decode(foreachTOML(8, "max_parallel = 4"), "")
+	wf, err := decodeEngineFixture(t, foreachTOML(8, "max_parallel = 4"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -428,7 +428,7 @@ func TestForEach_SourceOrderRegardlessOfCompletionOrder(t *testing.T) {
 // bounds its concurrent children even though the global max_parallel would
 // otherwise allow more.
 func TestForEach_FamilyLocalMaxParallelCap(t *testing.T) {
-	wf, err := workflow.Decode(foreachTOML(8, "max_parallel = 2"), "")
+	wf, err := decodeEngineFixture(t, foreachTOML(8, "max_parallel = 2"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,7 +479,7 @@ skill = "skills/analyze"
   [step.schema]
   finding = "text"
 `
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -532,7 +532,7 @@ resource_class = "heavy"
   [step.schema]
   finding = "text"
 `
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -594,7 +594,7 @@ skill = "skills/recheck"
   [step.schema]
   ok = "bool"
 `
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -630,7 +630,7 @@ skill = "skills/recheck"
 // touches no filesystem when the run has no run directory, relying only on
 // Result.Structured, exactly like every other persistence-off scheduler path.
 func TestForEach_PersistenceOff(t *testing.T) {
-	wf, err := workflow.Decode(foreachTOML(8, ""), "")
+	wf, err := decodeEngineFixture(t, foreachTOML(8, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -673,7 +673,7 @@ func TestForEach_PersistenceOff(t *testing.T) {
 func TestForEach_FailedChildDoesNotFailBarrierButFailsRun(t *testing.T) {
 	toml := strings.Replace(foreachTOML(8, ""), `skill = "skills/analyze"`,
 		"skill = \"skills/analyze\"\non_failure = \"continue\"", 1)
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -709,7 +709,7 @@ func TestForEach_FailedChildDoesNotFailBarrierButFailsRun(t *testing.T) {
 // reopen" and "Aggregate result contract" specify — even though replaying
 // that manifest on resume is Phase 3 scope.
 func TestForEach_PersistenceOnWritesManifestAndAggregate(t *testing.T) {
-	wf, err := workflow.Decode(foreachTOML(8, ""), "")
+	wf, err := decodeEngineFixture(t, foreachTOML(8, ""))
 	if err != nil {
 		t.Fatal(err)
 	}

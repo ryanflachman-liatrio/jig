@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -13,8 +12,10 @@ import (
 const FieldArtifact FieldType = "artifact"
 
 type moduleExpansion struct {
-	sources map[string]ModuleSource
-	locked  map[string]ModuleSource
+	capture  *authoringLoad
+	expanded int
+	sources  map[string]ModuleSource
+	locked   map[string]ModuleSource
 }
 
 type expandedModule struct {
@@ -26,8 +27,8 @@ type expandedModule struct {
 // steps. The resulting graph is the only graph the engine validates or runs.
 func expandModules(wf *Workflow, baseDir, sourcePath string, locked map[string]ModuleSource) error {
 	wf.publicSteps = cloneSteps(wf.Steps)
-	e := &moduleExpansion{sources: make(map[string]ModuleSource), locked: locked}
-	if err := e.expand(wf, baseDir, sourcePath, nil); err != nil {
+	e := &moduleExpansion{sources: make(map[string]ModuleSource), locked: locked, capture: wf.authoring}
+	if err := e.expand(wf, baseDir, sourcePath, "", nil); err != nil {
 		return err
 	}
 	paths := make([]string, 0, len(e.sources))
@@ -42,7 +43,10 @@ func expandModules(wf *Workflow, baseDir, sourcePath string, locked map[string]M
 	return nil
 }
 
-func (e *moduleExpansion) expand(wf *Workflow, baseDir, sourcePath string, stack []string) error {
+func (e *moduleExpansion) expand(wf *Workflow, baseDir, sourcePath, prefix string, stack []string) error {
+	if len(stack) > 32 {
+		return CaptureLimit
+	}
 	if wf.Module != nil {
 		if err := markModuleInputs(wf); err != nil {
 			return err
@@ -52,6 +56,10 @@ func (e *moduleExpansion) expand(wf *Workflow, baseDir, sourcePath string, stack
 	modules := make(map[string]expandedModule)
 	for _, raw := range wf.Steps {
 		if raw.Type != StepSubworkflow {
+			if e.expanded >= 1024 {
+				return CaptureLimit
+			}
+			e.expanded++
 			out = append(out, cloneStep(raw))
 			continue
 		}
@@ -60,6 +68,9 @@ func (e *moduleExpansion) expand(wf *Workflow, baseDir, sourcePath string, stack
 		}
 		if baseDir == "" {
 			return fmt.Errorf("step %q: module loading requires a workflow directory", raw.ID)
+		}
+		if err := captureValidatePath(raw.Module); err != nil {
+			return err
 		}
 		modulePath := filepath.Clean(filepath.Join(baseDir, raw.Module))
 		if filepath.IsAbs(raw.Module) || modulePath == baseDir || !withinDir(baseDir, modulePath) {
@@ -75,11 +86,14 @@ func (e *moduleExpansion) expand(wf *Workflow, baseDir, sourcePath string, stack
 			return fmt.Errorf("step %q: resolve module %q: %w", raw.ID, raw.Module, err)
 		}
 		absModulePath = filepath.Clean(absModulePath)
-		data, err := e.moduleData(absModulePath)
+		if len(stack) >= 32 {
+			return CaptureLimit
+		}
+		data, err := e.moduleData(absModulePath, raw.Module, sourcePath, prefix+raw.ID)
 		if err != nil {
 			return fmt.Errorf("step %q: read module %q: %w", raw.ID, raw.Module, err)
 		}
-		child, err := decodePrepared(string(data), filepath.Dir(modulePath))
+		child, err := decodePreparedCaptured(string(data), filepath.Dir(modulePath), absModulePath, e.capture)
 		if err != nil {
 			return fmt.Errorf("step %q: module %q: %w", raw.ID, raw.Module, err)
 		}
@@ -95,7 +109,7 @@ func (e *moduleExpansion) expand(wf *Workflow, baseDir, sourcePath string, stack
 		rebaseModuleAssets(child, filepath.Dir(absModulePath))
 		sum := sha256.Sum256(data)
 		e.sources[absModulePath] = ModuleSource{Path: absModulePath, SHA256: hex.EncodeToString(sum[:]), TOML: string(data)}
-		if err := e.expand(child, filepath.Dir(absModulePath), absModulePath, append(stack, absModulePath)); err != nil {
+		if err := e.expand(child, filepath.Dir(absModulePath), absModulePath, prefix+raw.ID+"__", append(stack, absModulePath)); err != nil {
 			return err
 		}
 		if err := resolveModuleExports(child, modules); err != nil {
@@ -272,7 +286,7 @@ func rewriteModuleReference(raw string, modules map[string]expandedModule) (stri
 	return result, nil
 }
 
-func (e *moduleExpansion) moduleData(path string) ([]byte, error) {
+func (e *moduleExpansion) moduleData(path, reference, declaring, declaration string) ([]byte, error) {
 	if e.locked != nil {
 		source, ok := e.locked[path]
 		if !ok {
@@ -285,7 +299,13 @@ func (e *moduleExpansion) moduleData(path string) ([]byte, error) {
 		}
 		return data, nil
 	}
-	return os.ReadFile(path)
+	data, b, err := e.capture.file("", AssetModule, path, filepath.Dir(path), declaring)
+	if err == nil {
+		b.Reference = reference
+		b.Declaration = declaration
+		e.capture.sources = append(e.capture.sources, b)
+	}
+	return data, err
 }
 
 func markModuleInputs(wf *Workflow) error {

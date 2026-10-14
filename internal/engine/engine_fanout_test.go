@@ -137,7 +137,7 @@ func fanOutChildStatuses(events []Event) (childID string, statuses []step.Status
 // reset to pending, and succeeds on its second attempt — settling the family
 // with the retried child counted as succeeded.
 func TestForEachChild_AutomaticRetryUnmodified(t *testing.T) {
-	wf, err := workflow.Decode(singleChildTOML("on_failure = \"retry\"\nmax_retries = 2\n"), "")
+	wf, err := decodeEngineFixture(t, singleChildTOML("on_failure = \"retry\"\nmax_retries = 2\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestForEachChild_AutomaticRetryUnmodified(t *testing.T) {
 // timeout fails just that child (as "step timeout exceeded") without
 // affecting the family's ability to settle once it does.
 func TestForEachChild_TimeoutUnmodified(t *testing.T) {
-	wf, err := workflow.Decode(singleChildTOML("timeout = \"5ms\"\non_failure = \"continue\"\n"), "")
+	wf, err := decodeEngineFixture(t, singleChildTOML("timeout = \"5ms\"\non_failure = \"continue\"\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestForEachChild_TimeoutUnmodified(t *testing.T) {
 // and that an operator skip decision lets the family settle with that child
 // counted as an accepted failure.
 func TestForEachChild_SecurityEscalationUnmodified(t *testing.T) {
-	wf, err := workflow.Decode(singleChildTOML(""), "")
+	wf, err := decodeEngineFixture(t, singleChildTOML(""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +276,7 @@ loop:
 // address a fan-out child by its full instance id, exactly like an ordinary
 // agent step, and that answering it lets the family settle successfully.
 func TestForEachChild_QuestionGateUnmodified(t *testing.T) {
-	wf, err := workflow.Decode(singleChildTOML(""), "")
+	wf, err := decodeEngineFixture(t, singleChildTOML(""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +327,7 @@ loop:
 // id, exactly like an ordinary step, and lets the family settle once it
 // succeeds.
 func TestForEachChild_HumanRecoveryRetryUnmodified(t *testing.T) {
-	wf, err := workflow.Decode(singleChildTOML(""), "") // default on_failure = abort → recovery gate
+	wf, err := decodeEngineFixture(t, singleChildTOML("")) // default on_failure = abort → recovery gate
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +403,7 @@ type = "command"
 depends_on = ["analyze"]
 run = "echo done"
 `
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -322,7 +322,7 @@ func TestRunSnapshotFileReviewAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wf, err := workflow.Decode(string(fixture), "")
+	wf, err := decodeEngineFixture(t, string(fixture))
 	if err != nil {
 		t.Fatalf("decode acceptance fixture: %v", err)
 	}

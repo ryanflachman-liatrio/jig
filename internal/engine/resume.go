@@ -19,6 +19,8 @@ import (
 )
 
 type workflowSnapshot struct {
+	Authoring     *authoringReference     `json:"authoring,omitempty"`
+	Checksum      string                  `json:"checksum,omitempty"`
 	SourcePath    string                  `json:"source_path,omitempty"`
 	BaseDir       string                  `json:"base_dir,omitempty"`
 	SHA256        string                  `json:"sha256"`
@@ -43,12 +45,22 @@ func persistWorkflowSnapshot(runDir string, wf *workflow.Workflow) error {
 	if runDir == "" || wf == nil {
 		return nil
 	}
-	path, source := wf.Source()
-	if source == "" {
-		return nil
+	prepared, assets, err := workflow.PrepareAuthoring(wf, "")
+	if err != nil {
+		return err
 	}
+	authority, err := newRunAuthoring(assets)
+	if err != nil {
+		return err
+	}
+	return authority.publish(runDir, prepared, datastore.PublishAuthoring)
+}
+
+func encodeWorkflowSnapshot(wf *workflow.Workflow, ref *authoringReference) ([]byte, error) {
+	path, source := wf.Source()
 	sum := sha256.Sum256([]byte(source))
 	snap := workflowSnapshot{
+		Authoring:     ref,
 		SourcePath:    path,
 		BaseDir:       filepath.Dir(path),
 		SHA256:        hex.EncodeToString(sum[:]),
@@ -68,11 +80,19 @@ func persistWorkflowSnapshot(runDir string, wf *workflow.Workflow) error {
 			snap.NotificationSHA256 = hash
 		}
 	}
-	data, err := json.MarshalIndent(snap, "", "  ")
+	raw, err := json.Marshal(snap)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return os.WriteFile(datastore.WorkflowSnapshotPath(runDir), data, 0o644)
+	snap.Checksum = authoringDigest(raw)
+	data, err := json.Marshal(snap)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > 32<<20 {
+		return nil, workflow.CaptureLimit
+	}
+	return data, nil
 }
 
 func loadWorkflowSnapshot(runDir string) (*workflow.Workflow, error) {
@@ -94,9 +114,27 @@ func LoadWorkflowSnapshot(runDir string) (*workflow.Workflow, error) {
 // file handle (e.g. a traversal-resistant os.Root read) can validate a
 // snapshot's checksums without going through a path-based loader.
 func DecodeWorkflowSnapshot(data []byte) (*workflow.Workflow, error) {
+	if len(data) > 32<<20 {
+		return nil, workflow.CaptureLimit
+	}
 	var snap workflowSnapshot
+	if err := datastore.CheckAuthoringJSON(data, 32<<20); err != nil {
+		return nil, workflow.CaptureIntegrity
+	}
 	if err := json.Unmarshal(data, &snap); err != nil {
 		return nil, fmt.Errorf("decode workflow snapshot: %w", err)
+	}
+	if snap.Authoring != nil {
+		if err := datastore.DecodeAuthoringRecord(data, 32<<20, &snap); err != nil {
+			return nil, workflow.CaptureIntegrity
+		}
+		checksum := snap.Checksum
+		snap.Checksum = ""
+		raw, err := json.Marshal(snap)
+		if err != nil || checksum == "" || authoringDigest(raw) != checksum {
+			return nil, workflow.CaptureIntegrity
+		}
+		snap.Checksum = checksum
 	}
 	sum := sha256.Sum256([]byte(snap.TOML))
 	if hex.EncodeToString(sum[:]) != snap.SHA256 {
@@ -190,9 +228,18 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	if err != nil {
 		return fail(err)
 	}
+	for _, event := range events {
+		if failure, ok := event.(RunError); ok && failure.CaptureReason != "" {
+			return fail(fmt.Errorf("run has a fatal authoring capture failure; start a new run: %w", failure.CaptureReason))
+		}
+	}
 	wf, err := loadWorkflowSnapshot(runDir)
 	if err != nil {
 		return fail(fmt.Errorf("resume workflow: %w", err))
+	}
+	authority, err := restoreRunAuthoring(runDir, wf)
+	if err != nil {
+		return fail(err)
 	}
 	checkpoint, err := restoreUnfinishedCheckpoint(runDir, wf, events)
 	if err != nil {
@@ -232,6 +279,7 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 		close(run.done)
 	}
 	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir, m.root, repoRoot, onDone)
+	s.authoring = authority
 	s.resolver = m.resolver
 	s.secretResolver = secrets
 	s.getCauseHint = run.causeSnapshot

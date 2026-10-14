@@ -128,7 +128,7 @@ func TestResumeRepairsInterruptedRecoveryTransactionAtEveryRecordBoundary(t *tes
 			name = "after complete batch"
 		}
 		t.Run(name, func(t *testing.T) {
-			wf, err := workflow.Decode(`
+			wf, err := decodeEngineFixture(t, `
 [workflow]
 name = "repair-recovery"
 version = "1"
@@ -136,7 +136,7 @@ version = "1"
 id = "agent"
 type = "agent"
 skill = "agent"
-`, "")
+`)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -208,7 +208,7 @@ type = "command"
 run = "true"
 depends_on = ["scope", "gate"]
 `
-	wf, err := workflow.Decode(source, "")
+	wf, err := decodeEngineFixture(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ depends_on = ["scope", "gate"]
 }
 
 func TestResumeParksInterruptedWorkerOnRecovery(t *testing.T) {
-	wf, err := workflow.Decode(`
+	wf, err := decodeEngineFixture(t, `
 [workflow]
 name = "worker"
 version = "1"
@@ -307,7 +307,7 @@ version = "1"
 id = "agent"
 type = "agent"
 skill = "agent"
-`, "")
+`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -441,7 +441,7 @@ type = "command"
 run = "true"
 depends_on = ["gate"]
 `
-	wf, err := workflow.Decode(source, "")
+	wf, err := decodeEngineFixture(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -519,7 +519,7 @@ depends_on = ["gate"]
 }
 
 func TestResumeRestoresBlockOnInput(t *testing.T) {
-	wf, err := workflow.Decode(`
+	wf, err := decodeEngineFixture(t, `
 [workflow]
 name = "parked"
 version = "1"
@@ -528,7 +528,7 @@ id = "agent"
 type = "agent"
 isolation = "none"
 skill = "agent"
-`, "")
+`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -573,7 +573,7 @@ skill = "agent"
 }
 
 func TestResumeRestoresStoppedStep(t *testing.T) {
-	wf, err := workflow.Decode(`
+	wf, err := decodeEngineFixture(t, `
 [workflow]
 name = "stopped"
 version = "1"
@@ -581,7 +581,7 @@ version = "1"
 id = "agent"
 type = "agent"
 skill = "agent"
-`, "")
+`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -620,7 +620,7 @@ skill = "agent"
 }
 
 func TestResumeRestoresAgentQuestion(t *testing.T) {
-	wf, err := workflow.Decode(`
+	wf, err := decodeEngineFixture(t, `
 [workflow]
 name = "question"
 version = "1"
@@ -629,7 +629,7 @@ id = "agent"
 type = "agent"
 isolation = "none"
 skill = "agent"
-`, "")
+`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -678,7 +678,7 @@ skill = "agent"
 }
 
 func TestResumeNeedsInputWithoutPayloadDegradesToRecovery(t *testing.T) {
-	wf, err := workflow.Decode(`
+	wf, err := decodeEngineFixture(t, `
 [workflow]
 name = "lost-input"
 version = "1"
@@ -686,7 +686,7 @@ version = "1"
 id = "agent"
 type = "agent"
 skill = "agent"
-`, "")
+`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -720,7 +720,7 @@ skill = "agent"
 }
 
 func TestResumeRehydratesExistingRecovery(t *testing.T) {
-	wf, err := workflow.Decode(`
+	wf, err := decodeEngineFixture(t, `
 [workflow]
 name = "recovery-park"
 version = "1"
@@ -729,7 +729,7 @@ id = "agent"
 type = "agent"
 isolation = "none"
 skill = "agent"
-`, "")
+`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -773,7 +773,7 @@ skill = "agent"
 }
 
 func TestResumeRestoresMixedParkKinds(t *testing.T) {
-	wf, err := workflow.Decode(`
+	wf, err := decodeEngineFixture(t, `
 [workflow]
 name = "mixed-parks"
 version = "1"
@@ -797,7 +797,7 @@ id = "worker"
 type = "agent"
 isolation = "none"
 skill = "agent"
-`, "")
+`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -874,7 +874,7 @@ func TestResumeIntegrationConflictPreservesRunWorktree(t *testing.T) {
 	initRepo(t, repoRoot)
 	root := filepath.Join(repoRoot, ".jig")
 	const runID = "integration-run"
-	wf, err := workflow.Decode(`
+	wf, err := decodeEngineFixture(t, `
 [workflow]
 name = "integration-park"
 version = "1"
@@ -883,7 +883,7 @@ id = "agent"
 type = "agent"
 skill = "agent"
 isolation = "worktree"
-`, "")
+`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -962,7 +962,7 @@ func TestResumeIntegrationWithoutConflictMarkersFailsClosed(t *testing.T) {
 	initRepo(t, repoRoot)
 	root := filepath.Join(repoRoot, ".jig")
 	const runID = "missing-conflict"
-	wf, err := workflow.Decode(`
+	wf, err := decodeEngineFixture(t, `
 [workflow]
 name = "missing-conflict"
 version = "1"
@@ -970,7 +970,7 @@ version = "1"
 id = "agent"
 type = "agent"
 skill = "agent"
-`, "")
+`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1036,7 +1036,7 @@ run = "true"
 }
 
 func TestResumeRecoverResumeUsesDurableSession(t *testing.T) {
-	wf, err := workflow.Decode(`
+	wf, err := decodeEngineFixture(t, `
 [workflow]
 name = "resume-sess"
 version = "1"
@@ -1045,7 +1045,7 @@ id = "agent"
 type = "agent"
 isolation = "none"
 skill = "agent"
-`, "")
+`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1220,7 +1220,7 @@ depends_on = ["failed"]
 }
 
 func TestFailedCrashSessionResumeReparksWithoutResume(t *testing.T) {
-	wf, err := workflow.Decode(`
+	wf, err := decodeEngineFixture(t, `
 [workflow]
 name = "dead-session"
 version = "1"
@@ -1229,7 +1229,7 @@ id = "agent"
 type = "agent"
 isolation = "none"
 skill = "agent"
-`, "")
+`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1300,7 +1300,7 @@ func TestResumeMutationWorktreeRecovery(t *testing.T) {
 			initRepo(t, repoRoot)
 			root := filepath.Join(repoRoot, ".jig")
 			runID := strings.ReplaceAll(tc.name, " ", "-")
-			wf, err := workflow.Decode(`
+			wf, err := decodeEngineFixture(t, `
 [workflow]
 name = "worktree-recovery"
 version = "1"
@@ -1309,7 +1309,7 @@ id = "agent"
 type = "agent"
 skill = "agent"
 isolation = "worktree"
-`, "")
+`)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1526,7 +1526,7 @@ func (e *capAwareExec) Execute(_ context.Context, req StepRequest, _ Reporter) (
 }
 
 func TestEnterRecoveryRespectsCapSessionResume(t *testing.T) {
-	wf, err := workflow.Decode(`
+	wf, err := decodeEngineFixture(t, `
 [workflow]
 name = "cap"
 version = "1"
@@ -1534,7 +1534,7 @@ version = "1"
 id = "agent"
 type = "agent"
 skill = "agent"
-`, "")
+`)
 	if err != nil {
 		t.Fatal(err)
 	}

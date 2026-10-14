@@ -31,6 +31,27 @@ func decodeWF(t *testing.T, toml string) *workflow.Workflow {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Start now captures declared skill bundles even under fake executors.
+	base := t.TempDir()
+	hasSkills := false
+	for _, s := range wf.Steps {
+		if s.Skill != "" {
+			hasSkills = true
+			dir := filepath.Join(base, s.Skill)
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: fixture\ndescription: Synthetic headless fixture\n---\nFixture instructions.\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if hasSkills {
+		wf, err = workflow.Decode(toml, base)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	return wf
 }
 

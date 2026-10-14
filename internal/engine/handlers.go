@@ -137,6 +137,9 @@ func phRunValidateGate(s *scheduler, m stepDoneMsg, wfStep *workflow.Step) postE
 // No-ops when there is no run branch (persistence-off / non-git) or the step has
 // no worktree (read-only step): nothing to integrate.
 func phSquashMergeIntegration(s *scheduler, m stepDoneMsg, _ *workflow.Step) postExecDecision {
+	if !s.verifyAuthoring(m.stepID) {
+		return decisionNeedsInput
+	}
 	if s.runBranch == "" {
 		return decisionContinue
 	}

@@ -397,6 +397,16 @@ func TestCommandExecutor_ScriptResolvedFromRepoRoot(t *testing.T) {
 			Script: "scripts/hello.sh",
 		},
 	}
+	prepared, assets, err := workflow.PrepareAuthoring(&workflow.Workflow{Steps: []workflow.Step{*req.Step}}, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Step = &prepared.Steps[0]
+	req.Assets = assets
+	req.AssetOwner = "s"
+	if err := os.Remove(filepath.Join(root, "scripts", "hello.sh")); err != nil {
+		t.Fatal(err)
+	}
 	rep := &noopReporter{}
 	result, err := exec.Execute(context.Background(), req, rep)
 	if err != nil {

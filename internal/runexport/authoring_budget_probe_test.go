@@ -2,29 +2,37 @@ package runexport
 
 import (
 	"bytes"
-	"encoding/json"
+	"context"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-// P3 probes the existing selected-source reader's budget without adding an
-// authoring source or changing production snapshot/export semantics.
+// Exercise the selected-source budget with a production capture snapshot.
+// Export must not follow its authoring reference.
 func TestAuthoringAssetSnapshotExportBudgetProbe(t *testing.T) {
-	_, dir := makeRunStore(t)
-	writeWorkflowSnapshot(t, dir)
-	path := filepath.Join(dir, "workflow.json")
-	data, err := os.ReadFile(path)
+	wf, err := workflow.Decode("[workflow]\nname='budget'\nversion='1'\n[[step]]\nid='worker'\ntype='command'\nrun='true'\n", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
+	manager := engine.NewManager(authoringBudgetExecutor{}, filepath.Join(t.TempDir(), ".jig"))
+	run, err := manager.Start(wf)
+	if err != nil {
 		t.Fatal(err)
 	}
-	// An unavailable reference must never become an additional selected source.
-	raw["authoring"] = json.RawMessage(`{"version":1,"path":"/unavailable/private/manifest.json"}`)
-	data, err = json.Marshal(raw)
+	if run.Wait().Failed {
+		t.Fatal("fixture failed")
+	}
+	dir := manager.RunDir(run.ID)
+	// Pure export decoding must not follow a valid reference to unavailable data.
+	if err := os.RemoveAll(filepath.Join(dir, "authoring")); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "workflow.json")
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,4 +62,10 @@ func TestAuthoringAssetSnapshotExportBudgetProbe(t *testing.T) {
 		}
 	}
 	t.Logf("32 MiB snapshot fits 256 MiB aggregate reader; one-byte-short remaining budget reports gap; authoring reference not read")
+}
+
+type authoringBudgetExecutor struct{}
+
+func (authoringBudgetExecutor) Execute(context.Context, engine.StepRequest, engine.Reporter) (*step.Result, error) {
+	return &step.Result{Status: step.StatusSucceeded}, nil
 }

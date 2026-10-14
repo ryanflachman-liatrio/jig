@@ -16,7 +16,7 @@ import (
 // No executor, no persistence, no git — only s.wf is populated.
 func buildScheduler(t *testing.T, toml string) *scheduler {
 	t.Helper()
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatalf("workflow.Decode: %v", err)
 	}

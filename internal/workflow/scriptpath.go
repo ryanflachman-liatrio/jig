@@ -34,14 +34,13 @@ func RepoRoot(startDir string) string {
 	}
 }
 
-// ScriptPath resolves a command step's `script` value to the path the runner
-// should read. An absolute script is returned unchanged; a relative script is
+// ScriptPath resolves a command step's `script` value at the authoring boundary. An absolute script is returned unchanged; a relative script is
 // joined onto root (the project root). When root is "" the script is returned
-// as-is, to be resolved against the execution cwd (persistence-off / tests).
+// as-is; preparation supplies its captured authoring base.
 //
 // This is the single source of truth for script resolution: both the load-time
-// validator (existence check) and the runtime runner call it, so the path that
-// validates is exactly the path that runs.
+// validator checks this anchor and preparation freezes it before dispatch.
+// The runner consumes captured bytes and never reopens this path.
 func ScriptPath(root, script string) string {
 	if script == "" || filepath.IsAbs(script) || root == "" {
 		return script

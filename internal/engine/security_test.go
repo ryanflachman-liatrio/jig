@@ -138,7 +138,7 @@ type = "agent"
 skill = "agent"
 isolation = "none"
 `
-	wf, err := workflow.Decode(source, "")
+	wf, err := decodeEngineFixture(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestForEachChildUsesResolvedTier2Policy(t *testing.T) {
 			if tc.child != "" {
 				source = strings.Replace(source, "skill = \"skills/analyze\"\n", "skill = \"skills/analyze\"\n  [step.security]\n  "+tc.child+"\n", 1)
 			}
-			wf, err := workflow.Decode(source, "")
+			wf, err := decodeEngineFixture(t, source)
 			if err != nil {
 				t.Fatal(err)
 			}

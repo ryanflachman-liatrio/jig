@@ -1063,7 +1063,7 @@ output = "` + outPath + `"
 output_exists = true
 output_contains = "hello"
 `
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1435,7 +1435,7 @@ run = "echo c"
 depends_on = ["b"]
 inputs = ["@b.result"]
 `
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1582,7 +1582,7 @@ goto = "scope"
 max_iterations = 2
 feedback = "@gate"
 `
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1706,7 +1706,7 @@ type = "command"
 run = "echo after"
 depends_on = ["chat"]
 `
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1792,7 +1792,7 @@ block_on = "chat.needs_input"
   [step.schema]
   needs_input = "bool"
 `
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2222,7 +2222,7 @@ skill      = "b"
 depends_on = ["a"]
 inputs     = ["@a.areas"]
 `
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2269,7 +2269,7 @@ type   = "agent"
 skill  = "b"
 inputs = ["testdata/request.md"]
 `
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2377,7 +2377,7 @@ skill      = "b"
 depends_on = ["a"]
 inputs     = ["@a"]
 `
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2558,7 +2558,7 @@ command = "false"
 	})
 
 	t.Run("session flush failure fails closed", func(t *testing.T) {
-		wf, err := workflow.Decode(`
+		wf, err := decodeEngineFixture(t, `
 [workflow]
 name = "val-session"
 version = "0.1"
@@ -2568,7 +2568,7 @@ type = "agent"
 skill = "check"
 [step.validate]
 command = "true"
-`, "")
+`)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -2601,7 +2601,7 @@ command = "true"
 }
 
 func TestDispatchClearsStaleSessionBeforeJournalingRunning(t *testing.T) {
-	wf, err := workflow.Decode(`
+	wf, err := decodeEngineFixture(t, `
 [workflow]
 name = "fresh-session"
 version = "1"
@@ -2609,7 +2609,7 @@ version = "1"
 id = "agent"
 type = "agent"
 skill = "agent"
-`, "")
+`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2672,7 +2672,7 @@ type     = "agent"
 skill    = "test"
 block_on = "mystep.status == 'blocked'"
 `
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}

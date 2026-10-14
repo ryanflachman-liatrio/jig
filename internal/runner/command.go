@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -47,13 +48,18 @@ func NewCommandExecutor(cwd string) *CommandExecutor {
 func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, rep engine.Reporter) (*step.Result, error) {
 	start := time.Now()
 
-	cmdStr, err := resolveCommand(req.Step.Run, req.Step.Script, req.RepoRoot)
+	cmdStr, err := resolveCommand(req)
 	if err != nil {
+		var capture workflow.CaptureError
+		var fatal error
+		if errors.As(err, &capture) {
+			fatal = err
+		}
 		return &step.Result{
 			Status:   step.StatusFailed,
 			Err:      err.Error(),
 			Duration: time.Since(start),
-		}, nil
+		}, fatal
 	}
 
 	// Run via the POSIX shell so the command string can include pipes,
@@ -267,33 +273,23 @@ func writeCommandTranscript(req engine.StepRequest, rep engine.Reporter, output 
 // resolveCommand returns the shell expression to pass to sh -c.
 // Exactly one of run or script must be non-empty; the workflow validator
 // enforces this at load time.
-//
-// A `script` is a file path resolved against repoRoot (the project root) — the
-// same anchor the validator checked at load time, via workflow.ScriptPath — so
-// the path that validated is the path that runs, regardless of the execution
-// cwd (which stays the step worktree so the script operates on that code). A
-// multi-line `script` is treated as an inline shell body, not a path. When
-// repoRoot is "" (persistence-off / tests) the path is resolved against the cwd.
-func resolveCommand(run, script, repoRoot string) (string, error) {
+// File scripts come only from the verified run capture. Literal run and
+// multiline script values retain their shell semantics; execution CWD never
+// selects authoring bytes.
+func resolveCommand(req engine.StepRequest) (string, error) {
+	run, script := req.Step.Run, req.Step.Script
 	if run != "" && script != "" {
-		// Defensive: validator should have caught this, but fail loudly.
 		return "", fmt.Errorf("step has both run and script set; only one is allowed")
 	}
 	if run != "" {
 		return run, nil
 	}
+	if strings.Contains(script, "\n") {
+		return script, nil
+	}
 	if script != "" {
-		// A multi-line value is an inline script body; a single-line value is a
-		// path to a script file (resolved from the project root).
-		if strings.Contains(script, "\n") {
-			return script, nil
-		}
-		path := workflow.ScriptPath(repoRoot, script)
-		body, err := os.ReadFile(path)
-		if err != nil {
-			return "", fmt.Errorf("read script file %q: %w", path, err)
-		}
-		return string(body), nil
+		data, err := req.Assets.Bytes(req.AssetOwner, workflow.AssetScript)
+		return string(data), err
 	}
 	return "", fmt.Errorf("command step has neither run nor script")
 }

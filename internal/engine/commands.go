@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -65,6 +66,18 @@ func (m stepDoneMsg) execute(s *scheduler) {
 	if cancel, ok := s.stepCancels[m.stepID]; ok {
 		cancel()
 		delete(s.stepCancels, m.stepID)
+	}
+
+	if s.fatalCaptureErr != nil {
+		return
+	}
+	var capture workflow.CaptureError
+	if errors.As(m.err, &capture) {
+		s.failCapture(capture)
+		return
+	}
+	if !s.verifyAuthoring(m.stepID) {
+		return
 	}
 
 	// A step escalated to StatusAwaitingRecovery by a critical security finding

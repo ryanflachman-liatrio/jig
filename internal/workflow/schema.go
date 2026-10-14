@@ -86,6 +86,7 @@ type Workflow struct {
 	// validation and later execution can resolve references in O(1).
 	index map[string]int
 
+	authoring  *authoringLoad
 	sourcePath string
 	sourceTOML string
 
@@ -309,6 +310,9 @@ type Defaults struct {
 // they apply to; validate() enforces that only the right fields are set for a
 // given Type.
 type Step struct {
+	assets                               []AssetBinding
+	scriptAnchor, assetAnchor, declaring string
+
 	ID         string        `toml:"id"`
 	Type       StepType      `toml:"type"`
 	DependsOn  []string      `toml:"depends_on"`

@@ -2,393 +2,43 @@
 
 package workflow
 
-// P3 experimental collector. Deliberately test-only until the full proof gate
-// passes; Load and Manager.Start do not call this code.
+// P3 qualification cases now exercise the production collector.
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/sys/unix"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
-	"golang.org/x/sys/unix"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/unicode/norm"
 )
 
-const p3FileLimit = 1 << 20
+// P3 policy probes exercise the production collector.
+const p3FileLimit = captureFileLimit
 
-type p3Error string
+type p3Error = captureError
 
-func (e p3Error) Error() string { return "authoring capture: " + string(e) }
+const p3Limit = captureLimit
+const p3Forbidden = captureForbidden
+const p3Unsupported = captureUnsupported
+const p3Integrity = captureIntegrity
+const p3Storage = captureStorage
 
-// No source path or bytes appear in diagnostic errors.
-const (
-	p3Limit       p3Error = "limit"
-	p3Forbidden   p3Error = "forbidden_path"
-	p3Unsupported p3Error = "unsupported_file"
-	p3Integrity   p3Error = "integrity"
-	p3Storage     p3Error = "storage"
-)
+type p3Ledger = captureLedger
+type p3Capture = captureCapture
 
-type p3Ledger struct {
-	read, unique, bindings, links, visited int
-	blobs                                  map[[32]byte][]byte
-}
+var p3ValidatePath = captureValidatePath
+var p3Pin = capturePin
+var p3SameSource = captureSameSource
 
-type p3Capture struct {
-	bytes      []byte
-	digest     [32]byte
-	executable bool
-}
+type p3Namespace = captureNamespace
 
-func p3ValidatePath(path string) error {
-	if !utf8.ValidString(path) || len(path) > 4096 {
-		return p3Limit
-	}
-	for _, r := range path {
-		if unicode.IsControl(r) {
-			return p3Forbidden
-		}
-	}
-	parts := strings.Split(filepath.ToSlash(path), "/")
-	for i, part := range parts {
-		if len(part) > 255 {
-			return p3Limit
-		}
-		folded := cases.Fold().String(part)
-		switch folded {
-		case ".git", ".jig", ".ssh", ".aws", ".azure", ".kube", ".gnupg", ".docker", ".env", ".netrc", ".npmrc", ".pypirc", "auth.json", "credentials.json":
-			return p3Forbidden
-		}
-		if strings.HasPrefix(folded, ".env.") {
-			return p3Forbidden
-		}
-		if folded == "gcloud" && i > 0 && cases.Fold().String(parts[i-1]) == ".config" {
-			return p3Forbidden
-		}
-	}
-	clean := filepath.Clean(path)
-	for _, root := range []string{"/dev", "/proc", "/sys"} {
-		if clean == root || strings.HasPrefix(clean, root+"/") {
-			return p3Forbidden
-		}
-	}
-	return nil
-}
-
-// Canonicalize only the selected anchor, then pin each component without
-// following links. Files below this anchor never use a path-based ordinary open.
-func p3Pin(path string) (*os.File, error) {
-	if err := p3ValidatePath(path); err != nil {
-		return nil, err
-	}
-	canonical, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return nil, p3Storage
-	}
-	canonical, err = filepath.Abs(canonical)
-	if err != nil {
-		return nil, p3Storage
-	}
-	if err := p3ValidatePath(canonical); err != nil {
-		return nil, err
-	}
-	fd, err := unix.Open("/", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
-	if err != nil {
-		return nil, p3Storage
-	}
-	for _, component := range strings.Split(strings.TrimPrefix(canonical, "/"), "/") {
-		if component == "" {
-			continue
-		}
-		next, openErr := unix.Openat(fd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-		unix.Close(fd)
-		if openErr != nil {
-			return nil, p3Storage
-		}
-		fd = next
-	}
-	return os.NewFile(uintptr(fd), "p3-anchor"), nil
-}
-
-func (l *p3Ledger) capture(root *os.File, relative string, afterOpen func()) (p3Capture, error) {
-	var empty p3Capture
-	if err := p3ValidatePath(relative); err != nil {
-		return empty, err
-	}
-	if filepath.IsAbs(relative) {
-		return empty, p3Forbidden
-	}
-	if l.bindings >= 2048 {
-		return empty, p3Limit
-	}
-	l.bindings++
-	localLinks := 0
-	for {
-		clean := filepath.Clean(relative)
-		if clean == ".." || strings.HasPrefix(clean, "../") {
-			return empty, p3Forbidden
-		}
-		parts := strings.Split(clean, "/")
-		if len(parts) > 64 {
-			return empty, p3Limit
-		}
-		fd, err := unix.Openat(int(root.Fd()), ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
-		if err != nil {
-			return empty, p3Storage
-		}
-		for _, part := range parts[:len(parts)-1] {
-			next, openErr := unix.Openat(fd, part, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-			unix.Close(fd)
-			if openErr != nil {
-				return empty, p3Forbidden
-			}
-			fd = next
-		}
-		name := parts[len(parts)-1]
-		var before unix.Stat_t
-		err = unix.Fstatat(fd, name, &before, unix.AT_SYMLINK_NOFOLLOW)
-		if err != nil {
-			unix.Close(fd)
-			return empty, p3Storage
-		}
-		if before.Mode&unix.S_IFMT == unix.S_IFLNK {
-			if localLinks >= 16 || l.links >= 1024 {
-				unix.Close(fd)
-				return empty, p3Limit
-			}
-			localLinks++
-			l.links++
-			buf := make([]byte, 4097)
-			n, readErr := unix.Readlinkat(fd, name, buf)
-			unix.Close(fd)
-			if readErr != nil {
-				return empty, p3Storage
-			}
-			if n > 4096 {
-				return empty, p3Limit
-			}
-			target := string(buf[:n])
-			if filepath.IsAbs(target) {
-				return empty, p3Forbidden
-			}
-			if err := p3ValidatePath(target); err != nil {
-				return empty, err
-			}
-			relative = filepath.Join(filepath.Dir(clean), target)
-			if err := p3ValidatePath(relative); err != nil {
-				return empty, err
-			}
-			continue
-		}
-		fileFD, openErr := unix.Openat(fd, name, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
-		if openErr != nil {
-			unix.Close(fd)
-			return empty, p3Unsupported
-		}
-		f := os.NewFile(uintptr(fileFD), "p3-source")
-		info, statErr := f.Stat()
-		if statErr != nil || !info.Mode().IsRegular() {
-			f.Close()
-			unix.Close(fd)
-			return empty, p3Unsupported
-		}
-		var opened unix.Stat_t
-		if unix.Fstat(fileFD, &opened) != nil || opened.Dev != before.Dev || opened.Ino != before.Ino {
-			f.Close()
-			unix.Close(fd)
-			return empty, p3Integrity
-		}
-		if afterOpen != nil {
-			afterOpen()
-		}
-		allowance := min(p3FileLimit, (32<<20)-l.read)
-		if allowance < 0 {
-			allowance = 0
-		}
-		data, readErr := io.ReadAll(io.LimitReader(f, int64(allowance)+1))
-		l.read += len(data)
-		var after, pathAfter unix.Stat_t
-		statErr = unix.Fstat(fileFD, &after)
-		pathErr := unix.Fstatat(fd, name, &pathAfter, unix.AT_SYMLINK_NOFOLLOW)
-		closeErr := f.Close()
-		unix.Close(fd)
-		if readErr != nil || closeErr != nil || statErr != nil {
-			return empty, p3Storage
-		}
-		if len(data) > allowance {
-			return empty, p3Limit
-		}
-		if pathErr != nil || pathAfter.Dev != opened.Dev || pathAfter.Ino != opened.Ino || pathAfter.Mode&unix.S_IFMT != unix.S_IFREG || !p3SameSource(opened, after) {
-			return empty, p3Integrity
-		}
-		digest := sha256.Sum256(data)
-		if l.blobs == nil {
-			l.blobs = make(map[[32]byte][]byte)
-		}
-		if _, ok := l.blobs[digest]; !ok {
-			if len(l.blobs) >= 1024 || l.unique+len(data) > 16<<20 {
-				return empty, p3Limit
-			}
-			l.blobs[digest] = bytes.Clone(data)
-			l.unique += len(data)
-		}
-		return p3Capture{bytes: data, digest: digest, executable: info.Mode()&0111 != 0}, nil
-	}
-}
-
-// Reads may update atime; changes to source identity, size, permissions,
-// link count, mtime or ctime remain observable integrity failures.
-func p3SameSource(a, b unix.Stat_t) bool {
-	return a.Dev == b.Dev && a.Ino == b.Ino && a.Size == b.Size && a.Mode == b.Mode &&
-		a.Nlink == b.Nlink && a.Mtim == b.Mtim && a.Ctim == b.Ctim
-}
-
-// p3Namespace rejects collisions before any content is read. Directories and
-// files share one namespace; an implicit file prefix cannot become a directory.
-type p3Namespace map[string]bool
-
-func (n p3Namespace) add(path string, directory bool) error {
-	if !norm.NFC.IsNormalString(path) {
-		return p3Forbidden
-	}
-	key := cases.Fold().String(path)
-	if _, exists := n[key]; exists {
-		return p3Forbidden
-	}
-	for prefix := filepath.Dir(key); prefix != "."; prefix = filepath.Dir(prefix) {
-		if isDir, exists := n[prefix]; exists && !isDir {
-			return p3Forbidden
-		}
-	}
-	if !directory {
-		for old := range n {
-			if strings.HasPrefix(old, key+"/") {
-				return p3Forbidden
-			}
-		}
-	}
-	n[key] = directory
-	return nil
-}
-
-func p3SelectBundle(path, project string) (*os.File, error) {
-	canonical, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return nil, p3Storage
-	}
-	canonical, err = filepath.Abs(canonical)
-	if err != nil {
-		return nil, p3Storage
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, p3Storage
-	}
-	for _, protected := range []string{home, project} {
-		if protected == "" {
-			continue
-		}
-		protected, err = filepath.EvalSymlinks(protected)
-		if err != nil {
-			return nil, p3Storage
-		}
-		protected, err = filepath.Abs(protected)
-		if err != nil {
-			return nil, p3Storage
-		}
-		if canonical == protected || withinDir(canonical, protected) {
-			return nil, p3Forbidden
-		}
-	}
-	return p3Pin(path)
-}
-
-func (l *p3Ledger) bundle(root *os.File) (map[string]p3Capture, error) {
-	files := make(map[string]p3Capture)
-	names := make(p3Namespace)
-	total := 0
-	var walk func(*os.File, string, int) error
-	walk = func(dir *os.File, prefix string, depth int) error {
-		if depth > 16 {
-			return p3Limit
-		}
-		for {
-			entries, err := dir.ReadDir(64)
-			if err != nil && err != io.EOF {
-				return p3Storage
-			}
-			for _, entry := range entries {
-				if l.visited >= 8192 {
-					return p3Limit
-				}
-				l.visited++
-				name := filepath.Join(prefix, entry.Name())
-				if err := p3ValidatePath(name); err != nil {
-					return err
-				}
-				if err := names.add(name, entry.IsDir()); err != nil {
-					return err
-				}
-				if entry.IsDir() {
-					fd, err := unix.Openat(int(dir.Fd()), entry.Name(), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-					if err != nil {
-						return p3Forbidden
-					}
-					child := os.NewFile(uintptr(fd), "p3-directory")
-					walkErr := walk(child, name, depth+1)
-					closeErr := child.Close()
-					if walkErr != nil {
-						return walkErr
-					}
-					if closeErr != nil {
-						return p3Storage
-					}
-				} else {
-					if len(files) >= 256 {
-						return p3Limit
-					}
-					captured, err := l.capture(root, name, nil)
-					if err != nil {
-						return err
-					}
-					if total+len(captured.bytes) > 4<<20 {
-						return p3Limit
-					}
-					total += len(captured.bytes)
-					files[name] = captured
-				}
-			}
-			if err == io.EOF {
-				return nil
-			}
-		}
-	}
-	// Reopening the descriptor avoids consuming the caller's directory offset.
-	fd, err := unix.Openat(int(root.Fd()), ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
-	if err != nil {
-		return nil, p3Storage
-	}
-	dir := os.NewFile(uintptr(fd), "p3-bundle")
-	err = walk(dir, "", 0)
-	closeErr := dir.Close()
-	if err != nil {
-		return nil, err
-	}
-	if closeErr != nil {
-		return nil, p3Storage
-	}
-	return files, nil
-}
+var p3SelectBundle = captureSelectBundle
 
 func p3Write(t *testing.T, root, name string, data []byte) {
 	t.Helper()

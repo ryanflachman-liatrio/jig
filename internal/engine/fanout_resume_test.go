@@ -102,7 +102,7 @@ id = "solo"
 type = "command"
 run = "true"
 `
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ run = "true"
 // or Resume fails closed": a manifest that differs from what FanOutExpanded
 // journaled (rewritten, or never durably renamed) must never be trusted.
 func TestRestoreUnfinishedCheckpoint_ForEach_ManifestDigestMismatchFailsClosed(t *testing.T) {
-	wf, err := workflow.Decode(foreachTOML(8, ""), "")
+	wf, err := decodeEngineFixture(t, foreachTOML(8, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,7 +162,7 @@ func TestRestoreUnfinishedCheckpoint_ForEach_ManifestDigestMismatchFailsClosed(t
 // directory copied without its fanout/ subtree) fails closed rather than
 // silently creating zero children for a family the journal says has some.
 func TestRestoreUnfinishedCheckpoint_ForEach_MissingManifestFailsClosed(t *testing.T) {
-	wf, err := workflow.Decode(foreachTOML(8, ""), "")
+	wf, err := decodeEngineFixture(t, foreachTOML(8, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestRestoreUnfinishedCheckpoint_ForEach_MissingManifestFailsClosed(t *testi
 // manifest that exists but does not decode (disk corruption, a half-written
 // file that somehow survived) also fails closed.
 func TestRestoreUnfinishedCheckpoint_ForEach_CorruptManifestFailsClosed(t *testing.T) {
-	wf, err := workflow.Decode(foreachTOML(8, ""), "")
+	wf, err := decodeEngineFixture(t, foreachTOML(8, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestRestoreUnfinishedCheckpoint_ForEach_CorruptManifestFailsClosed(t *testi
 // succeeded, mid-flight (interrupted), and needs_input — are folded through
 // exactly the same classification a static step would get.
 func TestRestoreUnfinishedCheckpoint_ForEach_ExactItemReuseAndMixedParkKinds(t *testing.T) {
-	wf, err := workflow.Decode(foreachTOML(8, ""), "")
+	wf, err := decodeEngineFixture(t, foreachTOML(8, ""))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func TestRestoreUnfinishedCheckpoint_ForEach_ExactItemReuseAndMixedParkKinds(t *
 // notice every child is done and close the barrier — writing the aggregate
 // and letting the run finish — without any operator action.
 func TestResumeForEach_SettlesBarrierForAlreadyTerminalChildren(t *testing.T) {
-	wf, err := workflow.Decode(foreachTOML(8, ""), "")
+	wf, err := decodeEngineFixture(t, foreachTOML(8, ""))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -25,7 +25,8 @@ import (
 // Fixture-specific preparation, not a replacement collector. Workflow's P3
 // tests qualify the full path/budget policy. Here every file is directly below
 // one pinned synthetic scripts directory; no discovery or links are allowed.
-// The production Manager/runner still have no frozen-asset dispatch path.
+// Retained as historical P3 evidence; authoring_assets_test.go exercises the
+// production capture and dispatch path without this adapter.
 func prepareAuthoringRunProbe(wf *workflow.Workflow, repo string) (map[string]string, error) {
 	fd, err := unix.Open(filepath.Join(repo, "scripts"), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {

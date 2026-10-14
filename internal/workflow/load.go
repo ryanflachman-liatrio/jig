@@ -2,7 +2,6 @@ package workflow
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -17,18 +16,24 @@ const (
 // Load reads, parses, and fully validates a workflow file. Authoring-artifact
 // references (skill dirs, JSON schemas, agent files) are resolved relative to
 // the file's own directory; command-step `script` paths are resolved relative
-// to the project (git repo) root, the same anchor the runner uses at execution
-// time (see workflow.ScriptPath / RepoRoot).
+// to the project (git repo) root. Load retains this provenance; Start captures
+// scripts there before scheduling (see ScriptPath / RepoRoot).
 func Load(path string) (*Workflow, error) {
-	data, err := os.ReadFile(path)
+	if err := captureValidatePath(path); err != nil {
+		return nil, err
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, CaptureStorage
+	}
+	capture := &authoringLoad{}
+	data, binding, err := capture.file("", AssetWorkflow, abs, filepath.Dir(abs), abs)
 	if err != nil {
 		return nil, err
 	}
-	abs, absErr := filepath.Abs(path)
-	if absErr != nil {
-		abs = path
-	}
-	return decodeWorkflow(string(data), filepath.Dir(abs), abs)
+	binding.Reference = path
+	capture.sources = append(capture.sources, binding)
+	return decodeWorkflowCaptured(string(data), filepath.Dir(abs), abs, nil, capture)
 }
 
 // Decode parses and validates a workflow from TOML text. baseDir is the root
@@ -62,7 +67,18 @@ func DecodeLocked(data, baseDir, sourcePath string, sources []ModuleSource) (*Wo
 }
 
 func decodeWorkflowLocked(data, baseDir, sourcePath string, locked map[string]ModuleSource) (*Workflow, error) {
-	wf, err := decodePrepared(data, baseDir)
+	if baseDir != "" {
+		var err error
+		baseDir, err = filepath.Abs(baseDir)
+		if err != nil {
+			return nil, CaptureStorage
+		}
+	}
+	return decodeWorkflowCaptured(data, baseDir, sourcePath, locked, &authoringLoad{})
+}
+
+func decodeWorkflowCaptured(data, baseDir, sourcePath string, locked map[string]ModuleSource, capture *authoringLoad) (*Workflow, error) {
+	wf, err := decodePreparedCaptured(data, baseDir, sourcePath, capture)
 	if err != nil {
 		return nil, err
 	}
@@ -89,10 +105,30 @@ func decodeWorkflowLocked(data, baseDir, sourcePath string, locked map[string]Mo
 // validation. Module templates contain @module.<input> placeholders that only
 // become ordinary graph edges once a parent has bound them.
 func decodePrepared(data, baseDir string) (*Workflow, error) {
+	return decodePreparedCaptured(data, baseDir, "", &authoringLoad{})
+}
+
+func decodePreparedCaptured(data, baseDir, sourcePath string, capture *authoringLoad) (*Workflow, error) {
+	if len(data) > captureFileLimit {
+		return nil, CaptureLimit
+	}
 	var wf Workflow
 	md, err := toml.Decode(data, &wf)
 	if err != nil {
 		return nil, fmt.Errorf("parse workflow: %w", err)
+	}
+	if len(wf.Steps) > 1024 {
+		return nil, CaptureLimit
+	}
+	wf.authoring = capture
+	anchor := RepoRoot(baseDir)
+	if anchor == "" {
+		anchor = baseDir
+	}
+	for i := range wf.Steps {
+		wf.Steps[i].scriptAnchor = anchor
+		wf.Steps[i].assetAnchor = baseDir
+		wf.Steps[i].declaring = sourcePath
 	}
 	// Reject unknown keys so typos (`runn`, `dependson`) fail loudly instead
 	// of silently doing nothing. Custom-unmarshaled fields (Input, OutputType)
@@ -131,6 +167,23 @@ func decodePrepared(data, baseDir string) (*Workflow, error) {
 		return nil, err
 	}
 
+	if baseDir != "" {
+		for i := range wf.Steps {
+			s := &wf.Steps[i]
+			if s.Schema == nil && s.SchemaFile != "" {
+				data, err := wf.readAsset(s, AssetSchema, s.SchemaFile, baseDir)
+				if err != nil {
+					return nil, err
+				}
+				sc, err := ParseJSONSchema(data)
+				if err != nil {
+					return nil, fmt.Errorf("step %q: invalid schema: %w", s.ID, err)
+				}
+				sc.File = s.SchemaFile
+				s.Schema = sc
+			}
+		}
+	}
 	wf.applyDefaults()
 	return &wf, nil
 }

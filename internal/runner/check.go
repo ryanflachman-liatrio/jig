@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -45,6 +46,10 @@ func (e *CheckExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 
 	result, err := e.command.Execute(ctx, req, rep)
 	if err != nil {
+		var capture workflow.CaptureError
+		if errors.As(err, &capture) {
+			return result, err
+		}
 		return e.protocolError(req, fmt.Sprintf("execute check command: %v", err), true), nil
 	}
 	if result == nil {

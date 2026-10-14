@@ -56,7 +56,9 @@ presentation primitives in `internal/tui/shared` without creating import cycles.
 
 ## Workflow construction and execution
 
-`workflow.Load` reads authoring TOML and resolves paths. `decodePrepared`
+`workflow.Load` reads bounded authoring TOML and retains declared asset bytes and
+provenance. `Manager.Start` takes an owned graph copy and captures remaining file
+scripts and validation schemas before any worker. `decodePrepared`
 rejects unknown keys, resolves skill/agent/output/review assets, applies agent
 profiles, and fills defaults. Root notification policy is resolved and
 subworkflow calls expand into namespaced steps. Final validation operates on
@@ -81,6 +83,14 @@ than presenting unrecorded progress. `manifest.Writer` is called synchronously;
 it is not a background event subscriber. Recovery batches have their own
 transaction path in `emitBatch`.
 
+Required authoring publication is checked before run registration; configured
+storage errors never select persistence-off implicitly. The scheduler verifies
+captures before dispatch, result acceptance, integration, completion and final
+landing. Capture damage fences dispatch and contribution, cancels workers and
+fails the run. File scripts consume captured bytes across retry, routes and
+fan-out; explicit `run` commands still read their execution workspace. Captured
+skill bundles do not provide frozen host helper delivery.
+
 Content follows a separate path: harness → runner → `transcript.jsonl`.
 `StepMessage` signals progress by sequence number. Live deltas and tool signals
 may be lossy; finalized content and operational decisions must remain
@@ -96,7 +106,9 @@ Representative store layout (use datastore helpers for actual paths):
 ```text
 .jig/
   runs/<run-id>/
-    workflow.json          locked workflow and module sources
+    workflow.json          checksummed locked workflow and authoring reference
+    authoring/manifest.json sorted capture inventory and provenance
+    authoring/blobs/        content-addressed source bytes
     journal.jsonl          orchestration history
     artifacts/             captured producer outputs
     steps/<step-id>/

@@ -4,6 +4,7 @@ import (
 	"github.com/ryanflachman-liatrio/jig/internal/interaction"
 	"github.com/ryanflachman-liatrio/jig/internal/review"
 	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // Event is the sealed vocabulary of state transitions the engine emits.
@@ -173,8 +174,10 @@ type InputRequest struct {
 
 // RunError is an engine-level failure, not a step-level failure.
 type RunError struct {
-	RunID string
-	Err   string
+	// CaptureReason fences reopen even if storage is repaired after detection.
+	CaptureReason workflow.CaptureError `json:"capture_reason,omitempty"`
+	RunID         string
+	Err           string
 }
 
 // RecoveryRequest is emitted when a step fails unrecoverably and the run pauses

@@ -41,17 +41,19 @@ type sub struct {
 // Manager is the registry of concurrent runs.
 // mu guards the registry only — workflow state is owned by each scheduler.
 type Manager struct {
-	mu        sync.Mutex
-	runs      map[string]*Run
-	exec      Executor
-	resolver  IntegrationResolver
-	root      string // .jig/ root (used in Phase 2+ for file I/O)
-	subs      []sub  // manager-level fan-out; TUI subscribes once
-	monitors  []sentinel.MonitorDef
-	secrets   SecretResolver
-	observers observerRegistry
-	epochMu   sync.Mutex
-	epoch     int
+	publishAuthoring func(string, []byte, map[string][]byte, []byte) error
+	startCheck       func(string, string) error
+	mu               sync.Mutex
+	runs             map[string]*Run
+	exec             Executor
+	resolver         IntegrationResolver
+	root             string // .jig/ root (used in Phase 2+ for file I/O)
+	subs             []sub  // manager-level fan-out; TUI subscribes once
+	monitors         []sentinel.MonitorDef
+	secrets          SecretResolver
+	observers        observerRegistry
+	epochMu          sync.Mutex
+	epoch            int
 }
 
 // nextEpoch returns a monotonic epoch number stamped onto each Run
@@ -160,6 +162,15 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	if wf == nil {
 		return nil, fmt.Errorf("engine: nil workflow")
 	}
+	prepared, assets, err := workflow.PrepareAuthoring(wf, "")
+	if err != nil {
+		return nil, err
+	}
+	wf = prepared
+	authority, err := newRunAuthoring(assets)
+	if err != nil {
+		return nil, err
+	}
 	runID := newRunID()
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -172,36 +183,56 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	}
 
 	m.mu.Lock()
-	m.runs[runID] = run
 	// Snapshot subscriber list at start — additions after Start don't join mid-run.
 	subs := make([]sub, len(m.subs))
 	copy(subs, m.subs)
 	secrets := m.secrets
 	m.mu.Unlock()
 
-	// Create the run directory and open a manifest.Writer when root is
-	// configured. A missing or uncreatable root is non-fatal — runs still work,
-	// they just don't persist. This avoids breaking existing tests that pass "".
 	var w *manifest.Writer
 	var runDir string
+	fail := func(err error) (*Run, error) {
+		cancel()
+		if w != nil {
+			_ = w.Close()
+		}
+		_ = run.runLock.Close()
+		return nil, err
+	}
 	if m.root != "" {
-		if rd, err := datastore.RunDir(m.root, runID); err == nil {
-			runDir = rd
-			_ = persistWorkflowSnapshot(runDir, wf)
-			if lock, lockErr := AcquireRunLease(runDir); lockErr == nil {
-				run.runLock = lock
-			} else {
-				m.mu.Lock()
-				delete(m.runs, runID)
-				m.mu.Unlock()
-				cancel()
-				return nil, fmt.Errorf("engine: lock run: %w", lockErr)
-			}
-			if mw, err := manifest.NewWriter(runDir); err == nil {
-				w = mw
+		runDir, err = datastore.RunDir(m.root, runID)
+		if err != nil {
+			return fail(workflow.CaptureStorage)
+		}
+		if m.startCheck != nil {
+			if err := m.startCheck("lease", runDir); err != nil {
+				return fail(workflow.CaptureStorage)
 			}
 		}
+		run.runLock, err = AcquireRunLease(runDir)
+		if err != nil {
+			return fail(workflow.CaptureStorage)
+		}
+		if m.startCheck != nil {
+			if err := m.startCheck("journal", runDir); err != nil {
+				return fail(workflow.CaptureStorage)
+			}
+		}
+		w, err = manifest.NewWriter(runDir)
+		if err != nil {
+			return fail(workflow.CaptureStorage)
+		}
+		publish := m.publishAuthoring
+		if publish == nil {
+			publish = datastore.PublishAuthoring
+		}
+		if err := authority.publish(runDir, wf, publish); err != nil {
+			return fail(err)
+		}
 	}
+	m.mu.Lock()
+	m.runs[runID] = run
+	m.mu.Unlock()
 
 	repoRoot := ""
 	if m.root != "" {
@@ -223,6 +254,7 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	if security != nil {
 		s.securitySignals = security.signals
 	}
+	s.authoring = authority
 	s.resolver = m.resolver
 	s.secretResolver = secrets
 	s.getCauseHint = run.causeSnapshot
@@ -731,18 +763,20 @@ type pendingQuestion struct {
 // ── scheduler ────────────────────────────────────────────────────────────────
 
 type scheduler struct {
-	wf           *workflow.Workflow
-	runID        string
-	states       map[string]*step.State
-	inbox        chan schedMsg
-	subs         []sub
-	exec         Executor
-	resolver     IntegrationResolver
-	cancel       context.CancelFunc        // cancels the run context; used by abort policy
-	writer       *manifest.Writer          // nil when persistence is disabled (root = "")
-	runDir       string                    // .jig/runs/<runID>/; "" when persistence is disabled
-	structured   map[string]map[string]any // cached JSON decode of step Result.Structured
-	stepFeedback map[string]string         // gotoStepID → feedback for route replay
+	authoring       *runAuthoring
+	fatalCaptureErr error
+	wf              *workflow.Workflow
+	runID           string
+	states          map[string]*step.State
+	inbox           chan schedMsg
+	subs            []sub
+	exec            Executor
+	resolver        IntegrationResolver
+	cancel          context.CancelFunc        // cancels the run context; used by abort policy
+	writer          *manifest.Writer          // nil when persistence is disabled (root = "")
+	runDir          string                    // .jig/runs/<runID>/; "" when persistence is disabled
+	structured      map[string]map[string]any // cached JSON decode of step Result.Structured
+	stepFeedback    map[string]string         // gotoStepID → feedback for route replay
 	// rerunSource maps a route's goto target → the firing source step id. When a
 	// coalesced rewind has several contributors it names the first in
 	// declaration order. It lets buildStepContext name why a step is re-running.
@@ -1027,6 +1061,22 @@ func (s *scheduler) runLoop(ctx context.Context) {
 		if s.fatalJournalErr != nil {
 			return
 		}
+		if s.fatalCaptureErr != nil {
+			if s.inFlight == 0 {
+				s.cleanupWorktrees()
+				s.emit(RunFinished{RunID: s.runID, Failed: true, Cause: CauseFailed})
+				return
+			}
+			select {
+			case msg := <-s.inbox:
+				s.handle(msg)
+			case <-ctx.Done():
+				s.cleanupWorktrees()
+				s.emit(RunFinished{RunID: s.runID, Failed: true, Cause: CauseFailed})
+				return
+			}
+			continue
+		}
 		if !s.restoredHold {
 			// 0. Fire any coalesced loop back-edges whose rewind body has fully
 			//    settled. Runs before dispatch so a fired rewind's freshly-pending body
@@ -1037,7 +1087,7 @@ func (s *scheduler) runLoop(ctx context.Context) {
 			}
 
 			// 1. Dispatch every ready step, respecting max_parallel.
-			for s.inFlight < maxPar {
+			for s.inFlight < maxPar && s.fatalCaptureErr == nil {
 				st, ok := s.nextReady(ctx)
 				if !ok {
 					break
@@ -1048,11 +1098,18 @@ func (s *scheduler) runLoop(ctx context.Context) {
 				return
 			}
 
+			if s.fatalCaptureErr != nil {
+				continue
+			}
+
 			// 2. Terminal check: nothing running, nothing pending and runnable. Before
 			//    finishing, present the final-merge gate (spec 06 A3) when the run branch
 			//    carries commits — this is a pre-RunFinished completion step, so the run
 			//    parks (does not emit RunFinished) until the operator lands or discards.
 			if s.inFlight == 0 && !s.anyPendingRunnable() {
+				if !s.verifyAuthoring("") {
+					continue
+				}
 				if !s.requestFinalMergeIfNeeded() {
 					s.cleanupWorktrees()
 					s.emit(RunFinished{RunID: s.runID, Failed: s.anyFailed(), Cause: s.terminalCause()})
@@ -1360,7 +1417,7 @@ func (s *scheduler) anyPendingRunnable() bool {
 }
 
 func (s *scheduler) anyFailed() bool {
-	if s.aborted {
+	if s.aborted || s.fatalCaptureErr != nil {
 		return true
 	}
 	for _, st := range s.states {
@@ -1454,6 +1511,9 @@ func (s *scheduler) stepBranchName(stepID string) string {
 // Strategy pattern's single dispatch site (see strategies.go), replacing what
 // was an inline branch per step type.
 func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
+	if !s.verifyAuthoring(st.ID) {
+		return
+	}
 	// A foreach family template never executes directly — dispatching it
 	// expands its bounded list into runtime children instead (see fanout.go).
 	// This check comes before the type-keyed strategy lookup because a
@@ -1903,6 +1963,10 @@ func (s *scheduler) buildRequest(
 		Guard:           guard,
 		FindingsPath:    findingsPath,
 	}
+	if s.authoring != nil {
+		req.Assets = s.authoring.assets
+		req.AssetOwner = s.assetOwner(st.ID)
+	}
 	if item, ok := s.fanOutItemByChild[st.ID]; ok {
 		req.FanOutItem = &item
 	}
@@ -1912,6 +1976,21 @@ func (s *scheduler) buildRequest(
 // handle processes one message from the scheduler's inbox by delegating to
 // its Command implementation — see command in commands.go.
 func (s *scheduler) handle(msg schedMsg) {
+	if s.fatalCaptureErr != nil {
+		switch m := msg.(type) {
+		case resetMsg:
+			if m.reply != nil {
+				m.reply <- resetReply{err: s.fatalCaptureErr}
+			}
+			return
+		case closureReqMsg:
+			m.reply <- nil
+			return
+		case stepDoneMsg, snapshotReqMsg:
+		default:
+			return
+		}
+	}
 	msg.(command).execute(s)
 }
 
@@ -2365,6 +2444,9 @@ func (s *scheduler) discardMutationWorkspace(stepID string) error {
 //   - abort (abort=true): discard the half-applied squash and fail the step,
 //     routing it to the recovery gate via applyFailurePolicy.
 func (s *scheduler) handleResolveIntegration(m resolveIntegrationMsg) {
+	if !s.verifyAuthoring(m.stepID) {
+		return
+	}
 	state := s.states[m.stepID]
 	if state == nil || state.Status != step.StatusAwaitingIntegration {
 		return // stale or duplicate
@@ -2506,6 +2588,9 @@ func (s *scheduler) requestFinalMergeIfNeeded() bool {
 // sets terminated so run()'s loop returns. This is a pre-RunFinished completion
 // step — there is deliberately no RunResumed and no post-finish re-entry.
 func (s *scheduler) handleFinalMerge(m finalMergeMsg) {
+	if !s.verifyAuthoring("") {
+		return
+	}
 	if !s.awaitingFinalMerge {
 		return // stale or duplicate
 	}
@@ -3687,7 +3772,7 @@ func (s *scheduler) snapshot() RunSnapshot {
 		ID:           s.runID,
 		Workflow:     s.wf.Meta.Name,
 		Steps:        states,
-		Done:         allDone,
+		Done:         allDone || (s.fatalCaptureErr != nil && s.inFlight == 0),
 		Failed:       s.anyFailed(),
 		TotalCostUSD: totalCost,
 		TotalTokens:  totalTokens,

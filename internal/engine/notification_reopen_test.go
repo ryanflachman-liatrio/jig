@@ -92,7 +92,7 @@ output_type = { enum = ["proceed", "narrow"] }
   source = "@scope.summary"
   label = "Scope"
 `
-	wf, err := workflow.Decode(source, "")
+	wf, err := decodeEngineFixture(t, source)
 	if err != nil {
 		t.Fatal(err)
 	}

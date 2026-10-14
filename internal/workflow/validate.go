@@ -449,7 +449,7 @@ func (v *validator) checkCommand(s *Step) {
 	// workflow file's directory — the same anchor the runner uses at execution
 	// time (ScriptPath), so a script that validates is exactly the one that runs.
 	// Fall back to baseDir when there is no enclosing git repo (fixtures / tests).
-	if s.Script != "" && v.baseDir != "" {
+	if s.Script != "" && !strings.Contains(s.Script, "\n") && v.baseDir != "" {
 		root := RepoRoot(v.baseDir)
 		if root == "" {
 			root = v.baseDir

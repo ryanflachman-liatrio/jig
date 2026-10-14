@@ -539,9 +539,30 @@ Deterministic script/command; no agent context.
 | Field    | Type    | Notes                                              |
 |----------|---------|----------------------------------------------------|
 | `run`    | string  | Shell command (runs in `cwd`). Exactly one of run/script. |
-| `script` | path    | Script file to execute, resolved from the **project (git repo) root** (e.g. `.agents/jig/scripts/verify-proof-files.sh`). A multi-line value is an inline script body. |
+| `script` | path    | Script file resolved from the **project (git repo) root** and captured before the first worker; retries and routes reuse those bytes. Without Git, the declaring workflow directory is the anchor. A multi-line value is an inline shell body. |
 | `inputs` | [string]| `@stepid` refs / paths made available.             |
 | `output` | path    | Optional file the command writes.                  |
+
+A newly loaded run sees edited authoring files. Editing or deleting an authored
+script after Start does not change its current run; use `run = "sh generated.sh"`
+for a script deliberately produced in the execution workspace. Empty script
+files are valid. Absolute paths authorize that exact file only.
+
+Authoring capture has fixed bounds: 1 MiB per file, 16 MiB unique bytes, 32 MiB
+cumulative reads, 2,048 bindings and 1,024 blobs. A declared skill directory is
+captured recursively with its prompt at Load (256 files / 4 MiB per bundle,
+16 directory levels); this preserves provenance but does not freeze ambient
+host helper reads or introduce a helper execution root. Capture rejects sensitive
+paths such as `.git`, `.jig`, credential directories and `.env` files, directory
+links below a selected anchor, devices and escaping file links. Relative file
+links must resolve inside their pinned anchor. Expanded graphs have at most
+1,024 static steps and 32 module import levels. Encoded manifests and workflow
+snapshots are bounded at 8 MiB and 32 MiB respectively.
+
+With persistence enabled, required capture writes must succeed before any
+worker starts. Missing or damaged captures fail the entire run; retry, continue
+and operator step recovery cannot bypass that failure. Persistence-off retains
+bounded captures in memory and does not provide durable reopen.
 
 ### `[step.foreach]` — dynamic fan-out
 

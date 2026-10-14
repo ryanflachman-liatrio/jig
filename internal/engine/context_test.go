@@ -106,7 +106,7 @@ run = "echo hi"
 // minimal scheduler suitable for buildRequest / buildStepContext.
 func fixtureScheduler(t *testing.T, toml string) *scheduler {
 	t.Helper()
-	wf, err := workflow.Decode(toml, "")
+	wf, err := decodeEngineFixture(t, toml)
 	if err != nil {
 		t.Fatalf("decode fixture: %v", err)
 	}

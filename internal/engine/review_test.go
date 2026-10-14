@@ -110,7 +110,7 @@ func TestPrepareReviewPreservesTargetOrder(t *testing.T) {
 		"proof_path": "proof.txt",
 	})
 	s.diffs["write"] = "diff --git a/a b/a\n"
-	wf, err := workflow.Decode(`
+	wf, err := decodeEngineFixture(t, `
 [workflow]
 name = "review-order"
 version = "1"
@@ -135,7 +135,7 @@ output_type = { enum = ["approve"] }
   [[step.review]]
   source = "diff"
   label = "Diff"
-`, "")
+`)
 	if err != nil {
 		t.Fatal(err)
 	}

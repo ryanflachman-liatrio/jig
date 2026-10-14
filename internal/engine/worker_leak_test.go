@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/ryanflachman-liatrio/jig/internal/step"
-	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // blockingExec parks every worker in Execute until its context is cancelled,
@@ -39,7 +38,7 @@ func TestNoWorkerLeakOnRunCancel(t *testing.T) {
 	for i := 0; i < n; i++ {
 		fmt.Fprintf(&b, "[[step]]\nid = \"s%d\"\ntype = \"command\"\nrun = \"true\"\n", i)
 	}
-	wf, err := workflow.Decode(b.String(), "")
+	wf, err := decodeEngineFixture(t, b.String())
 	if err != nil {
 		t.Fatal(err)
 	}
