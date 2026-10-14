@@ -108,6 +108,9 @@ func phRunValidateGate(s *scheduler, m stepDoneMsg, wfStep *workflow.Step) postE
 		return decisionNeedsInput
 	}
 	passed, detail := s.runGate(wfStep, s.executionDirForStep(m.stepID))
+	if s.fatalCaptureErr != nil {
+		return decisionNeedsInput
+	}
 	s.emit(GateResult{RunID: s.runID, StepID: m.stepID, Passed: passed, Detail: detail})
 	if !passed {
 		res := s.states[m.stepID].Result

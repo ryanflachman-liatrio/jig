@@ -122,6 +122,39 @@ func (a *AuthoringAssets) Verify(owner string) error {
 	}
 	return nil
 }
+
+// VerifyStep checks a worker's effective values against its immutable template
+// captures, including runtime children whose IDs differ from the template owner.
+func (a *AuthoringAssets) VerifyStep(owner string, st *Step) error {
+	if st == nil {
+		return CaptureMissing
+	}
+	if err := a.Verify(owner); err != nil {
+		return err
+	}
+	required := map[AssetKind]bool{
+		AssetSkill: st.Skill != "", AssetAgentFile: st.AgentFile != "",
+		AssetSchema: st.SchemaFile != "", AssetOutputTemplate: st.OutputTemplate != "",
+	}
+	for kind, yes := range required {
+		if !yes {
+			continue
+		}
+		found := false
+		for _, b := range a.manifest.Bindings {
+			if b.Owner == owner && b.Kind == kind && (kind != AssetSkill || b.Relative == "SKILL.md") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return CaptureMissing
+		}
+	}
+	copy := *st
+	copy.ID = owner
+	return a.validateEffective(&Workflow{Steps: []Step{copy}})
+}
 func assetDigest(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }
 
 type authoringLoad struct {
@@ -267,6 +300,9 @@ func PrepareAuthoring(wf *Workflow, base string) (*Workflow, *AuthoringAssets, e
 		original := &wf.Steps[i]
 		s.assets = append([]AssetBinding(nil), original.assets...)
 		s.scriptAnchor, s.assetAnchor, s.declaring = original.scriptAnchor, original.assetAnchor, original.declaring
+		if s.Validate != nil && original.Validate != nil {
+			s.Validate.outputSchemaReference = original.Validate.outputSchemaReference
+		}
 		if s.scriptAnchor == "" {
 			s.scriptAnchor = base
 		}
@@ -331,7 +367,14 @@ func PrepareAuthoring(wf *Workflow, base string) (*Workflow, *AuthoringAssets, e
 			}
 		}
 		if s.Validate != nil && s.Validate.OutputSchema != "" && !has(AssetValidationSchema) {
-			if _, err := out.readAsset(s, AssetValidationSchema, s.Validate.OutputSchema, s.assetAnchor); err != nil {
+			ref := s.Validate.outputSchemaReference
+			if ref != "" && s.Validate.OutputSchema != ref && s.Validate.OutputSchema != assetPath(s.assetAnchor, ref) {
+				return nil, nil, CaptureIntegrity
+			}
+			if ref == "" {
+				ref = s.Validate.OutputSchema
+			}
+			if _, err := out.readAsset(s, AssetValidationSchema, ref, s.assetAnchor); err != nil {
 				return nil, nil, err
 			}
 		}
@@ -346,6 +389,9 @@ func PrepareAuthoring(wf *Workflow, base string) (*Workflow, *AuthoringAssets, e
 	}
 	if len(a.manifest.Bindings) > 2048 {
 		return nil, nil, CaptureLimit
+	}
+	if err := a.validateLogicalBindings(); err != nil {
+		return nil, nil, err
 	}
 	for digest, b := range out.authoring.ledger.blobs {
 		key := fmt.Sprintf("%x", digest)
@@ -376,6 +422,26 @@ func bindingKey(b AssetBinding) string {
 	return b.Owner + "\x00" + b.Declaration + "\x00" + string(b.Kind) + "\x00" + b.Declaring + "\x00" + b.Reference + "\x00" + b.Relative
 }
 
+// Content deduplication never permits ambiguous logical inputs. Bundle members
+// have distinct relative names; every other step input has one binding per kind.
+func (a *AuthoringAssets) validateLogicalBindings() error {
+	seen := map[string]bool{}
+	for _, b := range a.manifest.Bindings {
+		key := bindingKey(b)
+		if b.Owner != "" {
+			key = b.Owner + "\x00" + string(b.Kind)
+			if b.Kind == AssetSkill {
+				key += "\x00" + b.Relative
+			}
+		}
+		if seen[key] {
+			return CaptureIntegrity
+		}
+		seen[key] = true
+	}
+	return nil
+}
+
 // RestoreAuthoring restores only supplied captured content; it never opens an
 // authoring source. Durable readers own confinement and encoded input bounds.
 func RestoreAuthoring(wf *Workflow, m AssetManifest, blobs map[string][]byte) (*AuthoringAssets, error) {
@@ -386,6 +452,9 @@ func RestoreAuthoring(wf *Workflow, m AssetManifest, blobs map[string][]byte) (*
 		return nil, CaptureLimit
 	}
 	a := &AuthoringAssets{manifest: AssetManifest{Version: 1, Bindings: append([]AssetBinding{}, m.Bindings...), Blobs: append([]AssetBlob{}, m.Blobs...)}, blobs: map[string][]byte{}}
+	if err := a.validateLogicalBindings(); err != nil {
+		return nil, err
+	}
 	total := 0
 	last := ""
 	for _, b := range m.Blobs {

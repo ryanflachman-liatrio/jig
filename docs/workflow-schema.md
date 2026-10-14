@@ -1274,17 +1274,22 @@ Any step may declare `[step.validate]`. Dependents wait until it passes.
 ```toml
 [step.validate]
 command         = "go build ./..."             # must exit 0 (runs in the step's worktree)
-output_schema   = "schemas/thing.json"         # `output` must match this JSON Schema
+output_schema   = "schemas/thing.json"         # schema file captured at Start; enforcement pending
 output_exists   = true
 output_contains = "APPROVED"
 ```
 
-`output_schema` validates that a step's `output` *file* conforms to a JSON
-Schema — useful for a `command` step that writes JSON. Producer **agent** steps
-don't need it: their structured output is already schema-enforced by construction
-(see "Structured outputs"), so declare `[step.schema]` / `schema_file` instead.
+`output_schema` names a workflow-relative schema file (module-relative when
+declared in a module). Its bytes are captured at Start and verified by the
+validation owner across attempts and snapshot restore. The current gate does
+**not** validate output JSON against that schema; schema enforcement is pending.
+Producer agent schemas use `[step.schema]` / `schema_file` and are supplied to
+the selected harness through its structured-output capability. Prompts, producer
+schemas, and output templates are captured at Load. Captured skill bundles
+preserve identity but provide no frozen host helper execution root.
 
-On failure the step's `on_failure` policy applies.
+Capture failures fail the entire run. Other gate failures use the step's
+`on_failure` policy.
 
 ---
 

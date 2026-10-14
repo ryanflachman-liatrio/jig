@@ -121,6 +121,18 @@ func (s *scheduler) verifyAuthoring(id string) bool {
 	}
 	return true
 }
+
+// validationSchema supplies the gate owner with frozen authoring bytes. Schema
+// enforcement remains separate from capture integrity; no checkout read is allowed.
+func (s *scheduler) validationSchema(st *workflow.Step) ([]byte, error) {
+	if s.authoring == nil {
+		return nil, workflow.CaptureMissing
+	}
+	if err := s.authoring.verify(s.runDir, s.assetOwner(st.ID)); err != nil {
+		return nil, err
+	}
+	return s.authoring.assets.Bytes(s.assetOwner(st.ID), workflow.AssetValidationSchema)
+}
 func (s *scheduler) failCapture(err error) {
 	if s.fatalCaptureErr != nil {
 		return

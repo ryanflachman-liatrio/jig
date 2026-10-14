@@ -761,6 +761,9 @@ func rebaseModuleAssets(wf *Workflow, baseDir string) {
 		if step.SchemaFile != "" && !filepath.IsAbs(step.SchemaFile) {
 			step.SchemaFile = filepath.Join(baseDir, step.SchemaFile)
 		}
+		if step.Validate != nil && step.Validate.OutputSchema != "" && !filepath.IsAbs(step.Validate.OutputSchema) {
+			step.Validate.OutputSchema = filepath.Join(baseDir, step.Validate.OutputSchema)
+		}
 	}
 }
 
@@ -785,6 +788,11 @@ func cloneSteps(in []Step) []Step {
 
 func cloneStep(in Step) Step {
 	out := in
+	out.assets = append([]AssetBinding(nil), in.assets...)
+	if in.Validate != nil {
+		v := *in.Validate
+		out.Validate = &v
+	}
 	out.DependsOn = append([]string(nil), in.DependsOn...)
 	out.Inputs = append([]Input(nil), in.Inputs...)
 	out.Routes = append([]Route(nil), in.Routes...)

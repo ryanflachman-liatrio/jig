@@ -2679,6 +2679,14 @@ func composeRecoveryMessage(errText, guidance string) string {
 // read-only execution view for readers.
 func (s *scheduler) runGate(wfStep *workflow.Step, executionDir string) (bool, string) {
 	v := wfStep.Validate
+	if v.OutputSchema != "" {
+		if _, err := s.validationSchema(wfStep); err != nil {
+			s.failCapture(err)
+			return false, "validation schema capture unavailable"
+		}
+		// Captured identity is required here. JSON Schema enforcement is not
+		// implemented by this gate yet; it belongs to the validation slice.
+	}
 
 	// Command gate: run via sh -c, check exit code 0.
 	if v.Command != "" {

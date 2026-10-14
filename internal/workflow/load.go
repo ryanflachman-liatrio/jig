@@ -129,6 +129,9 @@ func decodePreparedCaptured(data, baseDir, sourcePath string, capture *authoring
 		wf.Steps[i].scriptAnchor = anchor
 		wf.Steps[i].assetAnchor = baseDir
 		wf.Steps[i].declaring = sourcePath
+		if v := wf.Steps[i].Validate; v != nil {
+			v.outputSchemaReference = v.OutputSchema
+		}
 	}
 	// Reject unknown keys so typos (`runn`, `dependson`) fail loudly instead
 	// of silently doing nothing. Custom-unmarshaled fields (Input, OutputType)

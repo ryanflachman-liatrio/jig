@@ -1007,6 +1007,8 @@ type Validate struct {
 	OutputSchema   string `toml:"output_schema"`
 	OutputExists   bool   `toml:"output_exists"`
 	OutputContains string `toml:"output_contains"`
+	// outputSchemaReference preserves the declaring spelling before module rebasing.
+	outputSchemaReference string
 }
 
 // CheckFindings declares the on-disk protocol a check command must produce.

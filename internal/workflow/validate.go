@@ -799,7 +799,7 @@ func (v *validator) checkValidate(s *Step) {
 		v.errf("step %q [step.validate] checks its output but the step declares no `output`", s.ID)
 	}
 	if val.OutputSchema != "" && v.baseDir != "" {
-		if _, err := os.Stat(filepath.Join(v.baseDir, val.OutputSchema)); err != nil {
+		if _, err := os.Stat(assetPath(v.baseDir, val.OutputSchema)); err != nil {
 			v.errf("step %q: output_schema %q not found", s.ID, val.OutputSchema)
 		}
 	}

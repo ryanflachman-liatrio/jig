@@ -50,6 +50,11 @@ func NewAgentExecutorFixed(h harness.Harness) *AgentExecutor {
 //  4. Returns a Result that summarises the outcome.
 func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep engine.Reporter) (*step.Result, error) {
 	start := time.Now()
+	if req.Assets != nil {
+		if err := req.Assets.VerifyStep(req.AssetOwner, req.Step); err != nil {
+			return failResult(err.Error(), start), err
+		}
+	}
 	h, err := e.forHarness(req.Step.Backend)
 	if err != nil {
 		return failResult(fmt.Sprintf("harness: %v", err), start), nil
