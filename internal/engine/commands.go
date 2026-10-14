@@ -88,6 +88,10 @@ func (m stepDoneMsg) execute(s *scheduler) {
 		if m.result != nil {
 			s.states[m.stepID].Result = m.result
 		}
+		if recovery, ok := s.pendingRecovery[m.stepID]; ok {
+			delete(s.pendingRecovery, m.stepID)
+			s.handleRecover(recovery)
+		}
 		return
 	}
 

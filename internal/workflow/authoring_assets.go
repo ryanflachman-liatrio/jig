@@ -209,19 +209,23 @@ func (l *authoringLoad) file(owner string, kind AssetKind, ref, base, declaring 
 	b := AssetBinding{Owner: owner, Kind: kind, Reference: ref, Declaring: declaring, Anchor: root.Name(), Source: got.source, Size: len(got.bytes), Executable: got.executable, SHA256: fmt.Sprintf("%x", got.digest)}
 	return got.bytes, b, nil
 }
+
+// assetCaptureError preserves the typed reason with bounded author-facing
+// context. Never pass raw parser errors or private references to this boundary.
+func assetCaptureError(owner string, kind AssetKind, err error) error {
+	if len(owner) > 128 || !isIdent(owner) {
+		owner = "unknown"
+	}
+	return fmt.Errorf("step %q %s: %w", owner, kind, err)
+}
+
 func (wf *Workflow) readAsset(s *Step, kind AssetKind, ref, base string) ([]byte, error) {
 	if wf.authoring == nil {
 		wf.authoring = &authoringLoad{}
 	}
 	data, b, err := wf.authoring.file(s.ID, kind, ref, base, s.declaring)
 	if err != nil {
-		// IDs are author-facing context, never a source path. Programmatic
-		// workflows may bypass validation, so bound and validate this label.
-		owner := s.ID
-		if len(owner) > 128 || !isIdent(owner) {
-			owner = "unknown"
-		}
-		return nil, fmt.Errorf("step %q %s: %w", owner, kind, err)
+		return nil, assetCaptureError(s.ID, kind, err)
 	}
 	s.assets = append(s.assets, b)
 	return data, nil

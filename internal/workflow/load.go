@@ -201,7 +201,7 @@ func decodePreparedCaptured(data, baseDir, sourcePath string, capture *authoring
 				}
 				sc, err := ParseJSONSchema(data)
 				if err != nil {
-					return nil, fmt.Errorf("step %q: invalid schema: %w", s.ID, err)
+					return nil, assetCaptureError(s.ID, AssetSchema, CaptureIntegrity)
 				}
 				sc.File = s.SchemaFile
 				s.Schema = sc

@@ -39,7 +39,7 @@ func (wf *Workflow) resolveAgentFiles(baseDir string) error {
 		}
 		af, err := parseAgentFile(data)
 		if err != nil {
-			return fmt.Errorf("agent step %q: agent_file %q is invalid: %w", s.ID, s.AgentFile, err)
+			return assetCaptureError(s.ID, AssetAgentFile, CaptureIntegrity)
 		}
 		s.agentPrompt = af.Prompt
 		s.SnapshotAgentPrompt = af.Prompt
@@ -102,7 +102,7 @@ func parseAgentFile(data []byte) (*agentFile, error) {
 		}
 		key, val, ok := strings.Cut(trimmed, ":")
 		if !ok {
-			return nil, fmt.Errorf("frontmatter line %q is not `key: value`", trimmed)
+			return nil, fmt.Errorf("frontmatter must contain `key: value` lines")
 		}
 		val = strings.Trim(strings.TrimSpace(val), `"'`)
 		switch strings.TrimSpace(key) {

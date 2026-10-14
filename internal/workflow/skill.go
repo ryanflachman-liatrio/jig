@@ -19,11 +19,11 @@ func (wf *Workflow) resolveSkills(baseDir string) error {
 
 		data, err := wf.readSkill(s, baseDir)
 		if err != nil {
-			return fmt.Errorf("agent step %q: skill capture: %w", s.ID, err)
+			return assetCaptureError(s.ID, AssetSkill, err)
 		}
 		prompt, err := parseSkillFile(data)
 		if err != nil {
-			return fmt.Errorf("agent step %q: %s/SKILL.md is invalid: %w", s.ID, s.Skill, err)
+			return assetCaptureError(s.ID, AssetSkill, CaptureIntegrity)
 		}
 		s.agentPrompt = prompt
 		s.SnapshotAgentPrompt = prompt

@@ -79,6 +79,12 @@ liveness assumptions explicitly. Observed cost/network/security limits only
 cover what the implementation observes; they are not complete accounting of
 external side effects.
 
+A security escalation can park a step before its cancelled worker returns.
+Recovery Skip, Retry, or Resume stays pending until that worker's completion
+has been processed; only then may state change or a replacement use its
+workspace. Late cancellation results must not reopen an accepted failure or
+alter the replacement attempt. Abort remains immediate.
+
 Do not equate no runnable nodes with success. A run can be waiting on active
 workers, human input, retry backoff, an unresolved family, or recovery. New
 states need deliberate readiness, settlement, snapshot, replay, and UI behavior.

@@ -123,7 +123,9 @@ exit mapping as `jig run` apply.
 `unsupported_platform`, `missing_binding`, `integrity`, and `storage` are
 bounded diagnostic reasons. Step-owned file capture errors include the step
 and asset kind without source contents or private source paths. Startup
-errors appear in Home's notice or CLI stderr. Required storage failures never
+errors appear in Home's notice or CLI stderr. Malformed skill, agent-file,
+and producer-schema contents produce bounded `integrity` errors rather than
+raw parser lines or private file references. Required storage failures never
 silently switch a configured run to persistence-off.
 
 Capture damage detected before dispatch, result acceptance, integration,
@@ -139,7 +141,9 @@ creates no authoring helper copies, and has no durable reopen. Explicit `run`
 commands consume their execution workspace, including upstream integrated
 files. The [frozen-authoring example](../examples/frozen-authoring-assets.toml)
 demonstrates the distinction. The capture implementation has Linux and macOS
-paths; local qualification evidence currently covers macOS only.
+paths; capture qualification covers darwin/arm64 and linux/arm64. Linux was
+exercised in an isolated container with networking disabled; this is not
+qualification of jig's planned Docker execution runtime.
 
 ## Reset to a step
 

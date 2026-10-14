@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1862,12 +1863,11 @@ func TestDecodeSkillPromptRejectsInvalidSkillFile(t *testing.T) {
 	cases := []struct {
 		name    string
 		content string
-		want    string
 	}{
-		{name: "missing frontmatter", content: "Do the work.", want: "missing YAML frontmatter"},
-		{name: "missing name", content: "---\ndescription: Test skill\n---\nDo the work.", want: "field `name` is required"},
-		{name: "missing description", content: "---\nname: test\n---\nDo the work.", want: "field `description` is required"},
-		{name: "missing body", content: "---\nname: test\ndescription: Test skill\n---\n", want: "instruction body is required"},
+		{name: "missing frontmatter", content: "Do the work."},
+		{name: "missing name", content: "---\ndescription: Test skill\n---\nDo the work."},
+		{name: "missing description", content: "---\nname: test\n---\nDo the work."},
+		{name: "missing body", content: "---\nname: test\ndescription: Test skill\n---\n"},
 	}
 
 	for _, tc := range cases {
@@ -1884,8 +1884,8 @@ id = "test"
 type = "agent"
 skill = "skills/test"
 `, dir)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("error = %v, want substring %q", err, tc.want)
+			if err == nil || !errors.Is(err, CaptureIntegrity) {
+				t.Fatalf("error = %v, want typed capture integrity rejection", err)
 			}
 		})
 	}

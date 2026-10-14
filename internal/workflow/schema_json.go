@@ -74,7 +74,7 @@ func ParseJSONSchema(data []byte) (*Schema, error) {
 		return nil, fmt.Errorf("not valid JSON: %w", err)
 	}
 	if t := schemaType(root); t != "object" {
-		return nil, fmt.Errorf("top-level schema must be type \"object\", got %q", t)
+		return nil, fmt.Errorf("top-level schema must be type \"object\"")
 	}
 	return &Schema{Fields: objectFields(root)}, nil
 }

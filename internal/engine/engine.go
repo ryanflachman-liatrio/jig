@@ -898,6 +898,10 @@ type scheduler struct {
 	// worker): run-level cancellation still exists via s.cancel, but stop is
 	// surgical. Entries are removed when the worker's stepDoneMsg is handled.
 	stepCancels map[string]context.CancelFunc
+	// A security park can be published before its cancelled worker exits.
+	// Recovery must not replace its workspace or process a late completion
+	// against the operator's new state. One decision per worker is bounded.
+	pendingRecovery map[string]recoverMsg
 	// stopping marks steps whose worker was cancelled by Run.Stop (not by failure
 	// or run-level abort). When that worker's stepDoneMsg arrives it is routed to
 	// StatusStopped — partial work captured, no failure policy, run stays alive —
@@ -2337,6 +2341,20 @@ func (s *scheduler) handleRecover(m recoverMsg) {
 		return // stale or duplicate
 	}
 
+	if m.action != RecoverAbort {
+		switch m.action {
+		case RecoverSkip, RecoverRetry, RecoverResume:
+			if s.stepCancels[m.stepID] != nil {
+				if s.pendingRecovery == nil {
+					s.pendingRecovery = make(map[string]recoverMsg)
+				}
+				if _, exists := s.pendingRecovery[m.stepID]; !exists {
+					s.pendingRecovery[m.stepID] = m
+				}
+				return
+			}
+		}
+	}
 	switch m.action {
 	case RecoverAbort:
 		s.restoredHold = false

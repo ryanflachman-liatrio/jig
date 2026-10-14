@@ -139,7 +139,10 @@ func runFixtureStep(t *testing.T, rpcLog string, fs fixtureStep) (*step.Result, 
 	if err := os.WriteFile(rpcLog, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	stepDir := t.TempDir()
+	stepDir := filepath.Join(t.TempDir(), "steps", "worker")
+	if err := os.MkdirAll(stepDir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	askUser := fs.askUser
 	req := engine.StepRequest{
 		Step: &workflow.Step{

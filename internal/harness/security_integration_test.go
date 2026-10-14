@@ -564,7 +564,10 @@ func TestACPResumePathsLoadExplicitly(t *testing.T) {
 			if err := os.WriteFile(rpcLog, nil, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			stepDir := t.TempDir()
+			stepDir := filepath.Join(t.TempDir(), "steps", "worker")
+			if err := os.MkdirAll(stepDir, 0700); err != nil {
+				t.Fatal(err)
+			}
 			executor := runner.NewAgentExecutor(harness.For)
 			result, err := executor.Execute(context.Background(), engine.StepRequest{
 				Step:            &workflow.Step{ID: "worker", Type: workflow.StepAgent, Backend: tc.backend, Isolation: workflow.IsolationNone},

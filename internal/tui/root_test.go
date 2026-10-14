@@ -705,3 +705,34 @@ func TestHomeAuthoringCaptureErrorsVisible(t *testing.T) {
 		})
 	}
 }
+
+func TestHomeAuthoringParseFailure(t *testing.T) {
+	dir := t.TempDir()
+	skill := filepath.Join(dir, "PRIVATE_PATH_MARKER")
+	if err := os.Mkdir(skill, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("---\nPRIVATE_SOURCE_MARKER\n---\nInstructions.\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "workflow.toml")
+	if err := os.WriteFile(path, []byte("[workflow]\nname='parser'\nversion='1'\n[[step]]\nid='worker'\ntype='agent'\nskill='PRIVATE_PATH_MARKER'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager := engine.NewManager(runner.NewFakeExecutor(nil, runner.FakeOutcome{}), "")
+	var m tea.Model = New(t.Context(), manager)
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 120, Height: 35})
+	loaded := loadHomeWorkflowCmd(path)().(homeWorkflowLoadedMsg)
+	loaded.path = "" // Match the test's current Home selection without stale-load filtering.
+	m, _ = m.Update(loaded)
+	view := m.View().Content
+	if !strings.Contains(view, "authoring capture: integrity") {
+		t.Fatalf("Home hid parser rejection: %s", view)
+	}
+	if strings.Contains(view, "PRIVATE_SOURCE_MARKER") || strings.Contains(view, "PRIVATE_PATH_MARKER") {
+		t.Fatal("Home disclosed private authoring")
+	}
+	if len(manager.Runs()) != 0 {
+		t.Fatal("failed loader opened a run")
+	}
+}

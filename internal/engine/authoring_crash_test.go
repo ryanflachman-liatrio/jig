@@ -19,16 +19,22 @@ import (
 )
 
 func TestAuthoringPublicationCrash(t *testing.T) {
-	binary := filepath.Join(t.TempDir(), "publication-helper")
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
+	// Linux conformance can supply the identical datastore test binary built
+	// for its target platform, without installing a compiler in the fixture.
+	binary := os.Getenv("JIG_TEST_AUTHORING_PUBLICATION_HELPER")
+	if binary == "" {
+		binary = filepath.Join(t.TempDir(), "publication-helper")
+		cwd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		build := exec.Command("go", "test", "-c", "-o", binary, "./internal/datastore")
+		build.Dir = filepath.Join(cwd, "../..")
+		if out, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("build fixture: %s %v", out, err)
+		}
 	}
-	build := exec.Command("go", "test", "-c", "-o", binary, "./internal/datastore")
-	build.Dir = filepath.Join(cwd, "../..")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build fixture: %s %v", out, err)
-	}
+
 	for _, checkpoint := range []string{"blob_write", "manifest_write", "before_commit", "after_commit", "after_commit_empty_journal"} {
 		t.Run(checkpoint, func(t *testing.T) {
 			dir, wf := captureFixture(t, "[[step]]\nid='worker'\ntype='command'\nscript='script.sh'\n")

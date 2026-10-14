@@ -273,3 +273,55 @@ type authoringCLIExecutor func(context.Context, engine.StepRequest, engine.Repor
 func (f authoringCLIExecutor) Execute(ctx context.Context, r engine.StepRequest, rep engine.Reporter) (*step.Result, error) {
 	return f(ctx, r, rep)
 }
+
+func TestRunRun_AuthoringParseFailure(t *testing.T) {
+	for _, kind := range []string{"skill", "agent_file", "schema"} {
+		t.Run(kind, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "workflow.toml")
+			invalid := "---\nPRIVATE_SOURCE_MARKER\n---\nInstructions.\n"
+			var decl string
+			switch kind {
+			case "skill":
+				if err := os.Mkdir(filepath.Join(dir, "PRIVATE_PATH_MARKER"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "PRIVATE_PATH_MARKER/SKILL.md"), []byte(invalid), 0600); err != nil {
+					t.Fatal(err)
+				}
+				decl = "skill='PRIVATE_PATH_MARKER'"
+			case "agent_file":
+				if err := os.WriteFile(filepath.Join(dir, "PRIVATE_PATH_MARKER.md"), []byte(invalid), 0600); err != nil {
+					t.Fatal(err)
+				}
+				decl = "agent_file='PRIVATE_PATH_MARKER.md'"
+			case "schema":
+				if err := os.Mkdir(filepath.Join(dir, "skill"), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "skill/SKILL.md"), []byte("---\nname: fixture\ndescription: Synthetic\n---\nInstructions.\n"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "PRIVATE_PATH_MARKER.json"), []byte(`{"type":"PRIVATE_SOURCE_MARKER"}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+				decl = "skill='skill'\nschema_file='PRIVATE_PATH_MARKER.json'"
+			}
+			if err := os.WriteFile(path, []byte("[workflow]\nname='parser'\nversion='1'\n[[step]]\nid='worker'\ntype='agent'\n"+decl+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			code, output := authoringCLIOutput(t, func() int {
+				return runRun([]string{path, "--root", filepath.Join(dir, ".jig"), "--output", "json", "--discard-merge"})
+			})
+			if code != headless.ExitFailed || !strings.Contains(output, `step "worker" `+kind+`: authoring capture: integrity`) {
+				t.Fatalf("exit=%d output=%s", code, output)
+			}
+			for _, private := range []string{"PRIVATE_SOURCE_MARKER", "PRIVATE_PATH_MARKER", dir, "run_id:"} {
+				if strings.Contains(output, private) {
+					t.Fatalf("parser diagnostic disclosed/started run: %s", output)
+				}
+			}
+			t.Logf("%s: safe typed rejection; no private markers or worker dispatch", kind)
+		})
+	}
+}
