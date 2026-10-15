@@ -118,6 +118,12 @@ control surface.
 
 ## Transcript rendering
 
+Monitor shows streamed response text only in Transcript, beneath the selected
+step’s loaded tail. Steps contains status and metadata, never response previews.
+The live preview is replaced by the saved entry when a message finalizes; it
+also works while persistence is off. Historical pages and file views do not
+show the live preview, and streaming preserves paused scroll positions.
+
 Monitor reads finalized content through `internal/transcript`. Normalize
 entries into transcript items before search, navigation, expansion, and
 rendering. Pair tool use/result only within the same generation, iteration,

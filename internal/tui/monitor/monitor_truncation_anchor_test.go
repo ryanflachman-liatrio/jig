@@ -154,82 +154,6 @@ func TestWriteItemDetailSettledExchangeHeadAnchors(t *testing.T) {
 	}
 }
 
-// TestWriteStreamingOutputEarlierLinesIndicator locks FR-06.13: the
-// Steps-panel live tail shows a prepended "… N earlier lines" marker for
-// dropped rows and keeps only the newest outputMaxLines rows.
-func TestWriteStreamingOutputEarlierLinesIndicator(t *testing.T) {
-	m := newMonitorWithSteps(t)
-	stepID := "a"
-	idx, ok := m.index[stepID]
-	if !ok {
-		t.Fatalf("step %q not found", stepID)
-	}
-	m.steps[idx].status = step.StatusRunning
-
-	total := outputMaxLines + 5
-	var buf strings.Builder
-	for i := 0; i < total; i++ {
-		fmt.Fprintf(&buf, "line-%02d\n", i+1)
-	}
-	m.stepOutput[stepID] = &buf
-
-	body := stripANSI(m.body())
-
-	want := fmt.Sprintf("… %d earlier lines", total-outputMaxLines)
-	if !strings.Contains(body, want) {
-		t.Fatalf("streaming drop indicator %q missing from Steps panel:\n%s", want, body)
-	}
-	// The marker must sit between the row header ("▸ a") and the first
-	// tail row so a reviewer sees drop, then rows.
-	headerIdx := strings.Index(body, "▸ "+stepID)
-	markerIdx := strings.Index(body, want)
-	firstTailIdx := strings.Index(body, fmt.Sprintf("line-%02d", total-outputMaxLines+1))
-	if headerIdx < 0 || markerIdx < 0 || firstTailIdx < 0 {
-		t.Fatalf("row-header/marker/first-tail-row missing from Steps panel:\n%s", body)
-	}
-	if !(headerIdx < markerIdx && markerIdx < firstTailIdx) {
-		t.Fatalf("expected order header < marker < first tail row, got %d/%d/%d:\n%s", headerIdx, markerIdx, firstTailIdx, body)
-	}
-	// Dropped rows must not appear.
-	for i := 1; i <= total-outputMaxLines; i++ {
-		row := fmt.Sprintf("line-%02d", i)
-		if strings.Contains(body, row) {
-			t.Fatalf("dropped row %q still visible:\n%s", row, body)
-		}
-	}
-	// Newest rows must appear.
-	for i := total - outputMaxLines + 1; i <= total; i++ {
-		row := fmt.Sprintf("line-%02d", i)
-		if !strings.Contains(body, row) {
-			t.Fatalf("kept row %q missing:\n%s", row, body)
-		}
-	}
-}
-
-// TestWriteStreamingOutputNoIndicatorWhenUnderCap ensures the drop
-// indicator only appears when rows were actually dropped, so a small
-// running step does not gain an "… 0 earlier lines" noise line.
-func TestWriteStreamingOutputNoIndicatorWhenUnderCap(t *testing.T) {
-	m := newMonitorWithSteps(t)
-	stepID := "a"
-	idx, ok := m.index[stepID]
-	if !ok {
-		t.Fatalf("step %q not found", stepID)
-	}
-	m.steps[idx].status = step.StatusRunning
-
-	var buf strings.Builder
-	for i := 0; i < outputMaxLines-2; i++ {
-		fmt.Fprintf(&buf, "line-%02d\n", i+1)
-	}
-	m.stepOutput[stepID] = &buf
-
-	body := stripANSI(m.body())
-	if strings.Contains(body, "earlier lines") {
-		t.Fatalf("drop indicator rendered even though nothing was dropped:\n%s", body)
-	}
-}
-
 // TestChatItemLineRangesStableAcrossAnchorMode locks FR-06.14: whichever
 // anchor is in play, chatItemLineRanges must cover the item's actual
 // rendered rows so n/N navigation lands correctly. Head+3-tail (settled)
@@ -278,8 +202,7 @@ func TestChatItemLineRangesStableAcrossAnchorMode(t *testing.T) {
 
 // TestTruncationAnchorGallery captures the three anchor scenes in one
 // deterministic file: a settled head-anchored exchange, a running tail-
-// anchored exchange, and a Steps-panel streaming buffer with the drop
-// indicator. Opt-in via JIG_UI_SNAPSHOT_DIR.
+// anchored exchange, and a Transcript-panel live response. Opt-in via JIG_UI_SNAPSHOT_DIR.
 func TestTruncationAnchorGallery(t *testing.T) {
 	dir := os.Getenv("JIG_UI_SNAPSHOT_DIR")
 	if dir == "" {
@@ -307,7 +230,7 @@ func TestTruncationAnchorGallery(t *testing.T) {
 		return stripANSI(m.itemTranscriptBody())
 	}()
 
-	stepsPlain := func() string {
+	streamPlain := func() string {
 		m := newMonitorWithSteps(t)
 		stepID := "a"
 		idx, ok := m.index[stepID]
@@ -316,12 +239,14 @@ func TestTruncationAnchorGallery(t *testing.T) {
 		}
 		m.steps[idx].status = step.StatusRunning
 		var buf strings.Builder
-		total := outputMaxLines + 5
+		total := 15
 		for i := 0; i < total; i++ {
 			fmt.Fprintf(&buf, "streaming line %02d\n", i+1)
 		}
 		m.stepOutput[stepID] = &buf
-		return stripANSI(m.body())
+		m.chatStep = stepID
+		m.transcriptInnerW = 80
+		return stripANSI(m.chatBody())
 	}()
 
 	var b strings.Builder
@@ -334,8 +259,8 @@ func TestTruncationAnchorGallery(t *testing.T) {
 	fmt.Fprintln(&b, settledPlain)
 	fmt.Fprintln(&b, "== (b) Running tool exchange (toolDisplayRunning) -> tail anchor + prepended \"earlier lines\" ==")
 	fmt.Fprintln(&b, runningPlain)
-	fmt.Fprintln(&b, "== (c) Steps-panel live streaming output (outputMaxLines drop) ==")
-	fmt.Fprintln(&b, stepsPlain)
+	fmt.Fprintln(&b, "== (c) Transcript-panel live streaming output ==")
+	fmt.Fprintln(&b, streamPlain)
 
 	out := filepath.Join(dir, "25-task-3-anchor-gallery.txt")
 	if err := os.WriteFile(out, []byte(b.String()), 0o644); err != nil {
@@ -346,8 +271,8 @@ func TestTruncationAnchorGallery(t *testing.T) {
 		"Command: JIG_UI_SNAPSHOT_DIR=<dir> go test ./internal/tui/monitor -run TestTruncationAnchorGallery -count=1\n" +
 		"Scenes: (a) toolDisplaySuccess (head+tail with appended MoreItems marker),\n" +
 		"        (b) toolDisplayRunning (tail-only with prepended EarlierItems marker),\n" +
-		"        (c) Steps-panel writeStreamingOutput dropping leading rows (EarlierItems w/o expand hint).\n" +
-		"Style token for (c): shared.Theme.Chat.Hint (resolves Q-06.3 in favor of Chat.Hint rather than Question).\n"
+		"        (c) Transcript-panel live response before finalization.\n" +
+		"Scene (c) uses the transcript Markdown renderer.\n"
 	if err := os.WriteFile(filepath.Join(dir, "25-task-3-anchor-gallery.notes.txt"), []byte(notes), 0o644); err != nil {
 		t.Fatalf("write notes: %v", err)
 	}

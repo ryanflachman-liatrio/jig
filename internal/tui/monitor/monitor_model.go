@@ -289,7 +289,7 @@ type Model struct {
 	securityCursor     int
 	securityOffset     int
 
-	// Phase 4: rolling output buffer per step (last outputMaxLines lines).
+	// Unfinalized live transcript preview per step.
 	stepOutput map[string]*strings.Builder
 
 	vp     viewport.Model // Steps panel scroll
@@ -436,9 +436,6 @@ const (
 	// small adjacent run of tool-only entries so the common batched use/result
 	// pair stays together without making memory proportional to transcript size.
 	chatBoundaryContextMax = 16
-
-	// outputMaxLines is the number of streaming output lines shown per step.
-	outputMaxLines = 10
 )
 
 // blockKey identifies one block within a step's transcript by entry seq (unique

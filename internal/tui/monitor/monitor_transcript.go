@@ -130,7 +130,7 @@ func (m *Model) updateTranscriptFollow(atBottom bool) {
 		if n := len(m.chatEntries); n > 0 {
 			loadedSeq = m.chatEntries[n-1].Seq
 		}
-		if m.msgCount[m.chatStep] > loadedSeq {
+		if m.RunDir != "" && m.msgCount[m.chatStep] > loadedSeq {
 			m.loadChatTail()
 			m.refreshPanels()
 		}
@@ -644,14 +644,18 @@ func (m Model) transcriptPanelContent() string {
 }
 
 // chatBody renders one step's agent chat chain from its transcript. Loaded
-// entries delegate to the normalized item renderer; this branch owns only the
-// empty state.
+// entries delegate to the normalized item renderer, with an ephemeral live tail
+// after the saved content. Live output never becomes a finalized transcript item.
 func (m *Model) chatBody() string {
 	if m.selKind == "file" && m.selFile != "" {
 		return m.fileBody()
 	}
+	live := m.liveTranscriptTail()
 	if len(m.chatItems) > 0 {
 		body := m.itemTranscriptBody()
+		if live != "" {
+			body += "\n\n" + live
+		}
 		if m.compactToolNotice != "" {
 			body = "  " + shared.Theme.Chat.Hint.Render(m.compactToolNotice) + "\n\n" + body
 		}
@@ -691,11 +695,11 @@ func (m *Model) chatBody() string {
 	header := indicator + "  " + statusStyle(s.status).Render(string(s.status))
 	b.WriteString("  " + header + "\n\n")
 
-	running := s.status == step.StatusRunning
-	hasTail := false
-	if buf, ok := m.stepOutput[m.chatStep]; ok && buf.Len() > 0 {
-		hasTail = true
+	if live != "" {
+		b.WriteString(live)
+		return b.String()
 	}
+	running := s.status == step.StatusRunning
 
 	if len(m.chatEntries) == 0 {
 		// Review steps have no transcript. Their immutable document inventory is
@@ -709,12 +713,12 @@ func (m *Model) chatBody() string {
 				Title: "Transcript unavailable",
 				Body:  "Persistence is off for this run — nothing was captured.",
 			}))
-		} else if running && !hasTail {
+		} else if running {
 			b.WriteString(shared.RenderEmptyState(shared.EmptyState{
 				Title: "Waiting for step to start",
 				Body:  "Output will appear here once the step begins writing.",
 			}))
-		} else if !running && !hasTail {
+		} else {
 			if s.err != "" {
 				b.WriteString("  " + shared.Theme.Error.Render(s.err) + "\n")
 			} else if s.status == step.StatusPending {
@@ -731,6 +735,34 @@ func (m *Model) chatBody() string {
 		}
 	}
 	return b.String()
+}
+
+// liveTranscriptTail is a preview of the selected step only. A historical page
+// must not place current output beside older evidence; finalized messages replace
+// this buffer through StepMessage and the transcript file.
+func (m Model) liveTranscriptTail() string {
+	if m.chatPage.HasLater {
+		return ""
+	}
+	loadedSeq := 0
+	if n := len(m.chatEntries); n > 0 {
+		loadedSeq = m.chatEntries[n-1].Seq
+	}
+	if m.RunDir != "" && m.msgCount[m.chatStep] > loadedSeq {
+		return ""
+	}
+	buf := m.stepOutput[m.chatStep]
+	if buf == nil || buf.Len() == 0 {
+		return ""
+	}
+	text := expandView(buf.String())
+	// Do not cache partial Markdown under a finalized block's key.
+	if m.renderer != nil {
+		if rendered, err := m.renderer.Render(text); err == nil {
+			return stripBlankEdges(rendered)
+		}
+	}
+	return ansi.Hardwrap(text, max(m.transcriptInnerW, 1), true)
 }
 
 func (m *Model) writeReviewOverview(b *strings.Builder, request engine.ReviewRequest) {
