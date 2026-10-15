@@ -33,6 +33,7 @@ const ClipboardMaxTranscriptScanBytes = 8 * 1024 * 1024
 type ClipboardSurface string
 
 const (
+	ClipboardSurfaceSecurity           ClipboardSurface = "security details"
 	ClipboardSurfaceRunID              ClipboardSurface = "run ID"
 	ClipboardSurfaceMonitorFile        ClipboardSurface = "output file"
 	ClipboardSurfaceTranscriptItem     ClipboardSurface = "transcript item"

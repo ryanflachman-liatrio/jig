@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"os"
 	"strings"
 	"time"
 
@@ -16,6 +17,19 @@ import (
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case SecurityLoadedMsg:
+		if msg.runID != m.RunID || msg.runDir != m.RunDir {
+			return m, nil
+		}
+		m.securityLoading = false
+		m.securityLoadFailed = msg.err != nil && !os.IsNotExist(msg.err)
+		if msg.err == nil && len(msg.findings) >= len(m.secFindings) {
+			selectedGroup, _ := m.selectedSecurityGroup()
+			m.secFindings = msg.findings
+			m.retainSecuritySelection(selectedGroup.Key)
+			m.resize()
+		}
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.resize()
@@ -151,6 +165,14 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyPressMsg:
+		if m.securityOpen {
+			return m.updateSecurity(msg)
+		}
+		if !m.CapturesText() && !m.helpOpen && !m.showDiagnostics && keybind.Matches(msg, m.keys.SecurityInspector) {
+			m.securityOpen = true
+			m.securityLoading = m.RunDir != ""
+			return m, m.LoadSecurityCmd()
+		}
 		// ctrl+\ toggles the help agent modal from any focus region.
 		if keybind.Matches(msg, m.keys.ToggleHelp) {
 			return m.toggleHelpChat()

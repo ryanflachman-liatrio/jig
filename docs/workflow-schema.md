@@ -523,9 +523,21 @@ skill = "skills/audit"
 ```
 
 Codex's CLI has no native ACP server. `backend = "codex"` starts the
-`@agentclientprotocol/codex-acp` stdio adapter, which drives the Codex App
+`@agentclientprotocol/codex-acp@2.2.2` stdio adapter, which drives the Codex App
 Server using the operator's existing Codex login. Do not use `codex exec` or
 Codex's MCP server as a substitute; see [Codex ACP compatibility gate](research/codex-acp.md).
+
+For Codex configuration failures, inspect
+`.jig/runs/<run-id>/steps/<step-id>/acp-diagnostics.jsonl`. The
+`new_session_finished`, `load_session_finished`, and `set_config_finished`
+events include `advertised_config`: selector IDs, categories, current values,
+and available values. `set_config_started` records the requested setting and
+the configuration before the request. `set_config_rejected` distinguishes
+`missing_category`, `missing_option`, and `unavailable_value`; RPC failures use
+`set_config_failed`. In particular, compare the model selector and the
+`thought_level` selector before and after setting the model when investigating
+an effort failure. These artifacts are written automatically when run
+persistence is enabled, for both TUI and headless runs.
 
 The run monitor shows file patches only when an ACP adapter emits standard
 tool-call diff or location detail. A completed edit with no such detail shows

@@ -110,8 +110,8 @@ func ConnectCodexWithDiagnostics(ctx context.Context, decide Decider, onUpdate f
 		}
 	}()
 
-	cmd := exec.CommandContext(ctx, npxPath, "-y", "@agentclientprotocol/codex-acp@1.6.2")
-	diagnostics.Event("adapter_start", map[string]any{"adapter": "@agentclientprotocol/codex-acp@1.6.2"})
+	cmd := exec.CommandContext(ctx, npxPath, "-y", "@agentclientprotocol/codex-acp@2.2.2")
+	diagnostics.Event("adapter_start", map[string]any{"adapter": "@agentclientprotocol/codex-acp@2.2.2"})
 	cmd.Stderr = diagnostics.StderrWriter()
 	configureProcess(cmd)
 	stdin, err := cmd.StdinPipe()
@@ -213,7 +213,7 @@ func (c *Conn) NewSession(ctx context.Context, cwd string, opts ...SessionOption
 	}
 	sessionID := string(resp.SessionId)
 	c.setSessionConfig(sessionID, resp.ConfigOptions)
-	c.diagnostic("new_session_finished", map[string]any{"session_id": sessionID, "config_options": len(resp.ConfigOptions)})
+	c.diagnostic("new_session_finished", map[string]any{"session_id": sessionID, "config_options": len(resp.ConfigOptions), "advertised_config": c.configDiagnostics(sessionID)})
 	return sessionID, nil
 }
 
@@ -235,6 +235,7 @@ func (c *Conn) LoadSession(ctx context.Context, cwd, sessionID string, opts ...S
 		return fmt.Errorf("load session: %w", err)
 	}
 	c.setSessionConfig(sessionID, resp.ConfigOptions)
+	c.diagnostic("load_session_finished", map[string]any{"session_id": sessionID, "advertised_config": c.configDiagnostics(sessionID)})
 	return nil
 }
 
@@ -250,12 +251,15 @@ func (c *Conn) setSelectConfig(ctx context.Context, sessionID, configID, value s
 	}
 	options, ok := c.selectOptions(sessionID, configID)
 	if !ok {
+		c.diagnostic("set_config_rejected", map[string]any{"session_id": sessionID, "config_id": configID, "value": value, "reason": "missing_option", "advertised_config": c.configDiagnostics(sessionID)})
 		return fmt.Errorf("adapter did not advertise session config option %q", configID)
 	}
 	if checkValue && !containsConfigValue(options, value) {
+		c.diagnostic("set_config_rejected", map[string]any{"session_id": sessionID, "config_id": configID, "value": value, "reason": "unavailable_value", "advertised_config": c.configDiagnostics(sessionID)})
 		return fmt.Errorf("%s %q is unavailable; adapter advertises %s", configID, value, strings.Join(options, ", "))
 	}
 
+	c.diagnostic("set_config_started", map[string]any{"session_id": sessionID, "config_id": configID, "value": value, "advertised_config": c.configDiagnostics(sessionID)})
 	resp, err := c.rpc.SetSessionConfigOption(ctx, acpsdk.SetSessionConfigOptionRequest{
 		ValueId: &acpsdk.SetSessionConfigOptionValueId{
 			ConfigId:  acpsdk.SessionConfigId(configID),
@@ -264,11 +268,14 @@ func (c *Conn) setSelectConfig(ctx context.Context, sessionID, configID, value s
 		},
 	})
 	if err != nil {
-		c.diagnostic("set_config_failed", errorFields(err))
+		fields := errorFields(err)
+		fields["session_id"], fields["config_id"], fields["value"] = sessionID, configID, value
+		fields["advertised_config"] = c.configDiagnostics(sessionID)
+		c.diagnostic("set_config_failed", fields)
 		return fmt.Errorf("set %s %q: %w", configID, value, err)
 	}
 	c.setSessionConfig(sessionID, resp.ConfigOptions)
-	c.diagnostic("set_config_finished", map[string]any{"config_id": configID, "value": value})
+	c.diagnostic("set_config_finished", map[string]any{"session_id": sessionID, "config_id": configID, "value": value, "advertised_config": c.configDiagnostics(sessionID)})
 	return nil
 }
 
@@ -316,6 +323,7 @@ func (c *Conn) setSelectConfigByCategory(
 	}
 	configID, ok := c.selectOptionIDByCategory(sessionID, category)
 	if !ok {
+		c.diagnostic("set_config_rejected", map[string]any{"session_id": sessionID, "category": category, "value": value, "reason": "missing_category", "advertised_config": c.configDiagnostics(sessionID)})
 		return fmt.Errorf("adapter did not advertise a %q session config option", category)
 	}
 	return c.setSelectConfig(ctx, sessionID, configID, value, checkValue)
@@ -326,6 +334,24 @@ func (c *Conn) setSessionConfig(sessionID string, options []acpsdk.SessionConfig
 		c.sessionConfig = make(map[string][]acpsdk.SessionConfigOption)
 	}
 	c.sessionConfig[sessionID] = options
+}
+
+// configDiagnostics captures selector data without arbitrary adapter metadata,
+// descriptions, prompts, or authentication payloads.
+func (c *Conn) configDiagnostics(sessionID string) []map[string]any {
+	options := make([]map[string]any, 0, len(c.sessionConfig[sessionID]))
+	for _, option := range c.sessionConfig[sessionID] {
+		if option.Select == nil {
+			continue
+		}
+		selectOption := option.Select
+		fields := map[string]any{"id": selectOption.Id, "current_value": selectOption.CurrentValue, "values": configOptionValues(selectOption.Options)}
+		if selectOption.Category != nil {
+			fields["category"] = *selectOption.Category
+		}
+		options = append(options, fields)
+	}
+	return options
 }
 
 func (c *Conn) selectOptions(sessionID, configID string) ([]string, bool) {

@@ -15,7 +15,6 @@ inputs        = [
   "templates/context-assess.md",
   { from = "user", label = "Any additional context or focus areas for the review?", as = "user_context" },
 ]
-agent         = { extends = "@research-default", tools = ["Read", "Grep", "Glob", "WebSearch"] }
 
   [step.schema]
   state      = { enum = ["complete", "partial", "blocked"] }
@@ -32,7 +31,6 @@ skill         = "../skills/research_frontend"
 inputs        = ["@research.summary", { ref = "@research.findings", inline = true }]
 when          = "research.state == 'complete'"
 output        = ".jig/artifacts/report.md"
-agent         = { extends = "@research-default", tools = ["Read"] }
 
 # If research couldn't finish, escalate to a human instead of reporting.
 [[step]]

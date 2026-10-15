@@ -58,7 +58,10 @@ type MonitorDispatcher interface {
 
 // MonitorCircuit is shared by copied monitor definitions so a broken external
 // classifier is not retried by every subsequent run in the same process.
-type MonitorCircuit struct{ disabled atomic.Bool }
+type MonitorCircuit struct {
+	disabled atomic.Bool
+	failure  atomic.Pointer[MonitorFailure]
+}
 
 func (c *MonitorCircuit) disable()         { c.disabled.Store(true) }
 func (c *MonitorCircuit) isDisabled() bool { return c != nil && c.disabled.Load() }
@@ -272,7 +275,15 @@ func (s *Supervisor) flush(ctx context.Context, key executionKey) {
 			return
 		}
 		if s.monitorDisabled(mon) {
-			s.healthFinding(key.stepID, "monitor-unavailable/"+mon.Monitor, "Tier-2 classifier is unavailable for this process")
+			var failure *MonitorFailure
+			if mon.Circuit != nil {
+				failure = mon.Circuit.failure.Load()
+			}
+			detail := "This security check is disabled for this process. Restart jig after fixing the monitor configuration."
+			if failure != nil {
+				detail += " " + failure.Error()
+			}
+			s.healthFindingWithFailure(key.stepID, "monitor-unavailable/"+mon.Monitor, detail, failure)
 			continue
 		}
 		if mon.Monitor == "stuck-loop" && !StuckLoopPrefilter(entries) {
@@ -295,8 +306,12 @@ func (s *Supervisor) flush(ctx context.Context, key executionKey) {
 			if ctx.Err() != nil || errors.Is(dispatchErr, context.Canceled) && ctx.Err() != nil {
 				return
 			}
+			var failure *MonitorFailure
+			if errors.As(dispatchErr, &failure) && mon.Circuit != nil {
+				mon.Circuit.failure.Store(failure)
+			}
 			s.disableMonitor(mon)
-			s.healthFinding(key.stepID, "monitor-unavailable/"+mon.Monitor, monitorFailureDetail(dispatchErr))
+			s.healthFindingWithFailure(key.stepID, "monitor-unavailable/"+mon.Monitor, monitorFailureDetail(dispatchErr), failure)
 			if !continueFleet {
 				return
 			}
@@ -458,6 +473,10 @@ func (s *Supervisor) recordFinding(f Finding) {
 }
 
 func (s *Supervisor) healthFinding(stepID, monitor, detail string) {
+	s.healthFindingWithFailure(stepID, monitor, detail, nil)
+}
+
+func (s *Supervisor) healthFindingWithFailure(stepID, monitor, detail string, failure *MonitorFailure) {
 	key := monitor + "\x00" + stepID
 	s.mu.Lock()
 	if s.health[key] {
@@ -467,7 +486,7 @@ func (s *Supervisor) healthFinding(stepID, monitor, detail string) {
 	s.health[key] = true
 	s.mu.Unlock()
 	s.recordFinding(Finding{Ts: time.Now().UTC(), RunID: s.runID, StepID: stepID, Tier: TierMonitor,
-		Monitor: monitor, Severity: SeverityLow, Action: ActionObserved, Detail: detail,
+		Monitor: monitor, Severity: SeverityLow, Action: ActionObserved, Detail: detail, Failure: failure,
 		Fingerprint: NewFingerprint(s.runID, monitor, stepID)})
 }
 
@@ -535,6 +554,10 @@ func (s *Supervisor) restoreAccounting() {
 }
 
 func monitorFailureDetail(err error) string {
+	var failure *MonitorFailure
+	if errors.As(err, &failure) {
+		return "This security check is disabled for this process. " + failure.Error()
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "Tier-2 classifier timed out"
 	}

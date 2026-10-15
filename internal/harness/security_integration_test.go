@@ -393,7 +393,7 @@ func TestTier2ObservesEveryACPHarness(t *testing.T) {
 	tests := []struct{ name, backend, wantArg string }{
 		{"claude-acp", "claude", "@agentclientprotocol/claude-agent-acp@0.70.0"},
 		{"cursor-acp", "cursor", "acp"},
-		{"codex-acp", "codex", "@agentclientprotocol/codex-acp@1.6.2"},
+		{"codex-acp", "codex", "@agentclientprotocol/codex-acp@2.2.2"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

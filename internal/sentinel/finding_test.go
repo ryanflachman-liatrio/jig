@@ -73,3 +73,35 @@ func TestRedactionFingerprint(t *testing.T) {
 		t.Errorf("Finding.Detail missing pattern name: %q", f.Detail)
 	}
 }
+
+func TestFindingGroupsKeepDetectionsAheadOfCoverageNotices(t *testing.T) {
+	findings := []Finding{
+		{Monitor: "operator-allowlist", Action: ActionObserved, Detail: "approval 1"},
+		{Monitor: "monitor-unavailable/prompt-injection", Action: ActionObserved},
+		{Monitor: "operator-allowlist", Action: ActionObserved, Detail: "approval 2"},
+		{Monitor: "secret-in-write", Action: ActionBlocked, Severity: SeverityHigh, Detail: "redacted preview"},
+	}
+	groups := GroupFindings(findings)
+	if len(groups) != 3 || groups[0].Kind != Detection || groups[1].Kind != CheckWarning || groups[2].Kind != ConfigurationNotice || len(groups[2].Findings) != 2 {
+		t.Fatalf("groups: %+v", groups)
+	}
+	if got := SecuritySummary(findings); got != "1 detection · 1 check warning · 1 notice" {
+		t.Fatalf("summary: %s", got)
+	}
+}
+
+func TestSecurityReportGroupsApprovalNoticesAndExplainsFailures(t *testing.T) {
+	report := RenderMarkdown("step", []Finding{
+		{Monitor: "operator-allowlist", Action: ActionObserved, Detail: "approval 1", Evidence: "fixture rule 1"},
+		{Monitor: "operator-allowlist", Action: ActionObserved, Detail: "approval 2", Evidence: "fixture rule 2"},
+		{Monitor: "monitor-unavailable/prompt-injection", Action: ActionObserved, Detail: "Authentication failed; sign in again"},
+	})
+	for _, want := range []string{"0 detections · 1 check warning · 1 notice", "Remembered command approvals", "fixture rule 1", "fixture rule 2", "Authentication failed"} {
+		if !strings.Contains(report, want) {
+			t.Errorf("missing %q in %s", want, report)
+		}
+	}
+	if strings.Count(report, "## Remembered command approvals") != 1 {
+		t.Fatal("approval notices were not grouped")
+	}
+}

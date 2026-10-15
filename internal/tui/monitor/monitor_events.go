@@ -375,8 +375,10 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		}
 		// File is truth: read all findings from findings.jsonl to get the full
 		// Detail field (redacted-secret preview) that the event omits.
+		selectedGroup, _ := m.selectedSecurityGroup()
 		fPath := datastore.FindingsPath(m.RunDir)
-		if findings, err := sentinel.ReadAll(fPath); err == nil {
+		findings, err := sentinel.ReadAll(fPath)
+		if m.RunDir != "" && err == nil {
 			m.secFindings = findings
 		} else {
 			// Persistence off or file not yet written — synthesize a minimal record
@@ -390,6 +392,7 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 				Fingerprint: ev.Fingerprint,
 			})
 		}
+		m.retainSecuritySelection(selectedGroup.Key)
 		// Findings arrive after WindowSizeMsg, so the existing viewports still
 		// occupy the rows now needed by the security summary until they are refit.
 		m.resize()

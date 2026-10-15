@@ -69,51 +69,52 @@ func (m Model) securityViewHeight(available int) int {
 	if len(m.secFindings) == 0 || available < 1 || m.width < 1 {
 		return 0
 	}
-	return min(1+len(m.secFindings), securityMaxHeight, available)
+	return min(1+len(sentinel.GroupFindings(m.secFindings)), securityMaxHeight, available)
 }
 
-// securityView renders a bounded summary rather than letting an arbitrarily
-// large findings file displace the gate and footer.
 func (m Model) securityView(height int) string {
 	if len(m.secFindings) == 0 || height < 1 || m.width < 1 {
 		return ""
 	}
-
-	header := fmt.Sprintf("Security findings (%d)", len(m.secFindings))
-	lines := []string{shared.Theme.Security.Header.MaxWidth(m.width).Render(header)}
-
-	visible := min(len(m.secFindings), height-1)
-	overflow := len(m.secFindings) > visible
-	if overflow && height > 1 {
+	header := "Security · " + sentinel.SecuritySummary(m.secFindings) + " · ctrl+s inspect"
+	lines := []string{shared.Theme.Security.Header.Render(header)}
+	groups := sentinel.GroupFindings(m.secFindings)
+	visible := min(len(groups), height-1)
+	if visible < len(groups) && height > 1 {
 		visible = max(height-2, 0)
 	}
-	for _, f := range m.secFindings[:visible] {
-		sev := strings.ToUpper(string(f.Severity))
-		label := "[" + sev + "] " + f.Monitor + ": "
-		detail := f.Detail
-		if detail == "" {
-			detail = string(f.Action)
-		}
-		var row string
-		switch f.Severity {
-		case sentinel.SeverityCritical:
-			row = shared.Theme.Security.CriticalRow.MaxWidth(m.width).Render(label + detail)
-		case sentinel.SeverityHigh:
-			row = shared.Theme.Security.HighRow.MaxWidth(m.width).Render(label + detail)
-		case sentinel.SeverityMedium:
-			row = shared.Theme.Security.MediumRow.MaxWidth(m.width).Render(label + detail)
+	for _, group := range groups[:visible] {
+		label := ""
+		switch group.Kind {
+		case sentinel.ConfigurationNotice:
+			label = fmt.Sprintf("[NOTICE] %d remembered approvals · inspect to review rules", len(group.Findings))
+		case sentinel.CheckWarning:
+			label = "[CHECK WARNING] " + group.Title
 		default:
-			row = shared.Theme.Security.LowRow.MaxWidth(m.width).Render(label + detail)
+			f := group.Findings[0]
+			label = fmt.Sprintf("[%s] %s · %s · %d event(s)", strings.ToUpper(string(f.Severity)), group.Title, f.Action, len(group.Findings))
 		}
-		lines = append(lines, row)
+		style := shared.Theme.Security.LowRow
+		if group.Kind == sentinel.CheckWarning {
+			style = shared.Theme.Security.MediumRow
+		}
+		if group.Kind == sentinel.Detection {
+			switch group.Findings[0].Severity {
+			case sentinel.SeverityCritical:
+				style = shared.Theme.Security.CriticalRow
+			case sentinel.SeverityHigh:
+				style = shared.Theme.Security.HighRow
+			case sentinel.SeverityMedium:
+				style = shared.Theme.Security.MediumRow
+			}
+		}
+		lines = append(lines, style.Render(label))
 	}
-	if overflow && height > 1 {
-		remaining := len(m.secFindings) - visible
-		more := fmt.Sprintf("%s %d more finding", shared.EllipsisGlyph, remaining)
-		if remaining != 1 {
-			more += "s"
-		}
-		lines = append(lines, shared.Theme.Security.LowRow.MaxWidth(m.width).Render(more))
+	if visible < len(groups) && height > 1 {
+		lines = append(lines, fmt.Sprintf("%s %d more groups · ctrl+s inspect", shared.EllipsisGlyph, len(groups)-visible))
+	}
+	for i := range lines {
+		lines[i] = ansi.Truncate(lines[i], m.width, "")
 	}
 	return strings.Join(lines, "\n")
 }
@@ -524,6 +525,9 @@ func (m Model) View() string {
 		return ""
 	}
 
+	if m.securityOpen {
+		return m.securityInspectorView()
+	}
 	layout := m.verticalLayout()
 	footer := fitBlock(m.footerView(), m.width, layout.footerH)
 	status := fitBlock(m.statusLineView(), m.width, layout.statusH)

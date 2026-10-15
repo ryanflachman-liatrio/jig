@@ -23,6 +23,7 @@ Delivery is a property of the terminal, not of jig — see
 | Home · Runs list                       | selected **run ID** (no newline)  | *(not bound)*                                       |
 | Monitor · Transcript panel (messages)  | selected **transcript item**      | recorded **step transcript** snapshot               |
 | Monitor · Transcript panel (file view) | *(not bound — no line cursor)*    | selected **output file**                            |
+| Monitor · Security inspector            | selected **group details and records** | *(not bound)*                                   |
 | Monitor · Steps overview               | *(not bound)*                     | current step's **recorded transcript**              |
 | Review · source browse                 | current **source line**           | whole **document**                                  |
 | Review · select-range (`v`)            | inclusive **source range**        | whole **document**                                  |

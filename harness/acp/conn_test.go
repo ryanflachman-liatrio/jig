@@ -2,7 +2,10 @@ package acp
 
 import (
 	"context"
+	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -205,5 +208,60 @@ func TestSessionRequestsCarryMeta(t *testing.T) {
 	}
 	if agent.newReqs[1].Meta != nil || agent.newReqs[1].McpServers == nil {
 		t.Fatalf("option-free request = meta %#v servers %#v, want no _meta and an empty server list", agent.newReqs[1].Meta, agent.newReqs[1].McpServers)
+	}
+}
+
+func TestMissingEffortLogsAdvertisedConfiguration(t *testing.T) {
+	dir := t.TempDir()
+	log, err := newDiagnosticLog(dir, fixedSnapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	conn := newPipedConn(t, &configRecordingAgent{})
+	conn.diagnostics = log
+	if err := conn.SetSelectConfig(t.Context(), "session", "model", "haiku"); err != nil {
+		t.Fatal(err)
+	}
+	err = conn.SetSelectConfigByCategory(t.Context(), "session", acpsdk.SessionConfigOptionCategoryThoughtLevel, "high")
+	if err == nil {
+		t.Fatal("missing effort must fail")
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "acp-diagnostics.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []lifecycleEvent
+	for _, line := range strings.Split(strings.TrimSpace(string(body)), "\n") {
+		var event lifecycleEvent
+		if err := json.Unmarshal([]byte(line), &event); err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, event)
+	}
+	if len(events) != 3 {
+		t.Fatalf("got %d events, want request, response, rejection: %s", len(events), body)
+	}
+	if events[0].Event != "set_config_started" || events[0].Fields["config_id"] != "model" || events[0].Fields["value"] != "haiku" {
+		t.Fatalf("request: %+v", events[0])
+	}
+	options, ok := events[0].Fields["advertised_config"].([]any)
+	if !ok || len(options) != 1 {
+		t.Fatalf("initial configuration: %+v", events[0])
+	}
+	model := options[0].(map[string]any)
+	if model["id"] != "model" || model["category"] != "model" {
+		t.Fatalf("model configuration: %+v", model)
+	}
+	values := model["values"].([]any)
+	if len(values) != 2 || values[0] != "default" || values[1] != "haiku" {
+		t.Fatalf("model choices: %+v", values)
+	}
+	if events[1].Event != "set_config_finished" || len(events[1].Fields["advertised_config"].([]any)) != 0 {
+		t.Fatalf("response configuration: %+v", events[1])
+	}
+	rejected := events[2]
+	if rejected.Event != "set_config_rejected" || rejected.Fields["category"] != "thought_level" || rejected.Fields["value"] != "high" || rejected.Fields["reason"] != "missing_category" {
+		t.Fatalf("rejection: %+v", rejected)
 	}
 }

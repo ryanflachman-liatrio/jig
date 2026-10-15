@@ -281,7 +281,13 @@ type Model struct {
 	// populated by SecurityFinding ctrl events. Content is read from
 	// findings.jsonl (file is truth) rather than from the event fields, so
 	// the Detail field (redacted-secret preview) is always present.
-	secFindings []sentinel.Finding
+	secFindings        []sentinel.Finding
+	securityOpen       bool
+	securityLoading    bool
+	securityLoadFailed bool
+	securityDetail     bool
+	securityCursor     int
+	securityOffset     int
 
 	// Phase 4: rolling output buffer per step (last outputMaxLines lines).
 	stepOutput map[string]*strings.Builder
@@ -857,6 +863,15 @@ func (m Model) PaletteSections() []shared.HelpSection {
 }
 
 func (m Model) helpSections(simple bool) []shared.HelpSection {
+	if m.securityOpen {
+		return []shared.HelpSection{{Title: "Security inspector", Bindings: []keybind.Binding{
+			keybind.NewBinding(keybind.WithKeys("up", "down"), keybind.WithHelp("↑/↓", "select or scroll")),
+			keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "details")),
+			keybind.NewBinding(keybind.WithKeys("pgup", "pgdown"), keybind.WithHelp("pgup/pgdown", "scroll details")),
+			keybind.NewBinding(keybind.WithKeys("y"), keybind.WithHelp("y", "copy security details")),
+			keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "back / close")),
+		}}}
+	}
 	var sections []shared.HelpSection
 
 	switch {
@@ -963,6 +978,9 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 		Bindings: []keybind.Binding{toggleSimple},
 	})
 
+	security := m.keys.SecurityInspector
+	security.SetEnabled(!m.CapturesText())
+	sections = append(sections, shared.HelpSection{Title: "Security", Bindings: []keybind.Binding{security}})
 	notifDiag := m.keys.NotificationDiagnostics
 	notifDiag.SetEnabled(!m.CapturesText())
 	sections = append(sections, shared.HelpSection{

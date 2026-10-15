@@ -53,7 +53,7 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// The monitor's live-clock tick is routed unconditionally (like engine events)
 	// so the loop keeps advancing even while the user is on another screen; the
 	// monitor stops re-arming it once no step is running.
-	case monitor.TickMsg:
+	case monitor.TickMsg, monitor.SecurityLoadedMsg:
 		var mc tea.Cmd
 		m.monitor, mc = m.monitor.Update(msg)
 		return m, mc
@@ -124,7 +124,7 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		m.monitor = m.monitor.FocusPendingInput()
 		m.active = screenMonitor
-		return m, m.monitor.EnsureFrame()
+		return m, tea.Batch(m.monitor.EnsureFrame(), m.monitor.LoadSecurityCmd())
 
 	case runs.ShowMonitorMsg:
 		return m.openMonitor(msg.RunID)
@@ -425,7 +425,7 @@ func (m rootModel) openMonitor(runID string) (tea.Model, tea.Cmd) {
 	m.active = screenMonitor
 	// A run seeded from a snapshot/journal may already have a step running (or the
 	// prior frame loop fell silent while off-screen); restart the live clock.
-	return m, m.monitor.EnsureFrame()
+	return m, tea.Batch(m.monitor.EnsureFrame(), m.monitor.LoadSecurityCmd())
 }
 
 func (m rootModel) handleResetRequest(msg monitor.RequestResetMsg) (tea.Model, tea.Cmd) {

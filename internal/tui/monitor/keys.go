@@ -83,6 +83,7 @@ type monitorKeys struct {
 	// NotificationDiagnostics opens/closes the bounded diagnostics overlay
 	// (spec 23-spec-run-notifications FR-17). Command-palette discoverable via
 	// PaletteSections; never auto-opened by an arriving diagnostic.
+	SecurityInspector       keybind.Binding
 	NotificationDiagnostics keybind.Binding // matched (ctrl+g)
 
 	// Copy actions (spec 23-spec-clipboard-yank).
@@ -153,6 +154,7 @@ func defaultMonitorKeys() monitorKeys {
 		ToggleHelp:   keybind.NewBinding(keybind.WithKeys("ctrl+\\"), keybind.WithHelp("ctrl+\\", "help agent")),
 		ToggleSimple: keybind.NewBinding(keybind.WithKeys("ctrl+shift+a"), keybind.WithHelp("ctrl+shift+a", "simple/advanced")),
 
+		SecurityInspector:       keybind.NewBinding(keybind.WithKeys("ctrl+s"), keybind.WithHelp("ctrl+s", "security inspector")),
 		NotificationDiagnostics: shared.KeyNotificationDiagnostics,
 
 		CopyItem: keybind.NewBinding(keybind.WithKeys("y"), keybind.WithHelp("y", "copy")),

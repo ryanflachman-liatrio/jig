@@ -2,4 +2,6 @@
 
 [[agent]]
 id = "@research-default"
-permission_mode = "acceptEdits"
+backend = "codex"
+model = "gpt-6.1-sol"
+effort = "high"

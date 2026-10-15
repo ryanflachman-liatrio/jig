@@ -325,3 +325,33 @@ func TestMonitorAdapterHarnessFactoryError(t *testing.T) {
 		t.Fatalf("Dispatch = %+v, %v; want unlaunched error", got, err)
 	}
 }
+
+func TestMonitorFailureExplainsBackendStageAndRecoveryWithoutLeakingOutput(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		openErr error
+		events  []harness.Event
+		want    []string
+	}{
+		{name: "authentication", openErr: errors.New("authentication required: token=private-value"), want: []string{"backend=claude", "stage=session_open", "reason=authentication", "attempts=1", "Sign in"}},
+		{name: "invalid verdict", events: []harness.Event{resultEvent(map[string]any{"flagged": false}, nil)}, want: []string{"stage=verdict", "reason=invalid_verdict", "attempts=2", "required fields"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &fakeMonitorHarness{openErr: tc.openErr, sessions: []*fakeMonitorSession{scriptedSession(tc.events...), scriptedSession(tc.events...)}}
+			_, err := adapterWith(h).Dispatch(t.Context(), sentinel.MonitorSpec{Model: "fixture-model", Prompt: "private policy"}, "private transcript")
+			if err == nil {
+				t.Fatal("wanted failure")
+			}
+			for _, want := range append(tc.want, "model=fixture-model") {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("missing %q in %s", want, err)
+				}
+			}
+			for _, secret := range []string{"private-value", "private policy", "private transcript"} {
+				if strings.Contains(err.Error(), secret) {
+					t.Errorf("failure leaked %q", secret)
+				}
+			}
+		})
+	}
+}

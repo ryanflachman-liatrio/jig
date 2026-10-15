@@ -2065,11 +2065,11 @@ func TestMonitorViewFitsWindow(t *testing.T) {
 				}
 			}
 			if tt.findings == 0 {
-				if strings.Contains(plain, "Security findings") {
+				if strings.Contains(plain, "Security ·") {
 					t.Fatalf("empty security section rendered:\n%s", plain)
 				}
 			} else {
-				for _, want := range []string{"Security findings (8)", "… 5 more findings"} {
+				for _, want := range []string{"8 detections", "… 5 more groups"} {
 					if !strings.Contains(plain, want) {
 						t.Fatalf("populated security summary missing %q:\n%s", want, plain)
 					}
@@ -2129,7 +2129,7 @@ func TestMonitorResizeRefits(t *testing.T) {
 				size.w, size.h, height, ansiStrip(view))
 		}
 		plain := ansiStrip(view)
-		for _, want := range []string{"Human actions", "running", "Security findings"} {
+		for _, want := range []string{"Human actions", "running", "Security ·"} {
 			if !strings.Contains(plain, want) {
 				t.Fatalf("at %dx%d, view missing %q:\n%s", size.w, size.h, want, plain)
 			}
@@ -2667,7 +2667,8 @@ func TestSecurityPane(t *testing.T) {
 			t.Errorf("security view missing monitor name:\n%s", secView)
 		}
 		// Redacted preview must appear verbatim (not mangled by glamour).
-		if !strings.Contains(secView, "[aws-key:…MPLE]") {
+		m.securityCursor = 1
+		if !strings.Contains(m.securityDetails(), "[aws-key:…MPLE]") {
 			t.Errorf("security view mangled redacted preview:\n%s", secView)
 		}
 	})
@@ -2682,7 +2683,7 @@ func TestSecurityPane(t *testing.T) {
 	})
 
 	t.Run("header rendered", func(t *testing.T) {
-		if !strings.Contains(secView, "Security findings") {
+		if !strings.Contains(secView, "Security ·") {
 			t.Errorf("security view missing header:\n%s", secView)
 		}
 	})

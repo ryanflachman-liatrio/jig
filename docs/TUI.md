@@ -108,7 +108,7 @@ the existing selection by three rows and keeps it visible. In Transcript and
 Detail, one wheel event scrolls content by three rendered lines. All movement
 is clamped; horizontal or modified wheels are ignored.
 
-Mouse input is consumed without pass-through while modals, confirmations,
+Mouse input is consumed without pass-through while the Security inspector, modals, confirmations,
 help, the command palette, review workspaces, focused Gate controls, search, or
 text input are active. Borders, titles, footers, status and security strips,
 list headers, pagination, row gaps, hidden panels, and coordinates outside the

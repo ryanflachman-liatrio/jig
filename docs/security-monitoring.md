@@ -179,8 +179,39 @@ A classifier connection, timeout, or verdict failure produces one low-severity
 `monitor-unavailable/<id>` health finding for that run and disables that
 classifier for the remaining process lifetime. Other classifiers and Tier 1
 continue. Transcript, accounting-state, and finding-persistence failures use the
-same security event surface and name the degraded subsystem. Raw SDK errors are
-not persisted.
+same security event surface and name the degraded subsystem. Failures from the classifier adapter include a structured `failure` object:
+backend, model, stage (`adapter_start`, `session_open`, `response`, or `verdict`),
+reason, attempt count, elapsed time, configured time limit, and a recommended
+next step. Reasons distinguish authentication, model availability, session
+configuration, working-directory rejection, missing executables, rate limits,
+timeouts, invalid verdicts, and sessions ending without a result. Unclassified
+provider failures remain labeled `backend_error`; jig does not infer a more
+specific cause. Raw provider error strings and classifier output are not
+persisted. The original failure context is retained when the process disables
+a classifier, including for later runs in that process.
+
+### Inspect security events in the TUI
+
+The Monitor summary separates **detections**, **check warnings**, and
+**configuration notices**. Remembered command approvals are grouped into one
+notice, with every rule still available for inspection. Detections appear
+first by severity, followed by check warnings, then configuration notices.
+The JSONL audit records remain individual records; the generated `security.md`
+report uses the same groups and explanations.
+
+Press **ctrl+s** (or choose **security inspector** in the command palette) to
+open the inspector, including for saved runs. Use **↑/↓** or **j/k** to select
+a group, **enter** to view all its records, **pgup/pgdown** or **↑/↓** to scroll,
+and **y** to copy the selected group's details. **Esc** returns to the list,
+then closes it; **ctrl+s** closes it directly. The inspector leaves the run,
+selected step, gate queue, and underlying focus untouched.
+
+A check warning describes a coverage problem, not a detected attack. A
+configuration notice explains remembered approvals without claiming those
+commands executed. An unavailable classifier stays disabled until jig is
+restarted after the underlying problem is resolved. Older runs retain the
+failure detail originally recorded; new diagnostic fields cannot reconstruct
+a missing historical cause.
 
 A critical finding parks only the still-current, nonterminal execution at the
 existing recovery gate. A duplicate verdict, a verdict for an older
