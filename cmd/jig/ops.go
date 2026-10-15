@@ -199,6 +199,7 @@ func runDoctor(args []string) int {
 	fs.SetOutput(os.Stderr)
 	sandboxOpts := addSandboxFlags(fs)
 	root := fs.String("root", ".jig", "persistence root")
+	probeStoreWrite := fs.Bool("probe-store-write", false, "create and remove a temporary file to probe storage writability")
 	ci := fs.Bool("ci", false, "enforce unattended execution safety")
 	output := fs.String("output", "text", "output format: text|json")
 	fs.StringVar(output, "o", "text", "short for --output")
@@ -218,7 +219,9 @@ func runDoctor(args []string) int {
 		path = fs.Args()[0]
 	}
 	policy, policyErr := loadSandboxPolicy(sandboxOpts, *root)
-	report := ops.Doctor(ops.DoctorOptions{Root: *root, WorkflowPath: path, CI: *ci, SandboxPolicy: policy, SandboxPolicyError: policyErr, EndpointInput: sandboxOpts.endpoint})
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	report := ops.Doctor(ops.DoctorOptions{Context: ctx, ProbeStoreWrite: *probeStoreWrite, Root: *root, WorkflowPath: path, CI: *ci, SandboxPolicy: policy, SandboxPolicyError: policyErr, EndpointInput: sandboxOpts.endpoint})
 	if *output == "json" {
 		_ = json.NewEncoder(os.Stdout).Encode(report)
 	} else {

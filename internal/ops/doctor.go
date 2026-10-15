@@ -1,8 +1,10 @@
 package ops
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,11 +36,14 @@ type Check struct {
 }
 
 type DoctorReport struct {
-	OK     bool    `json:"ok"`
-	Checks []Check `json:"checks"`
+	OK      bool           `json:"ok"`
+	Checks  []Check        `json:"checks"`
+	Sandbox *SandboxReport `json:"sandbox,omitempty"`
 }
 
 type DoctorOptions struct {
+	Context            context.Context
+	ProbeStoreWrite    bool
 	EndpointInput      sandbox.EndpointInput
 	SandboxPolicy      *sandbox.Policy
 	SandboxPolicyError error
@@ -71,7 +76,10 @@ func Doctor(opts DoctorOptions) DoctorReport {
 		}
 	}
 
-	checks := []Check{checkStoreAccess(opts.Root), checkStoredRuns(opts.Root)}
+	if opts.Context == nil {
+		opts.Context = context.Background()
+	}
+	checks := []Check{inspectStoreAccess(opts.Root, opts.ProbeStoreWrite, storeProbeEffects{create: os.CreateTemp, remove: os.Remove}), checkStoredRuns(opts.Root)}
 	wf := opts.Workflow
 	if wf == nil && opts.WorkflowPath != "" {
 		var err error
@@ -85,16 +93,18 @@ func Doctor(opts DoctorOptions) DoctorReport {
 		checks = append([]Check{{ID: "workflow.load", Status: CheckPass, Scope: workflowScope(opts), Message: "workflow loaded and validated"}}, checks...)
 	}
 	policyChecks, permitted := checkSandboxPolicy(opts, wf)
+	sandboxReport := newSandboxReport(opts, wf, permitted)
+	finish := func() DoctorReport { report := finishDoctor(checks); report.Sandbox = sandboxReport; return report }
 	checks = append(checks, policyChecks...)
 	if !permitted {
-		return finishDoctor(checks)
+		return finish()
 	}
-	checks = append(checks, checkSandboxEndpoint(opts, wf)...)
+	checks = append(checks, inspectSandboxDeployment(opts, wf, sandboxReport)...)
 
 	if wf == nil {
 		checks = append(checks, binaryCheck("git.binary", "git", "optional", false, opts.LookPath, "install git to use worktree-isolated workflows"))
 		checks = append(checks, optionalBackendChecks(opts.LookPath, opts.Cwd)...)
-		return finishDoctor(checks)
+		return finish()
 	}
 
 	needsWorktree := false
@@ -161,7 +171,7 @@ func Doctor(opts DoctorOptions) DoctorReport {
 		}
 		checks = append(checks, Check{ID: "ci.final_merge", Status: CheckPass, Scope: "workflow", Message: "CI mode discards final merge requests"})
 	}
-	return finishDoctor(checks)
+	return finish()
 }
 
 func workflowScope(opts DoctorOptions) string {
@@ -171,7 +181,12 @@ func workflowScope(opts DoctorOptions) string {
 	return "workflow"
 }
 
-func checkStoreAccess(root string) Check {
+type storeProbeEffects struct {
+	create func(string, string) (*os.File, error)
+	remove func(string) error
+}
+
+func inspectStoreAccess(root string, probe bool, effects storeProbeEffects) Check {
 	if root == "" {
 		return Check{ID: "store.access", Status: CheckFail, Scope: root, Message: "persistence root is empty", Remediation: "pass --root PATH"}
 	}
@@ -188,19 +203,35 @@ func checkStoreAccess(root string) Check {
 			}
 			break
 		}
+		if !os.IsNotExist(statErr) {
+			return Check{ID: "store.access", Status: CheckFail, Scope: root, Message: "persistence path is not readable"}
+		}
 		parent := filepath.Dir(probeDir)
 		if parent == probeDir {
 			return Check{ID: "store.access", Status: CheckFail, Scope: root, Message: statErr.Error()}
 		}
 		probeDir = parent
 	}
-	f, err := os.CreateTemp(probeDir, ".jig-doctor-*")
+	// Read metadata and directory access without creating any file by default.
+	dir, readErr := os.Open(probeDir)
+	if readErr != nil {
+		return Check{ID: "store.access", Status: CheckFail, Scope: root, Message: "persistence location is not readable"}
+	}
+	_, readErr = dir.Readdirnames(1)
+	closeReadErr := dir.Close()
+	if readErr != nil && readErr != io.EOF || closeReadErr != nil {
+		return Check{ID: "store.access", Status: CheckFail, Scope: root, Message: "persistence location is not readable"}
+	}
+	if !probe {
+		return Check{ID: "store.access", Status: CheckPass, Scope: root, Message: "persistence location metadata readable; writability unverified"}
+	}
+	f, err := effects.create(probeDir, ".jig-doctor-*")
 	if err != nil {
 		return Check{ID: "store.access", Status: CheckFail, Scope: root, Message: "persistence root is not writable", Remediation: "choose a readable and writable --root"}
 	}
 	name := f.Name()
 	closeErr := f.Close()
-	removeErr := os.Remove(name)
+	removeErr := effects.remove(name)
 	if closeErr != nil || removeErr != nil {
 		return Check{ID: "store.access", Status: CheckFail, Scope: root, Message: "store write probe could not be cleaned up", Remediation: "check filesystem permissions"}
 	}

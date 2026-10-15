@@ -2,11 +2,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -238,4 +243,138 @@ func TestD04EndpointCLI(t *testing.T) {
 		t.Fatalf("host ambient independence: %v %s", err, out)
 	}
 	t.Log("all four entry points reject conflicting/duplicate/empty flags with exit 2; host-only run ignores poisoned Docker environment")
+}
+
+func TestD04DoctorCLI(t *testing.T) {
+	dir := t.TempDir()
+	project := filepath.Join(dir, "project")
+	home := filepath.Join(dir, "operator")
+	for _, path := range []string{project, home} {
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wf := filepath.Join(project, "host.toml")
+	if err := os.WriteFile(wf, []byte("[workflow]\nname='doctor'\nversion='1'\n[[step]]\nid='work'\ntype='command'\nrun='true'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, probe := range []bool{false, true} {
+		args := []string{"-test.run=^TestD04OfflineCLIHelper$", "--", "doctor", wf, "--root", filepath.Join(project, "missing"), "--output=json"}
+		if probe {
+			args = append(args, "--probe-store-write")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		cmd := exec.CommandContext(ctx, os.Args[0], args...)
+		cmd.Dir = project
+		cmd.Env = append(os.Environ(), "JIG_D04_CLI_HELPER=1", "HOME="+home, "XDG_CONFIG_HOME="+home)
+		out, err := cmd.CombinedOutput()
+		cancel()
+		if err != nil {
+			t.Fatalf("doctor: %v %s", err, out)
+		}
+		want := "writability unverified"
+		if probe {
+			want = "readable and writable"
+		}
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("missing effect disclosure: %s", out)
+		}
+		if _, err := os.Stat(filepath.Join(project, "missing")); !os.IsNotExist(err) {
+			t.Fatal("doctor created root")
+		}
+	}
+}
+
+func TestD04DoctorDockerReport(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "jig-cli-doc-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	socket := filepath.Join(dir, "d.sock")
+	ln, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requests, forbidden atomic.Int32
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		switch {
+		case r.Method == "HEAD" && r.URL.Path == "/_ping":
+			w.Header().Set("API-Version", "1.54")
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/version"):
+			fmt.Fprint(w, `{"ApiVersion":"1.54","MinAPIVersion":"1.40","Os":"linux"}`)
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/info"):
+			fmt.Fprint(w, `{"ID":"fixture","OSType":"linux","Architecture":"aarch64","MemoryLimit":true,"SwapLimit":true,"CpuCfsPeriod":true,"CpuCfsQuota":true,"PidsLimit":true,"CgroupVersion":"2","CgroupDriver":"systemd","SecurityOptions":[],"Warnings":["PRIVATE_SENTINEL"]}`)
+		case r.Method == "GET" && strings.Contains(r.URL.Path, "/images/"):
+			fmt.Fprint(w, `{"Id":"fixture-image","Os":"linux","Architecture":"arm64","Config":{"Env":["PRIVATE_SENTINEL"]}}`)
+		default:
+			forbidden.Add(1)
+			w.WriteHeader(500)
+		}
+	})}
+	done := make(chan struct{})
+	go func() { defer close(done); server.Serve(ln) }()
+	t.Cleanup(func() { server.Close(); <-done })
+	policy := filepath.Join(dir, "policy.toml")
+	data := fmt.Sprintf(`version=1
+allow_host=false
+[docker]
+allowed_endpoints=[%q]
+allowed_repositories=["alpine"]
+allowed_images=[]
+allowed_networks=["none"]
+workspace_roots=[%q]
+storage_roots=[%q]
+authentication="none"
+[docker.defaults]
+cpus=1
+memory="64MiB"
+pids=64
+[docker.ceilings]
+cpus=2
+memory="128MiB"
+pids=128
+`, "unix://"+socket, dir, dir)
+	if err := os.WriteFile(policy, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	wf := filepath.Join(dir, "workflow.toml")
+	if err := os.WriteFile(wf, []byte("[workflow]\nname='docker-doctor'\nversion='1'\n[[sandbox]]\nname='box'\nruntime='docker'\nimage='alpine'\n[[step]]\nid='work'\ntype='command'\nsandbox='box'\nrun='must-not-run'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, format := range []string{"json", "text"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestD04OfflineCLIHelper$", "--", "doctor", wf, "--root", filepath.Join(dir, "store"), "--sandbox-policy", policy, "--docker-host", "unix://"+socket, "--output", format)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "JIG_D04_CLI_HELPER=1", "HOME="+dir, "XDG_CONFIG_HOME="+dir, "DOCKER_HOST=tcp://PRIVATE_SENTINEL", "DOCKER_CONFIG=relative-invalid")
+		out, err := cmd.CombinedOutput()
+		cancel()
+		exit, ok := err.(*exec.ExitError)
+		if !ok || exit.ExitCode() != 1 {
+			t.Fatalf("Docker readiness exit: %v %s", err, out)
+		}
+		if strings.Contains(string(out), "PRIVATE_SENTINEL") || !strings.Contains(string(out), "sandbox_runtime_unsupported") {
+			t.Fatalf("invalid disclosure/report: %s", out)
+		}
+		if format == "json" {
+			var report struct {
+				Sandbox struct {
+					SchemaVersion int `json:"schema_version"`
+					Inspection    struct {
+						Binding struct {
+							NativePlatform string `json:"native_platform"`
+						} `json:"binding"`
+					} `json:"inspection"`
+				} `json:"sandbox"`
+			}
+			if err := json.Unmarshal(out, &report); err != nil || report.Sandbox.SchemaVersion != 1 || report.Sandbox.Inspection.Binding.NativePlatform != "linux/arm64" {
+				t.Fatalf("summary %s %v", out, err)
+			}
+		}
+	}
+	if requests.Load() != 8 || forbidden.Load() != 0 {
+		t.Fatalf("requests=%d forbidden=%d", requests.Load(), forbidden.Load())
+	}
+	t.Log("text+JSON doctor: exit=1 unsupported; 8 allowed metadata requests, zero forbidden requests, private response fields omitted")
 }

@@ -203,20 +203,8 @@ func SelectEndpoint(in EndpointInput, p *Policy) (*Endpoint, error) {
 	if err != nil || info.Mode()&os.ModeSocket == 0 {
 		return nil, endpointFailure("sandbox_endpoint_unavailable", "socket")
 	}
-	allowed := false
-	for _, entry := range p.Endpoints() {
-		candidate, err := socketPath(entry)
-		if err != nil {
-			continue
-		}
-		candidate, err = filepath.EvalSymlinks(candidate)
-		if err == nil && candidate == canonical {
-			allowed = true
-			break
-		}
-	}
-	if !allowed {
-		return nil, p.failure("sandbox_policy_denied", "docker.allowed_endpoints", "")
+	if err := authorizeEndpointPath(canonical, p); err != nil {
+		return nil, err
 	}
 	summary.URI = "unix://" + (&url.URL{Path: canonical}).EscapedPath()
 	return &Endpoint{summary: summary, path: canonical, identity: info}, nil
@@ -380,4 +368,18 @@ func projectionString(obj map[string]json.RawMessage, key string, required bool)
 	var value string
 	err := json.Unmarshal(raw, &value)
 	return value, err
+}
+
+func authorizeEndpointPath(canonical string, p *Policy) error {
+	for _, entry := range p.Endpoints() {
+		candidate, err := socketPath(entry)
+		if err != nil {
+			continue
+		}
+		candidate, err = filepath.EvalSymlinks(candidate)
+		if err == nil && candidate == canonical {
+			return nil
+		}
+	}
+	return p.failure("sandbox_policy_denied", "docker.allowed_endpoints", "")
 }

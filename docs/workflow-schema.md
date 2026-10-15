@@ -1715,3 +1715,11 @@ resumed run's policy. On active reopen the observer emits at most one
 filtered restored summary per (run, epoch, destination); subsequent genuinely
 new waits notify normally. Historical inspection (`jig status`,
 `ReplayJournal`, Runs hydration) creates no notification producer.
+
+Sandbox profiles describe authored intent. `jig validate` remains offline.
+`jig doctor` can compare requests with trusted operator policy and inspect
+bounded read-only metadata from an authorized local Unix socket; it never pulls
+images or runs image code. Omitted compute values receive only explicit policy
+defaults, while omitted platform remains unavailable until a Linux native
+platform is observed. Capability reports are unverified enforcement, and Docker
+execution is always unsupported. See [operator policy and doctor](operations.md#trusted-sandbox-policy).

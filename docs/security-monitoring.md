@@ -287,3 +287,11 @@ unsupported. Policy permission and effective resource defaults are not evidence
 of container isolation or enforced quotas. Policy diagnostics omit raw parser
 errors and private environment/config values; provenance is local operator data
 and must not become telemetry labels or exported workflow content.
+
+Doctor metadata inspection uses an allowlisted Unix transport with fixed
+request, response, header, image and time bounds. The SDK receives no ambient
+credentials, proxies, TLS stores, API overrides or telemetry exporters. Raw
+image environment/labels/entrypoint and daemon warnings are not diagnostics.
+Default store inspection performs no writes; only explicit
+`--probe-store-write` creates and removes a temporary file. These observations
+cannot certify UID/GID access, Desktop sharing, storage quotas or containment.

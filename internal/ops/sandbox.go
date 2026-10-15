@@ -68,13 +68,49 @@ func checkSandboxPolicy(opts DoctorOptions, wf *workflow.Workflow) ([]Check, boo
 	return checks, permitted
 }
 
-func checkSandboxEndpoint(opts DoctorOptions, wf *workflow.Workflow) []Check {
-	eligible := opts.EndpointInput.Explicit() || wf == nil && opts.SandboxPolicy.HasDocker()
+// SandboxReport separates permission, observations and execution support. Raw
+// authored profiles (including env), policy data and SDK replies never enter it.
+type SandboxReport struct {
+	SchemaVersion    int                 `json:"schema_version"`
+	Structure        string              `json:"structure"`
+	Policy           string              `json:"policy"`
+	Endpoint         string              `json:"endpoint"`
+	Capabilities     string              `json:"capabilities"`
+	ExecutionSupport string              `json:"execution_support"`
+	Source           sandbox.Source      `json:"source"`
+	Fingerprint      string              `json:"policy_fingerprint,omitempty"`
+	Inspection       *sandbox.Inspection `json:"inspection,omitempty"`
+}
+
+func newSandboxReport(opts DoctorOptions, wf *workflow.Workflow, permitted bool) *SandboxReport {
+	report := &SandboxReport{SchemaVersion: 1, Structure: "unavailable", Policy: "fail", Endpoint: "unavailable", Capabilities: "unavailable", ExecutionSupport: "unavailable", Source: sandbox.Source{Kind: "builtin"}}
 	if wf != nil {
+		report.Structure = "pass"
+		report.ExecutionSupport = "host"
 		for i := range wf.Steps {
 			if wf.Steps[i].ResolvedSandbox().Profile != nil {
+				report.ExecutionSupport = "sandbox_runtime_unsupported"
+			}
+		}
+	}
+	if permitted {
+		report.Policy = "pass"
+	}
+	if opts.SandboxPolicy != nil {
+		report.Source = opts.SandboxPolicy.Source()
+		report.Source.Path = sandbox.Display(report.Source.Path)
+		report.Fingerprint = opts.SandboxPolicy.Fingerprint()
+	}
+	return report
+}
+func inspectSandboxDeployment(opts DoctorOptions, wf *workflow.Workflow, report *SandboxReport) []Check {
+	eligible := opts.EndpointInput.Explicit() || wf == nil && opts.SandboxPolicy.HasDocker()
+	var steps []workflow.Step
+	if wf != nil {
+		steps = wf.Steps
+		for i := range steps {
+			if steps[i].ResolvedSandbox().Profile != nil {
 				eligible = true
-				break
 			}
 		}
 	}
@@ -83,13 +119,35 @@ func checkSandboxEndpoint(opts DoctorOptions, wf *workflow.Workflow) []Check {
 	}
 	endpoint, err := sandbox.SelectEndpoint(opts.EndpointInput, opts.SandboxPolicy)
 	if err != nil {
+		report.Endpoint = "fail"
 		return []Check{{ID: "sandbox.endpoint", Status: CheckFail, Scope: "deployment", Message: err.Error()}}
 	}
+	report.Endpoint = "pass"
 	summary := endpoint.Summary()
-	return []Check{
-		{ID: "sandbox.endpoint", Status: CheckPass, Scope: summary.EndpointSource, Message: summary.URI},
-		{ID: "sandbox.endpoint.context", Status: CheckPass, Scope: summary.ContextSource, Message: summary.Context},
-		{ID: "sandbox.endpoint.config", Status: CheckPass, Scope: summary.ConfigSource, Message: summary.ConfigRoot},
-		{ID: "sandbox.capability", Status: CheckWarn, Scope: "deployment", Message: "Daemon identity, API, platform and enforcement remain unverified; ambient TLS, auth, headers, API and platform overrides are not applied."},
+	checks := []Check{{ID: "sandbox.endpoint", Status: CheckPass, Scope: summary.EndpointSource, Message: summary.URI}, {ID: "sandbox.endpoint.context", Status: CheckPass, Scope: summary.ContextSource, Message: summary.Context}, {ID: "sandbox.endpoint.config", Status: CheckPass, Scope: summary.ConfigSource, Message: summary.ConfigRoot}}
+	observed, err := sandbox.Inspect(opts.Context, endpoint, opts.SandboxPolicy, steps, nil)
+	report.Inspection = &observed
+	if err != nil {
+		report.Capabilities = "fail"
+		return append(checks, Check{ID: "sandbox.capability", Status: CheckFail, Scope: "deployment", Message: err.Error()})
 	}
+	report.Capabilities = "unverified"
+	status := CheckWarn
+	if observed.Capabilities == nil || !observed.Capabilities.Ready {
+		status = CheckFail
+	}
+	checks = append(checks, Check{ID: "sandbox.capability", Status: status, Scope: "deployment", Message: "reported compute capabilities are metadata only; enforcement, UID/GID access, Desktop sharing, storage and emulation remain unverified"})
+	for _, st := range observed.Steps {
+		if st.Reason != "" {
+			checks = append(checks, Check{ID: "sandbox.capability.platform", Status: CheckFail, Scope: st.StepID, Message: st.Reason})
+		}
+	}
+	for _, image := range observed.Images {
+		status := CheckWarn
+		if image.Status == "cache_required_missing" || image.Status == "unavailable" || image.Status == "metadata_unavailable" {
+			status = CheckFail
+		}
+		checks = append(checks, Check{ID: "sandbox.capability.image", Status: status, Scope: image.Reference, Message: image.Status})
+	}
+	return checks
 }

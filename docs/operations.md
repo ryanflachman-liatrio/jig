@@ -545,8 +545,8 @@ for the runtime epoch. Workloads, executable validators, and operator-requested
 integration resolution pass the same authorization boundary. Host help and
 Tier-2 services remain outside that boundary. Policy permission does not enable
 Docker execution: the permanent `sandbox_runtime_unsupported` check still
-rejects every Docker workload. This checkpoint does not discover an endpoint,
-inspect a daemon, or certify resource enforcement.
+rejects every Docker workload. Doctor can inspect metadata for an authorized local deployment; this does not
+certify resource enforcement.
 
 Doctor reports `sandbox.policy`, bounded reason/field/source identifiers, and
 `sandbox.scope` auxiliary-host disclosure. Policy denial returns exit 1 and
@@ -582,7 +582,38 @@ sockets fail. Selection records endpoint/context/config provenance and pins
 socket identity; replacement is an error, never a new automatic selection.
 
 Doctor may select a policy-permitted Docker deployment even while execution is
-unsupported. No daemon is dialed at this checkpoint. Runtime rejects Docker
+unsupported. Doctor dials only the authorized local Unix socket through the
+read-only inspection boundary below. Runtime rejects Docker
 before deployment selection; explicit flags on a host run still require an
 allowed endpoint. TLS, headers, API/platform overrides, and credential
 configuration cannot alter the selected transport.
+
+### Read-only doctor inspection
+
+Default doctor storage inspection reads metadata and directory access; it never
+creates/removes a probe file and reports writability as unverified. Add
+`--probe-store-write` to explicitly create, close and remove a temporary file in
+the nearest existing storage ancestor. The flag never creates a missing root or
+grants any Docker mutation permission. Creation, close and cleanup failures
+remain readiness failures.
+
+Authorized deployment inspection uses the pinned Moby SDK with explicit
+transport settings and disabled telemetry export. It permits only HEAD/GET
+ping, GET version/info, and GET exact selected image-inspect paths. Budgets are
+10 seconds total, 2 seconds per dial, 4 MiB response bodies (including errors),
+64 KiB response headers, 36 wire requests and 32 distinct images. Requests use
+fresh connections to avoid hidden transport retries. Only a method-unsupported
+HEAD ping can fall back to GET; redirects and other failed ping retries are
+blocked. Context cancellation applies to every request.
+
+The version-1 `sandbox` JSON summary separates structure, policy, endpoint,
+capabilities and execution support. A completed binding records the selected
+socket, Linux daemon ID, negotiated API (1.40–1.54) and known native platform.
+Missing capability fields remain unknown; false remains false. Rootless compute
+readiness requires reported cgroup v2/systemd support. Reported capabilities
+never prove enforcement. Non-native platforms require emulation permission and
+remain unverified. Image absence with `pull="never"` fails; otherwise acquisition
+is reported as required, without pulling. Remaining images beyond the cap stay
+uninspected. Environment, labels, entrypoints and raw daemon warnings are omitted.
+Docker workflows still report `sandbox_runtime_unsupported` and exit 1 even
+when individual metadata checks pass.
