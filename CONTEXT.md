@@ -158,6 +158,58 @@ and input; the runner applies the decision order (Claude tool-list second
 layer, then the security guard). The harness does not own sentinel policy. A
 worktree and a tool list are different controls.
 
+## Planned frozen authoring assets
+
+These terms describe accepted D01 design decisions; runtime implementation and
+executable proof remain pending.
+
+**Frozen skill root:** the stable, run-and-step-owned location through which a
+conversation accesses its captured skill bundle. Its materialized contents are
+disposable and rebuilt from verified captures before later execution, only
+after the previous owner's termination is confirmed.
+
+**Helper copy:** the disposable materialization of a captured skill bundle for
+one worker execution. Its exact inventory must remain unchanged; generated
+files belong in separate scratch or the execution workspace.
+
+**Capture failure:** missing or damaged required authoring captures that
+invalidate the run's execution authority. It terminates the run rather than
+entering ordinary step retry or continuation; helper-copy damage alone is an
+attempt failure.
+
+## Planned Docker execution
+
+These terms describe accepted design decisions from the Docker epic interview;
+Docker execution is not implemented or accepted by the workflow loader yet.
+
+**Sandboxed step:** workflow work whose executable workload runs in a selected
+contained execution environment. Its backend and repository mutation policy
+remain separate choices; containment does not imply restricted network egress.
+
+**Synthetic baseline:** the sandbox's independent Git baseline containing
+only the allowed dispatched files. Its commit identity and history differ
+from the original source repository, whose identity is separate metadata.
+
+**Sandbox login:** operator-authorized backend login state kept separately
+for sandbox execution. It is distinct from registry pull credentials, task
+secrets, and the backend conversation checkpoint.
+
+**Credential lane:** exclusive use of one rotating backend login lineage
+across executions and jig processes. It can reduce agent parallelism below
+workflow limits; copying a credential file does not create another lane.
+
+**Phase container:** one container for either the main workload or executable
+validation within a sandboxed execution. Phases share the locked image and
+declared persistent workspace/scratch, with confirmed termination between them.
+
+**Candidate contribution:** the complete set of workspace changes after main
+execution and validation, subject to acceptance and mutation policy before
+publication. Reader and review-validator writes are not contributions.
+
+**Image lock:** the run's immutable image identity selected at first use for
+one reference/platform pair. Retries and reopen reuse that identity, subject
+to current operator policy and the recorded daemon's content availability.
+
 ## TUI presentation
 
 **Screen:** one of the root surfaces, Home or Monitor. Home contains workflow
