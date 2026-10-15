@@ -41,19 +41,20 @@ type sub struct {
 // Manager is the registry of concurrent runs.
 // mu guards the registry only — workflow state is owned by each scheduler.
 type Manager struct {
-	publishAuthoring func(string, []byte, map[string][]byte, []byte) error
-	startCheck       func(string, string) error
-	mu               sync.Mutex
-	runs             map[string]*Run
-	exec             Executor
-	resolver         IntegrationResolver
-	root             string // .jig/ root (used in Phase 2+ for file I/O)
-	subs             []sub  // manager-level fan-out; TUI subscribes once
-	monitors         []sentinel.MonitorDef
-	secrets          SecretResolver
-	observers        observerRegistry
-	epochMu          sync.Mutex
-	epoch            int
+	sandboxAuthorizer SandboxAuthorizer
+	publishAuthoring  func(string, []byte, map[string][]byte, []byte) error
+	startCheck        func(string, string) error
+	mu                sync.Mutex
+	runs              map[string]*Run
+	exec              Executor
+	resolver          IntegrationResolver
+	root              string // .jig/ root (used in Phase 2+ for file I/O)
+	subs              []sub  // manager-level fan-out; TUI subscribes once
+	monitors          []sentinel.MonitorDef
+	secrets           SecretResolver
+	observers         observerRegistry
+	epochMu           sync.Mutex
+	epoch             int
 }
 
 // nextEpoch returns a monotonic epoch number stamped onto each Run
@@ -162,7 +163,7 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	if wf == nil {
 		return nil, fmt.Errorf("engine: nil workflow")
 	}
-	if err := checkSandboxWorkflow(wf); err != nil {
+	if err := m.authorizeSandboxWorkflow(wf); err != nil {
 		return nil, err
 	}
 	prepared, assets, err := workflow.PrepareAuthoring(wf, "")
@@ -260,6 +261,7 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	s.authoring = authority
 	s.resolver = m.resolver
 	s.secretResolver = secrets
+	s.sandboxAuthorizer = m.sandboxAuthorizer
 	s.getCauseHint = run.causeSnapshot
 	s.observers = &m.observers
 
@@ -780,23 +782,24 @@ type pendingQuestion struct {
 // ── scheduler ────────────────────────────────────────────────────────────────
 
 type scheduler struct {
-	nextExecution    uint64
-	activeExecutions map[string]uint64
-	workerExits      map[string]*workerExit
-	authoring        *runAuthoring
-	fatalCaptureErr  error
-	wf               *workflow.Workflow
-	runID            string
-	states           map[string]*step.State
-	inbox            chan schedMsg
-	subs             []sub
-	exec             Executor
-	resolver         IntegrationResolver
-	cancel           context.CancelFunc        // cancels the run context; used by abort policy
-	writer           *manifest.Writer          // nil when persistence is disabled (root = "")
-	runDir           string                    // .jig/runs/<runID>/; "" when persistence is disabled
-	structured       map[string]map[string]any // cached JSON decode of step Result.Structured
-	stepFeedback     map[string]string         // gotoStepID → feedback for route replay
+	sandboxAuthorizer SandboxAuthorizer
+	nextExecution     uint64
+	activeExecutions  map[string]uint64
+	workerExits       map[string]*workerExit
+	authoring         *runAuthoring
+	fatalCaptureErr   error
+	wf                *workflow.Workflow
+	runID             string
+	states            map[string]*step.State
+	inbox             chan schedMsg
+	subs              []sub
+	exec              Executor
+	resolver          IntegrationResolver
+	cancel            context.CancelFunc        // cancels the run context; used by abort policy
+	writer            *manifest.Writer          // nil when persistence is disabled (root = "")
+	runDir            string                    // .jig/runs/<runID>/; "" when persistence is disabled
+	structured        map[string]map[string]any // cached JSON decode of step Result.Structured
+	stepFeedback      map[string]string         // gotoStepID → feedback for route replay
 	// rerunSource maps a route's goto target → the firing source step id. When a
 	// coalesced rewind has several contributors it names the first in
 	// declaration order. It lets buildStepContext name why a step is re-running.
@@ -1563,7 +1566,7 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 // the shared implementation behind agentDispatchStrategy and
 // commandDispatchStrategy in strategies.go.
 func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
-	if err := checkSandboxStep(st); err != nil {
+	if err := s.authorizeSandboxStep(st); err != nil {
 		s.failCapture(err)
 		return
 	}
@@ -1891,6 +1894,9 @@ func (s *scheduler) snapshotInputs(stepID string, inputs []ResolvedInput) error 
 }
 
 func (s *scheduler) resolveSecrets(st *workflow.Step) (map[string]string, error) {
+	if err := s.authorizeSandboxStep(st); err != nil {
+		return nil, err
+	}
 	if len(st.Secrets) == 0 {
 		return nil, nil
 	}
@@ -2042,21 +2048,22 @@ func (s *scheduler) buildRequest(
 	request := st.ResolvedSandbox()
 	ownedStep.SnapshotSandbox = &request
 	req := StepRequest{
-		RunID:           runID,
-		Step:            &ownedStep,
-		Inputs:          s.preResolvedInputs[st.ID],
-		Feedback:        s.stepFeedback[st.ID],
-		WorkflowContext: workflowContext,
-		ArtifactDir:     artifactDir,
-		Worktree:        worktreePath,
-		ExecutionDir:    executionDir,
-		RepoRoot:        s.repoRoot,
-		TranscriptPath:  transcriptPath,
-		Iteration:       state.Iteration,
-		Attempt:         state.Attempt,
-		Generation:      state.Generation,
-		Guard:           guard,
-		FindingsPath:    findingsPath,
+		SandboxAuthorizer: s.sandboxAuthorizer,
+		RunID:             runID,
+		Step:              &ownedStep,
+		Inputs:            s.preResolvedInputs[st.ID],
+		Feedback:          s.stepFeedback[st.ID],
+		WorkflowContext:   workflowContext,
+		ArtifactDir:       artifactDir,
+		Worktree:          worktreePath,
+		ExecutionDir:      executionDir,
+		RepoRoot:          s.repoRoot,
+		TranscriptPath:    transcriptPath,
+		Iteration:         state.Iteration,
+		Attempt:           state.Attempt,
+		Generation:        state.Generation,
+		Guard:             guard,
+		FindingsPath:      findingsPath,
 	}
 	if s.authoring != nil {
 		req.Assets = s.authoring.assets
@@ -2630,7 +2637,7 @@ func (s *scheduler) handleResolveIntegrationWithAgent(m resolveIntegrationWithAg
 	if state == nil || state.Status != step.StatusAwaitingIntegration || s.resolver == nil || st == nil || st.Type != workflow.StepAgent {
 		return
 	}
-	if err := checkSandboxStep(st); err != nil {
+	if err := s.authorizeSandboxStep(st); err != nil {
 		s.emit(RunError{RunID: s.runID, Err: err.Error()})
 		return
 	}
@@ -2641,7 +2648,7 @@ func (s *scheduler) handleResolveIntegrationWithAgent(m resolveIntegrationWithAg
 		return
 	}
 	result, err := s.resolver.ResolveIntegration(context.Background(), IntegrationResolutionRequest{
-		RunID: s.runID, Step: st, Worktree: s.runWorktree, Conflicts: paths,
+		RunID: s.runID, Step: cloneSandboxStep(st), Worktree: s.runWorktree, Conflicts: paths, SandboxAuthorizer: s.sandboxAuthorizer,
 	}, conflictReporter{})
 	if err != nil || result == nil || result.Status == step.StatusFailed {
 		detail := "agent conflict resolver failed"

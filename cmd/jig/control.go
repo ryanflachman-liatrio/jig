@@ -17,6 +17,7 @@ import (
 )
 
 type controlFlags struct {
+	sandbox      *sandboxFlags
 	root         *string
 	output       *string
 	quiet        *bool
@@ -29,7 +30,7 @@ type controlFlags struct {
 }
 
 func addControlFlags(fs *flag.FlagSet, recoveryDefault string) controlFlags {
-	f := controlFlags{}
+	f := controlFlags{sandbox: addSandboxFlags(fs)}
 	f.root = fs.String("root", ".jig", "persistence root")
 	f.output = fs.String("output", "text", "output format: text|json|jsonl")
 	fs.StringVar(f.output, "o", "text", "short for --output")
@@ -46,7 +47,7 @@ func addControlFlags(fs *flag.FlagSet, recoveryDefault string) controlFlags {
 
 var controlFlagsTakingValue = map[string]bool{
 	"root": true, "output": true, "o": true, "timeout": true,
-	"on-recovery": true, "on-conflict": true, "to": true,
+	"on-recovery": true, "on-conflict": true, "to": true, "sandbox-policy": true,
 }
 
 func applyControlCI(fs *flag.FlagSet, f controlFlags) {
@@ -100,7 +101,11 @@ func headlessOptions(ctx context.Context, f controlFlags, mode headless.OutputMo
 		return headless.Options{}, nil, err
 	}
 	tel := setupTelemetry(ctx, mgrRoot)
-	mgr, err := newManager(mgrRoot, cfg.Security, tel)
+	policy, err := loadSandboxPolicy(f.sandbox, mgrRoot)
+	if err != nil {
+		return headless.Options{}, tel, err
+	}
+	mgr, err := newManager(mgrRoot, cfg.Security, tel, policy)
 	if err != nil {
 		return headless.Options{}, tel, err
 	}

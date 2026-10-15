@@ -18,6 +18,7 @@ import (
 func runRun(args []string) int {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	sandboxOpts := addSandboxFlags(fs)
 
 	root := fs.String("root", ".jig", "persistence root (default: .jig)")
 	output := fs.String("output", "text", "output format: text|json|jsonl")
@@ -117,7 +118,12 @@ func runRun(args []string) int {
 	tel := setupTelemetry(ctx, *root)
 	defer tel.shutdown(context.Background())
 
-	rt, err := newRuntime(*root, cfg.Notifications, cfg.Security, tel)
+	policy, err := loadSandboxPolicy(sandboxOpts, *root)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return headless.ExitFailed
+	}
+	rt, err := newRuntime(*root, cfg.Notifications, cfg.Security, tel, policy)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return headless.ExitFailed
@@ -181,7 +187,7 @@ func parseConflictAction(s string) error {
 // sync with runRun's FlagSet.
 var runFlagsTakingValue = map[string]bool{
 	"root": true, "output": true, "o": true, "timeout": true,
-	"on-recovery": true, "on-conflict": true,
+	"on-recovery": true, "on-conflict": true, "sandbox-policy": true,
 }
 
 // reorderRunArgs moves the single positional workflow path to the end so

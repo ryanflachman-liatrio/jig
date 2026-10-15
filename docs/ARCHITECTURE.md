@@ -161,3 +161,20 @@ lines, never terminal rows. `internal/tui/review` handles interaction;
   hold working history (decisions, specs, plans, proofs) on disk but are not
   committed — see [AGENTS.md](../AGENTS.md). Verify API sketches and
   historical guarantees against the current implementation before using them.
+
+## Sandbox authorization
+
+`internal/sandbox` owns bounded operator-policy loading, immutable canonical
+policy data, fingerprints, and pure request/effective-resource evaluation. It
+imports workflow contracts, not engine or TUI. Policy authority is independent
+of `internal/config` preference merging. CLI composition supplies the frozen
+policy through the consumer-owned `engine.SandboxAuthorizer` interface.
+
+Engine checks all expanded requests before runtime support, storage publication,
+worktree preparation, or secret resolution. It retains the authorizer in the
+scheduler and carries it with the originating step into runner requests.
+Concrete command/check/agent, validation, and integration entry points check
+policy and runtime support before effects. Direct Manager use retains host
+behavior and rejects Docker without deployment wiring. Docker execution remains
+unsupported even when operator policy permits the request. Display decoding
+consults neither policy nor deployment state.

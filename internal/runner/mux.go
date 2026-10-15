@@ -33,6 +33,9 @@ func (m *Mux) Register(t workflow.StepType, e engine.Executor) {
 // a failed result (not an error) when no executor is registered, so the engine
 // can apply the step's failure policy rather than crashing.
 func (m *Mux) Execute(ctx context.Context, req engine.StepRequest, rep engine.Reporter) (*step.Result, error) {
+	if err := authorizeRequest(req); err != nil {
+		return &step.Result{Status: step.StatusFailed, Err: err.Error()}, err
+	}
 	e, ok := m.executors[req.Step.Type]
 	if !ok {
 		return &step.Result{

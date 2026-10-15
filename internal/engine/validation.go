@@ -57,7 +57,7 @@ func (m validationStartMsg) execute(s *scheduler) {
 	}
 	state.Result = m.result
 	st := s.stepByID(m.stepID)
-	if err := checkSandboxStep(st); err != nil {
+	if err := s.authorizeSandboxStep(st); err != nil {
 		m.reply <- err
 		return
 	}

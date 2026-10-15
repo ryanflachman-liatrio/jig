@@ -40,6 +40,9 @@ type checkFindingsDocument struct {
 }
 
 func (e *CheckExecutor) Execute(ctx context.Context, req engine.StepRequest, rep engine.Reporter) (*step.Result, error) {
+	if err := authorizeRequest(req); err != nil {
+		return &step.Result{Status: step.StatusFailed, Err: err.Error()}, err
+	}
 	if err := requiredToolsAvailable(req.Step); err != nil {
 		return e.protocolError(req, err.Error(), true), nil
 	}

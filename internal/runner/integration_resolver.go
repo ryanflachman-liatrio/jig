@@ -24,6 +24,9 @@ func (r *IntegrationResolver) ResolveIntegration(ctx context.Context, req engine
 	if req.Step == nil {
 		return &step.Result{Status: step.StatusFailed, Err: "missing conflicted step"}, nil
 	}
+	if err := engine.AuthorizeSandboxExecution(req.SandboxAuthorizer, req.Step, []string{req.Worktree}, nil); err != nil {
+		return &step.Result{Status: step.StatusFailed, Err: err.Error()}, err
+	}
 	resolverStep := *req.Step
 	resolverStep.Type = workflow.StepAgent
 	resolverStep.Isolation = workflow.IsolationNone
@@ -34,7 +37,7 @@ func (r *IntegrationResolver) ResolveIntegration(ctx context.Context, req engine
 	resolverStep.AppendSystemPrompt = strings.TrimSpace(resolverStep.AppendSystemPrompt + "\n\n" + integrationResolutionPrompt(req.Conflicts))
 
 	return r.agent.Execute(ctx, engine.StepRequest{
-		RunID: req.RunID, Step: &resolverStep, Worktree: req.Worktree, ExecutionDir: req.Worktree,
+		SandboxAuthorizer: req.SandboxAuthorizer, RunID: req.RunID, Step: &resolverStep, Worktree: req.Worktree, ExecutionDir: req.Worktree,
 	}, rep)
 }
 

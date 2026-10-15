@@ -205,3 +205,20 @@ beyond the current page.
 **User guidance:** human-authored text, including initial and resumed input.
 A user-role tool result is not user guidance. **Unsupported transcript item:**
 unknown content preserved in place for inspection rather than silently dropped.
+
+## Sandbox policy
+
+**Sandbox request:** the complete lexically selected host or Docker profile,
+including authored resource omissions and selection provenance. It is distinct
+from agent backend selection and Git isolation.
+
+**Operator policy:** immutable permission data loaded independently of project
+preferences from the invoking user's designated policy file. Its fingerprint
+records canonical content, not authority or a signature.
+
+**Effective sandbox resources:** explicit requested values or trusted defaults
+for omitted values, each retaining its source. A denied request is never changed
+to fit a ceiling. Permission does not imply runtime support or proven enforcement.
+
+**Auxiliary host scope:** help and Tier-2 services outside the workflow sandbox
+boundary. An all-agent containment requirement is unsupported.

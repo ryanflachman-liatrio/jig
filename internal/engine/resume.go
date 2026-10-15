@@ -258,7 +258,7 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	if err != nil {
 		return fail(fmt.Errorf("resume workflow: %w", err))
 	}
-	if err := checkSandboxWorkflow(wf); err != nil {
+	if err := m.authorizeSandboxWorkflow(wf); err != nil {
 		return fail(err)
 	}
 	checkpoint, err := restoreUnfinishedCheckpoint(runDir, wf, events)
@@ -302,6 +302,7 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	s.authoring = authority
 	s.resolver = m.resolver
 	s.secretResolver = secrets
+	s.sandboxAuthorizer = m.sandboxAuthorizer
 	s.getCauseHint = run.causeSnapshot
 	s.seq = seq
 	s.states = checkpoint.states

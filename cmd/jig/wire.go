@@ -13,6 +13,7 @@ import (
 	"github.com/ryanflachman-liatrio/jig/internal/harness"
 	"github.com/ryanflachman-liatrio/jig/internal/notification"
 	"github.com/ryanflachman-liatrio/jig/internal/runner"
+	"github.com/ryanflachman-liatrio/jig/internal/sandbox"
 	"github.com/ryanflachman-liatrio/jig/internal/telemetry"
 	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
@@ -44,7 +45,7 @@ type Runtime struct {
 // passed in here (loaded once by the caller via loadEffectiveConfig, Spec 28
 // Unit 3 — Runtime no longer reads operator configuration from disk itself).
 func NewRuntime(root string, notifications config.NotificationsConfig) (*Runtime, error) {
-	return newRuntime(root, notifications, config.SecurityConfig{}, nil)
+	return newRuntime(root, notifications, config.SecurityConfig{}, nil, nil)
 }
 
 // newRuntime is [NewRuntime] with the operator's security settings and an
@@ -52,8 +53,8 @@ func NewRuntime(root string, notifications config.NotificationsConfig) (*Runtime
 // non-nil, the Manager's executor is wrapped in a telemetry.MetricMux so
 // every step reports OTel spans/metrics alongside the notification runtime.
 // cmd/jig's CLI entry points use this; tests use the exported NewRuntime.
-func newRuntime(root string, notifications config.NotificationsConfig, security config.SecurityConfig, tel *telemetryHandle) (*Runtime, error) {
-	mgr, err := newManager(root, security, tel)
+func newRuntime(root string, notifications config.NotificationsConfig, security config.SecurityConfig, tel *telemetryHandle, policy *sandbox.Policy) (*Runtime, error) {
+	mgr, err := newManager(root, security, tel, policy)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +169,7 @@ func (r *Runtime) ReleaseRun(runID string) {
 //
 // security selects the Tier-2 monitor backend and model; a backend that cannot
 // serve the monitors fails construction.
-func newManager(root string, security config.SecurityConfig, tel *telemetryHandle) (*engine.Manager, error) {
+func newManager(root string, security config.SecurityConfig, tel *telemetryHandle, policy *sandbox.Policy) (*engine.Manager, error) {
 	mux := runner.NewMux()
 	mux.Register(workflow.StepCommand, runner.NewCommandExecutor(""))
 	mux.Register(workflow.StepCheck, runner.NewCheckExecutor(""))
@@ -181,6 +182,9 @@ func newManager(root string, security config.SecurityConfig, tel *telemetryHandl
 	}
 
 	mgr := engine.NewManager(exec, root)
+	if policy != nil {
+		mgr.SetSandboxAuthorizer(policy)
+	}
 	mgr.SetIntegrationResolver(runner.NewIntegrationResolver(harness.For))
 	mgr.SetSecretResolver(resolveNamedSecret)
 	monitors, err := runner.BuiltinMonitors(security)

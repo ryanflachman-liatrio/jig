@@ -45,6 +45,9 @@ func NewCommandExecutor(cwd string) *CommandExecutor {
 // rep.  The returned Result reflects the process exit code: exit 0 →
 // StatusSucceeded, any non-zero exit → StatusFailed.
 func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, rep engine.Reporter) (*step.Result, error) {
+	if err := authorizeRequest(req); err != nil {
+		return &step.Result{Status: step.StatusFailed, Err: err.Error()}, err
+	}
 	start := time.Now()
 
 	cmdStr, err := resolveCommand(req)

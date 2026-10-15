@@ -268,3 +268,22 @@ cost, captured tool evidence, resulting finding, cancellation behavior, and the
 backend's supported reopen result. Also submit an adversarial transcript that
 asks the classifier to invoke a tool and confirm no tool executes. A row not run
 must be reported as not run rather than inferred from offline coverage.
+
+## Sandbox policy authority
+
+Sandbox policy is loaded independently of preferences from an explicit operator
+path or the operator's XDG/home configuration. See
+[trusted sandbox policy](operations.md#trusted-sandbox-policy) for the strict
+format and safe-file rules. Project configuration cannot select or weaken it.
+Checks precede worker, executable validator, integration resolver, and secret
+resolution entry points. The policy is immutable during an active runtime
+epoch; it is not a filesystem watcher or mid-attempt revocation mechanism.
+
+This admission boundary does not sandbox host filesystem/network access.
+Help chat and Tier-2 classifiers remain host services outside workflow sandbox
+coverage. Stronger all-agent containment and hard storage requirements fail as
+unsupported. Docker authentication, secret delivery, and execution remain
+unsupported. Policy permission and effective resource defaults are not evidence
+of container isolation or enforced quotas. Policy diagnostics omit raw parser
+errors and private environment/config values; provenance is local operator data
+and must not become telemetry labels or exported workflow content.

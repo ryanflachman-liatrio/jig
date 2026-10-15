@@ -123,3 +123,74 @@ run='exit 98'
 	}
 	t.Log("all poisoned executables untouched; invalid policy/Docker config and unavailable endpoint do not affect validate")
 }
+
+func TestD04PolicyCLI(t *testing.T) {
+	root := t.TempDir()
+	project := filepath.Join(root, "project")
+	operator := filepath.Join(root, "operator")
+	for _, dir := range []string{project, operator} {
+		if err := os.Mkdir(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	policy := filepath.Join(operator, "deny.toml")
+	if err := os.WriteFile(policy, []byte("version=1\nallow_host=false\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	bad := filepath.Join(operator, "bad.toml")
+	if err := os.WriteFile(bad, []byte("PRIVATE_SENTINEL = ["), 0600); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(project, "executed")
+	wf := filepath.Join(project, "work.toml")
+	source := "[workflow]\nname='policy-cli'\nversion='1'\n[[step]]\nid='work'\ntype='command'\nrun='touch " + marker + "'\nsecrets=['synthetic']\n"
+	if err := os.WriteFile(wf, []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		args   []string
+		code   int
+		reason string
+	}{
+		{"run", []string{"run", wf, "--sandbox-policy", policy, "--root=", "--ci"}, 1, "sandbox_policy_denied"},
+		{"doctor-json", []string{"doctor", wf, "--sandbox-policy=" + policy, "--root=", "--output=json"}, 1, "sandbox_policy_denied"},
+		{"doctor-text", []string{"doctor", wf, "--sandbox-policy", policy, "--root="}, 1, "auxiliary_host"},
+		{"malformed", []string{"run", wf, "--sandbox-policy", bad, "--root="}, 1, "sandbox_policy_invalid"},
+		{"resume-missing", []string{"resume", "synthetic", "--on-recovery=retry", "--sandbox-policy", bad}, 1, "sandbox_policy_invalid"},
+		{"startup-malformed", []string{"--sandbox-policy", bad}, 1, "sandbox_policy_invalid"},
+		{"run-empty", []string{"run", wf, "--sandbox-policy="}, 2, "nonempty"},
+		{"doctor-empty", []string{"doctor", "--sandbox-policy="}, 2, "nonempty"},
+		{"resume-duplicate", []string{"resume", "synthetic", "--on-recovery=retry", "--sandbox-policy", policy, "--sandbox-policy=" + policy}, 2, "once"},
+		{"run-duplicate", []string{"run", wf, "--sandbox-policy", policy, "--sandbox-policy=" + policy}, 2, "once"},
+		{"startup-empty", []string{"--sandbox-policy="}, 2, "nonempty"},
+		{"validate", []string{"validate", wf, "--sandbox-policy", policy}, 2, "usage"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, os.Args[0], append([]string{"-test.run=^TestD04OfflineCLIHelper$", "--"}, tc.args...)...)
+			cmd.Dir = project
+			cmd.Env = append(os.Environ(), "JIG_D04_CLI_HELPER=1", "HOME="+operator, "XDG_CONFIG_HOME="+operator, "DOCKER_CONFIG="+bad, "DOCKER_HOST=tcp://PRIVATE_SENTINEL", "JIG_SECRET_SYNTHETIC=PRIVATE_SENTINEL")
+			out, err := cmd.CombinedOutput()
+			code := 0
+			if err != nil {
+				if e, ok := err.(*exec.ExitError); ok {
+					code = e.ExitCode()
+				} else {
+					t.Fatal(err)
+				}
+			}
+			if ctx.Err() != nil || code != tc.code || !strings.Contains(string(out), tc.reason) {
+				t.Fatalf("exit %d want %d output %s", code, tc.code, out)
+			}
+			if strings.Contains(string(out), "PRIVATE_SENTINEL") {
+				t.Fatal("private value disclosed")
+			}
+			t.Logf("exit=%d reason=%s", code, tc.reason)
+		})
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("denied workload executed")
+	}
+}

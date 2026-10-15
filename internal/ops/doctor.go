@@ -13,6 +13,7 @@ import (
 	"github.com/ryanflachman-liatrio/jig/internal/engine"
 	"github.com/ryanflachman-liatrio/jig/internal/headless"
 	"github.com/ryanflachman-liatrio/jig/internal/operatorcfg"
+	"github.com/ryanflachman-liatrio/jig/internal/sandbox"
 	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
@@ -38,14 +39,16 @@ type DoctorReport struct {
 }
 
 type DoctorOptions struct {
-	Root         string
-	WorkflowPath string
-	Workflow     *workflow.Workflow
-	CI           bool
-	Cwd          string
-	LookPath     func(string) (string, error)
-	LookupEnv    func(string) (string, bool)
-	RunGit       func(string, ...string) error
+	SandboxPolicy      *sandbox.Policy
+	SandboxPolicyError error
+	Root               string
+	WorkflowPath       string
+	Workflow           *workflow.Workflow
+	CI                 bool
+	Cwd                string
+	LookPath           func(string) (string, error)
+	LookupEnv          func(string) (string, bool)
+	RunGit             func(string, ...string) error
 }
 
 func Doctor(opts DoctorOptions) DoctorReport {
@@ -80,6 +83,11 @@ func Doctor(opts DoctorOptions) DoctorReport {
 	if wf != nil {
 		checks = append([]Check{{ID: "workflow.load", Status: CheckPass, Scope: workflowScope(opts), Message: "workflow loaded and validated"}}, checks...)
 	}
+	policyChecks, permitted := checkSandboxPolicy(opts, wf)
+	checks = append(checks, policyChecks...)
+	if !permitted {
+		return finishDoctor(checks)
+	}
 
 	if wf == nil {
 		checks = append(checks, binaryCheck("git.binary", "git", "optional", false, opts.LookPath, "install git to use worktree-isolated workflows"))
@@ -93,6 +101,10 @@ func Doctor(opts DoctorOptions) DoctorReport {
 	secrets := map[string]bool{}
 	for i := range wf.Steps {
 		s := &wf.Steps[i]
+		if s.ResolvedSandbox().Profile != nil {
+			checks = append(checks, Check{ID: "sandbox.execution_support", Status: CheckFail, Scope: sandbox.Display(s.ID), Message: "sandbox_runtime_unsupported: Docker execution is not supported"})
+			continue
+		}
 		if s.Isolation == workflow.IsolationWorktree {
 			needsWorktree = true
 		}

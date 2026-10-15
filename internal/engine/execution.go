@@ -36,7 +36,7 @@ func (s *scheduler) acquireExecutionWorkspace(st *workflow.Step) (executionWorks
 }
 
 func (s *scheduler) acquireExecutionWorkspaceContext(ctx context.Context, st *workflow.Step) (executionWorkspace, error) {
-	if err := checkSandboxStep(st); err != nil {
+	if err := s.authorizeSandboxStep(st); err != nil {
 		return executionWorkspace{}, err
 	}
 	kind := executionWorkspaceReadOnlyView

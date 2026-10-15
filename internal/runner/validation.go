@@ -26,6 +26,9 @@ func (e *CheckExecutor) Validate(ctx context.Context, req engine.StepRequest, re
 }
 
 func (m *Mux) Validate(ctx context.Context, req engine.StepRequest, rep engine.Reporter) (bool, string, error) {
+	if err := authorizeRequest(req); err != nil {
+		return false, "sandbox authorization failed", err
+	}
 	v, ok := m.executors[req.Step.Type].(engine.Validator)
 	if !ok {
 		return false, "executor does not support validation", nil
@@ -34,6 +37,9 @@ func (m *Mux) Validate(ctx context.Context, req engine.StepRequest, rep engine.R
 }
 
 func validateAttempt(ctx context.Context, req engine.StepRequest, rep engine.Reporter, fallback string) (bool, string, error) {
+	if err := authorizeRequest(req); err != nil {
+		return false, "sandbox authorization failed", err
+	}
 	v := req.Step.Validate
 	if v == nil {
 		return true, "gate passed", nil

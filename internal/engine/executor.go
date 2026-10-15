@@ -38,15 +38,18 @@ type IntegrationResolver interface {
 }
 
 type IntegrationResolutionRequest struct {
-	RunID     string
-	Step      *workflow.Step
-	Worktree  string
-	Conflicts []string
+	SandboxAuthorizer SandboxAuthorizer
+	RunID             string
+	Step              *workflow.Step
+	Worktree          string
+	Conflicts         []string
 }
 
 // StepRequest is the data a worker needs to execute one step.
 // @ref inputs are resolved to paths / inlined values before dispatch.
 type StepRequest struct {
+	// SandboxAuthorizer is frozen operator policy, never workflow-supplied.
+	SandboxAuthorizer SandboxAuthorizer
 	// Assets is immutable run-owned authoring content; AssetOwner names the static template.
 	Assets     *workflow.AuthoringAssets
 	AssetOwner string

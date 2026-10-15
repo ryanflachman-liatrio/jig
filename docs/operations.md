@@ -465,3 +465,91 @@ replace or accept it. Abort ends orchestration while retaining the uncertain
 storage. These checks do not certify arbitrary detached host descendants or
 provide Docker containment. Linux and macOS are the qualified host platforms;
 other platforms fail closed when group confirmation is unsupported.
+
+## Trusted sandbox policy
+
+`--sandbox-policy PATH` selects a separate operator-owned policy for bare TUI
+startup, `run`, `resume`, applied `reset`, and `doctor`. Separate and `=` values
+are accepted; an empty value or a repeated flag is a usage error (exit 2).
+`validate` remains structural and rejects operator policy flags.
+
+Without the flag, discovery uses `$XDG_CONFIG_HOME/jig/sandbox-policy.toml`,
+then `~/.config/jig/sandbox-policy.toml` when XDG is unset. XDG must be absolute.
+There is no project search or `--config` alias. Absent implicit policy permits
+host requests and denies Docker. A selected missing, unreadable, unsafe, or
+malformed policy fails closed. Policy files must be regular, at most 1 MiB,
+owned by the invoking user or root, and not group/world writable. File symlinks
+and unsafe ancestors are rejected; root-owned sticky temporary directories
+are permitted. Automatic sources inside the project/source tree are rejected;
+an explicit path is a deliberate operator designation. Ordinary project-over-user
+preference merging cannot change policy authority.
+
+A minimal host denial is:
+
+```toml
+version = 1
+allow_host = false
+```
+
+The optional Docker section requires every list, authentication, and both
+complete resource tables shown below. These are synthetic paths and explicit
+operator choices, not installed defaults:
+
+```toml
+version = 1
+allow_host = false
+require_all_agents = false
+
+[docker]
+allowed_endpoints = ["unix:///operator/docker.sock"]
+allowed_repositories = ["docker.io/library/alpine"]
+allowed_images = []
+require_digest = false
+allowed_networks = ["none"]
+allow_emulation = false
+workspace_roots = ["/operator/projects"]
+storage_roots = ["/operator/storage", "/operator/tmp"]
+authentication = "none"
+
+[docker.defaults]
+cpus = 1
+memory = "512MiB"
+pids = 64
+
+[docker.ceilings]
+cpus = 2
+memory = "2GiB"
+pids = 256
+```
+
+Unknown/duplicate keys fail. Optional booleans default to false. All lists
+allow at most 256 unique entries; empty lists deny their category. Image rules
+match normalized exact references or exact repository names, with no wildcard
+or prefix matching. `require_digest` also applies to repository permissions.
+Resources use the workflow grammar, defaults must fit ceilings, and explicit
+requests above a ceiling are denied without clamping. Only omitted resources
+receive defaults; authored requests remain unchanged.
+
+Docker workspace/source and storage paths must fall beneath canonical allowed
+roots, including resolution of existing ancestors of missing child paths.
+Empty persistence paths remain absent. These rules do not constrain arbitrary
+host filesystem or network access. `authentication = "none"` is the only
+supported mode. Docker secrets and agent authentication are unsupported; jig
+rejects them before secret resolution or login-store access. A true
+`require_all_agents` or positive `hard_storage_bytes` requirement is recognized
+but unsupported; zero/negative hard storage is invalid.
+
+Admission checks the complete expanded graph, including skipped steps and
+explicit child overrides, before launching work. The selected policy is frozen
+for the runtime epoch. Workloads, executable validators, and operator-requested
+integration resolution pass the same authorization boundary. Host help and
+Tier-2 services remain outside that boundary. Policy permission does not enable
+Docker execution: the permanent `sandbox_runtime_unsupported` check still
+rejects every Docker workload. This checkpoint does not discover an endpoint,
+inspect a daemon, or certify resource enforcement.
+
+Doctor reports `sandbox.policy`, bounded reason/field/source identifiers, and
+`sandbox.scope` auxiliary-host disclosure. Policy denial returns exit 1 and
+skips executable/secret readiness checks. Host tool availability is never used
+as evidence of tools inside a Docker image. Current-policy durable recovery and
+explicit policy recheck are not yet available; denied reopen fails before work.

@@ -51,6 +51,9 @@ func NewAgentExecutorFixed(h harness.Harness) *AgentExecutor {
 //     assistant text blocks — one capture path, no drift from the transcript.
 //  4. Returns a Result that summarises the outcome.
 func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep engine.Reporter) (result *step.Result, resultErr error) {
+	if err := authorizeRequest(req); err != nil {
+		return &step.Result{Status: step.StatusFailed, Err: err.Error()}, err
+	}
 	start := time.Now()
 	if req.Assets != nil {
 		if err := req.Assets.VerifyStep(req.AssetOwner, req.Step); err != nil {

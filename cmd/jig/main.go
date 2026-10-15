@@ -38,7 +38,7 @@ func main() {
 	applyGlobalConfigFlag()
 
 	// Subcommands run and exit before the TUI takes over the terminal.
-	if len(os.Args) > 1 {
+	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "--sandbox-policy") {
 		switch os.Args[1] {
 		case "init":
 			os.Exit(runInit(os.Args[2:]))
@@ -78,6 +78,11 @@ func main() {
 		}
 	}
 
+	sandboxOpts, err := parseStartupSandbox(os.Args[1:])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(2)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -95,7 +100,12 @@ func main() {
 	tel := setupTelemetry(ctx, ".jig")
 	defer tel.shutdown(context.Background())
 
-	rt, err := newRuntime(".jig", cfg.Notifications, cfg.Security, tel)
+	policy, err := loadSandboxPolicy(sandboxOpts, ".jig")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	rt, err := newRuntime(".jig", cfg.Notifications, cfg.Security, tel, policy)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing jig: %v\n", err)
 		os.Exit(1)

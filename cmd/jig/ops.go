@@ -197,11 +197,12 @@ func runLogs(args []string) int {
 func runDoctor(args []string) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	sandboxOpts := addSandboxFlags(fs)
 	root := fs.String("root", ".jig", "persistence root")
 	ci := fs.Bool("ci", false, "enforce unattended execution safety")
 	output := fs.String("output", "text", "output format: text|json")
 	fs.StringVar(output, "o", "text", "short for --output")
-	reordered, err := reorderArgs(args, map[string]bool{"root": true, "output": true, "o": true}, 1)
+	reordered, err := reorderArgs(args, map[string]bool{"root": true, "output": true, "o": true, "sandbox-policy": true}, 1)
 	if err != nil || fs.Parse(reordered) != nil {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -216,7 +217,8 @@ func runDoctor(args []string) int {
 	if len(fs.Args()) == 1 {
 		path = fs.Args()[0]
 	}
-	report := ops.Doctor(ops.DoctorOptions{Root: *root, WorkflowPath: path, CI: *ci})
+	policy, policyErr := loadSandboxPolicy(sandboxOpts, *root)
+	report := ops.Doctor(ops.DoctorOptions{Root: *root, WorkflowPath: path, CI: *ci, SandboxPolicy: policy, SandboxPolicyError: policyErr})
 	if *output == "json" {
 		_ = json.NewEncoder(os.Stdout).Encode(report)
 	} else {
@@ -285,6 +287,9 @@ Global flags:
                             support (TERM=linux, ancient telnet, etc.).
   --config PATH             use PATH as the user-level config.toml
                             layer instead of the default XDG location.
+
+  --sandbox-policy PATH     trusted operator policy for TUI startup, run,
+                            resume, applied reset, and doctor.
 
 Commands:
   init                      scaffold a valid workflow

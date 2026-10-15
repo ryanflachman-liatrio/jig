@@ -12,7 +12,7 @@ import (
 
 func TestNewManagerUsesPortableBuiltinRoster(t *testing.T) {
 	t.Chdir(t.TempDir())
-	mgr, err := newManager("", config.SecurityConfig{}, nil)
+	mgr, err := newManager("", config.SecurityConfig{}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,11 +3,79 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"reflect"
 
 	"github.com/BurntSushi/toml"
 	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
+
+// SandboxAuthorizer is frozen operator authority for one run epoch. Workflow
+// files and ordinary preferences cannot supply it. Implementations own policy
+// parsing; engine owns admission and dispatch. Callers pass owned steps/paths.
+type SandboxAuthorizer interface {
+	Authorize(st *workflow.Step, workspace, storage []string) error
+}
+
+// SetSandboxAuthorizer configures subsequent run epochs. Nil retains direct
+// Manager's host-only support boundary. Configure before starting runs.
+func (m *Manager) SetSandboxAuthorizer(authorizer SandboxAuthorizer) {
+	m.sandboxAuthorizer = authorizer
+}
+
+// AuthorizeSandboxExecution is shared with concrete runners, including direct
+// validation and integration calls. Policy permission never enables Docker.
+func AuthorizeSandboxExecution(a SandboxAuthorizer, st *workflow.Step, workspace, storage []string) error {
+	if a != nil {
+		if err := a.Authorize(st, workspace, storage); err != nil {
+			return err
+		}
+	}
+	return checkSandboxStep(st)
+}
+
+func (m *Manager) authorizeSandboxWorkflow(wf *workflow.Workflow) error {
+	var workspace []string
+	if m.root != "" {
+		workspace = append(workspace, filepath.Dir(m.root))
+	}
+	if path, _ := wf.Source(); path != "" {
+		workspace = append(workspace, filepath.Dir(path))
+	}
+	for _, src := range wf.ModuleSources() {
+		workspace = append(workspace, filepath.Dir(src.Path))
+	}
+	// Evaluate the entire request set before checking runtime support so a
+	// disallowed explicit child cannot hide behind an unsupported parent.
+	if m.sandboxAuthorizer != nil {
+		for i := range wf.Steps {
+			st := cloneSandboxStep(&wf.Steps[i])
+			if err := m.sandboxAuthorizer.Authorize(st, append([]string(nil), workspace...), []string{m.root}); err != nil {
+				return err
+			}
+		}
+	}
+	return checkSandboxWorkflow(wf)
+}
+
+func cloneSandboxStep(st *workflow.Step) *workflow.Step {
+	if st == nil {
+		return nil
+	}
+	owned := *st
+	r := st.ResolvedSandbox()
+	owned.SnapshotSandbox = &r
+	if st.Sandbox != nil {
+		ref := *st.Sandbox
+		owned.Sandbox = &ref
+	}
+	owned.Secrets = append([]string(nil), st.Secrets...)
+	return &owned
+}
+
+func (s *scheduler) authorizeSandboxStep(st *workflow.Step) error {
+	return AuthorizeSandboxExecution(s.sandboxAuthorizer, cloneSandboxStep(st), []string{s.repoRoot}, []string{s.jigRoot, s.runDir})
+}
 
 // SandboxRuntimeError is a support decision, never a host fallback. Policy
 // admission will precede this permanent guard when operator policy is wired.
