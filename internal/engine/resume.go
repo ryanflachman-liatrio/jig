@@ -19,18 +19,20 @@ import (
 )
 
 type workflowSnapshot struct {
-	Authoring     *authoringReference     `json:"authoring,omitempty"`
-	Checksum      string                  `json:"checksum,omitempty"`
-	SourcePath    string                  `json:"source_path,omitempty"`
-	BaseDir       string                  `json:"base_dir,omitempty"`
-	SHA256        string                  `json:"sha256"`
-	TOML          string                  `json:"toml"`
-	ModuleSources []workflow.ModuleSource `json:"module_sources,omitempty"`
-	Meta          workflow.Meta           `json:"meta"`
-	Defaults      workflow.Defaults       `json:"defaults"`
-	Telemetry     workflow.Telemetry      `json:"telemetry,omitempty"`
-	PublicSteps   []workflow.Step         `json:"public_steps,omitempty"`
-	ExpandedSteps []workflow.Step         `json:"expanded_steps,omitempty"`
+	SandboxVersion int                     `json:"sandbox_version,omitempty"`
+	Sandbox        *sandboxSnapshot        `json:"sandbox,omitempty"`
+	Authoring      *authoringReference     `json:"authoring,omitempty"`
+	Checksum       string                  `json:"checksum,omitempty"`
+	SourcePath     string                  `json:"source_path,omitempty"`
+	BaseDir        string                  `json:"base_dir,omitempty"`
+	SHA256         string                  `json:"sha256"`
+	TOML           string                  `json:"toml"`
+	ModuleSources  []workflow.ModuleSource `json:"module_sources,omitempty"`
+	Meta           workflow.Meta           `json:"meta"`
+	Defaults       workflow.Defaults       `json:"defaults"`
+	Telemetry      workflow.Telemetry      `json:"telemetry,omitempty"`
+	PublicSteps    []workflow.Step         `json:"public_steps,omitempty"`
+	ExpandedSteps  []workflow.Step         `json:"expanded_steps,omitempty"`
 	// Notification is the run's frozen resolved notification policy — the
 	// list of events and destination aliases that were in effect when the
 	// run started. It is secret-free: aliases only, no URL, bearer, or
@@ -76,6 +78,11 @@ func encodeWorkflowSnapshot(wf *workflow.Workflow, ref *authoringReference) ([]b
 		PublicSteps:   wf.PublicSteps(),
 		ExpandedSteps: wf.Steps,
 	}
+	sandboxes, err := captureSandboxes(wf.Steps)
+	if err != nil {
+		return nil, err
+	}
+	snap.SandboxVersion, snap.Sandbox = 1, sandboxes
 	policy := wf.NotificationPolicy()
 	if len(policy.Events) > 0 || len(policy.Routes) > 0 {
 		snap.Notification = &policy
@@ -162,6 +169,9 @@ func DecodeWorkflowSnapshot(data []byte) (*workflow.Workflow, error) {
 			return nil, fmt.Errorf("workflow snapshot notification policy checksum mismatch")
 		}
 	}
+	if err := restoreSandboxes(&snap); err != nil {
+		return nil, err
+	}
 	var wf *workflow.Workflow
 	if len(snap.ExpandedSteps) > 0 {
 		restored, err := workflow.RestoreExpandedWithTelemetry(snap.Meta, snap.Defaults, snap.Telemetry, snap.PublicSteps, snap.ExpandedSteps, snap.ModuleSources)
@@ -247,6 +257,9 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	wf, authority, err := loadAuthoringSnapshot(runDir)
 	if err != nil {
 		return fail(fmt.Errorf("resume workflow: %w", err))
+	}
+	if err := checkSandboxWorkflow(wf); err != nil {
+		return fail(err)
 	}
 	checkpoint, err := restoreUnfinishedCheckpoint(runDir, wf, events)
 	if err != nil {

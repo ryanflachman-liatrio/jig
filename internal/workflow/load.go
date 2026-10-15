@@ -73,7 +73,7 @@ func DecodeLockedMetadata(data, baseDir, sourcePath string, sources []ModuleSour
 	}
 	wf.publicSteps = cloneSteps(wf.Steps)
 	e := &moduleExpansion{metadataOnly: true, locked: locked, sources: map[string]ModuleSource{}}
-	if err := e.expand(wf, baseDir, sourcePath, "", nil); err != nil {
+	if err := e.expand(wf, baseDir, sourcePath, "", nil, nil, nil); err != nil {
 		return nil, err
 	}
 	wf.moduleSources = append([]ModuleSource(nil), sources...)
@@ -105,6 +105,7 @@ func decodeWorkflowCaptured(data, baseDir, sourcePath string, locked map[string]
 	if err := wf.resolveNotification(baseDir); err != nil {
 		return nil, err
 	}
+	wf.resolveSandboxes("", nil, nil)
 	if hasSubworkflow(wf) {
 		if err := expandModules(wf, baseDir, sourcePath, locked); err != nil {
 			return nil, err
@@ -159,6 +160,11 @@ func decodePreparedCaptured(data, baseDir, sourcePath string, capture *authoring
 	// consume their whole subtree, so their internals never show up here.
 	if keys := md.Undecoded(); len(keys) > 0 {
 		return nil, fmt.Errorf("unknown key(s) in workflow: %s", formatKeys(keys))
+	}
+
+	wf.sourcePath, wf.sourceTOML = sourcePath, data
+	if err := wf.validateSandboxDeclarations(); err != nil {
+		return nil, err
 	}
 
 	if wf.Module != nil && wf.Notification != nil {

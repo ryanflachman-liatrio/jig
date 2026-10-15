@@ -73,6 +73,7 @@ const (
 
 // Workflow is a parsed workflow file.
 type Workflow struct {
+	Sandboxes          []SandboxProfile    `toml:"sandbox"`
 	Notification       *NotificationConfig `toml:"notification"`
 	notificationPolicy NotificationPolicy
 
@@ -153,9 +154,9 @@ func (wf *Workflow) PublicSteps() []Step {
 		return nil
 	}
 	if wf.publicSteps != nil {
-		return wf.publicSteps
+		return cloneSteps(wf.publicSteps)
 	}
-	return wf.Steps
+	return cloneSteps(wf.Steps)
 }
 
 // ModuleSources returns a defensive copy of the provenance used by expansion.
@@ -189,6 +190,7 @@ func RestoreExpandedWithTelemetry(meta Meta, defaults Defaults, telemetry Teleme
 			return nil, fmt.Errorf("workflow snapshot predates the agent schema (step %q); start a new run", s.ID)
 		}
 	}
+	defaults.Sandbox = clonePointer(defaults.Sandbox)
 	wf := &Workflow{
 		Meta:           meta,
 		Defaults:       defaults,
@@ -283,9 +285,10 @@ type StepSecurity struct {
 
 // Defaults is the [defaults] table. Per-step fields override these.
 type Defaults struct {
-	Cwd          string `toml:"cwd"`
-	MaxParallel  int    `toml:"max_parallel"`
-	ArtifactsDir string `toml:"artifacts_dir"`
+	Sandbox      *string `toml:"sandbox" json:"sandbox,omitempty"`
+	Cwd          string  `toml:"cwd"`
+	MaxParallel  int     `toml:"max_parallel"`
+	ArtifactsDir string  `toml:"artifacts_dir"`
 	// ResourceLimits caps concurrently running steps by resource class. A class
 	// not present here is constrained only by max_parallel.
 	ResourceLimits map[string]int `toml:"resource_limits"`
@@ -322,6 +325,8 @@ type Defaults struct {
 // they apply to; validate() enforces that only the right fields are set for a
 // given Type.
 type Step struct {
+	Sandbox                              *string         `toml:"sandbox" json:"sandbox,omitempty"`
+	SnapshotSandbox                      *SandboxRequest `toml:"-" json:"snapshot_sandbox,omitempty"`
 	assets                               []AssetBinding
 	scriptAnchor, assetAnchor, declaring string
 

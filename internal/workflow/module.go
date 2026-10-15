@@ -29,7 +29,7 @@ type expandedModule struct {
 func expandModules(wf *Workflow, baseDir, sourcePath string, locked map[string]ModuleSource) error {
 	wf.publicSteps = cloneSteps(wf.Steps)
 	e := &moduleExpansion{sources: make(map[string]ModuleSource), locked: locked, capture: wf.authoring}
-	if err := e.expand(wf, baseDir, sourcePath, "", nil); err != nil {
+	if err := e.expand(wf, baseDir, sourcePath, "", nil, nil, nil); err != nil {
 		return err
 	}
 	paths := make([]string, 0, len(e.sources))
@@ -44,7 +44,7 @@ func expandModules(wf *Workflow, baseDir, sourcePath string, locked map[string]M
 	return nil
 }
 
-func (e *moduleExpansion) expand(wf *Workflow, baseDir, sourcePath, prefix string, stack []string) error {
+func (e *moduleExpansion) expand(wf *Workflow, baseDir, sourcePath, prefix string, stack []string, invocation, inherited *SandboxRequest) error {
 	if len(stack) > 32 {
 		return CaptureLimit
 	}
@@ -52,6 +52,10 @@ func (e *moduleExpansion) expand(wf *Workflow, baseDir, sourcePath, prefix strin
 		if err := markModuleInputs(wf); err != nil {
 			return err
 		}
+	}
+	ordinary := inherited
+	if !e.metadataOnly {
+		ordinary = wf.resolveSandboxes(prefix, invocation, inherited)
 	}
 	var out []Step
 	modules := make(map[string]expandedModule)
@@ -115,7 +119,12 @@ func (e *moduleExpansion) expand(wf *Workflow, baseDir, sourcePath, prefix strin
 		rebaseModuleAssets(child, filepath.Dir(absModulePath))
 		sum := sha256.Sum256(data)
 		e.sources[absModulePath] = ModuleSource{Path: absModulePath, SHA256: hex.EncodeToString(sum[:]), TOML: string(data)}
-		if err := e.expand(child, filepath.Dir(absModulePath), absModulePath, prefix+raw.ID+"__", append(stack, absModulePath)); err != nil {
+		childInvocation := invocation
+		if raw.Sandbox != nil {
+			r := raw.ResolvedSandbox()
+			childInvocation = &r
+		}
+		if err := e.expand(child, filepath.Dir(absModulePath), absModulePath, prefix+raw.ID+"__", append(stack, absModulePath), childInvocation, ordinary); err != nil {
 			return err
 		}
 		if err := resolveModuleExports(child, modules); err != nil {
@@ -794,6 +803,11 @@ func cloneSteps(in []Step) []Step {
 
 func cloneStep(in Step) Step {
 	out := in
+	out.Sandbox = clonePointer(in.Sandbox)
+	if in.SnapshotSandbox != nil {
+		r := in.SnapshotSandbox.Clone()
+		out.SnapshotSandbox = &r
+	}
 	out.assets = append([]AssetBinding(nil), in.assets...)
 	if in.Validate != nil {
 		v := *in.Validate

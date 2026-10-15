@@ -1,0 +1,33 @@
+# Structural validation only: jig validate examples/sandbox-inspect.toml
+# Docker execution is unsupported. Run/reopen fail closed; nothing runs on host.
+[workflow]
+name = "sandbox-inspect"
+version = "1"
+description = "Authoring example; no container execution support is implied."
+
+[defaults]
+sandbox = "build"
+
+[[sandbox]]
+name = "build"
+runtime = "docker"
+image = "alpine:3.22"
+platform = "linux/arm64"
+pull = "if_missing"
+network = "none"
+cpus = 0.5
+memory = "64MiB"
+pids = 32
+env = { COLOR = "plain" } # literal, nonsecret values only
+
+[[step]]
+id = "inspect"
+type = "command"
+run = "printf 'sandbox request example\n'"
+
+[[step]]
+id = "explicit_host"
+type = "command"
+depends_on = ["inspect"]
+sandbox = "host"
+run = "true"

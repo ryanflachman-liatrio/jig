@@ -130,7 +130,7 @@ func main() {
 // runValidate parses and validates a workflow file, printing a summary. It
 // returns a process exit code so main can Exit before the TUI initializes.
 func runValidate(args []string) int {
-	if len(args) != 1 {
+	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
 		fmt.Fprintln(os.Stderr, "usage: jig validate <workflow.toml>")
 		return 2
 	}

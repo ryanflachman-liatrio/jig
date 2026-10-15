@@ -107,6 +107,65 @@ Steps are declared with `[[step]]`. Five author-facing types: `agent`,
 | `[step.validate]` | table| Deterministic gate. See "Validation".                            |
 | `[[step.route]]` | table | Ordered bounded back-edge. See "Routes".                           |
 
+### Sandbox requests (structural support)
+
+Root and module documents may declare `[[sandbox]]` profiles and select one
+with `[defaults].sandbox` or `step.sandbox` on any of the five step kinds.
+`host` is a reserved selection and cannot name a profile. Sandbox selection,
+agent backend and Git isolation are independent. With no selection, steps use
+host. See [the inspection-only example](../examples/sandbox-inspect.toml).
+
+`jig validate` checks this syntax offline, including unused declarations and
+steps guarded out of execution. It does not load sandbox policy or Docker
+configuration, resolve credentials, contact a daemon or execute workflow code.
+Operator-only sandbox/Docker flags are rejected by validate with usage exit 2.
+**Docker execution remains unsupported:** Start and strict reopen reject an
+expanded graph containing any Docker request before executable work or secret
+resolution, including guarded steps. A successful validation is not readiness
+or permission. Trusted-policy and deployment inspection are separate future
+implementation checkpoints; no resources are enforced by this syntax.
+
+| Profile field | Contract |
+| --- | --- |
+| `name` | Required ASCII `[A-Za-z][A-Za-z0-9_-]{0,63}`; unique in the document; `host` reserved; at most 128 profiles. |
+| `runtime` | Required `"docker"`. |
+| `image` | Required named image reference, normalized by the distribution reference parser. Missing tag/digest means `latest`. URLs, embedded credentials, control characters, bare IDs and combined tag/digest are rejected. Original and normalized references are retained. |
+| `platform` | Optional `os/architecture[/variant]` request. No host architecture is substituted. Linux amd64, arm64 (optional v8), and arm/v6 or v7 are the intended inspection forms; other syntactically valid forms remain unsupported, as does all Docker execution. |
+| `pull` | `always`, `if_missing` (default), or `never`; no image is pulled. |
+| `network` | `none` (default) or `bridge`; bridge requests general outbound networking. |
+| `cpus` | Positive finite TOML integer/float convertible to a positive signed-64-bit count of nano-CPUs without fractional nano-CPUs. |
+| `memory` | String containing positive integer bytes or integer plus KiB/MiB/GiB/TiB. At least 6 MiB, at most signed-64-bit bytes; no signs, spaces, fractions or decimal units. |
+| `pids` | Positive TOML integer through 2147483647. |
+| `env` | Literal, nonsecret string values; no expansion or inherited host values. At most 128 keys, 128 bytes/key, 8 KiB/value, 64 KiB combined key/value UTF-8 bytes; no NUL. |
+
+Resource omission is preserved and differs from explicit zero, which is invalid.
+No built-in compute values are filled by the loader. Environment keys use
+`[A-Za-z_][A-Za-z0-9_]*`; PATH, HOME, USER, LOGNAME, SHELL, TMPDIR and prefixes
+JIG_, DOCKER_, LD_, DYLD_ are protected, including all generated JIG_SECRET_*
+names. Never put credentials in profile environment; diagnostics omit values.
+Unknown fields, empty selections and unresolved references fail validation.
+
+Resolution selects a whole profile in this order: explicit child selection,
+nearest explicit invocation selection, module-local default, inherited caller
+default, then host. Resolve references in their declaring document before
+propagation. Carry invocation selection separately from ordinary inherited
+defaults: a local default cannot override an explicit invocation, and an
+explicit child image or host cannot be replaced by its caller. Fields never
+merge across selections. Nested/repeated imports retain source digest,
+declaration path, invocation namespace, original reference and selection origin.
+Review/subworkflow nodes carry intent; human review and graph expansion do not
+execute in containers.
+
+New workflow snapshots have a versioned, checksummed sandbox section covering
+every expanded step/template. Runtime copies retain owned request maps and
+presence information without re-resolution. Display decoding uses stored data
+only. A legacy snapshot can synthesize host requests only when locked root,
+module and expanded data contains no sandbox declarations; executable reopen
+still requires the existing valid authoring capture. Missing/partial coverage
+in a new snapshot is an integrity error. Empty persistence roots cause no
+relative sandbox writes. Local snapshots may contain the authored nonsecret
+environment; exports omit it and the raw profile/source data.
+
 ### Subworkflow modules
 
 A reusable workflow module is a TOML file with a schema-versioned interface.

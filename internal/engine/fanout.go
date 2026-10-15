@@ -84,6 +84,14 @@ func parseForEachRef(items string) (stepID, field string) {
 // after creation, so sharing the template's slice/pointer fields is safe.
 func cloneForEachTemplate(tmpl *workflow.Step, instanceID string) *workflow.Step {
 	out := *tmpl
+	if tmpl.Sandbox != nil {
+		ref := *tmpl.Sandbox
+		out.Sandbox = &ref
+	}
+	if tmpl.SnapshotSandbox != nil {
+		r := tmpl.ResolvedSandbox()
+		out.SnapshotSandbox = &r
+	}
 	out.ID = instanceID
 	out.ForEach = nil
 	out.When = ""

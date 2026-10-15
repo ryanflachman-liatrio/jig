@@ -162,6 +162,9 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	if wf == nil {
 		return nil, fmt.Errorf("engine: nil workflow")
 	}
+	if err := checkSandboxWorkflow(wf); err != nil {
+		return nil, err
+	}
 	prepared, assets, err := workflow.PrepareAuthoring(wf, "")
 	if err != nil {
 		return nil, err
@@ -1560,6 +1563,10 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 // the shared implementation behind agentDispatchStrategy and
 // commandDispatchStrategy in strategies.go.
 func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
+	if err := checkSandboxStep(st); err != nil {
+		s.failCapture(err)
+		return
+	}
 	admittedAt := time.Now()
 	// Admission has already passed all capacity checks. Preparation consumes the
 	// same deadline as main, validation and collection, never a fresh timeout.
@@ -2027,9 +2034,16 @@ func (s *scheduler) buildRequest(
 		}
 	}
 
+	ownedStep := *st
+	if st.Sandbox != nil {
+		ref := *st.Sandbox
+		ownedStep.Sandbox = &ref
+	}
+	request := st.ResolvedSandbox()
+	ownedStep.SnapshotSandbox = &request
 	req := StepRequest{
 		RunID:           runID,
-		Step:            st,
+		Step:            &ownedStep,
 		Inputs:          s.preResolvedInputs[st.ID],
 		Feedback:        s.stepFeedback[st.ID],
 		WorkflowContext: workflowContext,
@@ -2614,6 +2628,10 @@ func (s *scheduler) handleResolveIntegrationWithAgent(m resolveIntegrationWithAg
 	state := s.states[m.stepID]
 	st := s.stepByID(m.stepID)
 	if state == nil || state.Status != step.StatusAwaitingIntegration || s.resolver == nil || st == nil || st.Type != workflow.StepAgent {
+		return
+	}
+	if err := checkSandboxStep(st); err != nil {
+		s.emit(RunError{RunID: s.runID, Err: err.Error()})
 		return
 	}
 	s.restoredHold = false

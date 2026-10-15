@@ -57,6 +57,10 @@ func (m validationStartMsg) execute(s *scheduler) {
 	}
 	state.Result = m.result
 	st := s.stepByID(m.stepID)
+	if err := checkSandboxStep(st); err != nil {
+		m.reply <- err
+		return
+	}
 	if m.result.SessionID != "" && s.runDir != "" {
 		if err := datastore.WriteSession(s.runDir, m.stepID, datastore.SessionInfo{SessionID: m.result.SessionID, Backend: st.Backend, Attempt: state.Attempt, Iteration: state.Iteration, Generation: state.Generation}); err != nil {
 			m.reply <- fmt.Errorf("persist session before validation: %w", err)
