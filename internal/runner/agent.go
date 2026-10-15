@@ -331,7 +331,7 @@ func captureStreamWith(
 	}
 
 	// lastAssistantText is the concatenated text from the most recent flushed
-	// assistant turn. The engine writes this to raw_result.md on success — no
+	// assistant turn. The engine derives output.md from it on success — no
 	// agent Write tool required; the engine owns all non-code file writes.
 	var lastAssistantText string
 
@@ -420,49 +420,14 @@ func captureStreamWith(
 				return failResult(fmt.Sprintf("persist session: %v", err), start), nil
 			}
 
-			// Structured output carries only brief metadata fields; large prose
-			// lives in raw_result.md, written by the engine from the agent's text
-			// response below.
+			// Structured output carries base metadata and any declared fields.
 			if ev.Structured != nil {
 				result.Structured = []byte(redactSecrets(req, string(ev.Structured)))
 			}
 
-			// Auto-capture to the canonical step directory whenever persistence
-			// is on. output.json holds the full structured envelope; output.md
-			// holds a rich markdown rendering of metadata fields for TUI display.
-			// raw_result.md holds the agent's prose response — written by the
-			// engine from lastAssistantText so no agent Write tool is required.
-			if req.TranscriptPath != "" {
-				stepDir := filepath.Dir(req.TranscriptPath)
-				if result.Structured != nil {
-					_ = os.WriteFile(filepath.Join(stepDir, "output.json"), result.Structured, 0o644)
-					if md := structuredToMarkdown(result.Structured); md != "" {
-						_ = os.WriteFile(filepath.Join(stepDir, "output.md"), []byte(md), 0o644)
-					}
-				}
-				if lastAssistantText != "" {
-					rawPath := filepath.Join(stepDir, "raw_result.md")
-					lastAssistantText = redactSecrets(req, lastAssistantText)
-					if err := os.WriteFile(rawPath, []byte(lastAssistantText), 0o644); err == nil {
-						result.OutputPath = rawPath
-						// Also write to the step's declared output path when set.
-						if req.Step.Output != "" {
-							outputPath, err := explicitOutputPath(req)
-							if err != nil {
-								return failResult(fmt.Sprintf("resolve declared output: %v", err), start), nil
-							}
-							if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
-								return failResult(fmt.Sprintf("create declared output directory: %v", err), start), nil
-							}
-							if err := os.WriteFile(outputPath, []byte(lastAssistantText), 0o644); err != nil {
-								return failResult(fmt.Sprintf("write declared output: %v", err), start), nil
-							}
-						}
-					}
-				} else if md := structuredToMarkdown(result.Structured); md != "" {
-					result.OutputPath = filepath.Join(stepDir, "output.md")
-				}
-				writeAgentAttemptArtifacts(req, result.Structured, lastAssistantText)
+			if err := writeAgentOutputs(req, result, redactSecrets(req, lastAssistantText)); err != nil {
+				result.Status = step.StatusFailed
+				result.Err = err.Error()
 			}
 
 			return result, nil
@@ -504,7 +469,7 @@ func explicitOutputPath(req engine.StepRequest) (string, error) {
 	return workflow.ExecutionPath(req.ExecutionDir, req.Step.Output)
 }
 
-func writeAgentAttemptArtifacts(req engine.StepRequest, structured []byte, prose string) {
+func writeAgentAttemptArtifacts(req engine.StepRequest, structured []byte, output, metadata string) {
 	if req.TranscriptPath == "" {
 		return
 	}
@@ -516,8 +481,11 @@ func writeAgentAttemptArtifacts(req engine.StepRequest, structured []byte, prose
 	if len(structured) > 0 {
 		_ = os.WriteFile(filepath.Join(dir, prefix+".output.json"), structured, 0o644)
 	}
-	if prose != "" {
-		_ = os.WriteFile(filepath.Join(dir, prefix+".raw_result.md"), []byte(prose), 0o644)
+	if output != "" {
+		_ = os.WriteFile(filepath.Join(dir, prefix+".output.md"), []byte(output), 0o644)
+	}
+	if metadata != "" {
+		_ = os.WriteFile(filepath.Join(dir, prefix+".metadata.md"), []byte(metadata), 0o644)
 	}
 }
 
@@ -629,11 +597,11 @@ func buildAgentPrompt(req engine.StepRequest) string {
 	}
 
 	// Inject output framing when persistence is on. The engine captures the
-	// agent's text response as raw_result.md — no Write tool required. When the
+	// agent's final deliverable as output.md — no Write tool required. When the
 	// step declares an output_template, its markdown skeleton follows so the agent
 	// fills each section in its response.
 	if req.TranscriptPath != "" {
-		b.WriteString("## Output\n\nYour text response is captured as the primary artifact (`raw_result.md`) for downstream steps. Keep structured output fields (`summary`, `confidence`, `status`, etc.) brief.\n\n")
+		b.WriteString("## Output\n\nYour final prose and declared output fields are captured as the full human-readable artifact (`output.md`) for downstream steps. Base status fields (`summary`, `confidence`, `status`, `assumptions`, `issues`, `block_reason`) are rendered separately in `metadata.md`; keep these brief. Put complete deliverables in your prose or declared fields, following the task's output contract. The full structured result is retained in `output.json`.\n\n")
 		if tmpl := req.Step.OutputTemplateBody(); tmpl != "" {
 			b.WriteString("Structure your response using the following template:\n\n")
 			b.WriteString(tmpl)

@@ -62,6 +62,7 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 	// the many edge cases in shell tokenisation.
 	cmd := exec.CommandContext(ctx, "sh", "-c", cmdStr)
 	cmd.Env = append(os.Environ(), commandInputEnv(req.Inputs)...)
+	cmd.Env = append(cmd.Env, commandContextEnv(req)...)
 	cmd.Env = append(cmd.Env, commandSecretEnv(req.Secrets)...)
 	cmd.Env = append(cmd.Env, commandFanOutEnv(req.FanOutItem)...)
 	// Kill the whole process group (sh plus every child it spawns) on cancel, not
@@ -172,6 +173,17 @@ func commandSecretEnv(secrets map[string]string) []string {
 		env = append(env, "JIG_SECRET_"+normalizeEnvName(name)+"="+value)
 	}
 	return env
+}
+
+// commandContextEnv gives publishing commands explicit persistence locations.
+// Empty values override inherited context, so persistence-off cannot target an
+// unrelated run from the parent shell.
+func commandContextEnv(req engine.StepRequest) []string {
+	runDir := ""
+	if req.TranscriptPath != "" {
+		runDir = filepath.Dir(filepath.Dir(filepath.Dir(req.TranscriptPath)))
+	}
+	return []string{"JIG_RUN_DIR=" + runDir, "JIG_PROJECT_DIR=" + req.RepoRoot}
 }
 
 // commandFanOutEnv exports a fan-out child's bound item and position metadata

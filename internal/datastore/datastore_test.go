@@ -221,3 +221,37 @@ func TestClearStepOutputsRemovesInputArtifact(t *testing.T) {
 		t.Errorf("input.md still exists after reset: %v", err)
 	}
 }
+
+func TestClearStepOutputsRemovesMetadataPreservingHistory(t *testing.T) {
+	runDir := t.TempDir()
+	dir, err := StepDir(runDir, "research")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "evidence"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{OutputPath(runDir, "research"), OutputJSONPath(runDir, "research"), MetadataPath(runDir, "research")}
+	history := []string{filepath.Join(dir, "transcript.jsonl"), filepath.Join(dir, "evidence", "generation-000-iteration-000-attempt-000.output.md")}
+	for _, path := range append(paths, history...) {
+		if err := os.WriteFile(path, []byte("synthetic evidence"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := ClearStepOutputs(runDir, "research"); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range paths {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("derived artifact remains: %s: %v", path, err)
+		}
+	}
+	for _, path := range history {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("history removed: %s: %v", path, err)
+		}
+	}
+	if MetadataPath("", "research") != "" {
+		t.Error("persistence-off metadata path must be empty")
+	}
+}

@@ -56,6 +56,37 @@ func TestCommandExecutor_Success(t *testing.T) {
 	}
 }
 
+func TestCommandExecutor_RunContext(t *testing.T) {
+	for _, persistent := range []bool{false, true} {
+		name := "persistence-off"
+		if persistent {
+			name = "persisted"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("JIG_RUN_DIR", "/stale/run")
+			t.Setenv("JIG_PROJECT_DIR", "/stale/project")
+			root := t.TempDir()
+			req := engine.StepRequest{Step: &workflow.Step{ID: "publish", Type: workflow.StepCommand,
+				Run: `printf '%s|%s' "$JIG_RUN_DIR" "$JIG_PROJECT_DIR"`}}
+			want := "|"
+			if persistent {
+				runDir := filepath.Join(root, "runs", "test-run")
+				req.TranscriptPath = filepath.Join(runDir, "steps", "publish", "transcript.jsonl")
+				req.RepoRoot = root
+				want = runDir + "|" + root
+			}
+			rep := &noopReporter{}
+			result, err := NewCommandExecutor(root).Execute(context.Background(), req, rep)
+			if err != nil || result.Status != step.StatusSucceeded {
+				t.Fatalf("execute: result=%+v err=%v", result, err)
+			}
+			if got := strings.Join(rep.deltas, ""); got != want {
+				t.Fatalf("context = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestCommandExecutor_Failure(t *testing.T) {
 	exec := NewCommandExecutor("")
 	req := engine.StepRequest{

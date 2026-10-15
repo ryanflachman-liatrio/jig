@@ -68,9 +68,12 @@ func stepOutputFiles(runDir string, stepId string, declaredOutput string) []outp
 
 	paths = append(paths,
 		datastore.InputPath(runDir, stepId),
-		datastore.OutputJSONPath(runDir, stepId),
 		datastore.OutputPath(runDir, stepId),
+		datastore.OutputJSONPath(runDir, stepId),
 	)
+	if metadataPath := datastore.MetadataPath(runDir, stepId); fileExists(metadataPath) {
+		paths = append(paths, metadataPath)
+	}
 	if securityPath := datastore.SecurityPath(runDir, stepId); fileExists(securityPath) {
 		paths = append(paths, securityPath)
 	}

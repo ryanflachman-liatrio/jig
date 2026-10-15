@@ -102,6 +102,9 @@ Representative store layout (use datastore helpers for actual paths):
     steps/<step-id>/
       result.json          materialized result
       input.md             effective dispatch prompt
+      output.md            full readable agent deliverable
+      output.json          full structured agent result
+      metadata.md          base agent status fields, rendered as Markdown
       session.json         durable backend conversation identity
       transcript.jsonl     finalized conversation content
   worktrees/               run-owned Git workspaces and reader views

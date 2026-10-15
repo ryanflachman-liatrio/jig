@@ -787,6 +787,12 @@ Pauses the run, renders an upstream artifact for a human, and captures a verdict
 
 ## Data flow
 
+Command steps receive `JIG_RUN_DIR` (the current persisted run directory) and
+`JIG_PROJECT_DIR` (the project root). These are explicit runner context, not
+backend selectors. Unavailable locations are empty, overriding inherited shell
+values; commands requiring durable storage must reject empty values. Relative
+paths in `run` still resolve against the execution directory.
+
 - **Inputs are an array.** Each entry is either an `@stepid` reference (resolves
   to that step's `output` file, or its structured JSON artifact for producers),
   an `@stepid.field` reference (a single field of a producer's JSON output), or
@@ -976,15 +982,18 @@ data fails the predicate closed to false.
 Agents split into two archetypes. **Mutators** (implementation steps) change the
 repo; their result is the diff plus engine-observed metadata (above), and they
 declare no output shape. **Producers** (research, validation, triage, routing,
-review) reach a conclusion the *workflow* consumes — and that conclusion is
-captured as **schema-enforced JSON**, not scraped from prose.
+review) reach a conclusion the *workflow* consumes through structured fields.
+Every agent receives the base output schema; declared fields extend it.
 
-The engine runs a producer step in headless mode (`claude -p --output-format
-json --json-schema '<schema>'`). The model's final answer is
-**constrained-decoded** to the schema — it is guaranteed well-formed — and lands
-in the CLI's `structured_output` field, which the engine writes to
-`.jig/artifacts/<step-id>.json`. Tool use composes with this: a producer may
-Read/Grep/Bash through its loop and *then* emit the schema-valid result.
+The selected ACP harness supplies the JSON Schema in the prompt and extracts
+the final JSON result, with bounded retries for parse failures. This is not a
+constrained-decoding guarantee. Persisted agent results live in
+`.jig/runs/<run-id>/steps/<step-id>/`: `output.json` holds the complete structured
+result, `metadata.md` renders base status fields, and `output.md` contains the
+full readable deliverable. Final prose is preserved and declared fields are
+rendered as Markdown; a matching terminal JSON envelope is omitted. Base-only
+results fall back to a readable metadata rendering. The original finalized
+response remains in `transcript.jsonl`.
 
 A producer declares its output shape one of three ways (mutually exclusive):
 
@@ -1010,9 +1019,7 @@ skill = "skills/research"
 agent = { tools = ["Read", "Grep", "Glob"] }
 
   [step.schema]
-  summary    = "text"                                   # convention: always include a markdown summary
-  status     = { enum = ["complete", "partial", "blocked"] }
-  confidence = "number"
+  report     = "text"                                   # full research document
   findings   = { list = "text" }
   sources    = { list = { url = "text", relevance = "number" } }
 ```
@@ -1025,10 +1032,12 @@ refs are type-checked identically.
 schema_file = "schemas/research.json"
 ```
 
-**Convention: every producer schema carries a `summary` markdown field.** That
-dissolves the markdown-vs-JSON tension — the JSON *carries* the human-facing
-prose. A review step renders `@research.summary` (glamour), while the engine
-branches on `@research.status`. Both come from one artifact; nothing is scraped.
+**Base fields are automatic:** `summary`, `status`, `confidence`, `assumptions`,
+`issues`, and `block_reason`. Do not redeclare them in a step schema. Keep these
+brief; use declared text fields such as `report` for full documents. A review
+can render `@research.report`, while conditions read `research.status`. Bare
+`@research` inputs and review targets read the complete `output.md` artifact.
+The readable files do not change structured field values or condition semantics.
 
 For **review** steps, the verdict is still captured from the human's choice in
 the TUI (a scalar `output_type`), not from a model.

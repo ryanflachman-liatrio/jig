@@ -1,11 +1,13 @@
 # Run through the TUI: go run ./cmd/jig, then select research.
 # Validate: go run ./cmd/jig validate .agents/jig/research.toml
 # Agent attempts have deadlines; human review waits do not.
-# Revisions revisit only edit -> review, leaving specialist reports intact.
+# Editorial and research revisions revisit edit -> review (at most five times).
+# The editor investigates targeted evidence gaps; original specialists stay intact.
+# Approved Markdown is published to research-output/<run-id>/ (requires Python 3).
 [workflow]
 name = "research"
 version = "1"
-description = "Parallel specialist research, consolidated documents, and bounded human review with a single revision editor."
+description = "Question-driven specialist research, evidence-audited recommendations and proposed plan, bounded human revision, and durable Markdown publication."
 
 [defaults]
 agent = "@research-default"
@@ -21,9 +23,11 @@ depends_on = []
 ask_user = true
 isolation = "none"
 timeout = "20m"
+  [step.context]
+  purpose = "Turn the request into prioritized, answerable questions with evidence standards and specialist deliverables."
   [[step.inputs]]
   from = "user"
-  label = "What should we research? Include the decision to support, project or sources, constraints, and desired depth."
+  label = "What should we research, and what decision or understanding should it support? Include sources, constraints, known assumptions or preferences, and desired depth if available."
   as = "request"
   once = true
 
@@ -37,6 +41,8 @@ inputs = ["@brief"]
 isolation = "none"
 resource_class = "research"
 timeout = "30m"
+  [step.context]
+  purpose = "Explain current mechanisms, ownership, constraints, and consequences for the assigned questions."
 
 [[step]]
 id = "research_ecosystem"
@@ -48,6 +54,8 @@ inputs = ["@brief"]
 isolation = "none"
 resource_class = "research"
 timeout = "30m"
+  [step.context]
+  purpose = "Compare viable approaches against shared criteria and challenge the preferred recommendation."
 
 [[step]]
 id = "research_contracts"
@@ -59,6 +67,8 @@ inputs = ["@brief"]
 isolation = "none"
 resource_class = "research"
 timeout = "30m"
+  [step.context]
+  purpose = "Make information boundaries and invariants concrete through worked normal and failure cases."
 
 [[step]]
 id = "research_risks"
@@ -70,6 +80,8 @@ inputs = ["@brief"]
 isolation = "none"
 resource_class = "research"
 timeout = "30m"
+  [step.context]
+  purpose = "Prioritize evidenced causal risk scenarios, controls, verification, and residual uncertainty."
 
 [[step]]
 id = "research_validation"
@@ -81,6 +93,8 @@ inputs = ["@brief"]
 isolation = "none"
 resource_class = "research"
 timeout = "30m"
+  [step.context]
+  purpose = "Test consequential assumptions and design reproducible checks that could falsify the main options."
 
 # One editor owns all reviewable documents, including specialist revisions.
 # Text fields support separate annotated documents without repository writes.
@@ -94,10 +108,11 @@ ask_user = true
 isolation = "none"
 timeout = "30m"
   [step.context]
-  purpose = "Synthesize all reports and address human comments across the document set."
-  notes = "On revision, use this run's immutable review-round documents as the baseline; all original reports remain inputs."
+  purpose = "Audit question coverage and evidence, resolve conflicts, and produce recommendations and a proposed plan."
+  notes = "Classify feedback as editorial or research revision and investigate targeted gaps. Use this run's immutable reviewed documents as the revision baseline; original reports remain provenance."
   [step.schema]
   synthesis = "text"
+  plan = "text"
   codebase = "text"
   ecosystem = "text"
   contracts = "text"
@@ -113,6 +128,10 @@ output_type = { enum = ["approve", "revise"] }
   [[step.review]]
   source = "@edit.synthesis"
   label = "Research synthesis"
+
+  [[step.review]]
+  source = "@edit.plan"
+  label = "Proposed implementation plan"
 
   [[step.review]]
   source = "@edit.codebase"
@@ -143,3 +162,12 @@ when = "review == 'revise'"
 goto = "edit"
 max_iterations = 5
 feedback = "@review"
+
+# Copy only the exact approved snapshots; no further model call or rewriting.
+[[step]]
+id = "publish"
+type = "command"
+depends_on = ["review"]
+when = "review == 'approve'"
+run = 'python3 "$JIG_PROJECT_DIR/scripts/publish_research.py" --run-dir "$JIG_RUN_DIR" --destination "$JIG_PROJECT_DIR/research-output"'
+timeout = "1m"

@@ -192,8 +192,8 @@ func SchedulerLockPath(runDir string) string {
 }
 
 // OutputPath returns the canonical path to output.md for a step inside runDir.
-// Content is the agent's raw_result base-schema field — the clean prose answer
-// written by the agent as its primary deliverable.
+// Content is the agent's final prose and rendered declared fields: its full
+// human-readable deliverable. Base status fields live in metadata.md.
 func OutputPath(runDir, stepID string) string {
 	return filepath.Join(runDir, "steps", stepID, "output.md")
 }
@@ -203,6 +203,15 @@ func OutputPath(runDir, stepID string) string {
 // declared [step.schema] fields).
 func OutputJSONPath(runDir, stepID string) string {
 	return filepath.Join(runDir, "steps", stepID, "output.json")
+}
+
+// MetadataPath returns the base status fields rendered as Markdown. Empty roots
+// disable persistence and must not resolve to a relative write destination.
+func MetadataPath(runDir, stepID string) string {
+	if runDir == "" {
+		return ""
+	}
+	return filepath.Join(runDir, "steps", stepID, "metadata.md")
 }
 
 // SecurityPath returns the canonical path to security.md for a step inside
@@ -267,7 +276,7 @@ func DeleteRun(root, runID string) error {
 }
 
 // ClearStepOutputs removes the derived per-step inputs and outputs for stepID —
-// input.md, result.json, output.md, output.json, and session.json — so a reset
+// input.md, result.json, output.md, output.json, metadata.md, and session.json — so a reset
 // step starts fresh. transcript.jsonl is intentionally left intact: it is
 // append-only and a re-run appends a new generation rather than overwriting
 // history. No-ops silently when runDir is empty (persistence-off path) or when
@@ -281,6 +290,7 @@ func ClearStepOutputs(runDir, stepID string) error {
 		ResultPath(runDir, stepID),
 		OutputPath(runDir, stepID),
 		OutputJSONPath(runDir, stepID),
+		MetadataPath(runDir, stepID),
 		SessionPath(runDir, stepID),
 	} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {

@@ -4,6 +4,9 @@
 # jig run artifacts & engine records (kept outside the working tree by design)
 .jig/
 
+# Published local research survives run cleanup; opt in explicitly to versioning.
+/research-output/
+
 # Go build/test output
 *.test
 *.out
