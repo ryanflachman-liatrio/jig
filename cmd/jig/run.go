@@ -128,6 +128,7 @@ func runRun(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return headless.ExitFailed
 	}
+	rt.Manager.SetSandboxDeploymentCheck(sandboxOpts.deploymentCheck(policy))
 	defer rt.Close(context.Background())
 	tel.attach(ctx, rt.Manager)
 
@@ -187,7 +188,7 @@ func parseConflictAction(s string) error {
 // sync with runRun's FlagSet.
 var runFlagsTakingValue = map[string]bool{
 	"root": true, "output": true, "o": true, "timeout": true,
-	"on-recovery": true, "on-conflict": true, "sandbox-policy": true,
+	"on-recovery": true, "on-conflict": true, "sandbox-policy": true, "docker-context": true, "docker-host": true, "docker-config": true,
 }
 
 // reorderRunArgs moves the single positional workflow path to the end so

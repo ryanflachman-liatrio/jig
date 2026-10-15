@@ -47,7 +47,7 @@ func addControlFlags(fs *flag.FlagSet, recoveryDefault string) controlFlags {
 
 var controlFlagsTakingValue = map[string]bool{
 	"root": true, "output": true, "o": true, "timeout": true,
-	"on-recovery": true, "on-conflict": true, "to": true, "sandbox-policy": true,
+	"on-recovery": true, "on-conflict": true, "to": true, "sandbox-policy": true, "docker-context": true, "docker-host": true, "docker-config": true,
 }
 
 func applyControlCI(fs *flag.FlagSet, f controlFlags) {
@@ -109,6 +109,7 @@ func headlessOptions(ctx context.Context, f controlFlags, mode headless.OutputMo
 	if err != nil {
 		return headless.Options{}, tel, err
 	}
+	mgr.SetSandboxDeploymentCheck(f.sandbox.deploymentCheck(policy))
 	tel.attach(ctx, mgr)
 	return headless.Options{
 		Manager: mgr, Root: mgrRoot, Output: mode, Quiet: *f.quiet,

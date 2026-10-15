@@ -39,6 +39,7 @@ type DoctorReport struct {
 }
 
 type DoctorOptions struct {
+	EndpointInput      sandbox.EndpointInput
 	SandboxPolicy      *sandbox.Policy
 	SandboxPolicyError error
 	Root               string
@@ -88,6 +89,7 @@ func Doctor(opts DoctorOptions) DoctorReport {
 	if !permitted {
 		return finishDoctor(checks)
 	}
+	checks = append(checks, checkSandboxEndpoint(opts, wf)...)
 
 	if wf == nil {
 		checks = append(checks, binaryCheck("git.binary", "git", "optional", false, opts.LookPath, "install git to use worktree-isolated workflows"))

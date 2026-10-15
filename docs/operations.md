@@ -553,3 +553,36 @@ Doctor reports `sandbox.policy`, bounded reason/field/source identifiers, and
 skips executable/secret readiness checks. Host tool availability is never used
 as evidence of tools inside a Docker image. Current-policy durable recovery and
 explicit policy recheck are not yet available; denied reopen fails before work.
+
+### Docker endpoint selection
+
+`--docker-context NAME`, `--docker-host URI`, and `--docker-config DIR` are
+operator flags for TUI startup, run/resume/applied reset, and doctor. They accept
+separate or `=` values, reject empty/repeated values, and context/host flags are
+mutually exclusive. `validate` rejects them. Host-only workflows without these
+flags skip Docker configuration and endpoint selection completely.
+
+Endpoint precedence is explicit context/host, `DOCKER_CONTEXT`, `DOCKER_HOST`,
+config `currentContext`, then virtual `default`. A non-default context ignores
+ambient `DOCKER_HOST`; virtual `default` uses it when present, otherwise
+`unix:///var/run/docker.sock`. An explicit host wins over ambient context.
+Config-root precedence is explicit `--docker-config`, `DOCKER_CONFIG`, then
+`~/.docker`. CLI relative directories resolve against process-entry CWD;
+environment roots must be absolute. Automatic config sources inside the project
+are rejected. Only needed config projections are read; a missing default home
+`config.json` means no active context. Invalid winning sources never fall back.
+
+Config and selected context metadata are bounded regular JSON files (1 MiB,
+64 nesting levels). Duplicate keys, trailing JSON, and wrong selected types
+fail. Only current context, context name, Docker host, and SkipTLSVerify are
+projected; credential/helper/TLS stores are not initialized or enumerated.
+Only local Unix sockets on Linux/macOS are supported. Selected and permitted
+socket symlinks resolve canonically before comparison; missing or forbidden
+sockets fail. Selection records endpoint/context/config provenance and pins
+socket identity; replacement is an error, never a new automatic selection.
+
+Doctor may select a policy-permitted Docker deployment even while execution is
+unsupported. No daemon is dialed at this checkpoint. Runtime rejects Docker
+before deployment selection; explicit flags on a host run still require an
+allowed endpoint. TLS, headers, API/platform overrides, and credential
+configuration cannot alter the selected transport.

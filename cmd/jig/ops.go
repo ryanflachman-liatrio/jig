@@ -202,7 +202,7 @@ func runDoctor(args []string) int {
 	ci := fs.Bool("ci", false, "enforce unattended execution safety")
 	output := fs.String("output", "text", "output format: text|json")
 	fs.StringVar(output, "o", "text", "short for --output")
-	reordered, err := reorderArgs(args, map[string]bool{"root": true, "output": true, "o": true, "sandbox-policy": true}, 1)
+	reordered, err := reorderArgs(args, map[string]bool{"root": true, "output": true, "o": true, "sandbox-policy": true, "docker-context": true, "docker-host": true, "docker-config": true}, 1)
 	if err != nil || fs.Parse(reordered) != nil {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -218,7 +218,7 @@ func runDoctor(args []string) int {
 		path = fs.Args()[0]
 	}
 	policy, policyErr := loadSandboxPolicy(sandboxOpts, *root)
-	report := ops.Doctor(ops.DoctorOptions{Root: *root, WorkflowPath: path, CI: *ci, SandboxPolicy: policy, SandboxPolicyError: policyErr})
+	report := ops.Doctor(ops.DoctorOptions{Root: *root, WorkflowPath: path, CI: *ci, SandboxPolicy: policy, SandboxPolicyError: policyErr, EndpointInput: sandboxOpts.endpoint})
 	if *output == "json" {
 		_ = json.NewEncoder(os.Stdout).Encode(report)
 	} else {
@@ -290,6 +290,10 @@ Global flags:
 
   --sandbox-policy PATH     trusted operator policy for TUI startup, run,
                             resume, applied reset, and doctor.
+
+  --docker-context NAME     select a named Docker context.
+  --docker-host URI         select a local Unix socket (exclusive with context).
+  --docker-config DIR       select the Docker metadata directory.
 
 Commands:
   init                      scaffold a valid workflow

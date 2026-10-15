@@ -41,20 +41,21 @@ type sub struct {
 // Manager is the registry of concurrent runs.
 // mu guards the registry only — workflow state is owned by each scheduler.
 type Manager struct {
-	sandboxAuthorizer SandboxAuthorizer
-	publishAuthoring  func(string, []byte, map[string][]byte, []byte) error
-	startCheck        func(string, string) error
-	mu                sync.Mutex
-	runs              map[string]*Run
-	exec              Executor
-	resolver          IntegrationResolver
-	root              string // .jig/ root (used in Phase 2+ for file I/O)
-	subs              []sub  // manager-level fan-out; TUI subscribes once
-	monitors          []sentinel.MonitorDef
-	secrets           SecretResolver
-	observers         observerRegistry
-	epochMu           sync.Mutex
-	epoch             int
+	sandboxDeploymentCheck func() error
+	sandboxAuthorizer      SandboxAuthorizer
+	publishAuthoring       func(string, []byte, map[string][]byte, []byte) error
+	startCheck             func(string, string) error
+	mu                     sync.Mutex
+	runs                   map[string]*Run
+	exec                   Executor
+	resolver               IntegrationResolver
+	root                   string // .jig/ root (used in Phase 2+ for file I/O)
+	subs                   []sub  // manager-level fan-out; TUI subscribes once
+	monitors               []sentinel.MonitorDef
+	secrets                SecretResolver
+	observers              observerRegistry
+	epochMu                sync.Mutex
+	epoch                  int
 }
 
 // nextEpoch returns a monotonic epoch number stamped onto each Run

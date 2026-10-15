@@ -194,3 +194,48 @@ func TestD04PolicyCLI(t *testing.T) {
 		t.Fatal("denied workload executed")
 	}
 }
+
+func TestD04EndpointCLI(t *testing.T) {
+	for _, command := range []string{"run", "doctor", "resume", "startup"} {
+		for _, bad := range [][]string{{"--docker-host="}, {"--docker-context=x", "--docker-host=unix:///x"}, {"--docker-config=a", "--docker-config=b"}} {
+			t.Run(command+strings.Join(bad, "_"), func(t *testing.T) {
+				args := append([]string(nil), bad...)
+				if command != "startup" {
+					args = append([]string{command}, args...)
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				cmd := exec.CommandContext(ctx, os.Args[0], append([]string{"-test.run=^TestD04OfflineCLIHelper$", "--"}, args...)...)
+				cmd.Env = append(os.Environ(), "JIG_D04_CLI_HELPER=1")
+				out, err := cmd.CombinedOutput()
+				exit, ok := err.(*exec.ExitError)
+				if !ok || exit.ExitCode() != 2 {
+					t.Fatalf("usage: %v %s", err, out)
+				}
+			})
+		}
+	}
+	// No explicit Docker flags: malformed ambient Docker inputs do not affect a
+	// host-only CLI run, and neither Docker configuration nor helpers are used.
+	dir := t.TempDir()
+	project := filepath.Join(dir, "project")
+	home := filepath.Join(dir, "operator")
+	for _, path := range []string{project, home} {
+		if err := os.Mkdir(path, 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wf := filepath.Join(project, "host.toml")
+	if err := os.WriteFile(wf, []byte("[workflow]\nname='host'\nversion='1'\n[[step]]\nid='work'\ntype='command'\nrun='true'\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestD04OfflineCLIHelper$", "--", "run", wf, "--root=", "--ci")
+	cmd.Dir = project
+	cmd.Env = append(os.Environ(), "JIG_D04_CLI_HELPER=1", "HOME="+home, "XDG_CONFIG_HOME="+home, "DOCKER_CONFIG=relative-invalid", "DOCKER_CONTEXT=PRIVATE_SENTINEL", "DOCKER_HOST=not-a-uri")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("host ambient independence: %v %s", err, out)
+	}
+	t.Log("all four entry points reject conflicting/duplicate/empty flags with exit 2; host-only run ignores poisoned Docker environment")
+}

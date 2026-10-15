@@ -67,3 +67,29 @@ func checkSandboxPolicy(opts DoctorOptions, wf *workflow.Workflow) ([]Check, boo
 	}
 	return checks, permitted
 }
+
+func checkSandboxEndpoint(opts DoctorOptions, wf *workflow.Workflow) []Check {
+	eligible := opts.EndpointInput.Explicit() || wf == nil && opts.SandboxPolicy.HasDocker()
+	if wf != nil {
+		for i := range wf.Steps {
+			if wf.Steps[i].ResolvedSandbox().Profile != nil {
+				eligible = true
+				break
+			}
+		}
+	}
+	if !eligible {
+		return nil
+	}
+	endpoint, err := sandbox.SelectEndpoint(opts.EndpointInput, opts.SandboxPolicy)
+	if err != nil {
+		return []Check{{ID: "sandbox.endpoint", Status: CheckFail, Scope: "deployment", Message: err.Error()}}
+	}
+	summary := endpoint.Summary()
+	return []Check{
+		{ID: "sandbox.endpoint", Status: CheckPass, Scope: summary.EndpointSource, Message: summary.URI},
+		{ID: "sandbox.endpoint.context", Status: CheckPass, Scope: summary.ContextSource, Message: summary.Context},
+		{ID: "sandbox.endpoint.config", Status: CheckPass, Scope: summary.ConfigSource, Message: summary.ConfigRoot},
+		{ID: "sandbox.capability", Status: CheckWarn, Scope: "deployment", Message: "Daemon identity, API, platform and enforcement remain unverified; ambient TLS, auth, headers, API and platform overrides are not applied."},
+	}
+}

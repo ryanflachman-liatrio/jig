@@ -51,3 +51,19 @@ func TestD04PolicyDoctor(t *testing.T) {
 	}
 	t.Log("doctor reports operator source, allow_host denial and auxiliary-host scope; secret/tool/git calls=0")
 }
+
+func TestD04EndpointHostOnlyDoctor(t *testing.T) {
+	wf, err := workflow.Decode("[workflow]\nname='host'\nversion='1'\n[[step]]\nid='work'\ntype='command'\nrun='true'\n", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := DoctorOptions{Workflow: wf, EndpointInput: sandbox.EndpointInput{EnvConfig: "relative-invalid", EnvContext: "PRIVATE_SENTINEL", EnvHost: "invalid"}}
+	if checks := checkSandboxEndpoint(opts, wf); len(checks) != 0 {
+		t.Fatalf("host selected endpoint: %+v", checks)
+	}
+	opts.EndpointInput.Host = "unix:///synthetic/missing.sock"
+	checks := checkSandboxEndpoint(opts, wf)
+	if len(checks) != 1 || checks[0].Status != CheckFail || !strings.Contains(checks[0].Message, "sandbox_policy_denied") {
+		t.Fatalf("explicit selection bypassed policy: %+v", checks)
+	}
+}

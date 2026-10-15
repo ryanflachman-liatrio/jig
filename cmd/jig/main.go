@@ -38,7 +38,7 @@ func main() {
 	applyGlobalConfigFlag()
 
 	// Subcommands run and exit before the TUI takes over the terminal.
-	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "--sandbox-policy") {
+	if len(os.Args) > 1 && !strings.HasPrefix(os.Args[1], "--sandbox-policy") && !strings.HasPrefix(os.Args[1], "--docker-") {
 		switch os.Args[1] {
 		case "init":
 			os.Exit(runInit(os.Args[2:]))
@@ -113,6 +113,7 @@ func main() {
 	// Ordered shutdown: producers first (cancel context on receipt of a
 	// signal via NotifyContext), then dispatcher drain. The 5-second cap is
 	// enforced inside Runtime.Close.
+	rt.Manager.SetSandboxDeploymentCheck(sandboxOpts.deploymentCheck(policy))
 	defer rt.Close(context.Background())
 	tel.attach(ctx, rt.Manager)
 

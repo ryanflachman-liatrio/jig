@@ -55,7 +55,13 @@ func (m *Manager) authorizeSandboxWorkflow(wf *workflow.Workflow) error {
 			}
 		}
 	}
-	return checkSandboxWorkflow(wf)
+	if err := checkSandboxWorkflow(wf); err != nil {
+		return err
+	}
+	if m.sandboxDeploymentCheck != nil {
+		return m.sandboxDeploymentCheck()
+	}
+	return nil
 }
 
 func cloneSandboxStep(st *workflow.Step) *workflow.Step {
@@ -224,3 +230,8 @@ func restoreSandboxes(snap *workflowSnapshot) error {
 	}
 	return nil
 }
+
+// SetSandboxDeploymentCheck installs bounded operator deployment selection after
+// policy and runtime support, before snapshot publication. Docker never reaches
+// this seam while its runtime is unsupported.
+func (m *Manager) SetSandboxDeploymentCheck(check func() error) { m.sandboxDeploymentCheck = check }

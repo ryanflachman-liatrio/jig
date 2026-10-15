@@ -11,13 +11,35 @@ import (
 )
 
 type sandboxFlags struct {
-	policy string
-	seen   bool
+	policy   string
+	seen     bool
+	endpoint sandbox.EndpointInput
+	xdg      string
 }
 
 func addSandboxFlags(fs *flag.FlagSet) *sandboxFlags {
-	f := &sandboxFlags{}
+	cwd, _ := os.Getwd()
+	home, _ := os.UserHomeDir()
+	f := &sandboxFlags{endpoint: sandbox.EndpointInput{Cwd: cwd, Home: home, Project: cwd, EnvContext: os.Getenv("DOCKER_CONTEXT"), EnvHost: os.Getenv("DOCKER_HOST"), EnvConfig: os.Getenv("DOCKER_CONFIG")}, xdg: os.Getenv("XDG_CONFIG_HOME")}
 	fs.Func("sandbox-policy", "trusted operator sandbox policy file", f.setPolicy)
+	for _, item := range []struct {
+		name   string
+		target *string
+	}{{"docker-context", &f.endpoint.Context}, {"docker-host", &f.endpoint.Host}, {"docker-config", &f.endpoint.Config}} {
+		fs.Func(item.name, "operator Docker endpoint selection", func(value string) error {
+			if *item.target != "" || strings.TrimSpace(value) == "" {
+				return fmt.Errorf("--%s must occur once with a nonempty value", item.name)
+			}
+			if item.name == "docker-host" && f.endpoint.Context != "" || item.name == "docker-context" && f.endpoint.Host != "" {
+				return fmt.Errorf("--docker-host and --docker-context are mutually exclusive")
+			}
+			if item.name == "docker-config" && !filepath.IsAbs(value) {
+				value = filepath.Join(f.endpoint.Cwd, value)
+			}
+			*item.target = value
+			return nil
+		})
+	}
 	return f
 }
 
@@ -35,11 +57,10 @@ func (f *sandboxFlags) setPolicy(value string) error {
 }
 
 func loadSandboxPolicy(f *sandboxFlags, root string) (*sandbox.Policy, error) {
-	cwd, err := os.Getwd()
-	if err != nil {
+	cwd, home := f.endpoint.Cwd, f.endpoint.Home
+	if cwd == "" {
 		return nil, fmt.Errorf("sandbox policy: process directory unavailable")
 	}
-	home, _ := os.UserHomeDir()
 	project := cwd
 	if root != "" {
 		abs, err := filepath.Abs(root)
@@ -48,7 +69,8 @@ func loadSandboxPolicy(f *sandboxFlags, root string) (*sandbox.Policy, error) {
 		}
 		project = filepath.Dir(abs)
 	}
-	return sandbox.Load(sandbox.Selection{ExplicitPath: f.policy, Cwd: cwd, Project: project, Home: home, XDGConfigHome: os.Getenv("XDG_CONFIG_HOME")})
+	f.endpoint.Project = project
+	return sandbox.Load(sandbox.Selection{ExplicitPath: f.policy, Cwd: cwd, Project: project, Home: home, XDGConfigHome: f.xdg})
 }
 
 // Bare TUI startup accepts only its operator flag here; subcommand flags are
@@ -63,4 +85,12 @@ func parseStartupSandbox(args []string) (*sandboxFlags, error) {
 		return nil, fmt.Errorf("unexpected startup argument")
 	}
 	return f, nil
+}
+
+func (f *sandboxFlags) deploymentCheck(policy *sandbox.Policy) func() error {
+	if !f.endpoint.Explicit() {
+		return nil
+	}
+	input := f.endpoint
+	return func() error { _, err := sandbox.SelectEndpoint(input, policy); return err }
 }

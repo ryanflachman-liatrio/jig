@@ -51,3 +51,22 @@ func readPolicy(path string) ([]byte, error) {
 }
 
 func trustedOwner(uid uint32) bool { return uid == 0 || uid == uint32(os.Geteuid()) }
+
+// Docker metadata permits canonical file links, but never devices or pipes.
+func readMetadata(path string) ([]byte, error) {
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	f := os.NewFile(uintptr(fd), "docker-metadata")
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() > policyLimit {
+		return nil, fmt.Errorf("invalid metadata file")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, policyLimit+1))
+	if err != nil || len(data) > policyLimit {
+		return nil, fmt.Errorf("metadata limit")
+	}
+	return data, nil
+}
