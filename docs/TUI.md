@@ -124,6 +124,15 @@ The live preview is replaced by the saved entry when a message finalizes; it
 also works while persistence is off. Historical pages and file views do not
 show the live preview, and streaming preserves paused scroll positions.
 
+Live text is literal, terminal-safe, and hard-wrapped to the panel width;
+Markdown syntax remains visible until finalization. Appending text does not
+reformat earlier lines or remove the middle of a response. Each step retains
+up to 1 MiB of contiguous live scrollback. Beyond that limit only the oldest
+bytes leave scrollback, with a visible notice; persisted capture limits are
+unchanged. If finalization or scrollback eviction would remove a paused
+reader's preview, retain that preview until they resume following or change
+pages/steps. Finalized prose uses the usual Markdown renderer when loaded.
+
 Monitor reads finalized content through `internal/transcript`. Normalize
 entries into transcript items before search, navigation, expansion, and
 rendering. Pair tool use/result only within the same generation, iteration,

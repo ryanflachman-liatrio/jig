@@ -243,7 +243,8 @@ func TestTruncationAnchorGallery(t *testing.T) {
 		for i := 0; i < total; i++ {
 			fmt.Fprintf(&buf, "streaming line %02d\n", i+1)
 		}
-		m.stepOutput[stepID] = &buf
+		m.stepOutput[stepID] = &liveTranscriptBuffer{}
+		m.stepOutput[stepID].append(buf.String())
 		m.chatStep = stepID
 		m.transcriptInnerW = 80
 		return stripANSI(m.chatBody())
@@ -272,7 +273,7 @@ func TestTruncationAnchorGallery(t *testing.T) {
 		"Scenes: (a) toolDisplaySuccess (head+tail with appended MoreItems marker),\n" +
 		"        (b) toolDisplayRunning (tail-only with prepended EarlierItems marker),\n" +
 		"        (c) Transcript-panel live response before finalization.\n" +
-		"Scene (c) uses the transcript Markdown renderer.\n"
+		"Scene (c) uses literal wrapped text while streaming.\n"
 	if err := os.WriteFile(filepath.Join(dir, "25-task-3-anchor-gallery.notes.txt"), []byte(notes), 0o644); err != nil {
 		t.Fatalf("write notes: %v", err)
 	}

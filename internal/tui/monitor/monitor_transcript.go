@@ -67,6 +67,7 @@ func (m *Model) reloadTranscript() {
 		return
 	}
 	m.chatStep = stepID
+	m.chatPausedLive = nil
 	m.chatItems = nil
 	m.chatVisibleItems = nil
 	m.chatCursorTargets = nil
@@ -117,9 +118,14 @@ func (m Model) showsTranscriptFollow() bool {
 }
 
 func (m *Model) resumeTranscriptFollow() {
+	hadPausedLive := m.chatPausedLive != nil
+	m.chatPausedLive = nil
 	m.chatAutoScroll = true
 	m.chatSeenSeq = m.latestChatSeq()
 	if m.ready {
+		if hadPausedLive {
+			m.setChatContent()
+		}
 		m.chatVP.GotoBottom()
 	}
 }
@@ -160,6 +166,7 @@ func (m *Model) loadChatTail() {
 		return
 	}
 	page = completeToolBoundaryContext(r, page)
+	m.chatPausedLive = nil
 	m.setChatPage(page)
 }
 
@@ -462,6 +469,7 @@ func (m *Model) loadOlderChat() {
 		return
 	}
 	page = completeToolBoundaryContext(r, page)
+	m.chatPausedLive = nil
 	m.setChatPage(page)
 	m.chatAutoScroll = false
 	if m.ready {
@@ -483,6 +491,7 @@ func (m *Model) loadNewerChat() {
 		return
 	}
 	page = completeToolBoundaryContext(r, page)
+	m.chatPausedLive = nil
 	m.setChatPage(page)
 	m.chatAutoScroll = false
 	if m.ready {
@@ -504,6 +513,7 @@ func (m *Model) loadChatBefore(end int64) bool {
 		return false
 	}
 	page = completeToolBoundaryContext(r, page)
+	m.chatPausedLive = nil
 	m.setChatPage(page)
 	return true
 }
@@ -741,28 +751,27 @@ func (m *Model) chatBody() string {
 // must not place current output beside older evidence; finalized messages replace
 // this buffer through StepMessage and the transcript file.
 func (m Model) liveTranscriptTail() string {
-	if m.chatPage.HasLater {
-		return ""
+	if buf := m.liveTranscriptBuffer(); buf != nil {
+		return buf.render(m.transcriptInnerW)
+	}
+	return ""
+}
+
+func (m Model) liveTranscriptBuffer() *liveTranscriptBuffer {
+	if m.selKind == "file" || m.chatPage.HasLater {
+		return nil
+	}
+	if !m.chatAutoScroll && m.chatPausedLive != nil {
+		return m.chatPausedLive
 	}
 	loadedSeq := 0
 	if n := len(m.chatEntries); n > 0 {
 		loadedSeq = m.chatEntries[n-1].Seq
 	}
 	if m.RunDir != "" && m.msgCount[m.chatStep] > loadedSeq {
-		return ""
+		return nil
 	}
-	buf := m.stepOutput[m.chatStep]
-	if buf == nil || buf.Len() == 0 {
-		return ""
-	}
-	text := expandView(buf.String())
-	// Do not cache partial Markdown under a finalized block's key.
-	if m.renderer != nil {
-		if rendered, err := m.renderer.Render(text); err == nil {
-			return stripBlankEdges(rendered)
-		}
-	}
-	return ansi.Hardwrap(text, max(m.transcriptInnerW, 1), true)
+	return m.stepOutput[m.chatStep]
 }
 
 func (m *Model) writeReviewOverview(b *strings.Builder, request engine.ReviewRequest) {
@@ -918,7 +927,7 @@ func (m Model) renderInsetMarkdown(key blockKey, text string) string {
 // fenceJSON pretty-prints s as a ```json fenced markdown block so it can be
 // rendered with syntax highlighting via renderMarkdown. Returns "" when s is
 // not valid JSON so callers can fall back to plain text. The caller is
-// responsible for bounding s before passing it in (e.g. via expandView) when
+// responsible for bounding s before passing it in when
 // the source is an unbounded transcript block; file content is pre-bounded by
 // readOutputFile's 256 KiB cap so no truncation is needed there.
 func fenceJSON(s string) string {
@@ -957,29 +966,7 @@ func jsonlToMarkdown(content string) string {
 	return sb.String()
 }
 
-// expandView bounds a block's expanded content: below chatExpandMax it returns
-// the content unchanged; above it, a head+tail with the middle elided so a
-// write-capped 256 KiB result never lays out in full.
-func expandView(s string) string {
-	if len(s) <= chatExpandMax {
-		return s
-	}
-	half := chatExpandMax / 2
-	head := clampRunes(s[:half])
-	tail := clampRunesTail(s[len(s)-half:])
-	elided := len(s) - len(head) - len(tail)
-	return head + fmt.Sprintf("\n%s %d KB elided %s\n", shared.EllipsisGlyph, elided/1024, shared.EllipsisGlyph) + tail
-}
-
-// clampRunes / clampRunesTail back a byte slice off to a rune boundary so
-// expandView never splits a multibyte rune at the elision seam.
-func clampRunes(s string) string {
-	for len(s) > 0 && !utf8.ValidString(s) {
-		s = s[:len(s)-1]
-	}
-	return s
-}
-
+// clampRunesTail advances a search excerpt to a valid UTF-8 boundary.
 func clampRunesTail(s string) string {
 	for len(s) > 0 && !utf8.ValidString(s) {
 		s = s[1:]

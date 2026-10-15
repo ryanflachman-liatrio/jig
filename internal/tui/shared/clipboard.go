@@ -175,6 +175,17 @@ func sanitizeClipboardText(raw string) string {
 	return b.String()
 }
 
+// DisplayLiteralText shares clipboard control-sequence normalization while
+// making line endings and indentation safe for a literal terminal preview.
+// Unlike copying, display tolerates malformed UTF-8 and has no payload limit;
+// callers bound their source before rendering.
+func DisplayLiteralText(raw string) string {
+	text := sanitizeClipboardText(raw)
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "")
+	return strings.ReplaceAll(text, "\t", "    ")
+}
+
 // skipEscapeSequence returns the number of bytes to skip past an ANSI escape
 // sequence that begins at raw[i] (raw[i] == 0x1B). Supports CSI (ESC [ … final),
 // OSC (ESC ] … BEL or ST), and simple two-byte sequences (ESC + one final).

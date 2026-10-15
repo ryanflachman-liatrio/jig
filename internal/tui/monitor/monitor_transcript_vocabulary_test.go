@@ -209,9 +209,7 @@ func TestExpandedDetailNeverOffersExpand(t *testing.T) {
 
 // TestTruncationVocabularyRetirement is FR-06.8: a grep-based Monitor
 // package regression that fails if any of the retired literals reappears in
-// a non-test source file. expandView's byte-elision marker is exempted via
-// an explicit allowlist since it reports a distinct concept (KB elision
-// inside a single blob, not a hidden-rows count).
+// a non-test source file. Security-pane wording is outside this contract.
 func TestTruncationVocabularyRetirement(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -222,8 +220,7 @@ func TestTruncationVocabularyRetirement(t *testing.T) {
 	// literal, with the reason so a maintainer editing this test can
 	// re-justify each exception in one place.
 	allowed := map[string]string{
-		"monitor_transcript.go": "expandView's byte-elision marker (\"\\n… %d KB elided …\\n\") is out of scope per slice 06 non-goal 1",
-		"monitor_view.go":       "Security pane's \"… %d more finding\" wording is out of scope per slice 06 non-goal 7 (Security pane, not Transcript panel)",
+		"monitor_view.go": "Security pane's \"… %d more finding\" wording is out of scope per slice 06 non-goal 7 (Security pane, not Transcript panel)",
 	}
 	// Retired quantitative-hint literals. The regex catches any bare
 	// "… " prefix followed on the same line by a %d conversion.

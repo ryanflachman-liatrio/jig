@@ -1,7 +1,6 @@
 package monitor
 
 import (
-	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/textarea"
@@ -284,6 +283,7 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		if ev.RunID != m.RunID {
 			return m, nil
 		}
+		m.preservePausedLive(ev.StepID)
 		if m.msgCount == nil {
 			m.msgCount = make(map[string]int)
 		}
@@ -298,9 +298,7 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		// the live-typing tail for that step is now on disk: reset it (the next
 		// deltas belong to the next, not-yet-finalized bubble). If that step's
 		// chat is open, re-read the transcript so the finalized entry appears.
-		if buf, ok := m.stepOutput[ev.StepID]; ok {
-			buf.Reset()
-		}
+		delete(m.stepOutput, ev.StepID)
 		// The Transcript panel always shows the cursor's step, so re-read whenever
 		// the finalized entry belongs to it and follow is active. A paused or
 		// paged-back view keeps its byte window stable until the operator follows
@@ -342,14 +340,17 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.stepOutput == nil {
-			m.stepOutput = make(map[string]*strings.Builder)
+			m.stepOutput = make(map[string]*liveTranscriptBuffer)
 		}
 		buf, ok := m.stepOutput[ev.StepID]
 		if !ok {
-			buf = &strings.Builder{}
+			buf = &liveTranscriptBuffer{}
 			m.stepOutput[ev.StepID] = buf
 		}
-		buf.WriteString(ev.Delta)
+		if buf.text.Len()+len(ev.Delta) > liveScrollbackBytes {
+			m.preservePausedLive(ev.StepID)
+		}
+		buf.append(ev.Delta)
 
 	case engine.RunError:
 		if ev.RunID != m.RunID {

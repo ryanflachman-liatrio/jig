@@ -1,7 +1,6 @@
 package monitor
 
 import (
-	"strings"
 	"time"
 
 	keybind "charm.land/bubbles/v2/key"
@@ -290,7 +289,8 @@ type Model struct {
 	securityOffset     int
 
 	// Unfinalized live transcript preview per step.
-	stepOutput map[string]*strings.Builder
+	stepOutput     map[string]*liveTranscriptBuffer
+	chatPausedLive *liveTranscriptBuffer
 
 	vp     viewport.Model // Steps panel scroll
 	chatVP viewport.Model // Transcript panel scroll — independent scroll position
@@ -417,10 +417,6 @@ const (
 )
 
 const (
-	// chatExpandMax bounds an expanded block so a 256 KiB write-capped result
-	// never lays out in full; beyond it the middle is elided head+tail.
-	chatExpandMax = 4096
-
 	// chatWindowMax bounds how many trailing entries modeChat renders, so a long
 	// run with thousands of messages stays responsive. Earlier entries are
 	// available through fixed-size pages.
@@ -627,7 +623,7 @@ func New(runID string) Model {
 		RunID:                runID,
 		keys:                 defaultMonitorKeys(),
 		index:                make(map[string]int),
-		stepOutput:           make(map[string]*strings.Builder),
+		stepOutput:           make(map[string]*liveTranscriptBuffer),
 		msgCount:             make(map[string]int),
 		chatRendered:         make(map[blockKey]string),
 		chatThinkingRendered: make(map[blockKey]string),
@@ -699,7 +695,7 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 	m.steps = make([]monitorStep, len(snap.Steps))
 	m.index = make(map[string]int, len(snap.Steps))
 	if m.stepOutput == nil {
-		m.stepOutput = make(map[string]*strings.Builder)
+		m.stepOutput = make(map[string]*liveTranscriptBuffer)
 	}
 	if m.msgCount == nil {
 		m.msgCount = make(map[string]int)
