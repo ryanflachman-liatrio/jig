@@ -457,7 +457,6 @@ const (
 	transcriptItemThinking
 	transcriptItemToolExchange
 	transcriptItemToolResult
-	transcriptItemReadGroup
 	transcriptItemToolGroup
 	transcriptItemSystem
 	transcriptItemUnsupported
@@ -549,7 +548,6 @@ const (
 	transcriptRenderDetail
 	transcriptRenderCard
 	transcriptRenderDiff
-	transcriptRenderReadGroup
 )
 
 type transcriptLineKey struct {

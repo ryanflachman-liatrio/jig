@@ -2,8 +2,12 @@ package monitor
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
 	"github.com/ryanflachman-liatrio/jig/internal/transcript"
@@ -32,14 +36,14 @@ func renumberEntries(entries []transcript.Entry, firstSeq int) []transcript.Entr
 func TestGroupReadTranscriptItems(t *testing.T) {
 	t.Run("adjacent reads group and enumerate every exchange member", func(t *testing.T) {
 		entries := append(renumberEntries(readExchange("one", "internal/alpha.go", 0, 0, 0), 1), renumberEntries(readExchange("two", "internal/beta.go", 0, 0, 0), 3)...)
-		got := groupReadTranscriptItems(buildTranscriptItems(entries, false), entries)
-		if len(got) != 1 || got[0].kind != transcriptItemReadGroup || len(got[0].groupMembers) != 2 {
+		got := groupCompactToolTranscriptItems(buildTranscriptItems(entries, false), entries)
+		if len(got) != 1 || got[0].kind != transcriptItemToolGroup || len(got[0].groupMembers) != 2 {
 			t.Fatalf("grouped items = %+v, want one two-member read group", got)
 		}
 		if refs := itemMembers(got[0]); len(refs) != 4 {
 			t.Fatalf("itemMembers(group) = %d refs, want 4", len(refs))
 		}
-		if got[0].key.anchor != got[0].groupMembers[0].primary.key || got[0].key.kind != transcriptItemReadGroup {
+		if got[0].key.anchor != got[0].groupMembers[0].primary.key || got[0].key.kind != transcriptItemToolGroup {
 			t.Fatalf("group key = %+v, want first-member anchor and group kind", got[0].key)
 		}
 	})
@@ -47,8 +51,8 @@ func TestGroupReadTranscriptItems(t *testing.T) {
 	t.Run("singleton is wrapped in its own read group", func(t *testing.T) {
 		entries := readExchange("one", "internal/alpha.go", 0, 0, 0)
 		before := buildTranscriptItems(entries, false)
-		after := groupReadTranscriptItems(before, entries)
-		if len(after) != 1 || after[0].kind != transcriptItemReadGroup || len(after[0].groupMembers) != 1 {
+		after := groupCompactToolTranscriptItems(before, entries)
+		if len(after) != 1 || after[0].kind != transcriptItemToolGroup || len(after[0].groupMembers) != 1 {
 			t.Fatalf("singleton not grouped\nbefore=%+v\nafter=%+v", before, after)
 		}
 		if !reflect.DeepEqual(after[0].groupMembers[0], before[0]) {
@@ -56,19 +60,21 @@ func TestGroupReadTranscriptItems(t *testing.T) {
 		}
 	})
 
-	t.Run("adjacent use-only page-edge reads retain only loaded evidence", func(t *testing.T) {
+	t.Run("use-only page-edge reads remain standalone", func(t *testing.T) {
 		firstInput := json.RawMessage(`{"file_path":"synthetic/first.go"}`)
 		secondInput := json.RawMessage(`{"file_path":"synthetic/second.go"}`)
 		entries := []transcript.Entry{{Seq: 1, Role: transcript.RoleAssistant, Blocks: []transcript.Block{
 			{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "first", Title: "Read", Kind: "read", Input: firstInput}},
 			{Type: transcript.BlockToolUse, Tool: &toolcall.Activity{ID: "second", Title: "Read", Kind: "read", Input: secondInput}},
 		}}}
-		got := groupReadTranscriptItems(buildTranscriptItems(entries, true), entries)
-		if len(got) != 1 || got[0].kind != transcriptItemReadGroup || got[0].displayState != toolDisplayRunning {
-			t.Fatalf("use-only items = %+v, want one running read group", got)
+		got := groupCompactToolTranscriptItems(buildTranscriptItems(entries, true), entries)
+		if len(got) != 2 {
+			t.Fatalf("use-only items = %+v, want two standalone reads", got)
 		}
-		if refs := itemMembers(got[0]); len(refs) != 2 {
-			t.Fatalf("use-only group refs = %d, want exactly two loaded uses", len(refs))
+		for _, item := range got {
+			if item.kind != transcriptItemToolExchange || item.displayState != toolDisplayRunning || len(itemMembers(item)) != 1 {
+				t.Fatalf("use-only read lost its running state or invented evidence: %+v", item)
+			}
 		}
 	})
 
@@ -77,7 +83,7 @@ func TestGroupReadTranscriptItems(t *testing.T) {
 		orphan := transcript.Entry{Seq: 3, Role: transcript.RoleUser, Blocks: []transcript.Block{{Type: transcript.BlockToolResult, Tool: &toolcall.Activity{ID: "orphan", Kind: "read", Status: "completed", Input: json.RawMessage(`{"file_path":"orphan.go"}`)}}}}
 		right := renumberEntries(readExchange("right", "right.go", 0, 0, 0), 4)
 		entries := append(append(left, orphan), right...)
-		got := groupReadTranscriptItems(buildTranscriptItems(entries, false), entries)
+		got := groupCompactToolTranscriptItems(buildTranscriptItems(entries, false), entries)
 		if len(got) != 3 || got[1].kind != transcriptItemToolResult {
 			t.Fatalf("result-only boundary items = %+v, want read/result-only/read", got)
 		}
@@ -85,7 +91,7 @@ func TestGroupReadTranscriptItems(t *testing.T) {
 			if i == 1 {
 				continue
 			}
-			if item.kind != transcriptItemReadGroup || len(item.groupMembers) != 1 {
+			if item.kind != transcriptItemToolGroup || len(item.groupMembers) != 1 {
 				t.Fatalf("result-only boundary should keep reads as separate singleton groups: %+v", got)
 			}
 		}
@@ -107,9 +113,9 @@ func TestGroupReadTranscriptItems(t *testing.T) {
 			tt.middle.Seq = 3
 			right := renumberEntries(readExchange("right", "right.go", 0, 0, 0), 4)
 			entries := append(append(left, tt.middle), right...)
-			got := groupReadTranscriptItems(buildTranscriptItems(entries, false), entries)
+			got := groupCompactToolTranscriptItems(buildTranscriptItems(entries, false), entries)
 			for i, item := range got {
-				if item.kind != transcriptItemReadGroup {
+				if item.kind != transcriptItemToolGroup {
 					continue
 				}
 				if len(item.groupMembers) != 1 {
@@ -133,9 +139,9 @@ func TestGroupReadTranscriptItems(t *testing.T) {
 			}
 			right := renumberEntries(readExchange("right", "right.go", g, i, a), 3)
 			entries := append(left, right...)
-			got := groupReadTranscriptItems(buildTranscriptItems(entries, false), entries)
+			got := groupCompactToolTranscriptItems(buildTranscriptItems(entries, false), entries)
 			singleton := func(item transcriptItem) bool {
-				return item.kind == transcriptItemReadGroup && len(item.groupMembers) == 1
+				return item.kind == transcriptItemToolGroup && len(item.groupMembers) == 1
 			}
 			if len(got) != 2 || !singleton(got[0]) || !singleton(got[1]) {
 				t.Fatalf("%s boundary items = %+v, want two singleton read groups", axis, got)
@@ -161,7 +167,7 @@ func TestGroupReadTranscriptItemsEligibility(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, got := readTargetForActivity(tt.activity)
+			_, got := readSummaryForActivity(tt.activity)
 			if got != tt.want {
 				t.Fatalf("eligible = %v, want %v", got, tt.want)
 			}
@@ -174,8 +180,8 @@ func TestReadGroupResultFirst(t *testing.T) {
 	second := renumberEntries(readExchange("second", "second.go", 0, 0, 0), 3)
 	entries := []transcript.Entry{first[1], first[0], second[1], second[0]}
 	entries[0].Seq, entries[1].Seq, entries[2].Seq, entries[3].Seq = 1, 2, 3, 4
-	items := groupReadTranscriptItems(buildTranscriptItems(entries, false), entries)
-	if len(items) != 1 || items[0].kind != transcriptItemReadGroup || len(items[0].groupMembers) != 2 {
+	items := groupCompactToolTranscriptItems(buildTranscriptItems(entries, false), entries)
+	if len(items) != 1 || items[0].kind != transcriptItemToolGroup || len(items[0].groupMembers) != 2 {
 		t.Fatalf("result-first items = %+v, want one two-member group", items)
 	}
 }
@@ -192,10 +198,63 @@ func TestReadGroupsAcrossHiddenReasoning(t *testing.T) {
 	m.RunDir = t.TempDir()
 	m.focus = focusTranscript
 	m.chatStep = "a"
+	m.compactToolGroups = true
 	m.setChatPage(transcript.Page{Entries: entries})
-	m, _ = m.Update(key("c"))
-	if len(m.chatVisibleItems) != 1 || m.chatVisibleItems[0].kind != transcriptItemReadGroup || len(m.chatVisibleItems[0].groupMembers) != 2 {
-		t.Fatalf("hidden reasoning between two reads should not stop them merging: %+v", m.chatVisibleItems)
+	assertGrouped := func() {
+		t.Helper()
+		if len(m.chatVisibleItems) != 1 || m.chatVisibleItems[0].kind != transcriptItemToolGroup || len(m.chatVisibleItems[0].groupMembers) != 2 {
+			t.Fatalf("hidden reasoning split reads: %+v", m.chatVisibleItems)
+		}
+		body := ansi.Strip(m.itemTranscriptBody())
+		if !strings.Contains(body, "Read (2)") || strings.Contains(body, "synthetic reasoning") {
+			t.Fatalf("unexpected collapsed read group:\n%s", body)
+		}
+	}
+	assertGrouped()
+	m.filters.tools = true
+	m.filterCursor = 2
+	m.toggleCurrentFilter()
+	if len(m.chatVisibleItems) != 3 || m.chatVisibleItems[1].kind != transcriptItemThinking {
+		t.Fatalf("reasoning filter did not restore read/reasoning/read: %+v", m.chatVisibleItems)
+	}
+	m.toggleCurrentFilter()
+	assertGrouped()
+	m.toggleCurrentFilter()
+	m, _ = m.Update(key("x"))
+	assertGrouped()
+}
+
+func TestReadGroupUsesCompletedActivity(t *testing.T) {
+	for _, inputOnResult := range []bool{false, true} {
+		t.Run(fmt.Sprintf("input_on_result_%v", inputOnResult), func(t *testing.T) {
+			entries := readExchange("read", "synthetic/source.go", 0, 0, 0)
+			use, result := entries[0].Blocks[0].Tool, entries[1].Blocks[0].Tool
+			use.Title, use.Kind = "Tool", ""
+			result.Input = json.RawMessage(`{"file_path":"synthetic/source.go","offset":7,"limit":3}`)
+			if inputOnResult {
+				use.Input = nil
+			} else {
+				use.Input, result.Input = result.Input, nil
+			}
+			m := newMonitorWithSteps(t)
+			m.focus = focusTranscript
+			m.chatStep = "a"
+			m.compactToolGroups = true
+			m.setChatPage(transcript.Page{Entries: entries})
+			if len(m.chatItems) != 1 || m.chatItems[0].kind != transcriptItemToolGroup {
+				t.Fatalf("completed read was not grouped: %+v", m.chatItems)
+			}
+			body := ansi.Strip(m.itemTranscriptBody())
+			if !strings.Contains(body, "source.go:7-9") || strings.Contains(body, "synthetic output") {
+				t.Fatalf("unexpected collapsed read:\n%s", body)
+			}
+			m, _ = m.Update(key("enter"))
+			m, _ = m.Update(key("n"))
+			m, _ = m.Update(key("enter"))
+			if !strings.Contains(ansi.Strip(m.itemTranscriptBody()), "synthetic output") {
+				t.Fatal("expanded read lost completed output")
+			}
+		})
 	}
 }
 
@@ -203,8 +262,9 @@ func TestReadGroupPageState(t *testing.T) {
 	entries := append(renumberEntries(readExchange("one", "one.go", 0, 0, 0), 1), renumberEntries(readExchange("two", "two.go", 0, 0, 0), 3)...)
 	m := newMonitorWithSteps(t)
 	m.chatStep = "a"
+	m.compactToolGroups = true
 	m.setChatPage(transcript.Page{Entries: entries})
-	if len(m.chatItems) != 1 || m.chatItems[0].kind != transcriptItemReadGroup {
+	if len(m.chatItems) != 1 || m.chatItems[0].kind != transcriptItemToolGroup {
 		t.Fatalf("page items = %+v, want group", m.chatItems)
 	}
 	key := m.chatItems[0].key

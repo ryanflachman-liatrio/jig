@@ -79,6 +79,7 @@ func TestCompactToolPolicyRegistry(t *testing.T) {
 		kind string
 		args map[string]any
 	}{
+		{"read", map[string]any{"file_path": "a.go"}},
 		{"edit", map[string]any{"file_path": "a.go"}},
 		{"write", map[string]any{"file_path": "a.go"}},
 		{"notebookedit", map[string]any{"notebook_path": "a.ipynb"}},

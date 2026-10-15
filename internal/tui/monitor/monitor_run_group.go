@@ -1,25 +1,21 @@
 package monitor
 
 // runGroupSpec adapts groupTranscriptItemRuns to a specific compact-group
-// feature (read groups, compact tool groups, ...). eligible decides whether
-// an item can join a run and, if so, under which discriminator kind; an item
+// policy. eligible decides whether an item can join a run and, if so, under
+// which discriminator kind; an item
 // only joins the current run when its kind matches and it shares the run's
 // execution coordinate (sameExecutionCoordinate). build turns a completed run
-// into its wrapped group item. skip is optional: it lets a spec keep some
-// completed runs as their bare, un-wrapped items instead (e.g. a solitary
-// failed read, which must keep rendering its full inline error detail).
+// into its wrapped group item.
 type runGroupSpec struct {
 	eligible func(item transcriptItem) (kind string, ok bool)
-	skip     func(run []transcriptItem) bool
 	build    func(run []transcriptItem) transcriptItem
 }
 
 // groupTranscriptItemRuns is a pure, page-local post-correlation pass shared
 // by every compact-group feature. It scans items in order, accumulating
 // consecutive eligible items that share a run's discriminator kind and
-// execution coordinate, then hands each completed run to spec.build (or
-// leaves it as bare items when spec.skip says so). Ineligible items flush the
-// current run and pass through unchanged, preserving any real boundary
+// execution coordinate, then hands each completed run to spec.build.
+// Ineligible items flush the current run and pass through unchanged, preserving any real boundary
 // between runs.
 func groupTranscriptItemRuns(items []transcriptItem, spec runGroupSpec) []transcriptItem {
 	grouped := make([]transcriptItem, 0, len(items))
@@ -29,11 +25,7 @@ func groupTranscriptItemRuns(items []transcriptItem, spec runGroupSpec) []transc
 		if len(run) == 0 {
 			return
 		}
-		if spec.skip != nil && spec.skip(run) {
-			grouped = append(grouped, run...)
-		} else {
-			grouped = append(grouped, spec.build(run))
-		}
+		grouped = append(grouped, spec.build(run))
 		run = run[:0]
 		runKind = ""
 	}
@@ -53,4 +45,8 @@ func groupTranscriptItemRuns(items []transcriptItem, spec runGroupSpec) []transc
 	}
 	flush()
 	return grouped
+}
+
+func sameExecutionCoordinate(a, b toolCorrelationKey) bool {
+	return a.generation == b.generation && a.iteration == b.iteration && a.attempt == b.attempt
 }

@@ -179,8 +179,6 @@ func (m *Model) writeTranscriptItem(b *strings.Builder, item transcriptItem, sel
 		}
 	}
 	switch item.kind {
-	case transcriptItemReadGroup:
-		m.writeReadGroup(b, item, selected, expanded)
 	case transcriptItemText:
 		if item.role == transcript.RoleUser {
 			b.WriteString(m.renderUserText(prefix, item, block, expanded))
@@ -221,20 +219,12 @@ func (m *Model) writeTranscriptItem(b *strings.Builder, item transcriptItem, sel
 				}
 			}
 		}
-		// summarizeActivity needs the tool-use's Input to format arguments
-		// (epic slice 15): when a settled result's activity carries its own
-		// Title/Kind/Locations/Output, `activity` above was swapped to that
-		// result activity, which normally has no Input of its own. Restore
-		// Input from the original use activity on a scoped copy so the
-		// summary keeps seeing the request's arguments without mutating
-		// `detailActivity` (still used verbatim for the expanded view below).
+		// Cards and compact groups use the same completed activity with
+		// initial metadata filled in when the result omits it. Expanded
+		// details still show the recorded result without fabricated input.
 		summaryActivity := activity
-		if summaryActivity != nil && len(summaryActivity.Input) == 0 {
-			if orig := use.Activity(); orig != nil && len(orig.Input) > 0 {
-				clone := *summaryActivity
-				clone.Input = orig.Input
-				summaryActivity = &clone
-			}
+		if item.toolUse != nil {
+			summaryActivity = compactToolActivity(item, m.chatEntries)
 		}
 		// The fair-share formatter (epic slice 15) budgets against the full
 		// panel content width rather than the narrower space actually left

@@ -186,17 +186,13 @@ func (m *Model) setChatPage(page transcript.Page) {
 }
 
 // buildChatItems applies compact grouping after the default reasoning
-// declutter, but before search or other filters can hide real group
-// boundaries. Read groups must see the same decluttered list as compact tool
-// groups: a hidden reasoning block sitting between two reads is not a real
-// boundary, so grouping on the pre-declutter list would needlessly split them
-// into separate single-read groups that never get a chance to re-merge.
+// declutter, but before search or other filters can hide real group boundaries.
 // chatEntries retains the complete page so showing reasoning can reconstruct
 // the original order without reading the transcript again.
 func (m Model) buildChatItems() []transcriptItem {
 	items := buildTranscriptItems(m.chatEntries, m.currentChatStepRunning())
 	if !m.compactToolGroups {
-		return groupReadTranscriptItems(items, m.chatEntries)
+		return items
 	}
 	if !m.filters.reasoning {
 		visible := make([]transcriptItem, 0, len(items))
@@ -213,7 +209,6 @@ func (m Model) buildChatItems() []transcriptItem {
 		}
 		items = visible
 	}
-	items = groupReadTranscriptItems(items, m.chatEntries)
 	return groupCompactToolTranscriptItems(items, m.chatEntries)
 }
 

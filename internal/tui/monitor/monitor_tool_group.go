@@ -14,6 +14,7 @@ type toolGroupPolicy struct {
 }
 
 var compactToolPolicies = map[string]toolGroupPolicy{
+	"read":         {title: "Read", kind: "read"},
 	"edit":         {title: "Edit", kind: "edit"},
 	"write":        {title: "Write", kind: "write"},
 	"notebookedit": {title: "Edit notebook", kind: "notebookedit"},
@@ -92,6 +93,10 @@ func compactToolActivity(item transcriptItem, entries []transcript.Entry) *toolc
 		}
 		if len(activity.Input) == 0 {
 			activity.Input = append(activity.Input[:0], use.Input...)
+		}
+		if len(activity.Locations) == 0 {
+			locations := &toolcall.Activity{Locations: use.Locations}
+			activity.Locations = locations.Clone().Locations
 		}
 	}
 	return activity

@@ -62,7 +62,8 @@ func summarizeActivity(activity *toolcall.Activity, width int) toolCallSummary {
 	}
 	switch kind {
 	case "read":
-		return toolSummary(shared.IconToolRead, "Read", shortFile(stringArg(args, "file_path", "path")), kind)
+		detail, _ := readSummaryForActivity(activity)
+		return toolSummary(shared.IconToolRead, "Read", detail, kind)
 	case "edit":
 		return toolSummary(shared.IconToolEdit, "Edit", shortFile(stringArg(args, "file_path", "path")), kind)
 	case "write":
