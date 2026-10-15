@@ -137,6 +137,7 @@ func clampActivity(a *toolcall.Activity, max int) bool {
 		}
 	}
 	clamp(&a.Title, perValue)
+	clamp(&a.Summary, perValue)
 	clamp(&a.Kind, perValue)
 	clamp(&a.Status, perValue)
 	clampRaw := func(raw *json.RawMessage, limit int) {
@@ -179,6 +180,7 @@ func clampActivity(a *toolcall.Activity, max int) bool {
 		}
 	}
 	consume(&a.Title)
+	consume(&a.Summary)
 	consume(&a.Kind)
 	consume(&a.Status)
 	consumeRaw := func(raw *json.RawMessage) { s := string(*raw); consume(&s); *raw = json.RawMessage(s) }

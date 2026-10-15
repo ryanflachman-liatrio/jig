@@ -485,14 +485,14 @@ func (m *Model) writeItemDetail(b *strings.Builder, label, content string, ancho
 	b.WriteString("      " + shared.Theme.Chat.TranscriptLabel.Render(label+":") + "\n")
 	if hidden > 0 && anchor == detailAnchorTail {
 		line := shared.HintLine(shared.EarlierItems(hidden, "line", "lines"), hint)
-		b.WriteString("      " + shared.Theme.Chat.Hint.Render(line) + "\n")
+		b.WriteString("      " + shared.Theme.Chat.Hint.Render(shared.TruncateTitle(line, max(m.transcriptInnerW-6, 0))) + "\n")
 	}
 	for _, row := range strings.Split(shown, "\n") {
 		b.WriteString("      " + shared.Theme.Chat.TranscriptDetail.Render(shared.BoxVertical+" "+row) + "\n")
 	}
 	if hidden > 0 && anchor != detailAnchorTail {
 		line := shared.HintLine(shared.MoreItems(hidden, "line", "lines"), hint)
-		b.WriteString("      " + shared.Theme.Chat.Hint.Render(line) + "\n")
+		b.WriteString("      " + shared.Theme.Chat.Hint.Render(shared.TruncateTitle(line, max(m.transcriptInnerW-6, 0))) + "\n")
 	}
 }
 
@@ -518,7 +518,9 @@ func (m *Model) writeToolActivityDetails(b *strings.Builder, activity *toolcall.
 	}
 	if len(activity.Input) > 0 {
 		hasDetail = true
-		m.writeItemDetail(b, "Input", prettyToolInput(activity.Input), anchor)
+		if !m.writeExecutionInput(b, activity) {
+			m.writeItemDetail(b, "Input", prettyToolInput(activity.Input), anchor)
+		}
 	}
 	if len(activity.Output) > 0 {
 		hasDetail = true

@@ -77,7 +77,7 @@ func summarizeActivity(activity *toolcall.Activity, width int) toolCallSummary {
 		s.meta = grepMetaArgs(args, width)
 		return s
 	case "bash":
-		return toolSummary(shared.IconToolShell, "Run", stringArg(args, "command"), kind)
+		return toolSummary(shared.IconToolShell, "Run", executionSummary(activity, width), kind)
 	case "websearch":
 		return toolSummary(shared.IconToolWeb, "Search web", webSearchDetail(args), kind)
 	case "webfetch":

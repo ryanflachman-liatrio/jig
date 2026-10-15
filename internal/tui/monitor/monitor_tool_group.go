@@ -85,6 +85,9 @@ func compactToolActivity(item transcriptItem, entries []transcript.Entry) *toolc
 		if activity.Title == "" {
 			activity.Title = use.Title
 		}
+		if activity.Summary == "" && len(activity.Input) == 0 {
+			activity.Summary = use.Summary
+		}
 		if activity.Kind == "" {
 			activity.Kind = use.Kind
 		}

@@ -157,6 +157,14 @@ file locations, or a descriptive activity title when raw input is absent.
 Failures, running or incomplete calls, calls without a usable summary,
 unknown tools, and `askuserquestion` remain standalone and split a run.
 
+Run summaries prefer the harness-normalized execution description, then a
+descriptive ACP title, then a command preview. Summary text is limited to 80 cells
+and clipped to fit the panel; multiline command previews show the first line
+with an ellipsis. Expanded execution calls show decoded shell text in a bounded
+Command section, remaining input fields in Arguments, and output separately.
+Unrecognized command shapes retain the generic Input view. These are display
+projections: full recorded input remains available to search and copy.
+
 Compact groups ignore settled reasoning hidden by the default view.
 Enabling the reasoning filter restores those items and splits groups at their
 original positions. Live reasoning and execution-coordinate changes still split

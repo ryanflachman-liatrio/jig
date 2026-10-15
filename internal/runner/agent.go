@@ -517,6 +517,7 @@ func redactToolActivity(req engine.StepRequest, activity *toolcall.Activity) *to
 		return nil
 	}
 	activity.Title = redactSecrets(req, activity.Title)
+	activity.Summary = redactSecrets(req, activity.Summary)
 	activity.Kind = redactSecrets(req, activity.Kind)
 	activity.Status = redactSecrets(req, activity.Status)
 	activity.Input = redactRaw(req, activity.Input)

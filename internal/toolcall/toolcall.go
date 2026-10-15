@@ -8,8 +8,11 @@ import "encoding/json"
 // Activity is the complete known state of a tool call. Producers must not
 // mutate an Activity after sending it across a harness event boundary.
 type Activity struct {
-	ID        string          `json:"id,omitempty"`
-	Title     string          `json:"title,omitempty"`
+	ID    string `json:"id,omitempty"`
+	Title string `json:"title,omitempty"`
+	// Summary is an optional execution description normalized by the harness.
+	// It is display metadata; Input retains the actual command and arguments.
+	Summary   string          `json:"summary,omitempty"`
 	Kind      string          `json:"kind,omitempty"`
 	Status    string          `json:"status,omitempty"`
 	Input     json.RawMessage `json:"input,omitempty"`
