@@ -269,8 +269,7 @@ func TestTrimStructuralBlankEdges(t *testing.T) {
 
 // TestVerticalRhythmHelperCallSites locks slice-04 FR-04.4: the two
 // edge-trim helpers must not silently swap. stripBlankEdges (SGR-aware) is
-// correct for Glamour output normalization inside renderNewCodeCard and
-// fileBody; trimStructuralBlankEdges (raw-bytes) is correct for per-item
+// correct for Glamour output normalization inside fileBody; trimStructuralBlankEdges (raw-bytes) is correct for per-item
 // trimming inside itemTranscriptBody. Anything else is a regression.
 func TestVerticalRhythmHelperCallSites(t *testing.T) {
 	items, err := os.ReadFile("monitor_transcript_items_view.go")
@@ -285,13 +284,9 @@ func TestVerticalRhythmHelperCallSites(t *testing.T) {
 	}
 	transcriptView := string(transcriptSrc)
 
-	// stripBlankEdges in monitor_transcript_items_view.go must appear only
-	// inside renderNewCodeCard.
-	if got := countCallsInFunction(t, itemsView, "renderNewCodeCard", "stripBlankEdges("); got == 0 {
-		t.Fatalf("expected stripBlankEdges( call inside renderNewCodeCard; not found")
-	}
-	if got, want := strings.Count(itemsView, "stripBlankEdges("), 1; got != want {
-		t.Fatalf("stripBlankEdges( occurrences in monitor_transcript_items_view.go = %d, want %d (only renderNewCodeCard)", got, want)
+	// Source highlighting now preserves literal rows without Glamour's padding.
+	if strings.Contains(itemsView, "stripBlankEdges(") {
+		t.Fatal("source rows must not be edge-trimmed")
 	}
 
 	// trimStructuralBlankEdges( in monitor_transcript_items_view.go must

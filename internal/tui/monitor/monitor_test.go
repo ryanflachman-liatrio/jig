@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"github.com/ryanflachman-liatrio/jig/internal/engine"
@@ -1355,9 +1356,9 @@ func TestMonitorAgentQuestionClearsOnResume(t *testing.T) {
 	}
 }
 
-// primaryBorderSeq is the SGR truecolor foreground for the Charple primary token
-// (#6B50FF → 107;80;255), used to detect which panel's border is focused.
-const primaryBorderSeq = "\x1b[38;2;107;80;255m"
+// primaryBorderSeq is the SGR truecolor foreground for the Guac focus token
+// (#12C78F → 18;199;143), used to detect which panel's border is focused.
+const primaryBorderSeq = "\x1b[38;2;18;199;143m"
 
 // titleLineFor returns the top-edge (title) line of the panel whose title
 // contains want, from a rendered two-panel monitor View. Panels are joined
@@ -3151,5 +3152,48 @@ func TestMonitorLiveClockNoDuplicateLoops(t *testing.T) {
 	}
 	if !m.ticking {
 		t.Fatal("ticking flag unexpectedly cleared")
+	}
+}
+
+// Bug 3 variant: with the failed-step error and compact notice pinned above
+// the viewport, n/N still keep the cursored item's header in view.
+func TestMonitorItemNavigationKeepsCursorVisibleFailedWithNotice(t *testing.T) {
+	blocks := make([]transcript.Block, 18)
+	for i := range blocks {
+		blocks[i] = transcript.Block{Type: transcript.BlockText, Text: fmt.Sprintf("content %02d", i+1)}
+	}
+	runDir := writeTranscript(t, "a", []transcript.Entry{{
+		Role:   transcript.RoleAssistant,
+		Blocks: blocks,
+	}})
+	m := newMonitorWithSteps(t)
+	m.RunDir = runDir
+	m = enterChatStep(t, m, "a")
+	i := m.index["a"]
+	m.steps[i].status = step.StatusFailed
+	m.steps[i].err = "synthetic backend failure"
+	m.transcriptInnerH = 8
+	m.refreshPanels()
+	m.chatVP.GotoTop()
+
+	for range len(blocks) {
+		// Re-arm the notice each press: any transcript key clears it.
+		m.compactToolNotice = "compact tool groups: on"
+		m.setChatContent()
+		m, _ = m.Update(key("n"))
+		assertChatCursorVisible(t, m)
+	}
+	if m.chatItemCursor != len(blocks)-1 {
+		t.Fatalf("forward cursor=%d, want %d", m.chatItemCursor, len(blocks)-1)
+	}
+	for range len(blocks) {
+		m, _ = m.Update(key("N"))
+		assertChatCursorVisible(t, m)
+		if chrome := m.transcriptChrome(); len(chrome) == 0 || !strings.Contains(ansi.Strip(chrome[0]), "synthetic backend failure") {
+			t.Fatalf("pinned error row missing from chrome: %q", chrome)
+		}
+	}
+	if m.chatItemCursor != 0 {
+		t.Fatalf("reverse cursor=%d, want 0", m.chatItemCursor)
 	}
 }

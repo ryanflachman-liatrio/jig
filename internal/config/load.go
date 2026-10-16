@@ -83,6 +83,10 @@ func loadFile(path string) (Config, error) {
 		if errors.As(err, &be) {
 			return Config{}, fmt.Errorf("%w: %s: %v", ErrConfigInvalid, path, be)
 		}
+		var ke keysError
+		if errors.As(err, &ke) {
+			return Config{}, fmt.Errorf("%w: %s: %v", ErrConfigInvalid, path, ke)
+		}
 		return Config{}, fmt.Errorf("%w: %s", ErrConfigInvalid, path)
 	}
 	return cfg, nil
@@ -92,8 +96,14 @@ func loadFile(path string) (Config, error) {
 // that adds fields with a restricted domain (e.g. [ui] glyph_preset) extends
 // this method.
 func (c Config) validate() error {
+	if err := c.TUI.Opener.Validate(); err != nil {
+		return err
+	}
 	if c.UI.GlyphPreset != "" && c.UI.GlyphPreset != "ascii" && c.UI.GlyphPreset != "unicode" {
 		return ErrConfigInvalid
+	}
+	if err := validateKeys(c.Keys); err != nil {
+		return err
 	}
 	if err := c.Notifications.validate(); err != nil {
 		return err

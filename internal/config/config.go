@@ -7,17 +7,20 @@ package config
 import "github.com/ryanflachman-liatrio/jig/internal/notification"
 
 // Config is the fully-typed, merged configuration surface. Each nested table
-// corresponds to one TOML table ([ui], [tui], [notifications], [telemetry],
-// [helpchat], [security]).
+// corresponds to one TOML table ([ui], [tui], [keys], [notifications],
+// [telemetry], [helpchat], [security]).
 // Fields are added to the nested structs by the unit that owns them; this
 // file only establishes the shape every layer merges against.
 type Config struct {
-	UI            UIConfig            `toml:"ui"`
-	TUI           TUIConfig           `toml:"tui"`
-	Notifications NotificationsConfig `toml:"notifications"`
-	Telemetry     TelemetryConfig     `toml:"telemetry"`
-	HelpChat      HelpChatConfig      `toml:"helpchat"`
-	Security      SecurityConfig      `toml:"security"`
+	UI  UIConfig  `toml:"ui"`
+	TUI TUIConfig `toml:"tui"`
+	// Keys remaps named TUI actions to chords, keyed by action ID
+	// ("monitor.copy_item" = "ctrl+y"). See docs/TUI.md for the IDs.
+	Keys          map[string]KeyChords `toml:"keys"`
+	Notifications NotificationsConfig  `toml:"notifications"`
+	Telemetry     TelemetryConfig      `toml:"telemetry"`
+	HelpChat      HelpChatConfig       `toml:"helpchat"`
+	Security      SecurityConfig       `toml:"security"`
 }
 
 // UIConfig holds general presentation defaults not owned by a more specific
@@ -32,13 +35,17 @@ type UIConfig struct {
 
 // TUIConfig holds terminal-UI display preferences (formerly .jig/tui.json).
 //
-// Both fields are pointers so a lower layer's explicit false can be
+// Boolean preferences are pointers so a lower layer's explicit false can be
 // overridden by an explicit false at a higher layer without being confused
 // with "unset" (CONVENTIONS.md: distinguish absent values from explicit
 // false). This matters most for SimpleMode, whose built-in default is true.
 type TUIConfig struct {
-	SimpleMode        *bool `toml:"simple_mode"`
-	CompactToolGroups *bool `toml:"compact_tool_groups"`
+	Opener            OpenerConfig `toml:"opener"`
+	SimpleMode        *bool        `toml:"simple_mode"`
+	CompactToolGroups *bool        `toml:"compact_tool_groups"`
+	// Bell rings the terminal bell when a run-monitor gate starts waiting.
+	// Opt-in because unrequested noise is worse than a missed pulse.
+	Bell *bool `toml:"bell"`
 }
 
 // SimpleModeOrDefault resolves SimpleMode, falling back to the built-in
@@ -51,11 +58,20 @@ func (c TUIConfig) SimpleModeOrDefault() bool {
 }
 
 // CompactToolGroupsOrDefault resolves CompactToolGroups, falling back to
-// the built-in default (false) when unset. Safe to call on a zero-value
+// the built-in default (true) when unset. Safe to call on a zero-value
 // TUIConfig.
 func (c TUIConfig) CompactToolGroupsOrDefault() bool {
 	if c.CompactToolGroups != nil {
 		return *c.CompactToolGroups
+	}
+	return true
+}
+
+// BellOrDefault resolves Bell, falling back to the built-in default (false)
+// when unset. Safe to call on a zero-value TUIConfig.
+func (c TUIConfig) BellOrDefault() bool {
+	if c.Bell != nil {
+		return *c.Bell
 	}
 	return false
 }

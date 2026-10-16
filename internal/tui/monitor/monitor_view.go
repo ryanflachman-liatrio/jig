@@ -196,8 +196,7 @@ func (m Model) statusLabel() string {
 func (m Model) hintLabel(width int) string {
 	bindings := m.compactHelpBindings()
 	if m.hasGate() && m.focus != focusGate {
-		gate := m.keys.FocusNext
-		gate.SetHelp("tab", "gate")
+		gate := shared.Relabel(m.keys.FocusNext, "gate")
 		bindings = append([]keybind.Binding{gate}, bindings...)
 	}
 	palette := shared.KeyPalette
@@ -562,6 +561,12 @@ func (m Model) View() string {
 	sec := fitBlock(m.securityView(layout.securityH), m.width, layout.securityH)
 	base := fitBlock(joinVertical(panels, sec, inputBar, status, footer), m.width, m.height)
 	base = m.gateOverlayView(base, layout)
+	if m.sourcePicker != nil {
+		base = m.sourcePicker.picker.overlay(base, m.width, m.height, m.sourcePickerKeys())
+	}
+	if m.locationPicker != nil {
+		base = m.locationPicker.picker.overlay(base, m.width, m.height, m.keys)
+	}
 	if m.helpOpen {
 		return m.helpOverlay(base)
 	}

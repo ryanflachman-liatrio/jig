@@ -233,7 +233,7 @@ func (m Model) listBody() string {
 
 	// Human-in-the-loop gates (review/input/question/prompt) render in the
 	// focused overlay, not inline here — the gate remains a non-blocking focus
-	// region (ADR 0002).
+	// region (ADR 0002). Live step output streams in the Transcript, not here.
 
 	return b.String()
 }

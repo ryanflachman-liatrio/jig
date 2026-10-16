@@ -101,7 +101,9 @@ func TestExecutionInputFallbackAndControls(t *testing.T) {
 	m.transcriptInnerW = 80
 	for _, raw := range []string{`{"command":["sh","-c","pwd"]}`, `{"command":42}`, `{"other":"value"}`, `{"command":`} {
 		var b strings.Builder
-		m.writeToolActivityDetails(&b, &toolcall.Activity{Kind: "execute", Input: json.RawMessage(raw)}, true, detailAnchorHead)
+		activity := &toolcall.Activity{Kind: "execute", Input: json.RawMessage(raw)}
+		m.setChatPage(transcript.Page{Entries: []transcript.Entry{{Seq: 1, Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockToolUse, Tool: activity}}}}})
+		m.writeToolActivityDetails(&b, m.chatItems[0], activity, true, detailAnchorHead)
 		if !strings.Contains(b.String(), "Input:") || strings.Contains(b.String(), "Command:") {
 			t.Fatalf("unknown shape lost generic input view: %s", b.String())
 		}

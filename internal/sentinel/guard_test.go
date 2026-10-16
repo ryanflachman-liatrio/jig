@@ -1,6 +1,7 @@
 package sentinel
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -199,4 +200,11 @@ func containsBytes(haystack, needle []byte) bool {
 		}
 	}
 	return false
+}
+
+func TestGuardFlagsOpenAIStyleKeyInWrite(t *testing.T) {
+	d := NewGuard(nil).Check("Write", map[string]any{"content": "OPENAI=sk-test" + fakeBody24})
+	if d.Allow || !strings.Contains(d.Reason, "openai-style-key") {
+		t.Fatalf("decision = %+v, want a block naming openai-style-key", d)
+	}
 }

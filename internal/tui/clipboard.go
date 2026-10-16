@@ -162,7 +162,7 @@ func renderClipboardNoticeOverlay(base, notice string, width, height int) string
 		return base
 	}
 	trimmed := ansi.Truncate(notice, max(width-2, 1), shared.EllipsisGlyph)
-	line := shared.Theme.Marker.Render("  " + trimmed)
+	line := shared.Theme.Marker.Width(width).Render("  " + trimmed)
 	comp := lipgloss.NewCompositor(
 		lipgloss.NewLayer(base),
 		lipgloss.NewLayer(line).X(0).Y(height-1).Z(1),

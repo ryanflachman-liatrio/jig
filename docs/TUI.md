@@ -83,6 +83,54 @@ empty, loading, disabled, error, and unknown states. Keep actions discoverable
 through help and the palette, and avoid rendering backend-specific jargon
 unless the operator needs it to act.
 
+### Remapping keys
+
+Every matched binding is a named action in its screen's keymap
+(`shared.Action`: a stable ID, the regions where it is live, and a pointer to
+the binding handlers match). `config.toml`'s `[keys]` table remaps actions by
+ID; each value is one chord or a list, and project entries override user
+entries per action:
+
+```toml
+[keys]
+"monitor.copy_item" = "ctrl+y"
+"global.palette" = ["ctrl+k", "ctrl+p"]
+```
+
+A remap replaces the action's default keys. Handlers, footers, the help
+overlay, and the command palette all read the same binding, so they show and
+accept the new chord. `tui.ConfigureKeymap` validates the table when the TUI
+starts and refuses to launch on an unknown ID, a fixed action, an empty chord
+list, or a chord that two actions would share in overlapping regions (a region
+encloses its dot-separated children; global chords are live everywhere). Keys
+may repeat across regions that are never live together, such as the Steps
+panel and a gate. Use `shared.Relabel` for a contextual description, never
+`SetHelp` with a literal key.
+
+Fixed actions keep their defaults but still block conflicting remaps: focus
+movement, paired-direction bindings whose handler reads the pressed key (j/k
+scroll, J/K, n/N, `[`/`]` entry navigation), the `gg` chord, gate submit and
+blur, the review-open key, the workflow list's own navigation and filter, and
+Detail's back key (chart mode drops `h`/`left` from it). Review workspaces,
+question forms, and overlay-internal keys (palette, help, filters) are not
+remappable yet.
+
+Remappable action IDs:
+
+| Scope | Actions |
+|---|---|
+| Global | `global.quit`, `global.help`, `global.help_typing`, `global.palette`, `global.notification_diagnostics` |
+| Home | `home.pane`, `home.detail`, `selector.open`, `runs.up`, `runs.down`, `runs.open`, `runs.new_run`, `runs.resume`, `runs.delete`, `runs.copy_id`, `runs.back` |
+| Detail | `detail.run`, `detail.runs`, `detail.toggle_chart` |
+| Monitor (all regions) | `monitor.toggle_help_agent`, `monitor.toggle_simple`, `monitor.gate_context`, `monitor.security_inspector` |
+| Monitor Steps | `monitor.down`, `monitor.up`, `monitor.open_transcript`, `monitor.toggle_tree`, `monitor.steps_leave`, `monitor.stop_step`, `monitor.reset_step`, `monitor.resume_step`, `monitor.toggle_bell`, `monitor.copy_all` |
+| Monitor Transcript | `monitor.transcript_to_steps`, `monitor.transcript_leave`, `monitor.toggle`, `monitor.expand_all`, `monitor.follow`, `monitor.search`, `monitor.filters`, `monitor.compact_tools`, `monitor.clear_view`, `monitor.page_older`, `monitor.page_newer`, `monitor.copy_item`, `monitor.toggle_bell`, `monitor.copy_all` |
+| Monitor recorded evidence | `monitor.open_location`, `monitor.source_mode`, `monitor.source_next`, `monitor.source_previous`, `monitor.source_first`, `monitor.source_last` |
+| Monitor gates | `monitor.recover_retry`, `monitor.recover_guide`, `monitor.recover_skip`, `monitor.recover_abort`, `monitor.integration_resolve`, `monitor.integration_agent`, `monitor.final_merge_approve`, `monitor.final_merge_discard`, `monitor.reset_confirm`, `monitor.reset_cancel` |
+
+The command palette still runs an entry by re-dispatching the action's current
+primary chord, so it follows remaps; it does not yet invoke actions by ID.
+
 ### Mouse navigation
 
 jig remains keyboard-primary: mouse navigation is optional, requires no configuration,
@@ -145,17 +193,29 @@ a user-role tool result is not human guidance. Preserve truncation indicators
 and bounded window reads. Follow the live tail only while the user is already
 at the tail; new output must not steal the position of someone reading history.
 
-Recognized tools, including local-file reads, use the same opt-in compact groups.
-Press `c` in Transcript or choose the command-palette action to toggle
-`compact_tool_groups` for the current session; the default (`false`) comes from
-`config.toml`'s `[tui]`
-table (`compact_tool_groups`), which a persistent default can override, but
+Every uninterrupted run of local-file read exchanges at one execution
+coordinate forms a page-local **grouped read**, including a run of one, so a
+lone read opens and collapses the same way. A grouped read is a tool group
+(see below) whose policy is always on: it groups whether or not compact tool
+groups are enabled, and it admits running and failed members. A single failed
+read is the exception: it stays standalone so its error detail renders inline.
+Collapsed, its tree lists every distinct loaded target once with its line
+selectors instead of the first-three/last preview. Otherwise it shares every
+tool-group behavior below: expansion, navigation, search, filters, and copy.
+Expansion and copy use only the members present on the loaded page, so
+grouping never implies off-page evidence.
+
+Other recognized tools fold into compact groups by default. Press `c` in
+Transcript or choose the command-palette action to toggle `compact_tool_groups`
+for the current session; the default (`true`) comes from `config.toml`'s
+`[tui]` table (`compact_tool_groups`), where `false` opts out persistently, but
 the in-session toggle itself is not written back to disk. Eligible groups
 contain one or more adjacent, settled, successful calls of the same canonical
 kind and execution coordinate. Read summaries use recorded input paths, ACP
 file locations, or a descriptive activity title when raw input is absent.
-Failures, running or incomplete calls, calls without a usable summary,
-unknown tools, and `askuserquestion` remain standalone and split a run.
+Except for grouped reads, failures and running or incomplete calls remain
+standalone. Calls without a usable summary, unknown tools, and
+`askuserquestion` remain standalone and split a run.
 
 Run summaries prefer the harness-normalized execution description, then a
 descriptive ACP title, then a command preview. Summary text is limited to 80 cells
@@ -165,15 +225,44 @@ Command section, remaining input fields in Arguments, and output separately.
 Unrecognized command shapes retain the generic Input view. These are display
 projections: full recorded input remains available to search and copy.
 
-Compact groups ignore settled reasoning hidden by the default view.
-Enabling the reasoning filter restores those items and splits groups at their
-original positions. Live reasoning and execution-coordinate changes still split
+With compact groups on, quiet exploration calls (`read`, `glob`, `grep`,
+`websearch`, `webfetch`) also fold across kinds: an uninterrupted run of
+settled, successful calls of those kinds forms one **Explore** group whose
+collapsed rows carry each call's kind as a muted label (`Search …`,
+`Read …`). A run of a single quiet kind keeps that kind's title and, for
+reads, the read tree. Any other kind, a failed or running call, or visible
+prose ends the run.
+
+Collapsed previews mask secrets. Error hints, collapsed call summaries
+(including bash command text), argument previews, and group or read-tree rows
+pass through `sentinel.RedactPreview`, which replaces known secret patterns
+and high-entropy values of key-looking assignments (`FOO_TOKEN=…`,
+`api_key: …`) with `<redacted>`. Free-standing SHAs, UUIDs and digests are not
+masked. Masking happens before truncation, so no prefix of a secret survives a
+narrow pane. Expanded detail bodies, `y` copy, and the transcript file on disk
+stay raw.
+
+The run monitor can also ring the terminal bell (BEL) when a gate starts
+waiting, so an operator in another pane, tab, or tmux window notices a blocked
+run. It is off by default; set `bell = true` in `config.toml`'s `[tui]` table
+to opt in. Press `B` in Steps or Transcript, or choose the command-palette
+action, to toggle it for the current session; the footer/help label reads
+`bell: on` or `bell: off`, and the toggle is not written back to disk. The bell
+rings once when the gate queue goes from empty to non-empty, not for gates that
+join an already-waiting queue, never when the operator was already focused on
+the gate, and at most once per 5-second cooldown. BEL is emitted through
+`tea.Raw` so it stays sequenced with renderer output; terminals and tmux decide
+whether it sounds, flashes, or only flags the window.
+
+Compact tool groups, including grouped reads in compact mode, ignore settled
+reasoning hidden by the default view. Enabling the reasoning filter restores
+those items and splits groups at their original positions. Live reasoning and execution-coordinate changes still split
 groups. Search and other filters run after grouping, so hiding prose, failures,
 or targetless calls with a filter cannot join calls across those boundaries.
 
-A collapsed group shows at most the first three calls, an omitted-count
-row, and the final call. Expanding the group with `enter` or space reveals every
-member as its existing bordered summary card. The group header and visible child
+A collapsed group other than a grouped read shows at most the first three
+calls, an omitted-count row, and the final call. Expanding any group with
+`enter` or space reveals every member as its existing bordered summary card. The group header and visible child
 cards are independent `n`/`N` stops; `enter` or space on a child toggles its
 existing detail, and `o` applies global expansion. Search and filters inspect
 members but retain the complete group, while copying a child copies that exchange
@@ -192,6 +281,147 @@ presentation mode as applicable). Shared map storage under a value receiver
 is not automatically concurrency-safe. Preserve raw evidence separately from
 ANSI decoration; use the existing display/clipboard normalization paths for
 terminal controls and hyperlinks.
+
+## Inspect recorded edit source
+
+In Transcript, `v` or **diff / recorded source** in the command palette switches
+an eligible edit between its default diff presentation and **Recorded new
+source**. The action expands a collapsed exchange. It uses only structured edit
+content captured in the transcript, including unchanged context in `NewText`;
+it never reads the current local file. Exchanges without structured edit
+content do not offer the action.
+
+A compact-group header first asks which eligible exchange to change. An edit
+with several source sections then asks which file section to show. Use `j`/`k`
+or arrows, Enter to select, and Esc to cancel without changing a mode. The
+selected child changes independently; other file sections retain their labels.
+Press `v` to return to diff, then `v` again to choose a different section. Mouse
+input cannot confirm a source picker. The nearest picker closes before Esc
+leaves Transcript; search, text entry, help, gate and review controls keep their
+input ownership.
+
+Diff remains the default when computation yields visible changes. Creation and
+identical input show recorded source; skipped or failed computation retains its
+unavailable-diff explanation. Empty new text shows **Empty recorded result**.
+If either participating use/result block was truncated, a warning above source
+says that only captured text is available. Even without that warning, this is
+the adapter's recorded text, not independently verified file completeness.
+Display strips terminal escapes and normalizes controls before highlighting;
+raw copied evidence remains separate.
+
+Mode, section and source byte position are scoped to the loaded exchange's run, step and execution
+coordinate. They survive resize, collapse, grouping and temporary filters.
+Changed payloads, unloaded pages or replacement steps reset presentation state.
+Switching pauses follow and keeps the selected item visible. Item and whole-step
+copy remain based on recorded evidence regardless of mode, window or expansion.
+
+Recorded source is browsable in contiguous windows of at most 4096 recorded
+bytes and 12 wrapped content rows. Labels, position, warnings and controls sit
+outside that content budget. Use these keys or their command-palette actions:
+
+| Key | Recorded source action |
+| --- | --- |
+| `alt+j` / `alt+k` | Next / previous window |
+| `alt+g` / `alt+G` | First / last window |
+
+Logical line numbers and continuation labels show where the window falls,
+including within a long line. All captured text remains reachable; these are
+window limits, not another capture limit. Ordinary `j`/`k` and viewport keys
+still scroll Transcript. Source browsing pauses follow; `G` resumes transcript
+follow. A single fallback source section can be browsed directly; use `v` to
+choose a section when an exchange has several.
+
+Resize reflows around the saved recorded-byte anchor. One-cell areas use a
+placeholder for a grapheme too wide to fit; widening restores its text. With
+no content width, widen the terminal to browse. Syntax highlighting operates
+on one window and may lack context from earlier windows; literal text remains
+available if highlighting fails. The recorded source does not change when the
+current file changes or an editor returns. `e` opens that current local file;
+`y` and `Y` still copy recorded evidence under the existing clipboard limits.
+
+## Open a recorded file target
+
+In Transcript, press `e` or choose **open file in editor** in the `ctrl+k`
+palette to open a recorded file target. Eligible targets come from normalized
+tool locations, edit-content paths, and recognized read/edit/write arguments
+(`file_path`, `path`) or notebook-edit arguments (`notebook_path`,
+`target_notebook`, `path`). Arbitrary prose, output, commands, search roots and
+glob-tool arguments are not file references.
+
+A selected exchange or compact-group child exposes only its targets. A group
+header collects its loaded members, without fetching another transcript page.
+Expansion is not required. Duplicate paths/positions collapse in their original
+order; explicit positions take precedence over path-only fallbacks. Different
+positions in the same file and equal relative paths from different execution
+directories remain separate choices.
+
+One target opens directly. Several targets open a keyboard picker: `j`/`k` or
+arrow keys select, Enter opens, and Esc cancels before leaving Transcript.
+The picker shows paths and positive recorded positions, checks file availability
+asynchronously, and disables unavailable targets with an explanation. A missing
+candidate never silently redirects to a valid sibling. Long labels retain their
+filename/position end, and the bounded list scrolls to every loaded candidate.
+Ordinary mouse selection does not open a file; mouse input is consumed while the
+picker is open. Cancel and editor return preserve transcript selection,
+expansion, focus and viewport position.
+
+Relative targets resolve against the **originating execution directory recorded
+on the same execution's transcript entries**. The runner records the absolute
+directory it actually supplies to the harness. It uses the configured repository
+root only when that is the session's directory. Paired use/result entries may
+share origin metadata within the same generation, iteration and attempt;
+conflicting or malformed origins remain unavailable. Historical records with no
+origin cannot resolve relative paths. A removed execution view never falls back
+to another checkout or jig's current directory. This internal origin metadata
+is excluded from exported transcript records and whole-step clipboard text.
+
+The target must currently exist as a regular local file (ordinary symlinks
+are followed). Absolute paths retain their identity and may be outside the
+project. Missing files, directories, URIs, and paths containing control
+characters are rejected without creating a file. Opening shows the **current
+local file**, which may differ from recorded transcript evidence. Spaces,
+Unicode, colons, and shell characters remain literal path data; a `:line`
+suffix is never parsed out of a filename.
+
+Configure an editor in user `config.toml` or project `.jig/config.toml`:
+
+```toml
+[tui.opener]
+argv = ["vim", "+{line}", "--", "{path}"]
+terminal = true
+```
+
+| Setting | Behavior |
+| --- | --- |
+| `argv` | Literal string array. Project argv replaces user argv as a whole. An explicit `[]` restores the `$EDITOR` fallback. |
+| `terminal` | Defaults to `true`; merged independently, including for `$EDITOR`. Use `false` for a GUI launcher. |
+| `{path}` | Required in configured arguments; substituted with the absolute file path without splitting the argument. |
+| `{line}`, `{column}` | Optional positive one-based positions; absent or nonpositive values expand to `1`. |
+
+Placeholders are forbidden in the executable (`argv[0]`); unknown placeholders,
+an empty executable, NUL bytes, and invalid field types fail configuration
+validation. For example, a GUI editor supporting a position argument can use
+`argv = ["code", "--goto", "{path}:{line}:{column}"]` with `terminal = false`.
+The editor determines whether it honors the supplied position.
+
+Without a nonempty configured argv, jig tokenizes `$EDITOR` as a command plus
+quoted/escaped arguments and appends the absolute path as one argument. It does
+not evaluate a shell: variables, substitutions, pipes, redirects, and globs
+stay literal. An unset fallback produces configuration guidance; there is no
+implicit operating-system opener. `$EDITOR` has no universal position flag, so
+when recorded coordinates are present the completion notice explains that the
+file opened without position navigation and recommends a configured template.
+
+Terminal mode yields the terminal to the editor and returns to Monitor when
+the editor exits. Nonterminal launchers run asynchronously with no terminal
+input/output. Both are waited for and reaped; unsuccessful exits and missing
+executables produce safe notices. Only one launch may be pending at a time.
+Navigation does not cancel a running GUI launcher, and stale preparation or
+completion cannot change a different selection. Opening does not cancel engine
+work or reset transcript selection, expansion, or viewport position. Search,
+text entry, modals, gates, review controls, and output-file view retain their
+own input behavior. Optional persistence is not needed to open an already-loaded
+absolute target.
 
 ## Review identity
 

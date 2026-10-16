@@ -229,6 +229,7 @@ func TestPresentationStatsHandlesNil(t *testing.T) {
 }
 
 func TestActivityDiffStatsAggregatesAcrossContent(t *testing.T) {
+	m := Model{}
 	activity := &toolcall.Activity{
 		Kind: "edit",
 		Content: []toolcall.Content{
@@ -236,7 +237,7 @@ func TestActivityDiffStatsAggregatesAcrossContent(t *testing.T) {
 			{Diff: newDiff("b.go", "x\ny\nz\n", "x\ny\nz\nQ\n")},
 		},
 	}
-	stats, ok := activityDiffStats(activity)
+	stats, ok := m.recordedActivityStats(activity)
 	if !ok {
 		t.Fatalf("expected activityDiffStats to report a diff exists")
 	}
@@ -246,19 +247,21 @@ func TestActivityDiffStatsAggregatesAcrossContent(t *testing.T) {
 }
 
 func TestActivityDiffStatsHandlesNil(t *testing.T) {
-	if _, ok := activityDiffStats(nil); ok {
+	m := Model{}
+	if _, ok := m.recordedActivityStats(nil); ok {
 		t.Fatalf("expected no diff for nil activity")
 	}
 }
 
 func TestActivityDiffStatsIgnoresFileCreation(t *testing.T) {
+	m := Model{}
 	activity := &toolcall.Activity{
 		Kind: "edit",
 		Content: []toolcall.Content{
 			{Diff: &toolcall.Diff{Path: "new.go", OldText: nil, NewText: "hello\n"}},
 		},
 	}
-	if _, ok := activityDiffStats(activity); ok {
+	if _, ok := m.recordedActivityStats(activity); ok {
 		t.Fatalf("expected no aggregate stats for file-creation only activity")
 	}
 }

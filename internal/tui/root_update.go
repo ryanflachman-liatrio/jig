@@ -22,6 +22,7 @@ var _ = clipboardState{}
 func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
+		m.opener.notice = ""
 		if m2, cmd, ok := m.handleGlobalKey(msg); ok {
 			return m2, cmd
 		}
@@ -219,11 +220,19 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case runs.ResumeRunMsg:
 		return m, resumeRunCmd(m.manager, msg.RunID)
 
+	case shared.OpenLocationRequest:
+		return m.admitOpenLocation(msg)
+	case openerPreparedMsg:
+		return m.preparedOpenLocation(msg)
+	case shared.OpenLocationResult:
+		return m.completeOpenLocation(msg)
+
 	// ── clipboard ────────────────────────────────────────────────────────
 	// A ClipboardRequest is admitted here before any active-screen handler
 	// runs, so navigation cannot orphan a pending request nor let a stale
 	// completion overwrite a newer one.
 	case shared.ClipboardRequest:
+		m.opener.notice = ""
 		return m.admitClipboard(msg)
 
 	case clipboardResultMsg:
@@ -252,7 +261,7 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // when it should fall through to the active screen's Update.
 func (m rootModel) handleGlobalKey(msg tea.KeyPressMsg) (rootModel, tea.Cmd, bool) {
 	if keybind.Matches(msg, shared.KeyQuit) {
-		return m, tea.Quit, true
+		return m, m.quitAfterOpener(), true
 	}
 	// Dirty-leave confirm (0.4 A6): y leaves to Home; anything else cancels.
 	if m.leaveConfirm {

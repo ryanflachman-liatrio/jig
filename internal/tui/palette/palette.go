@@ -314,22 +314,24 @@ func ParseKey(chord string) tea.KeyPressMsg {
 	case "space", " ":
 		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
 	}
+	// Modified chords carry no Text: a KeyPressMsg with Text set stringifies
+	// as that text, so "ctrl+r" would otherwise match the plain "r" binding.
 	if strings.HasPrefix(chord, "ctrl+shift+") && len(chord) > 11 {
 		r := []rune(strings.TrimPrefix(chord, "ctrl+shift+"))
 		if len(r) == 1 {
-			return tea.KeyPressMsg{Code: r[0], Mod: tea.ModCtrl | tea.ModShift, Text: string(r)}
+			return tea.KeyPressMsg{Code: r[0], Mod: tea.ModCtrl | tea.ModShift}
 		}
 	}
 	if strings.HasPrefix(chord, "ctrl+") && len(chord) > 5 {
 		r := []rune(strings.TrimPrefix(chord, "ctrl+"))
 		if len(r) == 1 {
-			return tea.KeyPressMsg{Code: r[0], Mod: tea.ModCtrl, Text: string(r)}
+			return tea.KeyPressMsg{Code: r[0], Mod: tea.ModCtrl}
 		}
 	}
 	if strings.HasPrefix(chord, "alt+") && len(chord) > 4 {
 		r := []rune(strings.TrimPrefix(chord, "alt+"))
 		if len(r) == 1 {
-			return tea.KeyPressMsg{Code: r[0], Mod: tea.ModAlt, Text: string(r)}
+			return tea.KeyPressMsg{Code: r[0], Mod: tea.ModAlt}
 		}
 	}
 	r := []rune(chord)

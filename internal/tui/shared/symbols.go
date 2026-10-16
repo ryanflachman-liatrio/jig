@@ -93,6 +93,7 @@ type symbolTable struct {
 	TreeLastGlyph     string
 	TreeContinueGlyph string
 	CursorBar         string
+	LiveCursor        string
 	RuleGlyph         string
 	EllipsisGlyph     string
 	// CommentGlyph is the filled dot used by the review workspace to
@@ -174,6 +175,7 @@ var unicodeSymbols = symbolTable{
 	TreeLastGlyph:     "└─",
 	TreeContinueGlyph: "│ ",
 	CursorBar:         "▌",
+	LiveCursor:        "▍",
 	RuleGlyph:         "─",
 	EllipsisGlyph:     "…",
 	CommentGlyph:      "●",
@@ -244,6 +246,7 @@ var asciiSymbols = symbolTable{
 	TreeLastGlyph:     "'-",
 	TreeContinueGlyph: "| ",
 	CursorBar:         "|",
+	LiveCursor:        "|",
 	RuleGlyph:         "-",
 	EllipsisGlyph:     "...",
 	CommentGlyph:      "*",

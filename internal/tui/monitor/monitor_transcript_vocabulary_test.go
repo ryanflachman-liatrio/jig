@@ -115,18 +115,17 @@ func TestWriteItemDetailHiddenLinesHintSingular(t *testing.T) {
 	}
 }
 
-// TestWriteNewCodeCardsHiddenLinesHint locks FR-06.6 for the second call
-// site: writeNewCodeCards emits the shared hint with its four-space indent.
-func TestWriteNewCodeCardsHiddenLinesHint(t *testing.T) {
+// Recorded source uses navigable windows; generic detail keeps its crop hints.
+func TestTranscriptSourceWindowHints(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	m.transcriptInnerW = 96
 	m.chatItemExpandAll = true
 	m.setChatPage(transcript.Page{Entries: diffExchange("edit-hint", "internal/synthetic/file.go", 20)})
 
 	plain := stripANSI(m.itemTranscriptBody())
-	want := "… 8 more lines [y: Copy full]"
+	want := "Lines 1–12 · 1/2 · more below"
 	if !strings.Contains(plain, want) {
-		t.Fatalf("writeNewCodeCards hidden-lines hint missing %q:\n%s", want, plain)
+		t.Fatalf("recorded-source position missing %q:\n%s", want, plain)
 	}
 	if strings.Contains(plain, "lines hidden") {
 		t.Fatalf("retired wording \"lines hidden\" still rendered:\n%s", plain)

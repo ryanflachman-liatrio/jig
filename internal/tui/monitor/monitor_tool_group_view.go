@@ -47,7 +47,7 @@ func (m *Model) renderCompactToolGroup(item transcriptItem, selected transcriptI
 		rows := compactToolGroupRows(item, m.chatEntries)
 		for i, row := range rows {
 			connector := shared.Theme.Chat.ReadGroupConnector.Render(shared.TreePrefix(i == len(rows)-1))
-			lines = append(lines, boundedToolGroupLine(prefix, "  "+connector+shared.Theme.Chat.ReadGroupTarget.Render(row.text), m.transcriptInnerW))
+			lines = append(lines, boundedToolGroupLine(prefix, "  "+connector+row.prefix+shared.Theme.Chat.ReadGroupTarget.Render(row.text)+row.suffix, m.transcriptInnerW))
 		}
 		ranges[item.key] = lineRange{start: 0, end: len(lines) - 1}
 		return toolGroupRender{body: strings.Join(lines, "\n"), ranges: ranges}
@@ -60,6 +60,7 @@ func (m *Model) renderCompactToolGroup(item transcriptItem, selected transcriptI
 		childWidth := max(0, m.transcriptInnerW-lipgloss.Width(branch))
 		nested := *m
 		nested.transcriptInnerW = childWidth
+		nested.insetRenderer = m.groupInsetRenderer
 		var child strings.Builder
 		nested.writeTranscriptItem(&child, member, selected == member.key)
 		body := trimStructuralBlankEdges(child.String())

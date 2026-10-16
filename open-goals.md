@@ -89,12 +89,12 @@ operator amenities.
 | ID | Goal | Who has it | jig today |
 |----|------|------------|-----------|
 | B1 | **Clipboard yank / OSC52** — copy run id, step output, selection | lazygit, Crush, nvim | **Done.** See [`docs/clipboard.md`](../clipboard.md). Open follow-up: Monitor output-file line selection (file copies whole). |
-| B2 | **Attention signal on gate wait** — terminal bell / optional notify | Claude Code, ops TUIs | **Partial.** Gate-bar pulse (`c0a6ca0`) + opt-in desktop/Slack/webhook on `attention_required` (A24). Open: terminal bell and a TUI-level toggle. |
-| B3 | **Fuzzy command palette** + richer named actions | fzf, k9s, gum, Crush | **Partial.** Fuzzy ranking + highlights (`sahilm/fuzzy`, `8af22d4`). Open: named actions — the catalog is still built from bindings and re-dispatches keys. |
+| B2 | **Attention signal on gate wait** — terminal bell / optional notify | Claude Code, ops TUIs | **Done.** Gate-bar pulse (`c0a6ca0`) + opt-in desktop/Slack/webhook on `attention_required` (A24) + opt-in terminal bell (`[tui] bell`, `B` session toggle; Spec 06). |
+| B3 | **Fuzzy command palette** + richer named actions | fzf, k9s, gum, Crush | **Partial.** Fuzzy ranking + highlights (`sahilm/fuzzy`, `8af22d4`). Named action registry (`shared.Action`, stable IDs per screen) landed with B7; the palette re-dispatches each action's current chord, so it follows remaps. Open: invoke actions by ID (needs an action-dispatch refactor of Monitor key handlers). |
 | B4 | **Which-key / next-keys overlay** after prefixes | Helix, nvim | Open. Silent `gg` only. |
 | B5 | **Theme skins + light mode** | Almost all admired TUIs | Open. Single dark "Pantera" theme; `[ui] glyph_preset` switches symbols, not colors. |
 | B6 | **Optional mouse** — click-to-focus + wheel (not mouse-first) | lazygit, k9s, yazi, btop | **Done** for Home (click + wheel) and Monitor (click focus, transcript click-to-toggle, wheel); Detail wheel only. Review, diffview, and question panels have no mouse. |
-| B7 | **Remappable keybindings** (config) | lazygit, k9s, Helix, Crush | Open. Hardcoded `*Keys`; no keys table in `config.toml`. |
+| B7 | **Remappable keybindings** (config) | lazygit, k9s, Helix, Crush | **Done** for global, Home, Detail, and Monitor actions: `[keys]` table, validated at TUI start (unknown/fixed IDs, region conflicts). See [`docs/TUI.md`](docs/TUI.md#remapping-keys). Open: review workspace, question forms, paired-direction bindings. |
 | B8 | **In-monitor run/session switcher** | Crush `ctrl+s`, OpenCode | Open. Esc → Home. |
 
 ### P1 / P2 — maturity
@@ -102,7 +102,7 @@ operator amenities.
 | ID | Goal | Notes |
 |----|------|-------|
 | B9 | Panel jump `1–n` + resize | Open. Digits are gate verdicts only. |
-| B10 | Richer TUI config | Partial. `config.toml` has `[ui] glyph_preset`, `[tui] simple_mode`, `[tui] compact_tool_groups`. Open: theme, keys, bell, density. |
+| B10 | Richer TUI config | Partial. `config.toml` has `[ui] glyph_preset`, `[tui] simple_mode`, `[tui] compact_tool_groups`. Open: theme, density. |
 | B11 | Custom commands / plugins | Open. |
 | B12 | Suspend `ctrl+z` | Open. |
 | B13 | In-TUI export / screendump | Open in the TUI. Nearby: CLI `jig export` (A22), `Y` copies a recorded transcript. |
@@ -152,8 +152,8 @@ Ranked. Status: **have** / **partial** / **missing**.
 | T2 | **Copy / yank selected transcript item** | have | `y` item (collapse-independent; group header copies members), `Y` whole recorded step transcript. See [`docs/clipboard.md`](../clipboard.md). |
 | T3 | **Open location** — `path:line` in `$EDITOR` or configured opener | missing | Locations render as inert text. |
 | T4 | **In-transcript edit cards with unified diff** | partial | Inline `Diff · <path>` with line numbers and intra-line highlights is now the **default** when old text exists; `+N/-M` badge; falls back to "New code". Open: toggle between diff and full new source. |
-| T5 | **Smart burst folding** — collapse consecutive successful tool rows between prose | partial | Reads always group into a tree (`79498d1`); same-kind compact groups (first 3 · "… N more" · last) bridge hidden reasoning (`a2fef23`) but are **opt-in** (`c` / `[tui] compact_tool_groups`, default off). Open: default-on policy, mixed-kind bursts. |
-| T6 | **Transcript noise & secrets policy** | partial | Collapsed arg previews redact secret-named keys and summarize objects/arrays (`7490319`); configured secrets replaced at write time; oversized user/thinking text collapses to a size label; tool output clamped (4 KiB / 12 rows) and never markdown-interpreted. Open: secret scan of error-hint/result previews; "N bytes" hiding for huge JSON. |
+| T5 | **Smart burst folding** — collapse consecutive successful tool rows between prose | done | Reads always group into a tree (`79498d1`); compact groups are on by default (`f4caab3`, `[tui] compact_tool_groups = false` opts out); mixed quiet bursts (read/glob/grep/websearch/webfetch) fold into one `Explore` group with kind-labelled rows (`ae04263`). |
+| T6 | **Transcript noise & secrets policy** | partial | Collapsed arg previews redact secret-named keys and summarize objects/arrays (`7490319`); configured secrets replaced at write time; oversized user/thinking text collapses to a size label; tool output clamped (4 KiB / 12 rows) and never markdown-interpreted. Collapsed previews (error hints, summaries, group rows) mask `sk-`/JWT/known patterns and high-entropy assignment values via `sentinel.RedactPreview` (`a69ee61`, Spec 06). Open: "N bytes" hiding for huge JSON (deferred to T19). |
 | T7 | **Per-turn / per-exchange timing + tokens** | partial | Turn metadata row (time, `Δ`, iter/attempt) at each generation/iteration/attempt boundary (`monitor_transcript_metadata.go`). Cost/tokens only on the step-end row. Open: per user↔assistant exchange spend. |
 | T8 | **Density + optional metadata modes** — compact / comfortable; optional seq/timestamp/cost chrome | missing | Simple mode only trims footer/help. |
 
@@ -194,7 +194,7 @@ the default view stays conversation-first.
 
 1. **T1** streaming in the Transcript panel (T2 done)
 2. **T3** open path + **T4** diff ↔ source toggle — actionable evidence
-3. **T5** default burst folding + **T6** preview secret scan — long runs stay readable
+3. ~~**T5** default burst folding + **T6** preview secret scan~~ **done** (T6 "N bytes" JSON deferred to T19)
 4. **T7** + **T8** economics + density — trust and forensics
 5. Remaining T10–T19 polish
 
@@ -209,17 +209,17 @@ Done since the first audit, struck through; open items keep their rank.
 3. ~~T2 Clipboard yank~~ **done**
 4. ~~A6 Restore Tier-2 monitors~~ **done** (G1 model fix landed)
 5. ~~A4 / A5 Cursor + Claude ACP resume parity~~ **done**
-6. B2 Gate attention — **partial**: pulse + opt-in notify landed; bell open
+6. ~~B2 Gate attention~~ **done**
 7. ~~A2 Thin ops CLI~~ **done**
 8. **T3 Open location**
-9. **T5 Smart burst folding** — partial; default-on + mixed-kind open
+9. ~~T5 Smart burst folding~~ **done**
 10. B3 Richer palette actions — fuzzy done; named actions open
 11. ~~A3 Mid-crash recovery~~ **done**
 12. **T4 Diff ↔ source toggle** — inline diff done
 13. ~~A8 Map/foreach fan-out~~ **done**
 14. A7 Codex parallel reliability — diagnostics done; fix/operator path open
 15. ~~B1~~ **done** / B4 Which-key
-16. **T6 Noise & secrets policy** — partial
+16. **T6 Noise & secrets policy** — partial; preview scan done, "N bytes" JSON deferred to T19
 17. B5 Theme skins + light mode
 18. **T7 Per-turn tokens/timing** — partial
 19. B8 In-monitor run switcher

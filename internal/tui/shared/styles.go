@@ -56,7 +56,7 @@ type Styles struct {
 	}
 	// Panel is the titled-box primitive (see panel.go). The border styles omit
 	// the top edge (the helper hand-composites the titled top line per ADR 0001);
-	// Focused/Blurred reuse the same Charple/Iron token pair as Viewport so the
+	// Focused/Blurred reuse the same Guac/Iron token pair as Viewport so the
 	// focus convention stays consistent app-wide.
 	Panel struct {
 		FocusedBorder lipgloss.Style
@@ -234,6 +234,10 @@ func DefaultTheme() Styles {
 	var (
 		primary   = lipgloss.Color(hexCharple)
 		secondary = lipgloss.Color(hexDolly)
+		// focus is the border color of whichever panel/viewport/textarea currently
+		// has focus. It is deliberately its own token rather than primary so the
+		// focus affordance reads green without repainting every other primary use.
+		focus     = lipgloss.Color(hexGuac)
 		accent    = lipgloss.Color(hexBok)
 		onPrimary = lipgloss.Color(hexButter)
 
@@ -282,7 +286,7 @@ func DefaultTheme() Styles {
 
 	s.Viewport.Focused = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(primary).
+		BorderForeground(focus).
 		Padding(0, 1)
 	s.Viewport.Blurred = lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -290,12 +294,12 @@ func DefaultTheme() Styles {
 		Padding(0, 1)
 
 	// Panel borders omit the top edge (BorderTop(false)); panel() hand-builds the
-	// titled top line. Same primary/Iron pair as Viewport.Focused/.Blurred.
+	// titled top line. Same focus/Iron pair as Viewport.Focused/.Blurred.
 	panelBorder := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderTop(false).
 		Padding(0, 1)
-	s.Panel.FocusedBorder = panelBorder.BorderForeground(primary)
+	s.Panel.FocusedBorder = panelBorder.BorderForeground(focus)
 	s.Panel.BlurredBorder = panelBorder.BorderForeground(lipgloss.Color(hexIron))
 	s.Panel.Title = lipgloss.NewStyle().Bold(true).Foreground(fgBase)
 	s.Card.BorderPending = lipgloss.NewStyle().Foreground(primary)
@@ -309,7 +313,7 @@ func DefaultTheme() Styles {
 
 	s.Textarea.Base = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
 	s.Textarea.Borderless = lipgloss.NewStyle()
-	s.Textarea.FocusedBorder = primary
+	s.Textarea.FocusedBorder = focus
 	s.Textarea.BlurredBorder = lipgloss.Color(hexIron)
 
 	s.Chat.Thinking = lipgloss.NewStyle().Italic(true).Foreground(fgDim)

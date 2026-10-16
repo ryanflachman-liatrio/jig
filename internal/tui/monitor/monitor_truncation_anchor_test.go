@@ -232,20 +232,17 @@ func TestTruncationAnchorGallery(t *testing.T) {
 
 	streamPlain := func() string {
 		m := newMonitorWithSteps(t)
-		stepID := "a"
-		idx, ok := m.index[stepID]
-		if !ok {
-			t.Fatalf("step %q not found", stepID)
-		}
-		m.steps[idx].status = step.StatusRunning
+		m.transcriptInnerW = 80
+		m.steps[m.index["a"]].status = step.StatusRunning
+		m.chatStep = "a"
 		var buf strings.Builder
 		total := 15
 		for i := 0; i < total; i++ {
 			fmt.Fprintf(&buf, "streaming line %02d\n", i+1)
 		}
-		m.stepOutput[stepID] = &liveTranscriptBuffer{}
-		m.stepOutput[stepID].append(buf.String())
-		m.chatStep = stepID
+		m.stepOutput["a"] = &liveTranscriptBuffer{}
+		m.stepOutput["a"].append(buf.String())
+		m.chatStep = "a"
 		m.transcriptInnerW = 80
 		return stripANSI(m.chatBody())
 	}()

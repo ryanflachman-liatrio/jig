@@ -23,8 +23,8 @@ func (m Model) View() string {
 		}
 		empty := shared.RenderEmptyState(shared.EmptyState{
 			Title: body,
-			Body:  "Press r to start a new run for " + name + ".",
-			CTA:   "r  start a run",
+			Body:  "Press " + m.keys.NewRun.Help().Key + " to start a new run for " + name + ".",
+			CTA:   m.keys.NewRun.Help().Key + "  start a run",
 		})
 		return empty + "\n" + shared.Theme.Footer.Render("  "+shared.HintString(m.keys.NewRun, m.keys.Back, shared.KeyHelp, shared.KeyQuit)) + "\n"
 	}

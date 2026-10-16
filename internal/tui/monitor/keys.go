@@ -42,6 +42,7 @@ type monitorKeys struct {
 	Search       keybind.Binding // matched (/)
 	Filters      keybind.Binding // matched (F)
 	CompactTools keybind.Binding // matched (c — compact eligible non-read tools)
+	ToggleBell   keybind.Binding // matched (B — session gate-bell toggle, Steps/Transcript)
 	ClearView    keybind.Binding // matched (x — clear search and filters)
 	PageOlder    keybind.Binding // matched ([)
 	PageNewer    keybind.Binding // matched (])
@@ -86,6 +87,16 @@ type monitorKeys struct {
 	SecurityInspector       keybind.Binding
 	NotificationDiagnostics keybind.Binding // matched (ctrl+g)
 
+	// Open a recorded local file through the root-owned editor launcher.
+	OpenLocation   keybind.Binding
+	SourceMode     keybind.Binding
+	SourceNext     keybind.Binding
+	SourcePrevious keybind.Binding
+	SourceFirst    keybind.Binding
+	SourceLast     keybind.Binding
+	PickerConfirm  keybind.Binding
+	PickerCancel   keybind.Binding
+
 	// Copy actions (spec 23-spec-clipboard-yank).
 	// CopyItem (y) copies the current transcript item / tool exchange.
 	// CopyAll (Y) copies the current source in full: the file for a file view,
@@ -94,7 +105,22 @@ type monitorKeys struct {
 	CopyAll  keybind.Binding
 }
 
+// defaultMonitorKeys is the effective keymap: the built-in bindings with the
+// validated [keys] overrides applied.
 func defaultMonitorKeys() monitorKeys {
+	k := baseMonitorKeys()
+	shared.ApplyKeymap(k.actions())
+	return k
+}
+
+// Actions lists the Monitor's named actions over the built-in bindings, for
+// keymap validation.
+func Actions() []shared.Action {
+	k := baseMonitorKeys()
+	return k.actions()
+}
+
+func baseMonitorKeys() monitorKeys {
 	return monitorKeys{
 		FocusNext:  keybind.NewBinding(keybind.WithKeys("tab"), keybind.WithHelp("tab", "focus")),
 		FocusPrev:  keybind.NewBinding(keybind.WithKeys("shift+tab"), keybind.WithHelp("shift+tab", "prev focus")),
@@ -121,6 +147,7 @@ func defaultMonitorKeys() monitorKeys {
 		Search:       keybind.NewBinding(keybind.WithKeys("/"), keybind.WithHelp("/", "search transcript")),
 		Filters:      keybind.NewBinding(keybind.WithKeys("F"), keybind.WithHelp("F", "filters")),
 		CompactTools: keybind.NewBinding(keybind.WithKeys("c"), keybind.WithHelp("c", "compact tools")),
+		ToggleBell:   keybind.NewBinding(keybind.WithKeys("B"), keybind.WithHelp("B", "bell")),
 		ClearView:    keybind.NewBinding(keybind.WithKeys("x"), keybind.WithHelp("x", "clear")),
 		PageOlder:    keybind.NewBinding(keybind.WithKeys("["), keybind.WithHelp("[", "older")),
 		PageNewer:    keybind.NewBinding(keybind.WithKeys("]"), keybind.WithHelp("]", "newer")),
@@ -157,7 +184,97 @@ func defaultMonitorKeys() monitorKeys {
 		SecurityInspector:       keybind.NewBinding(keybind.WithKeys("i"), keybind.WithHelp("i", "security inspector")),
 		NotificationDiagnostics: shared.KeyNotificationDiagnostics,
 
-		CopyItem: keybind.NewBinding(keybind.WithKeys("y"), keybind.WithHelp("y", "copy")),
-		CopyAll:  keybind.NewBinding(keybind.WithKeys("Y"), keybind.WithHelp("Y", "copy all")),
+		SourceNext:     keybind.NewBinding(keybind.WithKeys("alt+j"), keybind.WithHelp("alt+j", "next recorded source window")),
+		SourcePrevious: keybind.NewBinding(keybind.WithKeys("alt+k"), keybind.WithHelp("alt+k", "previous recorded source window")),
+		SourceFirst:    keybind.NewBinding(keybind.WithKeys("alt+g"), keybind.WithHelp("alt+g", "first recorded source window")),
+		SourceLast:     keybind.NewBinding(keybind.WithKeys("alt+G", "alt+shift+g"), keybind.WithHelp("alt+G", "last recorded source window")),
+		SourceMode:     keybind.NewBinding(keybind.WithKeys("v"), keybind.WithHelp("v", "diff / recorded source")),
+		PickerConfirm:  keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "open target")),
+		PickerCancel:   keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "cancel")),
+		OpenLocation:   keybind.NewBinding(keybind.WithKeys("e"), keybind.WithHelp("e", "open file in editor")),
+		CopyItem:       keybind.NewBinding(keybind.WithKeys("y"), keybind.WithHelp("y", "copy")),
+		CopyAll:        keybind.NewBinding(keybind.WithKeys("Y"), keybind.WithHelp("Y", "copy all")),
+	}
+}
+
+// actions names every binding a Monitor handler matches. Display-only
+// bindings are omitted; they mirror a matched binding's keys. The
+// notification-diagnostics chord is the global action's value, so it is
+// registered once in shared.GlobalActions.
+func (k *monitorKeys) actions() []shared.Action {
+	const (
+		all        = "monitor"
+		steps      = "monitor.steps"
+		transcript = "monitor.transcript"
+		picker     = "monitor.picker"
+		gate       = "monitor.gate"
+	)
+	a := func(id string, b *keybind.Binding, contexts ...string) shared.Action {
+		return shared.Action{ID: "monitor." + id, Contexts: contexts, Binding: b}
+	}
+	fixed := func(id string, b *keybind.Binding, contexts ...string) shared.Action {
+		act := a(id, b, contexts...)
+		act.Fixed = true
+		return act
+	}
+	return []shared.Action{
+		fixed("focus_next", &k.FocusNext, all),
+		fixed("focus_prev", &k.FocusPrev, all),
+		fixed("panel_focus", &k.PanelFocus, all),
+		a("toggle_help_agent", &k.ToggleHelp, all),
+		a("toggle_simple", &k.ToggleSimple, all),
+		a("gate_context", &k.GateContext, all),
+		a("security_inspector", &k.SecurityInspector, all),
+
+		a("down", &k.Down, steps, picker),
+		a("up", &k.Up, steps, picker),
+		a("open_transcript", &k.OpenTranscript, steps),
+		a("toggle_tree", &k.ToggleTree, steps),
+		a("steps_leave", &k.StepsLeave, steps),
+		a("stop_step", &k.StopStep, steps),
+		a("reset_step", &k.ResetStep, steps),
+		a("resume_step", &k.ResumeStep, steps),
+		a("toggle_bell", &k.ToggleBell, steps, transcript),
+		a("copy_all", &k.CopyAll, steps, transcript),
+
+		fixed("scroll", &k.Scroll, transcript),
+		fixed("scroll_fast", &k.ScrollFast, transcript),
+		fixed("block_nav", &k.BlockNav, transcript),
+		fixed("goto_top", &k.GotoTop, transcript),
+		a("transcript_to_steps", &k.TransToSteps, transcript),
+		a("transcript_leave", &k.TransLeave, transcript),
+		a("toggle", &k.Toggle, transcript),
+		a("expand_all", &k.ExpandAll, transcript),
+		a("follow", &k.Follow, transcript),
+		a("search", &k.Search, transcript),
+		a("filters", &k.Filters, transcript),
+		a("compact_tools", &k.CompactTools, transcript),
+		a("clear_view", &k.ClearView, transcript),
+		a("page_older", &k.PageOlder, transcript),
+		a("page_newer", &k.PageNewer, transcript),
+		a("copy_item", &k.CopyItem, transcript),
+		a("open_location", &k.OpenLocation, transcript),
+		a("source_mode", &k.SourceMode, transcript),
+		a("source_next", &k.SourceNext, transcript),
+		a("source_previous", &k.SourcePrevious, transcript),
+		a("source_first", &k.SourceFirst, transcript),
+		a("source_last", &k.SourceLast, transcript),
+		fixed("picker_confirm", &k.PickerConfirm, picker),
+		fixed("picker_cancel", &k.PickerCancel, picker),
+
+		fixed("gate_submit", &k.Submit, gate+".request", gate+".prompt", gate+".recovery"),
+		fixed("gate_blur", &k.GateBlur, gate),
+		fixed("gate_entry_nav", &k.GateEntryNav, gate),
+		fixed("review_open", &k.ReviewOpen, gate+".review"),
+		a("recover_retry", &k.RecoverRetry, gate+".recovery"),
+		a("recover_guide", &k.RecoverGuide, gate+".recovery"),
+		a("recover_skip", &k.RecoverSkip, gate+".recovery"),
+		a("recover_abort", &k.RecoverAbort, gate+".recovery", gate+".integration"),
+		a("integration_resolve", &k.IntegrationResolve, gate+".integration"),
+		a("integration_agent", &k.IntegrationAgent, gate+".integration"),
+		a("final_merge_approve", &k.FinalMergeApprove, gate+".final_merge"),
+		a("final_merge_discard", &k.FinalMergeDiscard, gate+".final_merge"),
+		a("reset_confirm", &k.ResetConfirm, gate+".reset_confirm"),
+		a("reset_cancel", &k.ResetCancel, gate+".reset_confirm"),
 	}
 }

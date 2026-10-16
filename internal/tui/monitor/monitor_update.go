@@ -16,6 +16,18 @@ import (
 )
 
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
+	hadGate, wasFocused := m.hasGate(), m.focus == focusGate
+	m, cmd := m.update(msg)
+	if m.locationPicker != nil && (m.locationPicker.owner != m.OpenLocationOwner() || m.focus != focusTranscript) {
+		m.locationPicker = nil
+	}
+	if m.sourcePicker != nil && (m.sourcePicker.owner != m.OpenLocationOwner() || m.focus != focusTranscript) {
+		m.sourcePicker = nil
+	}
+	return m.withGateBell(hadGate, wasFocused, cmd)
+}
+
+func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case SecurityLoadedMsg:
 		if msg.runID != m.RunID || msg.runDir != m.RunDir {
@@ -30,6 +42,8 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.resize()
 		}
 		return m, nil
+	case locationTargetsCheckedMsg:
+		return m.checkedLocationTargets(msg)
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.resize()
@@ -168,7 +182,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		if m.securityOpen {
 			return m.updateSecurity(msg)
 		}
-		if !m.CapturesText() && !m.helpOpen && !m.showDiagnostics && keybind.Matches(msg, m.keys.SecurityInspector) {
+		if !m.CapturesText() && !m.helpOpen && !m.showDiagnostics && m.sourcePicker == nil && m.locationPicker == nil && keybind.Matches(msg, m.keys.SecurityInspector) {
 			m.securityOpen = true
 			m.securityLoading = m.RunDir != ""
 			return m, m.LoadSecurityCmd()
@@ -204,6 +218,13 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			var hCmd tea.Cmd
 			m.helpModel, hCmd = m.helpModel.Update(msg)
 			return m, hCmd
+		}
+
+		if m.sourcePicker != nil {
+			return m.updateSourcePicker(msg)
+		}
+		if m.locationPicker != nil {
+			return m.updateLocationPicker(msg)
 		}
 
 		// A dedicated review workspace replaces the Monitor body and owns every
@@ -307,11 +328,12 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m, taCmd
 	}
 
-	// Route remaining messages (scroll keys, mouse wheel) to the focused panel.
+	// Non-key viewport messages may update rendering, but must not resume
+	// follow merely because a short item fits. Keys and wheels update follow
+	// in their explicit navigation paths above.
 	var cmd tea.Cmd
 	if m.focus == focusTranscript {
 		m.chatVP, cmd = m.chatVP.Update(msg)
-		m.updateTranscriptFollow(m.chatVP.AtBottom())
 	} else {
 		m.vp, cmd = m.vp.Update(msg)
 	}
@@ -329,6 +351,17 @@ func (m Model) hasGate() bool {
 // focusGate) the pulse stops — they have already seen it.
 func (m Model) gateShouldPulse() bool {
 	return m.hasGate() && m.focus != focusGate
+}
+
+// gateShouldRing is the bell's counterpart to gateShouldPulse: "a gate waits
+// and the operator isn't looking", narrowed to the empty → non-empty edge so
+// a burst of gates rings once, and rate-limited by gateBellCooldown. Focus is
+// judged from before the update (wasFocused): the first gate after run entry
+// auto-focuses itself (consumeFirstWaitFocus), which says nothing about
+// whether the operator is actually watching this terminal.
+func (m Model) gateShouldRing(hadGate, wasFocused bool) bool {
+	return m.bellEnabled && !hadGate && !wasFocused && m.hasGate() &&
+		bellClock().Sub(m.lastBell) >= gateBellCooldown
 }
 
 // textareaActive reports whether the focused gate is currently capturing free
@@ -391,8 +424,15 @@ func (m Model) aliasPanelFocus(key string) focusRegion {
 // selection cursor (eagerly reloading the Transcript per Resolved Decision 10),
 // space toggles the file tree expand/collapse, and esc/q leave to Home.
 func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	// Modified Transcript chords must not become plain Steps navigation.
+	if msg.Mod&tea.ModAlt != 0 {
+		msg.Text = ""
+	}
 	rows := m.visibleRows()
 	switch {
+	case keybind.Matches(msg, m.keys.ToggleBell):
+		m.toggleBell()
+		return m, nil
 	case keybind.Matches(msg, m.keys.Down):
 		if m.cursor < len(rows)-1 {
 			m.cursor++
@@ -482,7 +522,13 @@ func (m Model) updateSteps(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 // the block cursor, enter/space toggle the cursored block, o toggles all, and
 // h/esc return focus to the Steps panel. Remaining viewport keys scroll.
 func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
-	m.compactToolNotice = ""
+	if m.compactToolNotice != "" {
+		// The notice is pinned chrome; re-derive the viewport height now it is gone.
+		m.compactToolNotice = ""
+		if m.ready {
+			m.setChatContent()
+		}
+	}
 	if m.searchOpen {
 		switch {
 		case msg.String() == "esc":
@@ -522,6 +568,12 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Terminals can supply both Alt and printable Text. Key.String prefers
+	// Text, which would turn alt+G into the ordinary follow key. Text capture
+	// has already handled its input above; match modified browsing chords here.
+	if msg.Mod&tea.ModAlt != 0 {
+		msg.Text = ""
+	}
 	// Process follow first so shift+G never starts a gg chord.
 	if keybind.Matches(msg, m.keys.Follow) {
 		m.pendingGPrefix = false
@@ -566,6 +618,9 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		m.clearTranscriptView()
 		m.refreshPanels()
 		return m, nil
+	case keybind.Matches(msg, m.keys.ToggleBell):
+		m.toggleBell()
+		return m, nil
 	case keybind.Matches(msg, m.keys.CompactTools):
 		m.toggleCompactToolGroups()
 		m.chatAutoScroll = false
@@ -601,6 +656,21 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			return m, copyOutputFileCmd(m.selFile, kind)
 		}
 		return m, copyTranscriptCmd(m.RunDir, m.chatStep)
+	case keybind.Matches(msg, m.keys.SourceNext):
+		return m.browseSource("next"), nil
+	case keybind.Matches(msg, m.keys.SourcePrevious):
+		return m.browseSource("previous"), nil
+	case keybind.Matches(msg, m.keys.SourceFirst):
+		return m.browseSource("first"), nil
+	case keybind.Matches(msg, m.keys.SourceLast):
+		return m.browseSource("last"), nil
+	case keybind.Matches(msg, m.keys.SourceMode):
+		return m.toggleSource(), nil
+	case keybind.Matches(msg, m.keys.OpenLocation):
+		if m.selKind == "file" {
+			return m, nil
+		}
+		return m.openLocation()
 	case keybind.Matches(msg, m.keys.CopyItem):
 		// y in the Transcript panel copies the selected transcript item. It is
 		// intentionally unavailable in file view (files have no line cursor).

@@ -64,6 +64,7 @@ var (
 	TreeContinueGlyph string
 
 	CursorBar     string // selected-row marker
+	LiveCursor    string // typing cursor ending a streaming Transcript block
 	RuleGlyph     string
 	EllipsisGlyph string
 	CommentGlyph  string
@@ -156,6 +157,7 @@ func refreshVocabulary() {
 	TreeContinueGlyph = t.TreeContinueGlyph
 
 	CursorBar = t.CursorBar
+	LiveCursor = t.LiveCursor
 	RuleGlyph = t.RuleGlyph
 	EllipsisGlyph = t.EllipsisGlyph
 	CommentGlyph = t.CommentGlyph

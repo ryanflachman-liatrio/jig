@@ -14,6 +14,7 @@ import (
 	"github.com/ryanflachman-liatrio/jig/internal/helpchat"
 	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
 	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
 	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 	questionpanel "github.com/ryanflachman-liatrio/jig/internal/tui/question"
 	reviewworkspace "github.com/ryanflachman-liatrio/jig/internal/tui/review"
@@ -22,7 +23,7 @@ import (
 
 // focusRegion is which of the monitor's three regions currently holds keyboard
 // input. Both the Steps panel and the Transcript panel are always visible; only
-// the focused region's border is drawn primary (Charple). A pending gate is a
+// the focused region's border is drawn in the focus color (Guac). A pending gate is a
 // third region: it auto-focuses on arrival but does not freeze navigation — the
 // user can tab away to read the transcript a verdict is about and tab back. See
 // docs/adr/0002-gates-are-nonblocking-focus-regions.md.
@@ -138,15 +139,23 @@ func (r visibleRow) isFileRow() bool {
 // updated as engine events arrive. The user can press esc to return to the
 // runs list.
 type Model struct {
-	RunID      string
-	RunDir     string
-	workflow   string
-	keys       monitorKeys
-	steps      []monitorStep
-	index      map[string]int // stepID → steps position
-	done       bool
-	failed     bool
-	historical bool
+	sourceStates     map[sourceOwner]sourcePresentation
+	sourceDiffs      map[*toolcall.Diff]recordedDiffCache
+	sourceWindows    map[sourceWindowKey]*sourceWindowCache
+	sourceHighlight  func(string, string) (string, error)
+	sourcePicker     *sourcePickerState
+	locationInstance uint64
+	locationPickerID uint64
+	locationPicker   *locationPickerState
+	RunID            string
+	RunDir           string
+	workflow         string
+	keys             monitorKeys
+	steps            []monitorStep
+	index            map[string]int // stepID → steps position
+	done             bool
+	failed           bool
+	historical       bool
 	// interrupted is set for historical journals whose last durable worker
 	// status is running/validating (Spec 20 crash reopen).
 	interrupted bool
@@ -219,8 +228,9 @@ type Model struct {
 
 	// fileRenderer removes document framing for output files. insetRenderer uses
 	// the same flush layout at the narrower width left inside a tool block's bar.
-	fileRenderer  *glamour.TermRenderer
-	insetRenderer *glamour.TermRenderer
+	fileRenderer       *glamour.TermRenderer
+	insetRenderer      *glamour.TermRenderer
+	groupInsetRenderer *glamour.TermRenderer
 
 	// msgCount tracks the latest transcript entry seq observed per step (via
 	// StepMessage liveness events), used as a message count in the list.
@@ -335,6 +345,12 @@ type Model struct {
 	// simpleMode hides advanced transcript affordances from footer/help (2.3).
 	// Default true; sourced from the merged [tui] config (WithTUIConfig).
 	simpleMode bool
+
+	// bellEnabled rings the terminal bell when a gate starts waiting; seeded
+	// from [tui] bell and flipped for the session by ToggleBell. lastBell
+	// anchors the gateBellCooldown window.
+	bellEnabled bool
+	lastBell    time.Time
 
 	// diagnostics renders a sanitized text dump of the process-wide
 	// notification diagnostic ring (spec 23-spec-run-notifications FR-17).
@@ -532,6 +548,7 @@ type transcriptCursorTarget struct {
 // formatted for the conversation body and a diff rendered under one
 // expansion state cannot be served under another.
 type transcriptRenderKey struct {
+	source   sourcePresentation
 	itemKey  transcriptItemKey
 	surface  transcriptRenderSurface
 	width    int
@@ -619,6 +636,7 @@ type lifecycleActions struct {
 func New(runID string) Model {
 	return Model{
 		RunID:                runID,
+		locationInstance:     nextLocationInstance.Add(1),
 		keys:                 defaultMonitorKeys(),
 		index:                make(map[string]int),
 		stepOutput:           make(map[string]*liveTranscriptBuffer),
@@ -645,6 +663,7 @@ func New(runID string) Model {
 func (m Model) WithTUIConfig(cfg config.TUIConfig) Model {
 	m.simpleMode = cfg.SimpleModeOrDefault()
 	m.compactToolGroups = cfg.CompactToolGroupsOrDefault()
+	m.bellEnabled = cfg.BellOrDefault()
 	return m
 }
 
@@ -863,6 +882,12 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 			keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "back / close")),
 		}}}
 	}
+	if m.sourcePicker != nil {
+		return m.sourcePickerHelp()
+	}
+	if m.locationPicker != nil {
+		return m.pickerHelp()
+	}
 	var sections []shared.HelpSection
 
 	switch {
@@ -872,14 +897,14 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 		var bindings []keybind.Binding
 		if m.selKind == "file" {
 			copyAll := m.keys.CopyAll
-			copyAll.SetHelp("Y", "copy file")
+			copyAll = shared.Relabel(copyAll, "copy file")
 			bindings = []keybind.Binding{
 				m.keys.Scroll, m.keys.GotoTop, m.keys.ScrollFast, copyAll, m.keys.TransToSteps, m.keys.TransLeave,
 			}
 		} else {
 			blockNav := m.keys.BlockNav
 			if m.searchQuery != "" {
-				blockNav.SetHelp("n/N", "match")
+				blockNav = shared.Relabel(blockNav, "match")
 			}
 			pageOlder := m.keys.PageOlder
 			pageOlder.SetEnabled(m.chatPage.HasEarlier)
@@ -889,21 +914,33 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 			clearView.SetEnabled(m.searchQuery != "" || m.filters.active())
 			compactTools := m.keys.CompactTools
 			if m.compactToolGroups {
-				compactTools.SetHelp("c", "compact tools: on")
+				compactTools = shared.Relabel(compactTools, "compact tools: on")
 			} else {
-				compactTools.SetHelp("c", "compact tools: off")
+				compactTools = shared.Relabel(compactTools, "compact tools: off")
 			}
 			copyItem := m.keys.CopyItem
-			copyItem.SetHelp("y", contextualItemCopyLabel(m))
+			copyItem = shared.Relabel(copyItem, contextualItemCopyLabel(m))
 			copyItem.SetEnabled(len(m.chatVisibleItems) > 0)
 			copyAll := m.keys.CopyAll
-			copyAll.SetHelp("Y", "copy transcript")
+			copyAll = shared.Relabel(copyAll, "copy transcript")
+			sourceMode := m.keys.SourceMode
+			_, _, sourceAvailable := m.selectedSource()
+			sourceKeys := []keybind.Binding{m.keys.SourceNext, m.keys.SourcePrevious, m.keys.SourceFirst, m.keys.SourceLast}
+			for i := range sourceKeys {
+				sourceKeys[i].SetEnabled(sourceAvailable && !m.CapturesText() && !m.filterOpen)
+			}
+			sourceMode.SetEnabled(m.sourceEligible() && !m.CapturesText() && !m.filterOpen)
+			openLocation := m.keys.OpenLocation
+			if len(m.selectedLocationTargets()) == 0 {
+				openLocation = shared.Relabel(openLocation, "open file: no recorded target")
+			}
+			openLocation.SetEnabled(!m.CapturesText() && !m.filterOpen)
 			if simple {
 				// Keep scroll / follow / expand / leave; hide paging, filters,
 				// search, expand-all, and block-nav from footer/help.
 				bindings = []keybind.Binding{
 					m.keys.Scroll, m.keys.Follow, m.keys.Toggle, m.keys.ScrollFast,
-					m.keys.GotoTop, copyItem, copyAll,
+					m.keys.GotoTop, copyItem, copyAll, openLocation, sourceMode,
 					m.keys.TransToSteps, m.keys.TransLeave,
 				}
 			} else {
@@ -911,14 +948,16 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 					m.keys.Scroll, m.keys.Follow, blockNav, m.keys.Toggle, m.keys.ScrollFast,
 					m.keys.GotoTop, pageOlder, pageNewer,
 					m.keys.Search, m.keys.Filters, clearView, compactTools, m.keys.ExpandAll,
-					copyItem, copyAll,
+					copyItem, copyAll, openLocation, sourceMode,
 					m.keys.TransToSteps, m.keys.TransLeave,
 				}
 			}
+			bindings = append(bindings, sourceKeys...)
 		}
+		bindings = append(bindings, m.bellBinding())
 		if m.gateContext != nil {
 			contextKey := m.keys.GateContext
-			contextKey.SetHelp("ctrl+o", "return")
+			contextKey = shared.Relabel(contextKey, "return")
 			bindings = append([]keybind.Binding{contextKey}, bindings...)
 		}
 		sections = append(sections, shared.HelpSection{
@@ -937,17 +976,17 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 		treeKey.SetEnabled(!m.cursorIsFileRow())
 		copyAll := m.keys.CopyAll
 		if m.cursorIsFileRow() {
-			copyAll.SetHelp("Y", "copy file")
+			copyAll = shared.Relabel(copyAll, "copy file")
 		} else {
-			copyAll.SetHelp("Y", "copy transcript")
+			copyAll = shared.Relabel(copyAll, "copy transcript")
 		}
 		bindings := []keybind.Binding{
 			m.keys.OpenTranscript, stopKey, resetKey, resumeKey,
-			m.keys.StepsNav, treeKey, copyAll, m.keys.StepsLeave,
+			m.keys.StepsNav, treeKey, copyAll, m.bellBinding(), m.keys.StepsLeave,
 		}
 		if m.gateContext != nil {
 			contextKey := m.keys.GateContext
-			contextKey.SetHelp("ctrl+o", "return")
+			contextKey = shared.Relabel(contextKey, "return")
 			bindings = append([]keybind.Binding{contextKey}, bindings...)
 		}
 		sections = append(sections, shared.HelpSection{
@@ -963,7 +1002,7 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 		modeDesc = "enable simple"
 	}
 	toggleSimple := m.keys.ToggleSimple
-	toggleSimple.SetHelp("ctrl+shift+a", modeDesc)
+	toggleSimple = shared.Relabel(toggleSimple, modeDesc)
 	sections = append(sections, shared.HelpSection{
 		Title:    modeTitle,
 		Bindings: []keybind.Binding{toggleSimple},

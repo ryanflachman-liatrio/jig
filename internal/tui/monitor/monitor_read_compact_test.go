@@ -37,7 +37,11 @@ func TestReadCompactFailuresAndIncompleteCallsSplitGroups(t *testing.T) {
 				middle,
 				readExchange("after", "after.go", 0, 0, 0),
 			)})
-			if len(m.chatItems) != 3 || m.chatItems[1].kind != transcriptItemToolExchange {
+			wantKind := transcriptItemToolExchange
+			if name == "missing result" {
+				wantKind = transcriptItemToolGroup
+			}
+			if len(m.chatItems) != 3 || m.chatItems[1].kind != wantKind {
 				t.Fatalf("boundary was swallowed into a read group: %+v", m.chatItems)
 			}
 			if len(m.chatItems[0].groupMembers) != 1 || len(m.chatItems[2].groupMembers) != 1 {
@@ -147,7 +151,7 @@ func TestReadSummaryUsesNormalizedMetadata(t *testing.T) {
 	}
 }
 
-func TestReadCompactionMatchesOtherToolsAfterReopen(t *testing.T) {
+func TestToolCompactionPoliciesAfterReopen(t *testing.T) {
 	for _, kind := range []string{"read", "bash"} {
 		t.Run(kind, func(t *testing.T) {
 			var exchanges [][]transcript.Entry
@@ -166,7 +170,7 @@ func TestReadCompactionMatchesOtherToolsAfterReopen(t *testing.T) {
 				m.RunDir = runDir
 				m.compactToolGroups = compact
 				m = enterChatStep(t, m, "a")
-				if !compact {
+				if !compact && kind != "read" {
 					if len(m.chatItems) != 6 || m.chatItems[0].kind != transcriptItemToolExchange {
 						t.Fatalf("compact off: got %d items, want six standalone exchanges", len(m.chatItems))
 					}
@@ -180,12 +184,16 @@ func TestReadCompactionMatchesOtherToolsAfterReopen(t *testing.T) {
 				if !strings.Contains(body, shared.CollapsedMarker) {
 					t.Fatalf("group lacks collapse marker:\n%s", body)
 				}
-				for _, want := range []string{"target-0", "target-1", "target-2", "… 2 more calls", "target-5"} {
+				previews := []string{"target-0", "target-1", "target-2", "… 2 more calls", "target-5"}
+				if kind == "read" {
+					previews = []string{"target-0", "target-1", "target-2", "target-3", "target-4", "target-5"}
+				}
+				for _, want := range previews {
 					if !strings.Contains(body, want) {
 						t.Fatalf("collapsed preview missing %q:\n%s", want, body)
 					}
 				}
-				if strings.Contains(body, "target-3") || strings.Contains(body, "synthetic") {
+				if (kind != "read" && strings.Contains(body, "target-3")) || strings.Contains(body, "synthetic") {
 					t.Fatalf("collapsed preview exposed omitted calls or output:\n%s", body)
 				}
 				payload := m.copyTranscriptItemCmd()().(shared.ClipboardRequest).Loader()
@@ -218,8 +226,12 @@ func TestReadCompactionMatchesOtherToolsAfterReopen(t *testing.T) {
 					t.Fatal("resize/reload lost child selection or expansion")
 				}
 				m, _ = m.Update(key("c"))
-				if len(m.chatItems) != 6 || m.selectedTranscriptItemKey() != group.groupMembers[0].key {
-					t.Fatal("compact off did not restore standalone exchanges and child selection")
+				wantItems := 6
+				if kind == "read" {
+					wantItems = 1
+				}
+				if len(m.chatItems) != wantItems || m.selectedTranscriptItemKey() != group.groupMembers[0].key {
+					t.Fatal("compact toggle did not preserve the read policy and child selection")
 				}
 				m, _ = m.Update(key("c"))
 				m.searchQuery = "target-3"

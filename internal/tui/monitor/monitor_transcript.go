@@ -66,6 +66,10 @@ func (m *Model) reloadTranscript() {
 		}
 		return
 	}
+	m.sourceStates = nil
+	m.sourceWindows = nil
+	m.sourceDiffs = nil
+	m.sourcePicker = nil
 	m.chatStep = stepID
 	m.chatPausedLive = nil
 	m.chatItems = nil
@@ -185,14 +189,17 @@ func (m *Model) setChatPage(page transcript.Page) {
 	m.rerunSearch()
 }
 
-// buildChatItems applies compact grouping after the default reasoning
-// declutter, but before search or other filters can hide real group boundaries.
+// buildChatItems applies tool grouping after the default reasoning
+// declutter, but before search or other filters can hide real group
+// boundaries. Grouping must see the decluttered list: a hidden reasoning block sitting between two reads is not a real
+// boundary, so grouping on the pre-declutter list would needlessly split them
+// into separate single-read groups that never get a chance to re-merge.
 // chatEntries retains the complete page so showing reasoning can reconstruct
 // the original order without reading the transcript again.
 func (m Model) buildChatItems() []transcriptItem {
 	items := buildTranscriptItems(m.chatEntries, m.currentChatStepRunning())
 	if !m.compactToolGroups {
-		return items
+		return groupToolTranscriptItems(items, m.chatEntries, false)
 	}
 	if !m.filters.reasoning {
 		visible := make([]transcriptItem, 0, len(items))
@@ -209,7 +216,7 @@ func (m Model) buildChatItems() []transcriptItem {
 		}
 		items = visible
 	}
-	return groupCompactToolTranscriptItems(items, m.chatEntries)
+	return groupToolTranscriptItems(items, m.chatEntries, true)
 }
 
 func (m *Model) toggleCompactToolGroups() {
@@ -551,6 +558,7 @@ func toolOnlyEntry(entry transcript.Entry) bool {
 }
 
 func (m *Model) prunePageState() {
+	m.pruneSourceState()
 	loadedItems := make(map[transcriptItemKey]struct{}, len(m.chatItems))
 	for _, item := range m.chatItems {
 		loadedItems[item.key] = struct{}{}
@@ -577,16 +585,30 @@ func (m *Model) prunePageState() {
 	}
 }
 
-// transcriptChrome renders the search input, search/filter status, and filter
-// picker. They sit pinned above the Transcript viewport rather than inside
-// chatBody, so they stay visible however far the reader has scrolled and never
-// shift the item line ranges that navigation and mouse hit-testing index by.
-// It returns nil when there is nothing to show.
+// transcriptChrome renders the failed-step error, the compact-groups notice,
+// the search input, search/filter status, and filter picker. They sit pinned
+// above the Transcript viewport rather than inside chatBody, so they stay
+// visible however far the reader has scrolled and never shift the item line
+// ranges that navigation and mouse hit-testing index by. It returns nil when
+// there is nothing to show.
 func (m Model) transcriptChrome() []string {
 	if m.selKind == "file" {
 		return nil
 	}
 	var lines []string
+	if len(m.chatItems) > 0 {
+		// A transcript can end before the backend reports its terminal result.
+		// Keep the recovered failure visible beside that partial evidence. It
+		// keys on the current status, so a retry back to running drops it.
+		if i, ok := m.index[m.chatStep]; ok {
+			if s := m.steps[i]; s.status == step.StatusFailed && s.err != "" {
+				lines = append(lines, "  "+shared.Theme.Error.Render(shared.IconError+" "+s.err))
+			}
+		}
+		if m.compactToolNotice != "" {
+			lines = append(lines, "  "+shared.Theme.Chat.Hint.Render(m.compactToolNotice))
+		}
+	}
 	if m.searchOpen {
 		lines = append(lines, "  "+shared.Theme.Accent.Render("/")+" "+m.searchInput.View())
 	}
@@ -655,22 +677,13 @@ func (m *Model) chatBody() string {
 	if m.selKind == "file" && m.selFile != "" {
 		return m.fileBody()
 	}
-	live := m.liveTranscriptTail()
+	live := m.liveBlock()
 	if len(m.chatItems) > 0 {
 		body := m.itemTranscriptBody()
 		if live != "" {
-			body += "\n\n" + live
-		}
-		if m.compactToolNotice != "" {
-			body = "  " + shared.Theme.Chat.Hint.Render(m.compactToolNotice) + "\n\n" + body
-		}
-		if i, ok := m.index[m.chatStep]; ok {
-			s := m.steps[i]
-			if s.status == step.StatusFailed && s.err != "" {
-				// A transcript can end before the backend reports its terminal result.
-				// Keep the recovered failure visible beside that partial evidence.
-				return "  " + shared.Theme.Error.Render(shared.IconError+" "+s.err) + "\n\n" + body
-			}
+			// One blank row separates the live block from the last item, the
+			// same rhythm as between items. It sits after every line range.
+			body += "\n" + live
 		}
 		return body
 	}
@@ -1124,5 +1137,40 @@ func (m Model) fileBody() string {
 		writeVerbatim(&b, content)
 	}
 
+	return b.String()
+}
+
+// liveIndent aligns the live block with the text column of rendered items
+// (two-column prefix, disclosure marker, space).
+const liveIndent = "    "
+
+// liveBlock renders the selected live scrollback as literal rows ending in a
+// typing cursor. It follows the same page and paused-reader rules as the raw
+// live preview and never joins item navigation, search, copy, or click targets.
+func (m Model) liveBlock() string {
+	buf := m.liveTranscriptBuffer()
+	if buf == nil || buf.text.Len() == 0 {
+		return ""
+	}
+	width := max(m.transcriptInnerW-len(liveIndent), 1)
+	text := strings.TrimRight(buf.render(width), " \t\r\n")
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	rows := strings.Split(text, "\n")
+	// The cursor sits after the last glyph, or wraps to its own row when the
+	// last row already fills the panel.
+	cursor := shared.Theme.Accent.Render(shared.LiveCursor)
+	var b strings.Builder
+	for n, row := range rows {
+		b.WriteString(liveIndent + row)
+		if n == len(rows)-1 {
+			if ansi.StringWidth(row)+ansi.StringWidth(shared.LiveCursor) > width {
+				b.WriteString("\n" + liveIndent)
+			}
+			b.WriteString(cursor)
+		}
+		b.WriteString("\n")
+	}
 	return b.String()
 }

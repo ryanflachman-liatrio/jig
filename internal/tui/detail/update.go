@@ -166,13 +166,13 @@ func (m Model) resize() Model {
 // the viewport; esc/q/backspace still leave the screen.
 func (m Model) applyViewMode() Model {
 	if m.viewMode {
-		m.keys.Toggle.SetHelp("v", "list")
+		m.keys.Toggle = shared.Relabel(m.keys.Toggle, "list")
 		m.keys.Back.SetKeys("esc", "q", "backspace")
 		def := viewport.DefaultKeyMap()
 		m.vp.KeyMap.Left = def.Left
 		m.vp.KeyMap.Right = def.Right
 	} else {
-		m.keys.Toggle.SetHelp("v", "chart")
+		m.keys.Toggle = shared.Relabel(m.keys.Toggle, "chart")
 		m.keys.Back.SetKeys("esc", "q", "backspace", "h", "left")
 		m.vp.KeyMap.Left.Unbind()
 		m.vp.KeyMap.Right.Unbind()
