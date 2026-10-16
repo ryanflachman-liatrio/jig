@@ -27,7 +27,7 @@ func TestSecuritySummarySeparatesCoverageWarningsFromDetections(t *testing.T) {
 	m := readyDiagModel()
 	m.secFindings = securityNoticeFixture()
 	view := ansiStrip(m.securityView(5))
-	for _, want := range []string{"0 detections", "2 check warnings", "25 remembered approvals", "ctrl+s"} {
+	for _, want := range []string{"0 detections", "2 check warnings", "25 remembered approvals", "i inspect"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("missing %q in %s", want, view)
 		}
@@ -39,6 +39,10 @@ func TestSecurityInspectorNavigationKeepsRunFocus(t *testing.T) {
 	m.secFindings = securityNoticeFixture()
 	m.focus = focusGate
 	m, _ = m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+	if m.securityOpen {
+		t.Fatal("old ctrl+s shortcut still opens the inspector")
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
 	view := ansiStrip(m.View())
 	if !strings.Contains(view, "Security inspector") {
 		t.Fatalf("inspector did not open: %s", view)
@@ -66,7 +70,7 @@ func TestSecurityInspectorFitsResize(t *testing.T) {
 	for _, size := range [][2]int{{100, 30}, {40, 12}, {8, 4}, {1, 1}} {
 		m := readyDiagModel()
 		m.secFindings = securityNoticeFixture()
-		m, _ = m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+		m, _ = m.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
 		m, _ = m.Update(tea.WindowSizeMsg{Width: size[0], Height: size[1]})
 		if view := m.View(); lipgloss.Width(view) > size[0] || lipgloss.Height(view) > size[1] {
 			t.Fatalf("inspector exceeds %v", size)
@@ -88,7 +92,7 @@ func TestSecurityInspectorLoadsHistoryAndCopiesDetails(t *testing.T) {
 	_ = writer.Close()
 	m := readyDiagModel()
 	m.RunDir = dir
-	m, cmd := m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+	m, cmd := m.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
 	if cmd == nil {
 		t.Fatal("opening inspector did not request saved findings")
 	}
@@ -115,14 +119,18 @@ func TestSecurityInspectorLoadsHistoryAndCopiesDetails(t *testing.T) {
 func TestSecurityInspectorDoesNotStealTextOrPassMouseThrough(t *testing.T) {
 	m := readyDiagModel()
 	m.searchOpen = true
-	m, _ = m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
 	if m.securityOpen {
 		t.Fatal("inspector stole input while typing")
 	}
 	m.searchOpen = false
-	m, _ = m.Update(tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl})
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
 	if !m.mouseExcluded() {
 		t.Fatal("mouse can reach panels under the inspector")
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'i', Text: "i"})
+	if m.securityOpen {
+		t.Fatal("i did not close the inspector")
 	}
 	var found bool
 	m.securityOpen = false
@@ -130,6 +138,9 @@ func TestSecurityInspectorDoesNotStealTextOrPassMouseThrough(t *testing.T) {
 		for _, binding := range section.Bindings {
 			if binding.Help().Desc == "security inspector" {
 				found = true
+				if binding.Help().Key != "i" {
+					t.Fatalf("inspector palette shortcut = %q, want i", binding.Help().Key)
+				}
 			}
 		}
 	}

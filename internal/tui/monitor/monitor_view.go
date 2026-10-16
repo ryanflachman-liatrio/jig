@@ -76,7 +76,8 @@ func (m Model) securityView(height int) string {
 	if len(m.secFindings) == 0 || height < 1 || m.width < 1 {
 		return ""
 	}
-	header := "Security · " + sentinel.SecuritySummary(m.secFindings) + " · ctrl+s inspect"
+	inspectHint := m.keys.SecurityInspector.Help().Key + " inspect"
+	header := "Security · " + sentinel.SecuritySummary(m.secFindings) + " · " + inspectHint
 	lines := []string{shared.Theme.Security.Header.Render(header)}
 	groups := sentinel.GroupFindings(m.secFindings)
 	visible := min(len(groups), height-1)
@@ -111,7 +112,7 @@ func (m Model) securityView(height int) string {
 		lines = append(lines, style.Render(label))
 	}
 	if visible < len(groups) && height > 1 {
-		lines = append(lines, fmt.Sprintf("%s %d more groups · ctrl+s inspect", shared.EllipsisGlyph, len(groups)-visible))
+		lines = append(lines, fmt.Sprintf("%s %d more groups · %s", shared.EllipsisGlyph, len(groups)-visible, inspectHint))
 	}
 	for i := range lines {
 		lines[i] = ansi.Truncate(lines[i], m.width, "")

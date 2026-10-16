@@ -199,11 +199,11 @@ first by severity, followed by check warnings, then configuration notices.
 The JSONL audit records remain individual records; the generated `security.md`
 report uses the same groups and explanations.
 
-Press **ctrl+s** (or choose **security inspector** in the command palette) to
+Press **i** (or choose **security inspector** in the command palette) to
 open the inspector, including for saved runs. Use **↑/↓** or **j/k** to select
 a group, **enter** to view all its records, **pgup/pgdown** or **↑/↓** to scroll,
 and **y** to copy the selected group's details. **Esc** returns to the list,
-then closes it; **ctrl+s** closes it directly. The inspector leaves the run,
+then closes it; **i** closes it directly. The inspector leaves the run,
 selected step, gate queue, and underlying focus untouched.
 
 A check warning describes a coverage problem, not a detected attack. A

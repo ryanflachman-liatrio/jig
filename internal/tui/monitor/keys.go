@@ -154,7 +154,7 @@ func defaultMonitorKeys() monitorKeys {
 		ToggleHelp:   keybind.NewBinding(keybind.WithKeys("ctrl+\\"), keybind.WithHelp("ctrl+\\", "help agent")),
 		ToggleSimple: keybind.NewBinding(keybind.WithKeys("ctrl+shift+a"), keybind.WithHelp("ctrl+shift+a", "simple/advanced")),
 
-		SecurityInspector:       keybind.NewBinding(keybind.WithKeys("ctrl+s"), keybind.WithHelp("ctrl+s", "security inspector")),
+		SecurityInspector:       keybind.NewBinding(keybind.WithKeys("i"), keybind.WithHelp("i", "security inspector")),
 		NotificationDiagnostics: shared.KeyNotificationDiagnostics,
 
 		CopyItem: keybind.NewBinding(keybind.WithKeys("y"), keybind.WithHelp("y", "copy")),
