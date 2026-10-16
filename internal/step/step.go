@@ -52,6 +52,7 @@ type State struct {
 	// that makes re-runs legible in the transcript and gates nothing.
 	Generation int
 	Result     *Result
+	Timing     Timing
 	// SpentUSD / SpentTokens accumulate the cost and tokens of every executor
 	// attempt for this step — across retries, loop re-runs, resets, and resumed
 	// sessions. Result holds only the latest attempt; these are cumulative,

@@ -135,12 +135,12 @@ func TestRenderTurnMetadataRowStepEndAppendsCostAndTokens(t *testing.T) {
 	m.steps[stepIdx].cost = &cost
 	m.steps[stepIdx].tokens = 4200
 	m.steps[stepIdx].status = step.StatusSucceeded
-	m.steps[stepIdx].end = time.Date(2026, 9, 14, 10, 0, 12, 0, time.UTC)
+	m.steps[stepIdx].timing.EndedAt = time.Date(2026, 9, 14, 10, 0, 12, 0, time.UTC)
 
 	plain := stripANSI(m.renderTurnMetadataRow(coord, true, true))
-	// Time slot must derive from monitorStep.end (which for this fixture
+	// Time slot must derive from monitorStep.timing.EndedAt (which for this fixture
 	// happens to equal turnEnd), and the row must end with $cost + tokens.
-	wantTime := m.steps[stepIdx].end.Local().Format("15:04:05")
+	wantTime := m.steps[stepIdx].timing.EndedAt.Local().Format("15:04:05")
 	want := wantTime + "  Δ 12s  iter 2  $0.0412  4.2k tok"
 	if plain != want {
 		t.Fatalf("step-end row plain = %q, want %q", plain, want)
@@ -157,10 +157,10 @@ func TestRenderTurnMetadataRowStepEndOmitsCostAndTokensWhenAbsent(t *testing.T) 
 	}
 	stepIdx := m.index["a"]
 	m.steps[stepIdx].status = step.StatusSucceeded
-	m.steps[stepIdx].end = time.Date(2026, 9, 14, 10, 0, 3, 0, time.UTC)
+	m.steps[stepIdx].timing.EndedAt = time.Date(2026, 9, 14, 10, 0, 3, 0, time.UTC)
 
 	plain := stripANSI(m.renderTurnMetadataRow(coord, true, true))
-	wantTime := m.steps[stepIdx].end.Local().Format("15:04:05")
+	wantTime := m.steps[stepIdx].timing.EndedAt.Local().Format("15:04:05")
 	// Cost nil, tokens=0 → both slots drop; only the time and Δ remain.
 	want := wantTime + "  Δ 3s"
 	if plain != want {

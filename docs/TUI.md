@@ -172,6 +172,21 @@ The live preview is replaced by the saved entry when a message finalizes; it
 also works while persistence is off. Historical pages and file views do not
 show the live preview, and streaming preserves paused scroll positions.
 
+Step timing comes from the engine's `step.Timing` projection, carried in status
+events and snapshots. Journal replay uses that same projection; older journals
+fold their recorded envelope timestamps (second precision). The timer measures
+active execution and validation in the latest dispatch, freezes at human parks
+and stop/completion, and clears on a return to pending for retry/reset/resume.
+An interrupted run freezes at its last durable status observation; unobserved
+time while the process was absent is not counted. Missing timing stays unknown.
+
+Message counts use the latest finalized transcript sequence, across all
+attempts, independently of the bounded page currently displayed. Initial
+hydration, live notifications, and status transitions read the same transcript
+tail. A missed final notification is repaired by the terminal transition.
+Refreshing counts never moves a paused transcript page. Without persistence,
+live notification sequences supply the in-memory count.
+
 Live text is literal, terminal-safe, and hard-wrapped to the panel width;
 Markdown syntax remains visible until finalization. Appending text does not
 reformat earlier lines or remove the middle of a response. Each step retains

@@ -340,20 +340,11 @@ func subtypeBadgeLabel(subtype string) string {
 }
 
 func stepDuration(s monitorStep) string {
-	if s.start.IsZero() {
+	if s.timing.StartedAt.IsZero() {
 		return shared.IconSkipped
 	}
-	end := s.end
-	running := end.IsZero()
-	if running {
-		end = time.Now()
-	}
-	d := end.Sub(s.start)
-	// A still-running step is refreshed once a second by the live-clock tick, so
-	// round its display to whole seconds — millisecond digits would only ever show
-	// the arbitrary sub-second remainder at tick time and jitter distractingly.
-	// Completed steps keep millisecond precision (their duration is final).
-	if running {
+	d := s.timing.Duration(time.Now())
+	if !s.timing.ActiveSince.IsZero() {
 		d = d.Round(time.Second)
 	} else {
 		d = d.Round(time.Millisecond)

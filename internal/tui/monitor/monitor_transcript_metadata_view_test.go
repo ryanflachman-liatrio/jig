@@ -5,7 +5,7 @@ package monitor
 //   - the row appears in a coord-change gap when the closing turn has any
 //     derivable field, and lives inside the previous item's line range so
 //     n/N navigation still lands on the item;
-//   - the step-end row appears below the last item once monitorStep.end
+//   - the step-end row appears below the last item once monitorStep.timing.EndedAt
 //     is set, and never before;
 //   - when the row is empty (Ts absent, iter=attempt=0, no cost/tokens)
 //     the loop's output matches slice 04 byte-for-byte.
@@ -126,14 +126,14 @@ func TestTurnMetadataRowAtStepEnd(t *testing.T) {
 	m.steps[stepIdx].cost = &cost
 	m.steps[stepIdx].tokens = 4200
 	m.steps[stepIdx].status = step.StatusSucceeded
-	m.steps[stepIdx].end = time.Date(2026, 9, 14, 10, 0, 12, 0, time.UTC)
+	m.steps[stepIdx].timing.EndedAt = time.Date(2026, 9, 14, 10, 0, 12, 0, time.UTC)
 
 	body := stripANSI(m.itemTranscriptBody())
 
 	// The step-end row must appear below the last item (turn 1) and
 	// carry both cost and tokens. Its time slot derives from
-	// monitorStep.end, not the last transcript entry's Ts.
-	wantEndTime := m.steps[stepIdx].end.Local().Format("15:04:05")
+	// monitorStep.timing.EndedAt, not the last transcript entry's Ts.
+	wantEndTime := m.steps[stepIdx].timing.EndedAt.Local().Format("15:04:05")
 	wantStepEnd := wantEndTime + "  Δ" // Δ elapsed inside the row (turn 1 is one entry so elapsed is 0s → dropped, but time+cost still present)
 	if !strings.Contains(body, wantEndTime) {
 		t.Fatalf("expected step-end time %q in body:\n%s", wantEndTime, body)
@@ -181,7 +181,7 @@ func TestTurnMetadataRowSkippedForRunningStep(t *testing.T) {
 	m.transcriptInnerW = 60
 	m.setChatPage(twoTurnPage())
 	// Populate cost/tokens as though the harness reported them, but
-	// keep monitorStep.end zero so the step is still Running.
+	// keep monitorStep.timing.EndedAt zero so the step is still Running.
 	stepIdx := m.index["a"]
 	cost := 0.5
 	m.steps[stepIdx].cost = &cost
@@ -245,7 +245,7 @@ func TestTurnMetadataRowLineRangesMatchRenderedRows(t *testing.T) {
 	m.steps[stepIdx].cost = &cost
 	m.steps[stepIdx].tokens = 1234
 	m.steps[stepIdx].status = step.StatusSucceeded
-	m.steps[stepIdx].end = time.Date(2026, 9, 14, 10, 0, 12, 0, time.UTC)
+	m.steps[stepIdx].timing.EndedAt = time.Date(2026, 9, 14, 10, 0, 12, 0, time.UTC)
 
 	body := m.itemTranscriptBody()
 	rows := strings.Split(strings.TrimRight(body, "\n"), "\n")

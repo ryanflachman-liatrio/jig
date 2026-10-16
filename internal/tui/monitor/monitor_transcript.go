@@ -170,8 +170,37 @@ func (m *Model) loadChatTail() {
 		return
 	}
 	page = completeToolBoundaryContext(r, page)
+	if n := len(page.Entries); n > 0 {
+		m.recordTranscriptSeq(m.chatStep, page.Entries[n-1].Seq)
+	}
 	m.chatPausedLive = nil
 	m.setChatPage(page)
+}
+
+// refreshTranscriptCount uses the same durable sequence for initial hydration
+// and live refresh. Read only the tail, not the entire transcript. Liveness
+// signals may be dropped; status transitions and selecting a step also refresh.
+func (m *Model) refreshTranscriptCount(stepID string) {
+	if m.RunDir == "" {
+		return
+	}
+	r, err := transcript.Open(datastore.TranscriptPath(m.RunDir, stepID))
+	if err != nil {
+		return
+	}
+	seq, err := r.LatestSeq()
+	if err == nil {
+		m.recordTranscriptSeq(stepID, seq)
+	}
+}
+
+func (m *Model) recordTranscriptSeq(stepID string, seq int) {
+	if m.msgCount == nil {
+		m.msgCount = make(map[string]int)
+	}
+	if seq > m.msgCount[stepID] {
+		m.msgCount[stepID] = seq
+	}
 }
 
 func (m *Model) setChatPage(page transcript.Page) {

@@ -121,6 +121,9 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.monitor = monitor.New(msg.runID).WithTUIConfig(m.tuiConfig).WithDiagnostics(m.diagnostics).WithTelemetryMode(m.telemetryMode).WithHelpChatConfig(m.helpChatConfig)
 		m.monitor.RunDir = m.manager.RunDir(msg.runID)
 		m.monitor = m.monitor.WithJournal(msg.events)
+		// Replay restores gates; the live snapshot supplies the current timing
+		// projection, including any work started since that history was read.
+		m.monitor = m.monitor.WithSnapshot(msg.run.Snapshot())
 		m.monitor.SetRun(msg.run)
 		m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		m.monitor = m.monitor.FocusPendingInput()

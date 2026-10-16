@@ -1,8 +1,6 @@
 package monitor
 
 import (
-	"time"
-
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 
@@ -82,11 +80,14 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 			m.steps[i].err = ev.Err
 			m.steps[i].subtype = ev.Subtype
 		}
-		if ev.To == step.StatusRunning {
-			m.steps[i].start = time.Now()
+		m.steps[i].timing = ev.ProjectTiming(m.steps[i].timing)
+		if !m.historical {
+			m.refreshTranscriptCount(ev.StepID)
+			if m.RunDir != "" && ev.StepID == m.chatStep && m.chatAutoScroll {
+				m.loadChatTail()
+			}
 		}
 		if ev.To == step.StatusSucceeded || ev.To == step.StatusFailed || ev.To == step.StatusSkipped {
-			m.steps[i].end = time.Now()
 			// Re-discover step files when a step reaches a terminal state — the
 			// runner may have just written input.md/output.md/output.json.
 			if m.RunDir != "" {
@@ -297,7 +298,9 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		if m.stepFiles == nil {
 			m.stepFiles = make(map[string][]outputFile)
 		}
-		if ev.Seq > m.msgCount[ev.StepID] {
+		if m.RunDir != "" {
+			m.refreshTranscriptCount(ev.StepID)
+		} else if ev.Seq > m.msgCount[ev.StepID] {
 			m.msgCount[ev.StepID] = ev.Seq
 		}
 		m.refreshLiveStepFiles(ev.StepID)

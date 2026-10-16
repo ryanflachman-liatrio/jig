@@ -232,8 +232,8 @@ type Model struct {
 	insetRenderer      *glamour.TermRenderer
 	groupInsetRenderer *glamour.TermRenderer
 
-	// msgCount tracks the latest transcript entry seq observed per step (via
-	// StepMessage liveness events), used as a message count in the list.
+	// msgCount tracks the latest finalized transcript sequence per step. Live
+	// notifications trigger a file refresh, or supply the count without storage.
 	msgCount map[string]int
 
 	expanded  map[string]bool
@@ -600,8 +600,7 @@ func (f transcriptFilters) active() bool {
 type monitorStep struct {
 	id        string
 	status    step.Status
-	start     time.Time
-	end       time.Time
+	timing    step.Timing
 	err       string   // failure reason when status == StatusFailed
 	subtype   string   // SDK result subtype for agent policy-limit failures
 	cost      *float64 // TotalCostUSD from step.Result; nil when not yet known
@@ -752,6 +751,9 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 		ms := monitorStep{
 			id:          st.ID,
 			status:      st.Status,
+			timing:      st.Timing,
+			iteration:   st.Iteration,
+			attempt:     st.Attempt,
 			parentID:    st.ParentID,
 			fanOutIndex: st.FanOutIndex,
 			fanOutTotal: st.FanOutTotal,
@@ -780,11 +782,13 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 	for _, st := range snap.Steps {
 		if m.RunDir != "" {
 			m.stepFiles[st.ID] = stepOutputFiles(m.RunDir, st.ID, "")
+			m.refreshTranscriptCount(st.ID)
 		}
 	}
 	if nRows := len(m.visibleRows()); m.cursor >= nRows && nRows > 0 {
 		m.cursor = nRows - 1
 	}
+	m.reloadTranscript()
 	return m
 }
 
@@ -804,8 +808,18 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 func (m Model) WithJournal(evs []engine.Event) Model {
 	m.historical = true
 	m.interrupted = engine.ClassifyUnfinished(evs) == engine.UnfinishedInterrupted
+	var lastStatusAt time.Time
 	for _, e := range evs {
+		if status, ok := e.(engine.StepStatus); ok && status.At.After(lastStatusAt) {
+			lastStatusAt = status.At
+		}
 		m, _ = m.handleEngineEvent(e)
+	}
+	for i := range m.steps {
+		m.steps[i].timing.Pause(lastStatusAt)
+	}
+	for _, st := range m.steps {
+		m.refreshTranscriptCount(st.id)
 	}
 	m.reloadTranscript()
 	return m

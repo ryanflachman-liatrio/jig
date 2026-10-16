@@ -151,7 +151,7 @@ func (m *Model) itemTranscriptBody() string {
 	// attempts, not per turn (see docs/plans/omp-slice-11-turn-metadata-row.md).
 	if lastRenderedIdx >= 0 {
 		prev := m.chatVisibleItems[lastRenderedIdx]
-		if idx, ok := m.index[m.chatStep]; ok && !m.steps[idx].end.IsZero() {
+		if idx, ok := m.index[m.chatStep]; ok && !m.steps[idx].timing.EndedAt.IsZero() {
 			if row := m.renderTurnMetadataRow(prev.coord, true, true); row != "" {
 				b.WriteString("\n")
 				line++
