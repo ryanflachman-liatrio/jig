@@ -3,10 +3,10 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"reflect"
 
 	"github.com/BurntSushi/toml"
+
 	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
@@ -34,36 +34,6 @@ func AuthorizeSandboxExecution(a SandboxAuthorizer, st *workflow.Step, workspace
 	return checkSandboxStep(st)
 }
 
-func (m *Manager) authorizeSandboxWorkflow(wf *workflow.Workflow) error {
-	var workspace []string
-	if m.root != "" {
-		workspace = append(workspace, filepath.Dir(m.root))
-	}
-	if path, _ := wf.Source(); path != "" {
-		workspace = append(workspace, filepath.Dir(path))
-	}
-	for _, src := range wf.ModuleSources() {
-		workspace = append(workspace, filepath.Dir(src.Path))
-	}
-	// Evaluate the entire request set before checking runtime support so a
-	// disallowed explicit child cannot hide behind an unsupported parent.
-	if m.sandboxAuthorizer != nil {
-		for i := range wf.Steps {
-			st := cloneSandboxStep(&wf.Steps[i])
-			if err := m.sandboxAuthorizer.Authorize(st, append([]string(nil), workspace...), []string{m.root}); err != nil {
-				return err
-			}
-		}
-	}
-	if err := checkSandboxWorkflow(wf); err != nil {
-		return err
-	}
-	if m.sandboxDeploymentCheck != nil {
-		return m.sandboxDeploymentCheck()
-	}
-	return nil
-}
-
 func cloneSandboxStep(st *workflow.Step) *workflow.Step {
 	if st == nil {
 		return nil
@@ -80,6 +50,9 @@ func cloneSandboxStep(st *workflow.Step) *workflow.Step {
 }
 
 func (s *scheduler) authorizeSandboxStep(st *workflow.Step) error {
+	if s.policyBlock != nil {
+		return *s.policyBlock
+	}
 	return AuthorizeSandboxExecution(s.sandboxAuthorizer, cloneSandboxStep(st), []string{s.repoRoot}, []string{s.jigRoot, s.runDir})
 }
 
@@ -125,6 +98,7 @@ func checkSandboxWorkflow(wf *workflow.Workflow) error {
 // sandboxSnapshot covers every expanded template; runtime fan-out children copy
 // the template's locked request. Its digest is also covered by the outer record.
 type sandboxSnapshot struct {
+	Policy   *SandboxPolicyState                `json:"policy,omitempty"`
 	Version  int                                `json:"version"`
 	Requests map[string]workflow.SandboxRequest `json:"requests"`
 	SHA256   string                             `json:"sha256"`
@@ -200,11 +174,15 @@ func restoreSandboxes(snap *workflowSnapshot) error {
 		}
 		return nil
 	}
-	if snap.SandboxVersion != 1 || snap.Sandbox == nil || snap.Sandbox.Version != 1 || len(snap.Sandbox.Requests) != len(snap.ExpandedSteps) {
+	if snap.Sandbox == nil || (snap.SandboxVersion != 1 && snap.SandboxVersion != 2) || snap.Sandbox.Version != snap.SandboxVersion || len(snap.Sandbox.Requests) != len(snap.ExpandedSteps) {
 		return workflow.CaptureIntegrity
 	}
 	raw, err := json.Marshal(snap.Sandbox.Requests)
-	if err != nil || snap.Sandbox.SHA256 != authoringDigest(raw) {
+	digest := authoringDigest(raw)
+	if snap.SandboxVersion == 2 {
+		digest = sandboxSnapshotDigest(snap.Sandbox)
+	}
+	if err != nil || snap.Sandbox.SHA256 != digest {
 		return workflow.CaptureIntegrity
 	}
 	sources := map[string]string{snap.SourcePath: snap.SHA256}
@@ -228,10 +206,11 @@ func restoreSandboxes(snap *workflowSnapshot) error {
 		owned := r.Clone()
 		st.SnapshotSandbox = &owned
 	}
+	if snap.SandboxVersion == 2 {
+		return validateSandboxState(snap.Sandbox.Policy, snap.ExpandedSteps)
+	}
+	if snap.Sandbox.Policy != nil {
+		return workflow.CaptureIntegrity
+	}
 	return nil
 }
-
-// SetSandboxDeploymentCheck installs bounded operator deployment selection after
-// policy and runtime support, before snapshot publication. Docker never reaches
-// this seam while its runtime is unsupported.
-func (m *Manager) SetSandboxDeploymentCheck(check func() error) { m.sandboxDeploymentCheck = check }

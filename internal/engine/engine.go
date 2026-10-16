@@ -41,21 +41,21 @@ type sub struct {
 // Manager is the registry of concurrent runs.
 // mu guards the registry only — workflow state is owned by each scheduler.
 type Manager struct {
-	sandboxDeploymentCheck func() error
-	sandboxAuthorizer      SandboxAuthorizer
-	publishAuthoring       func(string, []byte, map[string][]byte, []byte) error
-	startCheck             func(string, string) error
-	mu                     sync.Mutex
-	runs                   map[string]*Run
-	exec                   Executor
-	resolver               IntegrationResolver
-	root                   string // .jig/ root (used in Phase 2+ for file I/O)
-	subs                   []sub  // manager-level fan-out; TUI subscribes once
-	monitors               []sentinel.MonitorDef
-	secrets                SecretResolver
-	observers              observerRegistry
-	epochMu                sync.Mutex
-	epoch                  int
+	sandboxEpochLoader SandboxEpochLoader
+	sandboxAuthorizer  SandboxAuthorizer
+	publishAuthoring   func(string, []byte, map[string][]byte, []byte) error
+	startCheck         func(string, string) error
+	mu                 sync.Mutex
+	runs               map[string]*Run
+	exec               Executor
+	resolver           IntegrationResolver
+	root               string // .jig/ root (used in Phase 2+ for file I/O)
+	subs               []sub  // manager-level fan-out; TUI subscribes once
+	monitors           []sentinel.MonitorDef
+	secrets            SecretResolver
+	observers          observerRegistry
+	epochMu            sync.Mutex
+	epoch              int
 }
 
 // nextEpoch returns a monotonic epoch number stamped onto each Run
@@ -149,6 +149,7 @@ func (m *Manager) PersistedRuns() ([]string, error) {
 // and replay.go are the caretakers that request, store, and hand back
 // mementos without inspecting or mutating their contents.
 type RunSnapshot struct {
+	PolicyBlock  *SandboxPolicyBlocked
 	ID           string
 	Workflow     string
 	Steps        []step.State
@@ -164,7 +165,8 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	if wf == nil {
 		return nil, fmt.Errorf("engine: nil workflow")
 	}
-	if err := m.authorizeSandboxWorkflow(wf); err != nil {
+	a, policy, err := m.loadSandboxEpoch(context.Background(), wf, nil)
+	if err != nil {
 		return nil, err
 	}
 	prepared, assets, err := workflow.PrepareAuthoring(wf, "")
@@ -176,6 +178,7 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	if err != nil {
 		return nil, err
 	}
+	authority.policy = policy.Clone()
 	runID := newRunID()
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -262,7 +265,10 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	s.authoring = authority
 	s.resolver = m.resolver
 	s.secretResolver = secrets
-	s.sandboxAuthorizer = m.sandboxAuthorizer
+	s.sandboxAuthorizer = a
+	s.policyState = policy.Clone()
+	s.policyLoad = m.loadSandboxEpoch
+	s.policyContext = ctx
 	s.getCauseHint = run.causeSnapshot
 	s.observers = &m.observers
 
@@ -377,7 +383,7 @@ func (r *Run) causeSnapshot() CompletionCause {
 // settle rather than returning on the cancel alone (ctrl channels never close).
 func (r *Run) Wait() RunSnapshot {
 	<-r.done
-	return r.finalSnap
+	return r.finalSnapshot()
 }
 
 // Stop halts one running step's worker without ending the run (spec 07 B1). The
@@ -539,7 +545,7 @@ func (r *Run) Snapshot() RunSnapshot {
 	// Fast path: scheduler already exited and finalSnap is ready.
 	select {
 	case <-r.done:
-		return r.finalSnap
+		return r.finalSnapshot()
 	default:
 	}
 	// Slow path: ask the live scheduler. Also select on done in case the
@@ -551,10 +557,10 @@ func (r *Run) Snapshot() RunSnapshot {
 		case snap := <-reply:
 			return snap
 		case <-r.done:
-			return r.finalSnap
+			return r.finalSnapshot()
 		}
 	case <-r.done:
-		return r.finalSnap
+		return r.finalSnapshot()
 	}
 }
 
@@ -784,6 +790,13 @@ type pendingQuestion struct {
 
 type scheduler struct {
 	sandboxAuthorizer SandboxAuthorizer
+	policyState       *SandboxPolicyState
+	policyBlock       *SandboxPolicyBlocked
+	policyChecking    bool
+	policyLoad        SandboxEpochLoader
+	policyContext     context.Context
+	policyParks       []Event
+	policyRestore     func() error
 	nextExecution     uint64
 	activeExecutions  map[string]uint64
 	workerExits       map[string]*workerExit
@@ -1104,7 +1117,7 @@ func (s *scheduler) runLoop(ctx context.Context) {
 			}
 			continue
 		}
-		if !s.restoredHold {
+		if !s.restoredHold && s.policyBlock == nil {
 			// 0. Fire any coalesced loop back-edges whose rewind body has fully
 			//    settled. Runs before dispatch so a fired rewind's freshly-pending body
 			//    steps are picked up in this same iteration.
@@ -2079,6 +2092,21 @@ func (s *scheduler) buildRequest(
 // handle processes one message from the scheduler's inbox by delegating to
 // its Command implementation — see command in commands.go.
 func (s *scheduler) handle(msg schedMsg) {
+	if s.policyBlock != nil {
+		switch m := msg.(type) {
+		case sandboxRecheckMsg, sandboxRecheckResult, snapshotReqMsg:
+		case resetMsg:
+			if m.reply != nil {
+				m.reply <- resetReply{err: *s.policyBlock}
+			}
+			return
+		case closureReqMsg:
+			m.reply <- nil
+			return
+		default:
+			return
+		}
+	}
 	if s.fatalCaptureErr != nil {
 		switch m := msg.(type) {
 		case resetMsg:
@@ -3836,6 +3864,7 @@ func (s *scheduler) snapshot() RunSnapshot {
 		}
 	}
 	return RunSnapshot{
+		PolicyBlock:  clonePolicyBlock(s.policyBlock),
 		ID:           s.runID,
 		Workflow:     s.wf.Meta.Name,
 		Steps:        states,
@@ -3872,4 +3901,10 @@ func fanOutCtrl(subs []sub, e Event) {
 		default:
 		}
 	}
+}
+
+func (r *Run) finalSnapshot() RunSnapshot {
+	s := r.finalSnap
+	s.PolicyBlock = clonePolicyBlock(s.PolicyBlock)
+	return s
 }

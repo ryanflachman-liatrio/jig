@@ -90,6 +90,9 @@ type RunSummary struct {
 
 // StepSummary is one run.json step row.
 type StepSummary struct {
+	Sandbox     string   `json:"sandbox,omitempty"`
+	Runtime     string   `json:"runtime,omitempty"`
+	Platform    string   `json:"platform,omitempty"`
 	Alias       string   `json:"alias"`
 	Type        string   `json:"type,omitempty"`
 	Backend     string   `json:"backend,omitempty"`

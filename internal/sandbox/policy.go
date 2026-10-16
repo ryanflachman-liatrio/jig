@@ -17,6 +17,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/distribution/reference"
+
 	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
@@ -487,3 +488,19 @@ func canonicalPath(path string) (string, error) {
 		path = filepath.Dir(path)
 	}
 }
+
+// Reload follows a previously selected file without falling back to discovery.
+// Builtin origins deliberately rediscover the current operator default.
+func Reload(selection Selection, source Source) (*Policy, error) {
+	if selection.ExplicitPath != "" || source.Kind == "builtin" || source.Kind == "" {
+		return Load(selection)
+	}
+	selection.ExplicitPath = source.Path
+	p, err := Load(selection)
+	if err != nil {
+		return nil, err
+	}
+	p.source.Kind = source.Kind
+	return p, nil
+}
+func (f *Failure) SandboxReason() string { return f.Reason }

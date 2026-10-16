@@ -320,7 +320,7 @@ func (m Model) update(msg tea.Msg) (Model, tea.Cmd) {
 
 // hasGate reports whether the input queue has any pending entries.
 func (m Model) hasGate() bool {
-	return len(m.inputQueue) > 0
+	return m.policyBlock != nil || len(m.inputQueue) > 0
 }
 
 // gateShouldPulse reports whether the collapsed gate bar should breathe

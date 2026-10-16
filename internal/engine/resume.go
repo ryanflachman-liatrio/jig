@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 
 	"github.com/ryanflachman-liatrio/jig/internal/datastore"
@@ -58,7 +59,7 @@ func persistWorkflowSnapshot(runDir string, wf *workflow.Workflow) error {
 	return authority.publish(runDir, prepared, datastore.PublishAuthoring)
 }
 
-func encodeWorkflowSnapshot(wf *workflow.Workflow, ref *authoringReference) ([]byte, error) {
+func encodeWorkflowSnapshot(wf *workflow.Workflow, ref *authoringReference, sandboxPolicy *SandboxPolicyState) ([]byte, error) {
 	path, source := wf.Source()
 	base := wf.AuthoringBase()
 	if base == "" {
@@ -82,7 +83,12 @@ func encodeWorkflowSnapshot(wf *workflow.Workflow, ref *authoringReference) ([]b
 	if err != nil {
 		return nil, err
 	}
-	snap.SandboxVersion, snap.Sandbox = 1, sandboxes
+	if sandboxPolicy != nil {
+		sandboxes.Version = 2
+		sandboxes.Policy = sandboxPolicy.Clone()
+		sandboxes.SHA256 = sandboxSnapshotDigest(sandboxes)
+	}
+	snap.SandboxVersion, snap.Sandbox = sandboxes.Version, sandboxes
 	policy := wf.NotificationPolicy()
 	if len(policy.Events) > 0 || len(policy.Routes) > 0 {
 		snap.Notification = &policy
@@ -222,6 +228,14 @@ func notificationPolicyDigest(policy workflow.NotificationPolicy) (string, error
 // interrupted mid-flight are moved to recovery; parks that already existed
 // before process death are rehydrated in place.
 func (m *Manager) Resume(runID string) (*Run, error) {
+	return m.ResumeWithGuard(runID, nil)
+}
+
+// ResumeWithGuard runs a consumer eligibility check after capture/policy checks
+// and before restoring workspaces or publishing events. The guard may reject a
+// reopen but cannot grant sandbox permission. It is used by headless controls
+// to give policy denial precedence over an underlying automation-unsafe gate.
+func (m *Manager) ResumeWithGuard(runID string, guard func(policyBlocked bool) error) (*Run, error) {
 	if runID == "" || filepath.Base(runID) != runID || strings.ContainsAny(runID, `/\\`) {
 		return nil, fmt.Errorf("engine: invalid run id %q", runID)
 	}
@@ -258,8 +272,15 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	if err != nil {
 		return fail(fmt.Errorf("resume workflow: %w", err))
 	}
-	if err := m.authorizeSandboxWorkflow(wf); err != nil {
+	lockedPolicy, err := restoredSandboxPolicy(wf, authority.policy, events)
+	if err != nil {
 		return fail(err)
+	}
+	a, policy, policyErr := m.loadSandboxEpoch(context.Background(), wf, lockedPolicy)
+	if guard != nil {
+		if err := guard(policyErr != nil); err != nil {
+			return fail(err)
+		}
 	}
 	checkpoint, err := restoreUnfinishedCheckpoint(runDir, wf, events)
 	if err != nil {
@@ -302,7 +323,20 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	s.authoring = authority
 	s.resolver = m.resolver
 	s.secretResolver = secrets
-	s.sandboxAuthorizer = m.sandboxAuthorizer
+	s.sandboxAuthorizer = a
+	s.policyState = policy.Clone()
+	if s.policyState == nil {
+		s.policyState = lockedPolicy.Clone()
+	}
+	if s.policyState == nil {
+		s.policyState = builtinSandboxState(wf)
+	}
+	s.policyLoad = m.loadSandboxEpoch
+	s.policyContext = ctx
+	if policyErr != nil {
+		s.policyBlock = &SandboxPolicyBlocked{RunID: runID, Reason: sandboxReason(policyErr), Epoch: uint64(seq + 1)}
+		s.sandboxAuthorizer = *s.policyBlock
+	}
 	s.getCauseHint = run.causeSnapshot
 	s.seq = seq
 	s.states = checkpoint.states
@@ -334,10 +368,28 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	// non-terminal child (trySettleFamily itself guards on that) and for a
 	// family that already settled before the crash (guarded by fam.Settled /
 	// state.Status != Running).
-	for _, familyID := range s.fanOutFamilyOrder {
-		s.trySettleFamily(familyID)
+	if s.policyBlock == nil {
+		for _, familyID := range s.fanOutFamilyOrder {
+			s.trySettleFamily(familyID)
+		}
 	}
-	if err := s.restoreRunBranch(len(checkpoint.integrations) > 0); err != nil {
+	restore := func() error { return s.restoreRunBranch(len(checkpoint.integrations) > 0) }
+	if s.policyBlock != nil {
+		s.policyRestore = func() error {
+			if err := s.restoreRunBranch(len(checkpoint.integrations) > 0); err != nil {
+				return err
+			}
+			for id := range s.states {
+				s.reattachStepWorktree(id)
+			}
+			for _, familyID := range s.fanOutFamilyOrder {
+				s.trySettleFamily(familyID)
+			}
+			return nil
+		}
+		restore = func() error { return nil }
+	}
+	if err := restore(); err != nil {
 		m.mu.Lock()
 		delete(m.runs, runID)
 		m.mu.Unlock()
@@ -356,6 +408,12 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 		_ = w.Close()
 		cancel()
 		return fail(err)
+	}
+	if s.policyBlock != nil {
+		s.policyParks = append([]Event(nil), reopenEvents...)
+		reopenEvents = append([]Event{*s.policyBlock}, reopenEvents...)
+	} else if sandboxGrantNeeded(lockedPolicy, policy, events) {
+		reopenEvents = append([]Event{SandboxPolicyCleared{RunID: runID, Epoch: uint64(seq + 1), Policy: policy.Clone()}}, reopenEvents...)
 	}
 	s.observers = &m.observers
 
@@ -894,6 +952,12 @@ func (s *scheduler) rehydrateParks(checkpoint *unfinishedCheckpoint) ([]Event, e
 				events = append(events, request)
 			}
 		case step.StatusAwaitingIntegration:
+			if s.policyBlock != nil {
+				request := checkpoint.integrations[stepID]
+				request.RunID = s.runID
+				events = append(events, request)
+				return nil
+			}
 			paths := mergeConflictPaths(s.runWorktree)
 			if len(paths) == 0 {
 				return fmt.Errorf("resume: step %q is awaiting integration but the run worktree has no unresolved conflict markers", stepID)
@@ -944,6 +1008,9 @@ func (s *scheduler) restoreParkSession(stepID string) {
 }
 
 func (s *scheduler) reattachStepWorktree(stepID string) {
+	if s.policyBlock != nil {
+		return
+	}
 	st := s.stepByID(stepID)
 	if st == nil || st.Isolation != workflow.IsolationWorktree || s.jigRoot == "" {
 		return
@@ -1158,4 +1225,17 @@ func (s *scheduler) restoreRunBranch(preserveConflict bool) error {
 	}
 	s.stepCommits = commits
 	return nil
+}
+
+func sandboxGrantNeeded(previous, current *SandboxPolicyState, events []Event) bool {
+	blocked := false
+	for _, event := range events {
+		switch event.(type) {
+		case SandboxPolicyBlocked:
+			blocked = true
+		case SandboxPolicyCleared:
+			blocked = false
+		}
+	}
+	return blocked || !reflect.DeepEqual(previous, current)
 }

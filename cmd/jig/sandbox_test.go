@@ -162,7 +162,7 @@ func TestD04PolicyCLI(t *testing.T) {
 		{"doctor-json", []string{"doctor", wf, "--sandbox-policy=" + policy, "--root=", "--output=json"}, 1, "sandbox_policy_denied"},
 		{"doctor-text", []string{"doctor", wf, "--sandbox-policy", policy, "--root="}, 1, "auxiliary_host"},
 		{"malformed", []string{"run", wf, "--sandbox-policy", bad, "--root="}, 1, "sandbox_policy_invalid"},
-		{"resume-missing", []string{"resume", "synthetic", "--on-recovery=retry", "--sandbox-policy", bad}, 1, "sandbox_policy_invalid"},
+		{"resume-missing", []string{"resume", "synthetic", "--on-recovery=retry", "--sandbox-policy", bad}, 1, "datastore"},
 		{"startup-malformed", []string{"--sandbox-policy", bad}, 1, "sandbox_policy_invalid"},
 		{"run-empty", []string{"run", wf, "--sandbox-policy="}, 2, "nonempty"},
 		{"doctor-empty", []string{"doctor", "--sandbox-policy="}, 2, "nonempty"},

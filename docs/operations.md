@@ -551,8 +551,40 @@ certify resource enforcement.
 Doctor reports `sandbox.policy`, bounded reason/field/source identifiers, and
 `sandbox.scope` auxiliary-host disclosure. Policy denial returns exit 1 and
 skips executable/secret readiness checks. Host tool availability is never used
-as evidence of tools inside a Docker image. Current-policy durable recovery and
-explicit policy recheck are not yet available; denied reopen fails before work.
+as evidence of tools inside a Docker image.
+
+### Policy on reopen and recheck
+
+Reopen verifies the captured workflow and authoring assets, then reloads current
+policy using the saved source selector. A previously selected policy file that
+is missing, unsafe or malformed blocks the run; it never falls back to another
+file. A saved built-in policy origin rediscovers the current operator default.
+An explicit `--sandbox-policy FILE` on resume reselects a trusted source for that
+epoch. Permission is evaluated against the captured request and effective
+resources; changed defaults do not resize work, and fingerprint changes alone
+do not deny permission. The successful policy is frozen until the next epoch.
+
+Denial journals `sandbox_policy_blocked` before publishing it. This run-level
+block overlays recovery, review, input and integration state. It fences worker,
+validator, secret and integration-resolver calls, plus reset, skip and session
+resume. Monitor shows **recheck policy** and **abort run**. Rechecks coalesce
+while pending, run outside the scheduler with a ten-second deadline, and carry
+a block epoch so stale results cannot release a newer block. Abort remains
+responsive. A grant is journaled before workspace restoration and leaves
+underlying human gates pending. A journal failure keeps execution fenced.
+
+Headless resume with `--on-recovery=retry` attempts one explicit policy recheck.
+Persistent denial aborts and exits 1; abort, skip and resume policies also exit 1
+without bypassing it. Ordinary human gates still exit 3 after policy permits
+the run. Status and historical Monitor replay stored evidence without loading
+policy or contacting Docker. Export includes only aliased sandbox profile,
+runtime, recognized authored platform, and typed policy reason summaries.
+
+Docker execution remains unsupported, including after a successful policy
+check. Synthetic complete Docker captures exercise binding/identity checks;
+real Docker runs cannot be started by this release. A bound inspection uses
+the original canonical socket and daemon identity rather than current context
+selection. No metadata report certifies container enforcement.
 
 ### Docker endpoint selection
 

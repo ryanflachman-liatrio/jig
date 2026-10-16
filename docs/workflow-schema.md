@@ -119,11 +119,11 @@ host. See [the inspection-only example](../examples/sandbox-inspect.toml).
 steps guarded out of execution. It does not load sandbox policy or Docker
 configuration, resolve credentials, contact a daemon or execute workflow code.
 Operator-only sandbox/Docker flags are rejected by validate with usage exit 2.
-**Docker execution remains unsupported:** Start and strict reopen reject an
-expanded graph containing any Docker request before executable work or secret
+**Docker execution remains unsupported:** Start rejects an expanded graph containing any Docker request; strict reopen
+blocks a complete captured Docker request before executable work or secret
 resolution, including guarded steps. A successful validation is not readiness
-or permission. Trusted-policy and deployment inspection are separate future
-implementation checkpoints; no resources are enforced by this syntax.
+or permission. Trusted policy and read-only deployment inspection are available
+through doctor; no resources are enforced by this syntax.
 
 | Profile field | Contract |
 | --- | --- |
@@ -156,15 +156,26 @@ declaration path, invocation namespace, original reference and selection origin.
 Review/subworkflow nodes carry intent; human review and graph expansion do not
 execute in containers.
 
-New workflow snapshots have a versioned, checksummed sandbox section covering
-every expanded step/template. Runtime copies retain owned request maps and
+New workflow snapshots have a version-2, checksummed sandbox section covering
+every expanded step/template. It separates authored requests from effective
+resources and their provenance, the selected operator policy source/fingerprint,
+and any inspected deployment binding. Reopen retains effective values rather
+than applying changed defaults. Host snapshots require no Docker binding.
+Runtime copies retain owned request maps and
 presence information without re-resolution. Display decoding uses stored data
 only. A legacy snapshot can synthesize host requests only when locked root,
 module and expanded data contains no sandbox declarations; executable reopen
 still requires the existing valid authoring capture. Missing/partial coverage
 in a new snapshot is an integrity error. Empty persistence roots cause no
 relative sandbox writes. Local snapshots may contain the authored nonsecret
-environment; exports omit it and the raw profile/source data.
+environment; exports omit it and raw profile/source/deployment data.
+
+Strict reopen verifies the entire capture before reloading current operator
+policy. A denial journals a run-level policy block without replacing existing
+parks. Only an explicit successful policy recheck releases a live block; ordinary
+retry, reset, skip, resume and failure routes cannot do so. A changed fingerprint
+alone is not denial. Legacy Docker captures missing complete effective/binding
+metadata cannot reopen; they remain available for offline display.
 
 ### Subworkflow modules
 

@@ -147,6 +147,10 @@ func drainLive(live <-chan engine.Event) {
 
 func eventRunID(ev engine.Event) string {
 	switch e := ev.(type) {
+	case engine.SandboxPolicyBlocked:
+		return e.RunID
+	case engine.SandboxPolicyCleared:
+		return e.RunID
 	case engine.RunStarted:
 		return e.RunID
 	case engine.RunFinished:

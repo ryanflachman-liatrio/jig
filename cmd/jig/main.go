@@ -113,7 +113,7 @@ func main() {
 	// Ordered shutdown: producers first (cancel context on receipt of a
 	// signal via NotifyContext), then dispatcher drain. The 5-second cap is
 	// enforced inside Runtime.Close.
-	rt.Manager.SetSandboxDeploymentCheck(sandboxOpts.deploymentCheck(policy))
+	rt.Manager.SetSandboxEpochLoader(sandboxOpts.epochLoader(rt.Manager.Root()))
 	defer rt.Close(context.Background())
 	tel.attach(ctx, rt.Manager)
 

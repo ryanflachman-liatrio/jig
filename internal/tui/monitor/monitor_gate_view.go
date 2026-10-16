@@ -34,6 +34,9 @@ func clipReason(s string, width, maxLines int) string {
 }
 
 func (m Model) inputBarView() string {
+	if m.policyBlock != nil {
+		return "  " + shared.Theme.Warning.Render("GATE · sandbox policy blocked") + " · " + m.policyBlock.Reason + " · tab to open"
+	}
 	if !m.hasGate() {
 		label := shared.Theme.Title.Render("Human actions")
 		return "  " + label + shared.Theme.Chat.Hint.Render("  ·  no pending actions")
@@ -110,6 +113,9 @@ func (m Model) gateChromeTitle(entry *pendingInputEntry) string {
 // gateOverlay keeps the input controls out of vertical layout calculations, so
 // focusing a gate cannot resize or move either transcript viewport.
 func (m Model) gateOverlay() string {
+	if m.policyBlock != nil {
+		return m.sandboxGateView()
+	}
 	if !m.hasGate() {
 		return ""
 	}

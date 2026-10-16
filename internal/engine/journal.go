@@ -25,6 +25,10 @@ type Envelope struct {
 // eventKind returns the stable journal kind string for an event.
 func eventKind(e Event) string {
 	switch e.(type) {
+	case SandboxPolicyBlocked:
+		return "sandbox_policy_blocked"
+	case SandboxPolicyCleared:
+		return "sandbox_policy_cleared"
 	case RunStarted:
 		return "run_started"
 	case RunFinished:
@@ -140,6 +144,13 @@ var decoders = map[string]func([]byte) (Event, error){
 		var e ReviewSubmitted
 		return e, json.Unmarshal(b, &e)
 	},
+	"sandbox_policy_blocked": func(b []byte) (Event, error) {
+		var e SandboxPolicyBlocked
+		err := json.Unmarshal(b, &e)
+		e.Reason = SandboxPolicyReason(e.Reason)
+		return e, err
+	},
+	"sandbox_policy_cleared": func(b []byte) (Event, error) { var e SandboxPolicyCleared; return e, json.Unmarshal(b, &e) },
 	"run_error": func(b []byte) (Event, error) {
 		var e RunError
 		return e, json.Unmarshal(b, &e)

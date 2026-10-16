@@ -18,6 +18,27 @@ import (
 
 func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 	switch ev := e.(type) {
+	case engine.SandboxPolicyBlocked:
+		if ev.RunID != m.RunID || ev.Epoch < m.policyEpoch || m.policyCleared && ev.Epoch == m.policyEpoch {
+			return m, nil
+		}
+		ev.Reason = engine.SandboxPolicyReason(ev.Reason)
+		m.policyBlock = &ev
+		m.policyCleared = false
+		m.policyEpoch = ev.Epoch
+		m.policyChecking = false
+		m.reviewOpen = false
+	case engine.SandboxPolicyCleared:
+		if ev.RunID != m.RunID || ev.Epoch < m.policyEpoch {
+			return m, nil
+		}
+		m.policyBlock = nil
+		m.policyCleared = true
+		m.policyEpoch = ev.Epoch
+		m.policyChecking = false
+		if !m.hasGate() {
+			m.focus = focusSteps
+		}
 	case engine.RunStarted:
 		if ev.RunID != m.RunID {
 			return m, nil

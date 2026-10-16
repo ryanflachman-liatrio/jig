@@ -52,18 +52,19 @@ type StepReport struct {
 }
 
 type RunReport struct {
-	RunID        string       `json:"run_id"`
-	Workflow     string       `json:"workflow"`
-	State        RunState     `json:"state"`
-	LockHeld     bool         `json:"lock_held"`
-	Reopenable   bool         `json:"reopenable"`
-	StartedAt    *time.Time   `json:"started_at"`
-	UpdatedAt    *time.Time   `json:"updated_at"`
-	FinishedAt   *time.Time   `json:"finished_at"`
-	TotalCostUSD float64      `json:"total_cost_usd"`
-	TotalTokens  int          `json:"total_tokens"`
-	WaitingOn    []WaitReport `json:"waiting_on"`
-	Steps        []StepReport `json:"steps"`
+	SandboxPolicyReason string       `json:"sandbox_policy_reason,omitempty"`
+	RunID               string       `json:"run_id"`
+	Workflow            string       `json:"workflow"`
+	State               RunState     `json:"state"`
+	LockHeld            bool         `json:"lock_held"`
+	Reopenable          bool         `json:"reopenable"`
+	StartedAt           *time.Time   `json:"started_at"`
+	UpdatedAt           *time.Time   `json:"updated_at"`
+	FinishedAt          *time.Time   `json:"finished_at"`
+	TotalCostUSD        float64      `json:"total_cost_usd"`
+	TotalTokens         int          `json:"total_tokens"`
+	WaitingOn           []WaitReport `json:"waiting_on"`
+	Steps               []StepReport `json:"steps"`
 }
 
 // InspectRun returns a durable status view. A corrupt journal returns both its
@@ -132,6 +133,12 @@ func FoldStatus(runID string, records []engine.JournalRecord, lockHeld bool) Run
 			report.UpdatedAt = &ts
 		}
 		switch event := record.Event.(type) {
+		case engine.SandboxPolicyBlocked:
+			report.SandboxPolicyReason = engine.SandboxPolicyReason(event.Reason)
+			waits["\x00sandbox_policy"] = WaitReport{Kind: "sandbox_policy"}
+		case engine.SandboxPolicyCleared:
+			report.SandboxPolicyReason = ""
+			delete(waits, "\x00sandbox_policy")
 		case engine.RunStarted:
 			report.RunID = event.RunID
 			report.Workflow = event.Workflow

@@ -83,6 +83,9 @@ func renderStatusList(reports []ops.RunReport) {
 func renderStatusDetail(report ops.RunReport) {
 	fmt.Printf("run_id: %s\nworkflow: %s\nstate: %s\nlock_held: %t\nreopenable: %t\nstarted_at: %s\nupdated_at: %s\nfinished_at: %s\ncost_usd: %.4f\ntokens: %d\n",
 		report.RunID, report.Workflow, report.State, report.LockHeld, report.Reopenable, formatTime(report.StartedAt), formatTime(report.UpdatedAt), formatTime(report.FinishedAt), report.TotalCostUSD, report.TotalTokens)
+	if report.SandboxPolicyReason != "" {
+		fmt.Printf("sandbox policy: %s\n", report.SandboxPolicyReason)
+	}
 	for _, wait := range report.WaitingOn {
 		fmt.Printf("waiting_on: %s %s\n", wait.StepID, wait.Kind)
 	}

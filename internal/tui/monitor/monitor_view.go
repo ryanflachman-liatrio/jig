@@ -150,6 +150,9 @@ func (m Model) statusLabel() string {
 		}
 		return shared.Theme.Valid.Render("done")
 	}
+	if m.policyBlock != nil {
+		return shared.Theme.Warning.Render("sandbox policy blocked")
+	}
 	if m.historical && m.interrupted && !m.hasGate() {
 		return shared.Theme.Warning.Render("interrupted")
 	}

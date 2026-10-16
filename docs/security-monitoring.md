@@ -295,3 +295,17 @@ image environment/labels/entrypoint and daemon warnings are not diagnostics.
 Default store inspection performs no writes; only explicit
 `--probe-store-write` creates and removes a temporary file. These observations
 cannot certify UID/GID access, Desktop sharing, storage quotas or containment.
+
+A current-policy denial on reopen installs a durable run-wide block before
+restoring executable work. Skip, reset, session resume and ordinary retry
+cannot clear it. Explicit recheck reloads the saved trusted source (or an
+operator-selected replacement) without rereading workflow authoring files; a
+missing selected file never falls back. The grant is journaled before execution
+can resume. Policy checks do not prove Docker resource enforcement.
+
+Local snapshots retain policy source paths and, for synthetic inspected Docker
+captures, endpoint/config provenance and daemon identity. Treat these as
+sensitive local state. Exports use aliased profile/runtime/platform summaries
+and typed denial codes; they omit environment values, endpoint/config paths,
+policy source paths and raw daemon data. Policy events add no telemetry labels
+or exporters.

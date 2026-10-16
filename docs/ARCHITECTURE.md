@@ -27,6 +27,7 @@ Dependency versions live in the two `go.mod` files, not this map.
 | `internal/config` | Typed `Config` schema, TOML loading for the user- and project-level `config.toml` files, and the layered defaults → user → project merge. No CLI flag parsing; consumed by `cmd/jig`, `internal/tui`, `internal/notification` call sites, and `internal/telemetry`. |
 | `internal/workflow` | TOML loading, authoring files, profiles/defaults, module expansion, typed conditions and output contracts, graph validation. No agent execution. |
 | `internal/engine` | Manager and per-run scheduler, readiness, budgets, retries/routes, fan-out, parks, review/integration, reset/reopen, journal event vocabulary. Defines `Executor` and `Reporter`. |
+| `internal/sandbox` | Trusted operator policy, local endpoint selection and bounded read-only Docker inspection. Imports the Docker SDK; does not own scheduling. |
 | `internal/runner` | Concrete agent, command, and check execution, input delivery, validation, artifact capture, transcript writes. Uses the harness seam for agents. |
 | `internal/agentcfg` | Leaf package: the sealed single-backend agent union (`ClaudeAgent`, `CodexAgent`, `CursorAgent`), mode tables and value validation. Shared by `internal/workflow` and `internal/harness` so neither imports the other. |
 | `internal/harness` | Claude ACP, Cursor ACP, and Codex ACP lifecycle/capability adapters; normalizes vendor output, enforces each backend's agent settings, and resolves canonical tool names for permission decisions. |
@@ -178,3 +179,14 @@ policy and runtime support before effects. Direct Manager use retains host
 behavior and rejects Docker without deployment wiring. Docker execution remains
 unsupported even when operator policy permits the request. Display decoding
 consults neither policy nor deployment state.
+
+## Sandbox authority epochs
+
+`cmd/jig` supplies the engine-owned `SandboxEpochLoader` seam. The engine does
+not import `internal/sandbox` or the Docker SDK. New captures retain versioned
+authored/effective/inspected state. Current policy is loaded at admission,
+strict reopen and explicit recheck; runners receive immutable epoch authority.
+The scheduler alone owns the run-level policy block. Block/grant events use
+the reliable journal-before-publication path. Recheck I/O runs outside the
+scheduler, with cancellation and stale block-epoch rejection. Consumers render
+the block and send Run commands; they do not implement authorization.

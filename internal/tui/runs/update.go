@@ -182,6 +182,14 @@ func (m Model) sortRows() Model {
 
 func (m Model) handleEngineEvent(e engine.Event) Model {
 	switch ev := e.(type) {
+	case engine.SandboxPolicyBlocked:
+		if i, ok := m.index[ev.RunID]; ok {
+			m.rows[i].policyBlocked = true
+		}
+	case engine.SandboxPolicyCleared:
+		if i, ok := m.index[ev.RunID]; ok {
+			m.rows[i].policyBlocked = false
+		}
 	case engine.RunStarted:
 		return m.handleRunStarted(ev)
 	case engine.StepStatus:

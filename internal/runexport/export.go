@@ -322,9 +322,17 @@ func identifierReplacements(runID string, wf *workflow.Workflow, snapshotBaseDir
 
 func buildRunSummary(runID string, report ops.RunReport, wf *workflow.Workflow, aliases *aliasTable, anchor *timeAnchor, authoritative bool) RunSummary {
 	wfByID := map[string]*workflow.Step{}
+	sandboxAliases := map[string]string{}
 	if wf != nil {
 		for i := range wf.Steps {
 			wfByID[wf.Steps[i].ID] = &wf.Steps[i]
+			r := wf.Steps[i].ResolvedSandbox()
+			if r.Profile != nil {
+				key := r.Source + "\x00" + r.Reference
+				if sandboxAliases[key] == "" {
+					sandboxAliases[key] = fmt.Sprintf("sandbox-%d", len(sandboxAliases)+1)
+				}
+			}
 		}
 	}
 	run := RunSummary{RunAlias: runAlias, WorkflowAlias: workflowAlias, State: string(report.State), StateAuthoritative: authoritative}
@@ -359,6 +367,14 @@ func buildRunSummary(runID string, report ops.RunReport, wf *workflow.Workflow, 
 			summary.Tokens = &tokens
 		}
 		if st, ok := wfByID[lookupID]; ok {
+			summary.Runtime = "host"
+			summary.Sandbox = "host"
+			r := st.ResolvedSandbox()
+			if r.Profile != nil {
+				summary.Runtime = "docker"
+				summary.Sandbox = sandboxAliases[r.Source+"\x00"+r.Reference]
+				summary.Platform = exportSandboxPlatform(string(r.Profile.Platform))
+			}
 			summary.Type = string(st.Type)
 			summary.Backend = st.Backend
 			for _, dep := range st.DependsOn {
@@ -395,4 +411,13 @@ func marshalJSONL[T any](items []T) ([]byte, error) {
 		buf = append(buf, '\n')
 	}
 	return buf, nil
+}
+
+func exportSandboxPlatform(p string) string {
+	switch p {
+	case "linux/amd64", "linux/arm64", "linux/arm64/v8", "linux/arm/v7", "linux/arm/v6", "linux/386", "linux/ppc64le", "linux/s390x", "linux/riscv64":
+		return p
+	default:
+		return ""
+	}
 }

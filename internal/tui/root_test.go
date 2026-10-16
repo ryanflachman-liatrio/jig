@@ -736,3 +736,22 @@ func TestHomeAuthoringParseFailure(t *testing.T) {
 		t.Fatal("failed loader opened a run")
 	}
 }
+
+func TestD04ReopenPolicyRouting(t *testing.T) {
+	m := rootModel{runs: runspane.NewModel(), monitor: monitor.New("r"), handles: map[string]*engine.Run{}}
+	for _, ev := range []engine.Event{engine.RunStarted{RunID: "r", Workflow: "wf", Steps: []string{"x"}}, engine.SandboxPolicyBlocked{RunID: "r", Reason: "sandbox_policy_denied", Epoch: 5}} {
+		model, _ := m.Update(monitor.EngineEventMsg{Event: ev})
+		m = model.(rootModel)
+	}
+	if body := m.runs.PaneBody(100, 20); !strings.Contains(body, "policy blocked") {
+		t.Fatalf("root lost policy event: %s", body)
+	}
+	if _, cmd := m.Update(monitor.SandboxPolicyActionMsg{RunID: "absent", Epoch: 5}); cmd != nil {
+		t.Fatal("stale run action executed")
+	}
+	model, _ := m.Update(monitor.EngineEventMsg{Event: engine.SandboxPolicyCleared{RunID: "r", Epoch: 5}})
+	m = model.(rootModel)
+	if strings.Contains(m.runs.PaneBody(100, 20), "policy blocked") {
+		t.Fatal("root lost grant")
+	}
+}

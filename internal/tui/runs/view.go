@@ -78,6 +78,9 @@ func runRowStatus(row runRow) string {
 	if row.done {
 		return shared.Theme.Valid.Render("done")
 	}
+	if row.policyBlocked && !row.done {
+		return shared.Theme.Warning.Render("policy blocked")
+	}
 	if row.interrupted {
 		return shared.Theme.Warning.Render("interrupted")
 	}

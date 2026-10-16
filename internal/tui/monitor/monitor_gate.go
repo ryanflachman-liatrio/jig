@@ -248,6 +248,9 @@ func (m Model) updateGateEscape(msg tea.KeyPressMsg, entry *pendingInputEntry) (
 // entry's kind; each submit path reads routing IDs from the entry, emits the
 // unchanged routing message, and removes the entry (auto-advance via removeEntryAt).
 func (m Model) updateGate(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	if m.policyBlock != nil {
+		return m.updateSandboxGate(msg)
+	}
 	entry, ok := m.activeEntry()
 	if !ok {
 		return m, nil

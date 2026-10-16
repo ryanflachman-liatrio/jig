@@ -101,15 +101,12 @@ func headlessOptions(ctx context.Context, f controlFlags, mode headless.OutputMo
 		return headless.Options{}, nil, err
 	}
 	tel := setupTelemetry(ctx, mgrRoot)
-	policy, err := loadSandboxPolicy(f.sandbox, mgrRoot)
-	if err != nil {
-		return headless.Options{}, tel, err
-	}
+	policy, _ := loadSandboxPolicy(f.sandbox, mgrRoot)
 	mgr, err := newManager(mgrRoot, cfg.Security, tel, policy)
 	if err != nil {
 		return headless.Options{}, tel, err
 	}
-	mgr.SetSandboxDeploymentCheck(f.sandbox.deploymentCheck(policy))
+	mgr.SetSandboxEpochLoader(f.sandbox.epochLoader(mgrRoot))
 	tel.attach(ctx, mgr)
 	return headless.Options{
 		Manager: mgr, Root: mgrRoot, Output: mode, Quiet: *f.quiet,

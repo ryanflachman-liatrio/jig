@@ -222,3 +222,10 @@ to fit a ceiling. Permission does not imply runtime support or proven enforcemen
 
 **Auxiliary host scope:** help and Tier-2 services outside the workflow sandbox
 boundary. An all-agent containment requirement is unsupported.
+
+**Policy epoch:** one admission or reopen authorization against immutable
+requests and locked effective values. Permission is frozen for that epoch.
+
+**Policy block:** a durable run-level fence over existing parks. An explicit
+policy recheck may grant permission; it does not answer a human gate or consume
+a worker attempt. Abort settles the run.

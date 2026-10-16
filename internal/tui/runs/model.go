@@ -30,15 +30,16 @@ type Model struct {
 }
 
 type runRow struct {
-	id          string
-	workflow    string
-	statuses    map[string]step.Status // stepID → current status
-	total       int
-	done        bool
-	failed      bool
-	paused      bool // unfinished historical run (review and/or crash)
-	interrupted bool // Spec 20: unfinished with running/validating workers
-	started     time.Time
+	policyBlocked bool
+	id            string
+	workflow      string
+	statuses      map[string]step.Status // stepID → current status
+	total         int
+	done          bool
+	failed        bool
+	paused        bool // unfinished historical run (review and/or crash)
+	interrupted   bool // Spec 20: unfinished with running/validating workers
+	started       time.Time
 
 	// familyChildren maps a foreach family's step id to its current
 	// generation's runtime child ids (A8), so total/done can fold discovered

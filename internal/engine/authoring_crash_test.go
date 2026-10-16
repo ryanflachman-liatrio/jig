@@ -51,7 +51,7 @@ func TestAuthoringPublicationCrash(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			snapshot, err := encodeWorkflowSnapshot(prepared, authority.reference())
+			snapshot, err := encodeWorkflowSnapshot(prepared, authority.reference(), nil)
 			if err != nil {
 				t.Fatal(err)
 			}

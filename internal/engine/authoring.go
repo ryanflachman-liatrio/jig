@@ -21,6 +21,7 @@ type authoringReference struct {
 	Bytes    int    `json:"bytes"`
 }
 type runAuthoring struct {
+	policy   *SandboxPolicyState
 	assets   *workflow.AuthoringAssets
 	manifest []byte
 	snapshot []byte
@@ -46,7 +47,7 @@ func (a *runAuthoring) reference() *authoringReference {
 }
 func authoringDigest(b []byte) string { sum := sha256.Sum256(b); return hex.EncodeToString(sum[:]) }
 func (a *runAuthoring) publish(dir string, wf *workflow.Workflow, publish func(string, []byte, map[string][]byte, []byte) error) error {
-	data, err := encodeWorkflowSnapshot(wf, a.reference())
+	data, err := encodeWorkflowSnapshot(wf, a.reference(), a.policy)
 	if err != nil {
 		return err
 	}
@@ -175,6 +176,13 @@ func loadAuthoringSnapshot(dir string) (*workflow.Workflow, *runAuthoring, error
 	if err := json.Unmarshal(data, &snapshot); err != nil {
 		return nil, nil, workflow.CaptureIntegrity
 	}
+	if snapshot.SandboxVersion < 2 {
+		for _, st := range wf.Steps {
+			if st.ResolvedSandbox().Profile != nil {
+				return nil, nil, workflow.CaptureIntegrity
+			}
+		}
+	}
 	ref := snapshot.Authoring
 	if ref == nil || ref.Version != 1 || ref.Path != "authoring/manifest.json" {
 		return nil, nil, fmt.Errorf("workflow snapshot lacks a supported authoring capture contract; start a new run: %w", workflow.CaptureMissing)
@@ -229,5 +237,8 @@ func loadAuthoringSnapshot(dir string) (*workflow.Workflow, *runAuthoring, error
 		return nil, nil, workflow.CaptureIntegrity
 	}
 	a.snapshot = data
+	if snapshot.Sandbox != nil {
+		a.policy = snapshot.Sandbox.Policy.Clone()
+	}
 	return wf, a, nil
 }

@@ -210,3 +210,15 @@ checks deterministic local prerequisites before tokens are spent.
 - Engine design: [`docs/engine-design.md`](engine-design.md)
 - Open goal A1: [`docs/plans/open-goals.md`](plans/open-goals.md)
 - Operations CLI: [`docs/operations.md`](operations.md)
+
+### Sandbox policy blocks
+
+`resume` checks current operator policy after validating the locked capture and
+before executable restoration. `sandbox_policy_blocked` is a run-level failure
+with exit 1, even if another human gate is pending. `--on-recovery retry` performs
+one bounded policy recheck; persistent denial cancels and waits for native
+settlement. `abort`, `skip` and `resume` cannot bypass denial. A successful
+recheck preserves the underlying parks and their ordinary gate/exit behavior.
+The JSON error code is `sandbox_policy_blocked`; its message is a bounded typed
+reason. JSONL carries `sandbox_policy_blocked` and `sandbox_policy_cleared`.
+There is no worker retry attempt or live policy watcher for this gate.

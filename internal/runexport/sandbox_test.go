@@ -8,13 +8,16 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ryanflachman-liatrio/jig/internal/engine"
 	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
-func TestD04OfflineSandboxProjection(t *testing.T) {
+func TestD04OfflineSandboxProjection(t *testing.T) { testSandboxProjection(t, false) }
+func TestD04ReopenSandboxProjection(t *testing.T)  { testSandboxProjection(t, true) }
+func testSandboxProjection(t *testing.T, complete bool) {
 	root, dir := buildIntactFixture(t)
 	path := filepath.Join(dir, "workflow.json")
 	raw, err := os.ReadFile(path)
@@ -64,6 +67,34 @@ func TestD04OfflineSandboxProjection(t *testing.T) {
 	put("sandbox", map[string]any{"version": 1, "requests": requests, "sha256": hex.EncodeToString(sum[:])})
 	put("expanded_steps", steps)
 	put("public_steps", steps)
+	if complete {
+		policy := &engine.SandboxPolicyState{Source: engine.SandboxPolicySource{Kind: "explicit", Path: "/PRIVATE_POLICY_SOURCE/policy.toml"}, Fingerprint: strings.Repeat("a", 64), Effective: map[string]engine.SandboxEffective{}, Binding: &engine.SandboxBinding{URI: "unix:///PRIVATE_ENDPOINT/docker.sock", EndpointSource: "flag", ConfigRoot: "/PRIVATE_CONFIG_ROOT", DaemonID: "PRIVATE_DAEMON_ID", API: "1.54", NativePlatform: "linux/amd64"}}
+		for _, st := range steps {
+			e := engine.SandboxEffective{}
+			if st.ResolvedSandbox().Profile != nil {
+				e = engine.SandboxEffective{NanoCPUs: 1000000000, MemoryBytes: 512 << 20, PIDs: 64, CPUSource: "policy_default", MemorySource: "policy_default", PIDsSource: "policy_default", Platform: "linux/amd64"}
+			}
+			policy.Effective[st.ID] = e
+		}
+		payload, _ := json.Marshal(struct {
+			Requests map[string]workflow.SandboxRequest
+			Policy   *engine.SandboxPolicyState
+		}{requests, policy})
+		digest := sha256.Sum256(payload)
+		put("sandbox_version", 2)
+		put("sandbox", map[string]any{"version": 2, "requests": requests, "policy": policy, "sha256": hex.EncodeToString(digest[:])})
+		ev := engine.SandboxPolicyBlocked{RunID: fixtureRunName, Epoch: 20, Reason: "sandbox_policy_denied"}
+		grantLine, _ := engine.MarshalEnvelope(20, engine.SandboxPolicyCleared{RunID: fixtureRunName, Epoch: 19, Policy: policy})
+		line, _ := engine.MarshalEnvelope(21, ev)
+		f, err := os.OpenFile(filepath.Join(dir, "journal.jsonl"), os.O_APPEND|os.O_WRONLY, 0600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.Write(append(grantLine, '\n'))
+		f.Write(append(line, '\n'))
+		f.Close()
+	}
+
 	raw, err = json.Marshal(snap)
 	if err != nil {
 		t.Fatal(err)
@@ -97,7 +128,7 @@ func TestD04OfflineSandboxProjection(t *testing.T) {
 		}
 		members["raw-archive"] = archive
 		for name, body := range members {
-			for _, private := range []string{"D04_PRIVATE_ENV_SENTINEL", "private.example.test", "private-profile", "snapshot_sandbox"} {
+			for _, private := range []string{"D04_PRIVATE_ENV_SENTINEL", "private.example.test", "private-profile", "snapshot_sandbox", "PRIVATE_POLICY_SOURCE", "PRIVATE_ENDPOINT", "PRIVATE_CONFIG_ROOT", "PRIVATE_DAEMON_ID"} {
 				if bytes.Contains(body, []byte(private)) {
 					t.Fatalf("%s exposed %s", name, private)
 				}

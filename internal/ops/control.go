@@ -66,20 +66,22 @@ func ResumeRun(ctx context.Context, opts headless.Options, runID string) headles
 	if err != nil {
 		return headless.Result{ExitCode: headless.ExitFailed, Err: err}
 	}
-	if err := resumeEligibility(preflight, opts.OnRecovery); err != nil {
+	live, ctrl := opts.Manager.Subscribe()
+	bufferedCtrl, stopBuffer := bufferControlEvents(ctrl)
+	defer stopBuffer()
+	run, err := opts.Manager.ResumeWithGuard(runID, func(blocked bool) error {
+		if blocked {
+			return nil
+		}
+		return resumeEligibility(preflight, opts.OnRecovery)
+	})
+	if err != nil {
 		code := headless.ExitFailed
 		var controlErr *ControlError
 		if errors.As(err, &controlErr) {
 			code = controlErr.ExitCode
 		}
 		return headless.Result{ExitCode: code, Err: err}
-	}
-	live, ctrl := opts.Manager.Subscribe()
-	bufferedCtrl, stopBuffer := bufferControlEvents(ctrl)
-	defer stopBuffer()
-	run, err := opts.Manager.Resume(runID)
-	if err != nil {
-		return headless.Result{ExitCode: headless.ExitFailed, Err: err}
 	}
 	if opts.OnRunStart != nil {
 		opts.OnRunStart(run.ID, preflight.Workflow)

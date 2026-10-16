@@ -87,3 +87,32 @@ sandbox='box'
 	}
 	t.Log("command/check/agent/mux workloads and validators plus resolver denied; harness=0 command=0 validator=0")
 }
+
+func TestD04ReopenPolicyBlockedAuthority(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "must-not-exist")
+	block := engine.SandboxPolicyBlocked{RunID: "synthetic", Epoch: 4, Reason: "sandbox_policy_denied"}
+	st := &workflow.Step{ID: "worker", Type: workflow.StepCommand, Run: "touch " + marker, Validate: &workflow.Validate{Command: "touch " + marker}}
+	req := engine.StepRequest{Step: st, SandboxAuthorizer: block}
+	executor := NewCommandExecutor("")
+	if _, err := executor.Execute(context.Background(), req, nil); err == nil {
+		t.Fatal("blocked workload ran")
+	}
+	if _, _, err := executor.Validate(context.Background(), req, nil); err == nil {
+		t.Fatal("blocked validator ran")
+	}
+	calls := 0
+	factory := func(string) (harness.Harness, error) { calls++; return nil, errors.New("must not open") }
+	st.Type = workflow.StepReview
+	if _, _, err := NewAgentExecutor(factory).Validate(context.Background(), req, nil); err == nil {
+		t.Fatal("blocked review-origin validator ran")
+	}
+	if _, err := NewIntegrationResolver(factory).ResolveIntegration(context.Background(), engine.IntegrationResolutionRequest{Step: st, SandboxAuthorizer: block}, nil); err == nil {
+		t.Fatal("blocked resolver ran")
+	}
+	if calls != 0 {
+		t.Fatal("harness launched")
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("workload/validator launched")
+	}
+}

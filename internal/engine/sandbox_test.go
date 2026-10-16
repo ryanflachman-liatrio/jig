@@ -116,7 +116,7 @@ func TestD04OfflineSnapshotOwnership(t *testing.T) {
 	if !reflect.DeepEqual(original, prepared.Steps[0].ResolvedSandbox()) {
 		t.Fatal("prepared graph aliases caller")
 	}
-	raw, err := encodeWorkflowSnapshot(prepared, nil)
+	raw, err := encodeWorkflowSnapshot(prepared, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +144,7 @@ func TestD04OfflineSnapshotOwnership(t *testing.T) {
 func TestD04OfflineSnapshotIntegrity(t *testing.T) {
 	for _, damage := range []string{"section", "version", "inner_version", "coverage", "extra", "digest", "normalized", "mismatch"} {
 		t.Run(damage, func(t *testing.T) {
-			raw, err := encodeWorkflowSnapshot(d04Decode(t, d04DockerWorkflow), nil)
+			raw, err := encodeWorkflowSnapshot(d04Decode(t, d04DockerWorkflow), nil, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -214,9 +214,8 @@ func TestD04OfflineReopenAndLegacy(t *testing.T) {
 	}
 	spy := &d04Spy{}
 	_, err = NewManager(spy, root).Resume("synthetic")
-	var unsupported *SandboxRuntimeError
-	if !errors.As(err, &unsupported) || spy.executions.Load() != 0 {
-		t.Fatalf("reopen fallback: %v", err)
+	if !errors.Is(err, workflow.CaptureIntegrity) || spy.executions.Load() != 0 {
+		t.Fatalf("incomplete legacy sandbox capture: %v", err)
 	}
 	for _, legacyDocker := range []bool{false, true} {
 		t.Run(map[bool]string{false: "legacy_host", true: "legacy_sandbox"}[legacyDocker], func(t *testing.T) {

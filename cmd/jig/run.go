@@ -128,7 +128,7 @@ func runRun(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return headless.ExitFailed
 	}
-	rt.Manager.SetSandboxDeploymentCheck(sandboxOpts.deploymentCheck(policy))
+	rt.Manager.SetSandboxEpochLoader(sandboxOpts.epochLoader(rt.Manager.Root()))
 	defer rt.Close(context.Background())
 	tel.attach(ctx, rt.Manager)
 

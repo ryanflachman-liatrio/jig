@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
 	"github.com/ryanflachman-liatrio/jig/internal/sandbox"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 type sandboxFlags struct {
@@ -87,10 +91,107 @@ func parseStartupSandbox(args []string) (*sandboxFlags, error) {
 	return f, nil
 }
 
-func (f *sandboxFlags) deploymentCheck(policy *sandbox.Policy) func() error {
-	if !f.endpoint.Explicit() {
-		return nil
-	}
+// epochLoader captures operator inputs once, then reloads trusted policy only
+// at admission, reopen, or explicit recheck. It never rereads workflow files.
+func (f *sandboxFlags) epochLoader(root string) engine.SandboxEpochLoader {
 	input := f.endpoint
-	return func() error { _, err := sandbox.SelectEndpoint(input, policy); return err }
+	project := input.Project
+	if root != "" {
+		if abs, err := filepath.Abs(root); err == nil {
+			project = filepath.Dir(abs)
+		}
+	}
+	selection := sandbox.Selection{ExplicitPath: f.policy, Cwd: input.Cwd, Project: project, Home: input.Home, XDGConfigHome: f.xdg}
+	return func(ctx context.Context, wf *workflow.Workflow, locked *engine.SandboxPolicyState) (engine.SandboxAuthorizer, *engine.SandboxPolicyState, error) {
+		source := sandbox.Source{}
+		if locked != nil {
+			source = sandbox.Source{Kind: locked.Source.Kind, Path: locked.Source.Path}
+		}
+		policy, err := sandbox.Reload(selection, source)
+		if err != nil {
+			return nil, nil, err
+		}
+		src := policy.Source()
+		state := &engine.SandboxPolicyState{Source: engine.SandboxPolicySource{Kind: src.Kind, Path: src.Path}, Fingerprint: policy.Fingerprint(), Effective: map[string]engine.SandboxEffective{}}
+		workspace := []string{project}
+		if path, _ := wf.Source(); path != "" {
+			workspace = append(workspace, filepath.Dir(path))
+		}
+		for _, m := range wf.ModuleSources() {
+			workspace = append(workspace, filepath.Dir(m.Path))
+		}
+		authority := &lockedSandboxAuthority{policy: policy, values: map[string]sandbox.Effective{}}
+		docker := false
+		firstDockerID := ""
+		for i := range wf.Steps {
+			st := &wf.Steps[i]
+			request := st.ResolvedSandbox()
+			var previous *sandbox.Effective
+			if locked != nil {
+				e, ok := locked.Effective[st.ID]
+				if !ok {
+					return nil, nil, workflow.CaptureIntegrity
+				}
+				previous = &sandbox.Effective{Request: request, NanoCPUs: e.NanoCPUs, MemoryBytes: e.MemoryBytes, PIDs: e.PIDs, CPUSource: e.CPUSource, MemorySource: e.MemorySource, PIDsSource: e.PIDsSource}
+			}
+			e, err := policy.Evaluate(st, workspace, []string{root}, previous)
+			if err != nil {
+				return nil, nil, err
+			}
+			key, _ := json.Marshal(request)
+			authority.values[string(key)] = e
+			v := engine.SandboxEffective{NanoCPUs: e.NanoCPUs, MemoryBytes: e.MemoryBytes, PIDs: e.PIDs, CPUSource: e.CPUSource, MemorySource: e.MemorySource, PIDsSource: e.PIDsSource}
+			if request.Profile != nil {
+				docker = true
+				if firstDockerID == "" {
+					firstDockerID = st.ID
+				}
+				if locked != nil {
+					v.Platform = locked.Effective[st.ID].Platform
+				}
+			}
+			state.Effective[st.ID] = v
+		}
+		if docker {
+			if locked == nil {
+				return nil, nil, &engine.SandboxRuntimeError{StepID: firstDockerID}
+			}
+			if locked.Binding == nil {
+				return nil, nil, workflow.CaptureIntegrity
+			}
+			b := locked.Binding
+			// Bind the original canonical URI. Context/config edits never reselect it.
+			boundInput := sandbox.EndpointInput{Cwd: input.Cwd, Home: input.Home, Project: project, Host: b.URI}
+			endpoint, err := sandbox.SelectEndpoint(boundInput, policy)
+			if err != nil {
+				return nil, nil, err
+			}
+			expected := sandbox.BindingData{Endpoint: sandbox.EndpointSummary{URI: b.URI}, DaemonID: b.DaemonID, API: b.API, NativePlatform: b.NativePlatform}
+			if _, err = sandbox.Inspect(ctx, endpoint, policy, wf.Steps, &expected); err != nil {
+				return nil, nil, err
+			}
+			copied := *b
+			state.Binding = &copied
+		} else if input.Explicit() {
+			if _, err = sandbox.SelectEndpoint(input, policy); err != nil {
+				return nil, nil, err
+			}
+		}
+		return authority, state, nil
+	}
+}
+
+type lockedSandboxAuthority struct {
+	policy *sandbox.Policy
+	values map[string]sandbox.Effective
+}
+
+func (a *lockedSandboxAuthority) Authorize(st *workflow.Step, workspace, storage []string) error {
+	key, _ := json.Marshal(st.ResolvedSandbox())
+	e, ok := a.values[string(key)]
+	if !ok {
+		return workflow.CaptureIntegrity
+	}
+	_, err := a.policy.Evaluate(st, workspace, storage, &e)
+	return err
 }

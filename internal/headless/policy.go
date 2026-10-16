@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/ryanflachman-liatrio/jig/internal/engine"
+	"github.com/ryanflachman-liatrio/jig/internal/step"
 )
 
 // Policy decides how to answer park-path events. Recovery/conflict defaults
@@ -22,12 +23,38 @@ type Policy struct {
 	// (approve conflict) can discard or fail-closed instead of hanging.
 	awaitingApprove bool
 	mergeHandled    bool
+	sandboxBlocked  bool
+	sandboxRetried  bool
 }
 
 // Handle applies a native settle action or returns a typed GateError for
 // unexpected human gates. Returning nil means "continue waiting for settle."
 // The caller always waits for RunFinished after Cancel.
 func (p *Policy) Handle(run *engine.Run, ev engine.Event) error {
+	switch e := ev.(type) {
+	case engine.SandboxPolicyBlocked:
+		p.sandboxBlocked = true
+		if p.OnRecovery == RecoveryRetry && !p.sandboxRetried {
+			p.sandboxRetried = true
+			run.RecheckSandboxPolicy(e.Epoch)
+			return nil
+		}
+		return e
+	case engine.SandboxPolicyCleared:
+		if p.sandboxBlocked {
+			for _, st := range run.Snapshot().Steps {
+				switch st.Status {
+				case step.StatusAwaitingReview, step.StatusStopped:
+					return &GateError{Code: "gate_human", Message: "human action remains pending after policy recheck", StepID: st.ID}
+				}
+			}
+		}
+		p.sandboxBlocked = false
+		return nil
+	}
+	if p.sandboxBlocked {
+		return nil
+	}
 	switch e := ev.(type) {
 	case engine.ReviewRequest:
 		return &GateError{

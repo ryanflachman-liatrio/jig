@@ -357,3 +357,29 @@ func directorySnapshot(t *testing.T, root string) map[string]fileSnapshot {
 	}
 	return snapshot
 }
+
+func TestD04ReopenScaffoldDefaults(t *testing.T) {
+	plan, err := Plan(Options{Dir: filepath.Join(t.TempDir(), "example"), Template: "minimal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, file := range plan.Files {
+		if !strings.HasSuffix(file.Path, ".toml") {
+			continue
+		}
+		wf, err := workflow.Decode(string(file.Contents), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, st := range wf.Steps {
+			count++
+			if st.ResolvedSandbox().Reference != "host" || st.ResolvedSandbox().Profile != nil {
+				t.Fatal("scaffold enabled sandbox execution")
+			}
+		}
+	}
+	if count == 0 {
+		t.Fatal("no generated steps verified")
+	}
+}

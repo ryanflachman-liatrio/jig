@@ -174,6 +174,10 @@ func projectEvent(rec decodedRecord, aliases *aliasTable, anchor *timeAnchor) Ev
 			steps[i] = aliases.stepAlias(id)
 		}
 		out.Data = mustJSON(map[string]any{"steps": steps})
+	case engine.SandboxPolicyBlocked:
+		out.Data = mustJSON(map[string]any{"reason": engine.SandboxPolicyReason(event.Reason)})
+	case engine.SandboxPolicyCleared:
+		out.Data = mustJSON(map[string]any{})
 	case engine.RunFinished:
 		out.Data = mustJSON(map[string]any{"failed": event.Failed})
 	case engine.StepStatus:

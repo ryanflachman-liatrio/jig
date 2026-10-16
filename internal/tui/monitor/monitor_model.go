@@ -141,6 +141,10 @@ func (r visibleRow) isFileRow() bool {
 // updated as engine events arrive. The user can press esc to return to the
 // runs list.
 type Model struct {
+	policyBlock      *engine.SandboxPolicyBlocked
+	policyChecking   bool
+	policyEpoch      uint64
+	policyCleared    bool
 	sourceStates     map[sourceOwner]sourcePresentation
 	sourceDiffs      map[*toolcall.Diff]recordedDiffCache
 	sourceWindows    map[sourceWindowKey]*sourceWindowCache
@@ -723,6 +727,12 @@ func (m *Model) SetRun(run *engine.Run) {
 // WithSnapshot initialises the monitor from a RunSnapshot so the user sees
 // current state immediately when navigating to an already-running run.
 func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
+	m.policyBlock = nil
+	if snap.PolicyBlock != nil {
+		b := *snap.PolicyBlock
+		m.policyBlock = &b
+		m.policyEpoch = b.Epoch
+	}
 	m.workflow = snap.Workflow
 	m.done = snap.Done
 	m.failed = snap.Failed
@@ -1066,6 +1076,14 @@ func (m Model) compactHelpBindings() []keybind.Binding {
 
 // gateHelpSection builds the section for the currently-active gate entry.
 func (m Model) gateHelpSection() shared.HelpSection {
+	if m.policyBlock != nil {
+		if m.done || m.historical {
+			return shared.HelpSection{Title: "Sandbox policy", Bindings: []keybind.Binding{m.keys.GateBlur}}
+		}
+		recheck := m.keys.RecoverRetry
+		recheck.SetHelp(recheck.Help().Key, "recheck policy")
+		return shared.HelpSection{Title: "Sandbox policy", Bindings: []keybind.Binding{recheck, m.keys.RecoverAbort, m.keys.GateBlur}}
+	}
 	entry, ok := m.activeEntry()
 	if !ok {
 		return shared.HelpSection{Title: "Gate", Bindings: []keybind.Binding{m.keys.GateBlur}}

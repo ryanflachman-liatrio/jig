@@ -58,6 +58,10 @@ func (w *writer) runID(id string) {
 
 func (w *writer) event(ev engine.Event) {
 	switch e := ev.(type) {
+	case engine.SandboxPolicyBlocked:
+		w.errf("sandbox policy blocked: %s", e.Reason)
+	case engine.SandboxPolicyCleared:
+		w.errf("sandbox policy recheck passed")
 	case engine.StepStatus:
 		w.progress("%s %s", e.StepID, e.To)
 	case engine.RunStarted:
@@ -78,7 +82,14 @@ func (w *writer) jsonlEvent(ev engine.Event) {
 		Type string `json:"type"`
 		Data any    `json:"data"`
 	}
-	b, err := json.Marshal(line{Type: eventTypeName(ev), Data: ev})
+	var data any = ev
+	if grant, ok := ev.(engine.SandboxPolicyCleared); ok {
+		data = struct {
+			RunID string
+			Epoch uint64
+		}{grant.RunID, grant.Epoch}
+	}
+	b, err := json.Marshal(line{Type: eventTypeName(ev), Data: data})
 	if err != nil {
 		return
 	}
@@ -87,6 +98,10 @@ func (w *writer) jsonlEvent(ev engine.Event) {
 
 func eventTypeName(ev engine.Event) string {
 	switch ev.(type) {
+	case engine.SandboxPolicyBlocked:
+		return "sandbox_policy_blocked"
+	case engine.SandboxPolicyCleared:
+		return "sandbox_policy_cleared"
 	case engine.RunStarted:
 		return "run_started"
 	case engine.RunFinished:
@@ -166,6 +181,10 @@ func buildEnvelope(mgr *engine.Manager, wf *workflow.Workflow, snap engine.RunSn
 }
 
 func errorInfo(err error) *ErrorInfo {
+	var b engine.SandboxPolicyBlocked
+	if errors.As(err, &b) {
+		return &ErrorInfo{Code: "sandbox_policy_blocked", Message: engine.SandboxPolicyReason(b.Reason)}
+	}
 	var g *GateError
 	if errors.As(err, &g) {
 		return &ErrorInfo{Code: g.Code, Message: g.Message, StepID: g.StepID}

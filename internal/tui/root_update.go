@@ -155,6 +155,18 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case monitor.SandboxPolicyActionMsg:
+		if run, ok := m.handles[msg.RunID]; ok {
+			return m, func() tea.Msg {
+				if msg.Abort {
+					run.AbortSandboxPolicy(msg.Epoch)
+				} else {
+					run.RecheckSandboxPolicy(msg.Epoch)
+				}
+				return nil
+			}
+		}
+		return m, nil
 	case monitor.RecoverResponseMsg:
 		if run, ok := m.handles[msg.RunID]; ok {
 			run.Recover(msg.StepID, msg.Action, msg.Text)
