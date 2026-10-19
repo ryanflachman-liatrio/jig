@@ -2,7 +2,6 @@ package engine
 
 import (
 	"errors"
-	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,7 +22,7 @@ func buildScheduler(t *testing.T, toml string) *scheduler {
 	}
 	noop := func() {}
 	inbox := make(chan schedMsg, 8)
-	return newScheduler(wf, "test-run", inbox, nil, &testExec{}, noop, nil, datastore.Run{}, "", "", func(RunSnapshot) {})
+	return newScheduler(schedulerDeps{wf: wf, runID: "test-run", inbox: inbox, exec: &testExec{}, cancel: noop, onDone: func(RunSnapshot) {}})
 }
 
 // TestResetClosure verifies closureOf returns the correct reset set.

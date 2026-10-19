@@ -375,7 +375,7 @@ func TestCriticalTier2FindingOnlyEscalatesCurrentExecution(t *testing.T) {
 	wf := &workflow.Workflow{Meta: workflow.Meta{Name: "current-security"}, Steps: []workflow.Step{{ID: "agent", Type: workflow.StepAgent}}}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	scheduler := newScheduler(wf, "run", make(chan schedMsg, 4), nil, &testExec{}, cancel, nil, datastore.Run{}, "", "", func(RunSnapshot) {})
+	scheduler := newScheduler(schedulerDeps{wf: wf, runID: "run", inbox: make(chan schedMsg, 4), exec: &testExec{}, cancel: cancel, onDone: func(RunSnapshot) {}})
 	state := scheduler.states["agent"]
 	state.Status = step.StatusRunning
 	state.Generation, state.Iteration, state.Attempt = 2, 3, 4

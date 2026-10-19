@@ -99,7 +99,7 @@ depends_on = ["a"]
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	exec := &crashRecordingExec{}
-	s := newScheduler(wf, "r", make(chan schedMsg, 1), nil, exec, cancel, w, datastore.Run{}, "", "", func(RunSnapshot) {})
+	s := newScheduler(schedulerDeps{wf: wf, runID: "r", inbox: make(chan schedMsg, 1), exec: exec, cancel: cancel, writer: w, onDone: func(RunSnapshot) {}})
 	s.states["a"].Status = step.StatusRunning
 	s.states["a"].Timing.Apply(step.StatusRunning, time.Now().Add(-time.Second))
 	priorTiming := s.states["a"].Timing

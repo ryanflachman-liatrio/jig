@@ -2228,7 +2228,7 @@ command = "true"
 		if err != nil {
 			t.Fatal(err)
 		}
-		s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, datastore.Run{}, "", "", func(RunSnapshot) {})
+		s := newScheduler(schedulerDeps{wf: wf, runID: "test", inbox: make(chan schedMsg, 4), cancel: cancel, onDone: func(RunSnapshot) {}})
 		s.states["check"].Status = step.StatusRunning
 		s.states["check"].Result = &step.Result{Status: step.StatusSucceeded}
 
@@ -2257,7 +2257,7 @@ command = "false"
 		if err != nil {
 			t.Fatal(err)
 		}
-		s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, datastore.Run{}, "", "", func(RunSnapshot) {})
+		s := newScheduler(schedulerDeps{wf: wf, runID: "test", inbox: make(chan schedMsg, 4), cancel: cancel, onDone: func(RunSnapshot) {}})
 		s.states["check"].Status = step.StatusRunning
 		s.states["check"].Result = &step.Result{Status: step.StatusSucceeded}
 
@@ -2301,7 +2301,7 @@ command = "true"
 		if err := os.WriteFile(filepath.Join(sessionDir, "occupied"), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, runDir, "", "", func(RunSnapshot) {})
+		s := newScheduler(schedulerDeps{wf: wf, runID: "test", inbox: make(chan schedMsg, 4), cancel: cancel, runDir: runDir, onDone: func(RunSnapshot) {}})
 		s.states["check"].Status = step.StatusRunning
 		s.states["check"].Result = &step.Result{Status: step.StatusSucceeded, SessionID: "sess"}
 
@@ -2342,7 +2342,7 @@ skill = "agent"
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	exec := &sessionBarrierExec{runDir: runDir, seen: make(chan datastore.SessionInfo, 1)}
-	s := newScheduler(wf, "fresh-session", make(chan schedMsg, 4), nil, exec, cancel, writer, runDir, root, filepath.Dir(root), func(RunSnapshot) { close(done) })
+	s := newScheduler(schedulerDeps{wf: wf, runID: "fresh-session", inbox: make(chan schedMsg, 4), exec: exec, cancel: cancel, writer: writer, runDir: runDir, jigRoot: root, repoRoot: filepath.Dir(root), onDone: func(RunSnapshot) { close(done) }})
 	go s.run(ctx)
 
 	select {
@@ -2390,7 +2390,7 @@ block_on = "mystep.status == 'blocked'"
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, datastore.Run{}, "", "", func(RunSnapshot) {})
+	s := newScheduler(schedulerDeps{wf: wf, runID: "test", inbox: make(chan schedMsg, 4), cancel: cancel, onDone: func(RunSnapshot) {}})
 	sub := sub{live: make(chan Event, 4), ctrl: make(chan Event, 4)}
 	s.subs = append(s.subs, sub)
 	s.states["mystep"].Status = step.StatusRunning

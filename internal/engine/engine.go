@@ -237,7 +237,7 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 		run.runLock = nil
 		close(run.done)
 	}
-	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir, m.store.Root(), repoRoot, onDone)
+	s := newScheduler(schedulerDeps{wf: wf, runID: runID, inbox: inbox, subs: subs, exec: m.exec, cancel: cancel, writer: w, runDir: runDir, jigRoot: m.store.Root(), repoRoot: repoRoot, onDone: onDone})
 	if security != nil {
 		s.securitySignals = security.signals
 	}
@@ -873,36 +873,44 @@ type scheduler struct {
 	foreach fanOutRegistry
 }
 
-func newScheduler(
-	wf *workflow.Workflow,
-	runID string,
-	inbox chan schedMsg,
-	subs []sub,
-	exec Executor,
-	cancel context.CancelFunc,
-	writer *manifest.Writer,
-	runDir datastore.Run,
-	jigRoot string,
-	repoRoot string,
-	onDone func(RunSnapshot),
-) *scheduler {
+// schedulerDeps are newScheduler's inputs. The zero value of every optional
+// field means "not configured": no subscribers, no executor, persistence off.
+type schedulerDeps struct {
+	wf       *workflow.Workflow // required
+	runID    string
+	inbox    chan schedMsg // required
+	subs     []sub
+	exec     Executor
+	cancel   context.CancelFunc
+	writer   *manifest.Writer // nil when persistence is off
+	runDir   datastore.Run    // disabled when persistence is off
+	jigRoot  string           // "" when persistence is off
+	repoRoot string           // "" on the persistence-off / non-git path
+	onDone   func(RunSnapshot)
+}
+
+func newScheduler(d schedulerDeps) *scheduler {
+	if d.wf == nil || d.inbox == nil {
+		panic("engine: newScheduler requires a workflow and an inbox")
+	}
+	wf := d.wf
 	states := make(map[string]*step.State, len(wf.Steps))
 	for _, s := range wf.Steps {
 		states[s.ID] = &step.State{ID: s.ID, Status: step.StatusPending}
 	}
 	return &scheduler{
 		wf:              wf,
-		runID:           runID,
+		runID:           d.runID,
 		states:          states,
-		inbox:           inbox,
-		subs:            subs,
-		exec:            exec,
-		cancel:          cancel,
-		writer:          writer,
-		runDir:          runDir,
+		inbox:           d.inbox,
+		subs:            d.subs,
+		exec:            d.exec,
+		cancel:          d.cancel,
+		writer:          d.writer,
+		runDir:          d.runDir,
 		pendingLoops:    make(map[string]*loopIntent),
-		jigRoot:         jigRoot,
-		repoRoot:        repoRoot,
+		jigRoot:         d.jigRoot,
+		repoRoot:        d.repoRoot,
 		worktrees:       make(map[string]stepWorktree),
 		executionViews:  make(map[string]executionWorkspace),
 		stepCommits:     make(map[string]string),
@@ -917,7 +925,7 @@ func newScheduler(
 			phCheckBlockOn,
 			phSquashMergeIntegration,
 		},
-		onDone:  onDone,
+		onDone:  d.onDone,
 		foreach: newFanOutRegistry(),
 	}
 }

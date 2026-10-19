@@ -45,7 +45,7 @@ run = "true"
 				}
 				cancel := func() {}
 				ctrl := make(chan Event, 16)
-				s := newScheduler(wf, "r", make(chan schedMsg, 1), []sub{{ctrl: ctrl}}, &testExec{}, cancel, writer, datastore.RunAt(runDir), "", "", func(RunSnapshot) {})
+				s := newScheduler(schedulerDeps{wf: wf, runID: "r", inbox: make(chan schedMsg, 1), subs: []sub{{ctrl: ctrl}}, exec: &testExec{}, cancel: cancel, writer: writer, runDir: datastore.RunAt(runDir), onDone: func(RunSnapshot) {}})
 				if err := s.emit(RunStarted{RunID: "r", Workflow: "timing", Steps: []string{"a", "b"}}); err != nil {
 					t.Fatal(err)
 				}

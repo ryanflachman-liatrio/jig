@@ -233,7 +233,7 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 		run.runLock = nil
 		close(run.done)
 	}
-	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir, m.store.Root(), repoRoot, onDone)
+	s := newScheduler(schedulerDeps{wf: wf, runID: runID, inbox: inbox, subs: subs, exec: m.exec, cancel: cancel, writer: w, runDir: runDir, jigRoot: m.store.Root(), repoRoot: repoRoot, onDone: onDone})
 	s.resolver = m.resolver
 	s.secretResolver = secrets
 	s.getCauseHint = run.causeSnapshot
