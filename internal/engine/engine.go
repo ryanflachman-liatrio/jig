@@ -771,17 +771,12 @@ type scheduler struct {
 	// runCtx is the run's context, captured by runLoop so asynchronous work
 	// started from a command (the agent conflict resolver) observes stop and
 	// cancel. It is read only on the scheduler goroutine.
-	runCtx context.Context
-	// resolvingIntegration maps a step to the sequence number of its in-flight
-	// agent conflict resolution. A result whose sequence no longer matches was
-	// superseded (reset, abort, cancel) and is dropped.
-	resolvingIntegration map[string]uint64
-	integrationSeq       uint64
-	cancel               context.CancelFunc        // cancels the run context; used by abort policy
-	writer               *manifest.Writer          // nil when persistence is disabled (root = "")
-	runDir               datastore.Run             // .jig/runs/<runID>/; "" when persistence is disabled
-	structured           map[string]map[string]any // cached JSON decode of step Result.Structured
-	stepFeedback         map[string]string         // gotoStepID → feedback for route replay
+	runCtx         context.Context
+	integrationSeq uint64
+	cancel         context.CancelFunc // cancels the run context; used by abort policy
+	writer         *manifest.Writer   // nil when persistence is disabled (root = "")
+	runDir         datastore.Run      // .jig/runs/<runID>/; "" when persistence is disabled
+	stepFeedback   map[string]string  // gotoStepID → feedback for route replay
 	// rerunSource maps a route's goto target → the firing source step id. When a
 	// coalesced rewind has several contributors it names the first in
 	// declaration order. It lets buildStepContext name why a step is re-running.
@@ -802,7 +797,6 @@ type scheduler struct {
 	classInFlight    map[string]int
 	readOnlyInFlight int
 	mutatingInFlight int
-	retryNotBefore   map[string]time.Time
 	securityFindings int
 	networkRequests  int
 	secretResolver   SecretResolver
@@ -815,7 +809,6 @@ type scheduler struct {
 	repoRoot   string            // git repo root (parent of jigRoot)
 	worktrees  map[string]string // stepID → active worktree absolute path
 	wtBaseSHAs map[string]string // stepID → HEAD SHA captured at worktree creation
-	diffs      map[string]string // stepID → latest diff text (updated each execution)
 	// executionViews holds read-only dispatch snapshots separately from mutation
 	// worktrees so they can never be captured, validated, or integrated as edits.
 	executionViews map[string]executionWorkspace
@@ -867,19 +860,6 @@ type scheduler struct {
 	// trigger it again for the same step.
 	seenEscalations map[string]bool
 
-	// skippedByOperator marks steps a human chose to skip at the recovery gate
-	// (RecoverSkip). The step is transitioned to StatusFailed, but unlike an
-	// abort-policy failure it must NOT block its dependents: it is treated as a
-	// transparent, on_failure="continue" node by depsReady and anyPendingRunnable.
-	// This is the interactive equivalent of a static on_failure = "continue".
-	skippedByOperator map[string]bool
-
-	// skippedByGuard marks steps whose when= condition evaluated false. These
-	// steps are optional branches: a dependent should not be blocked just because
-	// an optional upstream node did not apply. They are transparent in depsReady,
-	// cascadeSkip, and anyPendingRunnable.
-	skippedByGuard map[string]bool
-
 	pendingQuestions map[string]map[string]pendingQuestion
 	// restoredQuestionResponses accumulates answers to questions whose original
 	// worker died. Once the last answer arrives, the scheduler resumes the
@@ -894,11 +874,6 @@ type scheduler struct {
 	// worker): run-level cancellation still exists via s.cancel, but stop is
 	// surgical. Entries are removed when the worker's stepDoneMsg is handled.
 	stepCancels map[string]context.CancelFunc
-	// stopping marks steps whose worker was cancelled by Run.Stop (not by failure
-	// or run-level abort). When that worker's stepDoneMsg arrives it is routed to
-	// StatusStopped — partial work captured, no failure policy, run stays alive —
-	// rather than through the normal failure path.
-	stopping map[string]bool
 
 	// postExecChain is the Chain of Responsibility built once in newScheduler
 	// below and walked by (stepDoneMsg).execute (commands.go) after every
@@ -956,18 +931,15 @@ func newScheduler(
 		cancel:                    cancel,
 		writer:                    writer,
 		runDir:                    runDir,
-		structured:                make(map[string]map[string]any),
 		stepFeedback:              make(map[string]string),
 		rerunSource:               make(map[string]string),
 		rerunMax:                  make(map[string]int),
 		pendingLoops:              make(map[string]*loopIntent),
 		classInFlight:             make(map[string]int),
-		retryNotBefore:            make(map[string]time.Time),
 		jigRoot:                   jigRoot,
 		repoRoot:                  repoRoot,
 		worktrees:                 make(map[string]string),
 		wtBaseSHAs:                make(map[string]string),
-		diffs:                     make(map[string]string),
 		executionViews:            make(map[string]executionWorkspace),
 		stepCommits:               make(map[string]string),
 		pendingUserInputs:         make(map[string][]workflow.Input),
@@ -976,14 +948,10 @@ func newScheduler(
 		stickyUserInputs:          make(map[string][]ResolvedInput),
 		reviewSessions:            make(map[string]review.Session),
 		seenEscalations:           make(map[string]bool),
-		skippedByOperator:         make(map[string]bool),
-		skippedByGuard:            make(map[string]bool),
 		pendingQuestions:          make(map[string]map[string]pendingQuestion),
 		restoredQuestionResponses: make(map[string][]interaction.QuestionResponse),
 		stepCancels:               make(map[string]context.CancelFunc),
-		stopping:                  make(map[string]bool),
 		runtime:                   make(map[string]*stepRuntime),
-		resolvingIntegration:      make(map[string]uint64),
 		postExecChain: []postExecHandler{
 			phCaptureWorktreeDiff,
 			phValidateMutationPaths,
@@ -1142,7 +1110,7 @@ func (s *scheduler) nextReady(ctx context.Context) (*workflow.Step, bool) {
 			}
 			continue
 		}
-		if until := s.retryNotBefore[st.ID]; !until.IsZero() && time.Now().Before(until) {
+		if until := s.rt(st.ID).retryNotBefore; !until.IsZero() && time.Now().Before(until) {
 			continue
 		}
 		if !s.resourceAvailable(st) {
@@ -1163,7 +1131,7 @@ func (s *scheduler) nextReady(ctx context.Context) (*workflow.Step, bool) {
 				if !s.transition(st.ID, state.Status, step.StatusSkipped) {
 					return nil, false
 				}
-				s.skippedByGuard[st.ID] = true
+				s.rt(st.ID).skippedByGuard = true
 				s.cascadeSkip(st.ID)
 				continue
 			}
@@ -1255,14 +1223,14 @@ func (s *scheduler) depsReady(st *workflow.Step) bool {
 		// A guard-skipped dep is transparent when the dependent only uses it for
 		// sequencing (no @ref input). If the dependent references output data from
 		// the guard-skipped step it must still wait (and will be cascade-skipped).
-		if depState.Status == step.StatusSkipped && s.skippedByGuard[depID] && !stepRefsDep(st, depID) {
+		if depState.Status == step.StatusSkipped && s.rt(depID).skippedByGuard && !stepRefsDep(st, depID) {
 			continue
 		}
 		// A failed dep is "ready" when it declared on_failure = "continue", or
 		// when a human skipped it at the recovery gate (RecoverSkip) — both mean
 		// "its failure does not block dependents."
 		if depState.Status == step.StatusFailed {
-			if s.skippedByOperator[depID] {
+			if s.rt(depID).skippedByOperator {
 				continue
 			}
 			depStep := s.stepByID(depID)
@@ -1320,14 +1288,14 @@ func (s *scheduler) anyPendingRunnable() bool {
 		if st.Status == step.StatusSkipped {
 			// Guard-skipped steps are transparent optional branches — dependents
 			// should not be considered blocked just because the guard didn't fire.
-			if !s.skippedByGuard[id] {
+			if !s.rt(id).skippedByGuard {
 				blocked[id] = true
 			}
 		}
 		if st.Status == step.StatusFailed {
 			// An operator-skipped step (RecoverSkip) is transparent like a
 			// continue-failed one — it must not seed the blocked set.
-			if s.skippedByOperator[id] {
+			if s.rt(id).skippedByOperator {
 				continue
 			}
 			wfStep := s.stepByID(id)
@@ -1706,7 +1674,7 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	}
 	// Clear the structured-output cache so block_on and when-guards always
 	// see fresh output after a re-run rather than a stale cached decode.
-	delete(s.structured, st.ID)
+	s.rt(st.ID).structured = nil
 
 	// Give this worker its own child context so Run.Stop can cancel it
 	// independently of the run context and its siblings (spec 07 B1). The child is
@@ -1874,15 +1842,15 @@ func (s *scheduler) structuredField(stepID string, fields []string) (any, error)
 	if state == nil || state.Result == nil {
 		return nil, fmt.Errorf("step %q has no result", stepID)
 	}
-	m, ok := s.structured[stepID]
-	if !ok {
+	m := s.rt(stepID).structured
+	if m == nil {
 		if len(state.Result.Structured) == 0 {
 			return nil, fmt.Errorf("step %q has no structured output", stepID)
 		}
 		if err := json.Unmarshal(state.Result.Structured, &m); err != nil {
 			return nil, fmt.Errorf("decode structured output for step %q: %w", stepID, err)
 		}
-		s.structured[stepID] = m
+		s.rt(stepID).structured = m
 	}
 	var value any = m
 	for _, field := range fields {
@@ -2081,7 +2049,7 @@ func (s *scheduler) handleSecurityFinding(sf SecurityFinding) {
 // handleStop cancels one running step's worker without ending the run (spec 07
 // B1). It cancels only that step's child context — never the run context — so
 // the worker exits, its stepDoneMsg is routed to StatusStopped (handle marks it
-// via s.stopping), and the run stays alive and quiescent. Stopping a step that
+// via stepRuntime.stopping), and the run stays alive and quiescent. Stopping a step that
 // has no live worker (pending, already terminal, parked without a worker, or an
 // unknown id) is a documented no-op: the absence of a cancel-registry entry is
 // exactly "no worker in flight".
@@ -2094,7 +2062,7 @@ func (s *scheduler) handleStop(m stopMsg) {
 	// stepDoneMsg (which may already be racing us) is routed to StatusStopped
 	// rather than through the failure policy. The registry entry is cleared when
 	// that stepDoneMsg is handled.
-	s.stopping[m.stepID] = true
+	s.rt(m.stepID).stopping = true
 	cancel()
 }
 
@@ -2269,7 +2237,6 @@ func (s *scheduler) handleReset(m resetMsg) {
 			delete(s.worktrees, id)
 			delete(s.wtBaseSHAs, id)
 		}
-		delete(s.diffs, id)
 
 		delete(s.stepCommits, id)
 		s.runtime[id] = s.rt(id).afterReset()
@@ -2280,8 +2247,6 @@ func (s *scheduler) handleReset(m resetMsg) {
 		delete(s.pendingUserInputs, id)
 		delete(s.collectedUserInputs, id)
 		delete(s.preResolvedInputs, id)
-		delete(s.stopping, id)
-		delete(s.resolvingIntegration, id)
 	}
 	// Remove the current expansion from runtime scheduling for every family in
 	// the (static) closure — a fresh FanOutExpanded/manifest is written the
@@ -2318,7 +2283,7 @@ func (s *scheduler) handleRecover(m recoverMsg) {
 		// skippedByOperator marks it transparent so depsReady/anyPendingRunnable
 		// treat it like an on_failure="continue" node — dependents proceed and the
 		// run keeps going. No worker is re-dispatched; the recovery loop ends here.
-		s.skippedByOperator[m.stepID] = true
+		s.rt(m.stepID).skippedByOperator = true
 		s.restoredHold = false
 		s.transitionRecovery(m.stepID, state.Status, step.StatusFailed, RecoverSkip)
 
@@ -2397,7 +2362,7 @@ func (s *scheduler) discardMutationWorkspace(stepID string) error {
 	}
 	delete(s.worktrees, stepID)
 	delete(s.wtBaseSHAs, stepID)
-	delete(s.diffs, stepID)
+	s.rt(stepID).diff = ""
 	// createWorktreeAt uses -B and therefore resets any surviving branch ref to
 	// the current run tip. Branch deletion is only cleanup, not correctness.
 	_, _ = gitCmd(s.repoRoot, "branch", "-D", s.stepBranchName(stepID))
@@ -2417,7 +2382,7 @@ func (s *scheduler) handleResolveIntegration(m resolveIntegrationMsg) {
 	if state == nil || state.Status != step.StatusAwaitingIntegration {
 		return // stale or duplicate
 	}
-	if _, busy := s.resolvingIntegration[m.stepID]; busy {
+	if s.rt(m.stepID).resolvingSeq != 0 {
 		s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("step %q: agent conflict resolution in progress; wait for it before resolving or aborting", m.stepID)})
 		return
 	}
@@ -2490,7 +2455,7 @@ func (s *scheduler) handleResolveIntegrationWithAgent(m resolveIntegrationWithAg
 	if state == nil || state.Status != step.StatusAwaitingIntegration || s.resolver == nil || st == nil || st.Type != workflow.StepAgent {
 		return
 	}
-	if _, busy := s.resolvingIntegration[m.stepID]; busy {
+	if s.rt(m.stepID).resolvingSeq != 0 {
 		s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("step %q: agent conflict resolution already in progress", m.stepID)})
 		return
 	}
@@ -2502,7 +2467,7 @@ func (s *scheduler) handleResolveIntegrationWithAgent(m resolveIntegrationWithAg
 	}
 	s.integrationSeq++
 	seq := s.integrationSeq
-	s.resolvingIntegration[m.stepID] = seq
+	s.rt(m.stepID).resolvingSeq = seq
 	ctx, resolver, inbox := s.runCtx, s.resolver, s.inbox
 	req := IntegrationResolutionRequest{RunID: s.runID, Step: st, Worktree: s.runWorktree, Conflicts: paths}
 	go func() {
@@ -2518,10 +2483,10 @@ func (s *scheduler) handleResolveIntegrationWithAgent(m resolveIntegrationWithAg
 // result for a superseded request (reset or abort while the agent ran) is
 // dropped.
 func (s *scheduler) handleIntegrationResolved(m integrationResolvedMsg) {
-	if seq, ok := s.resolvingIntegration[m.stepID]; !ok || seq != m.seq {
+	if s.rt(m.stepID).resolvingSeq != m.seq {
 		return
 	}
-	delete(s.resolvingIntegration, m.stepID)
+	s.rt(m.stepID).resolvingSeq = 0
 	state := s.states[m.stepID]
 	st := s.stepByID(m.stepID)
 	if state == nil || state.Status != step.StatusAwaitingIntegration || st == nil {
@@ -2794,10 +2759,10 @@ func (s *scheduler) resolveGuardValue(ref workflow.ConditionRef) (any, workflow.
 		}
 	}
 
-	m, ok := s.structured[ref.Step]
-	if !ok && len(depState.Result.Structured) > 0 {
+	m := s.rt(ref.Step).structured
+	if m == nil && len(depState.Result.Structured) > 0 {
 		if err := json.Unmarshal(depState.Result.Structured, &m); err == nil {
-			s.structured[ref.Step] = m
+			s.rt(ref.Step).structured = m
 		}
 	}
 	var cur any = m
@@ -2822,7 +2787,7 @@ func (s *scheduler) resolveGuardValue(ref workflow.ConditionRef) (any, workflow.
 }
 
 // stepStringField reads a top-level string field from stepID's own structured
-// output, populating the s.structured cache the same way resolveGuardValue
+// output, populating the stepRuntime.structured cache the same way resolveGuardValue
 // does. Used to surface the agent-authored `block_reason` base-schema field
 // in a block_on gate without requiring a workflow-authored field reference.
 func (s *scheduler) stepStringField(stepID, field string) string {
@@ -2830,10 +2795,10 @@ func (s *scheduler) stepStringField(stepID, field string) string {
 	if depState == nil || depState.Result == nil {
 		return ""
 	}
-	m, ok := s.structured[stepID]
-	if !ok && len(depState.Result.Structured) > 0 {
+	m := s.rt(stepID).structured
+	if m == nil && len(depState.Result.Structured) > 0 {
 		if err := json.Unmarshal(depState.Result.Structured, &m); err == nil {
-			s.structured[stepID] = m
+			s.rt(stepID).structured = m
 		}
 	}
 	value, _ := m[field].(string)
@@ -2960,7 +2925,7 @@ func (s *scheduler) cascadeSkip(skipID string) {
 				// Guard-skipped deps are transparent when the dependent only uses
 				// them for sequencing (no @ref input). If the dependent references
 				// output data from the guard-skipped step it must still be skipped.
-				if s.skippedByGuard[dep] && !stepRefsDep(st, dep) {
+				if s.rt(dep).skippedByGuard && !stepRefsDep(st, dep) {
 					continue
 				}
 				// A skipped dep cascades unless the dep opted into "continue".
@@ -3060,7 +3025,7 @@ func (s *scheduler) collectDepDiffs(stepID string) string {
 			return
 		}
 		visited[id] = true
-		if d, ok := s.diffs[id]; ok && d != "" {
+		if d := s.rt(id).diff; d != "" {
 			parts = append(parts, d)
 		}
 		if wfStep := s.stepByID(id); wfStep != nil {
@@ -3715,7 +3680,7 @@ func (s *scheduler) terminalManifest(e Event) *manifest.StepTerminal {
 		}
 	}
 	term.IntegrationCommit = s.stepCommits[ss.StepID]
-	if diff := s.diffs[ss.StepID]; diff != "" {
+	if diff := s.rt(ss.StepID).diff; diff != "" {
 		term.DiffSHA256 = fmt.Sprintf("%x", sha256.Sum256([]byte(diff)))
 	}
 	return term

@@ -35,7 +35,7 @@ type postExecHandler func(s *scheduler, m stepDoneMsg, wfStep *workflow.Step) po
 // so downstream review steps always see the most-recent state.
 func phCaptureWorktreeDiff(s *scheduler, m stepDoneMsg, _ *workflow.Step) postExecDecision {
 	if path, ok := s.worktrees[m.stepID]; ok {
-		s.diffs[m.stepID] = captureDiff(path, s.wtBaseSHAs[m.stepID])
+		s.rt(m.stepID).diff = captureDiff(path, s.wtBaseSHAs[m.stepID])
 		if result := s.states[m.stepID].Result; result != nil {
 			result.ChangedFiles = changedFiles(path, s.wtBaseSHAs[m.stepID])
 		}

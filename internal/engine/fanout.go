@@ -283,7 +283,7 @@ func (s *scheduler) nextReadyChild(familyID string) (*workflow.Step, bool) {
 			s.transition(childID, step.StatusPending, step.StatusFailed)
 			continue
 		}
-		if until := s.retryNotBefore[childID]; !until.IsZero() && time.Now().Before(until) {
+		if until := s.rt(childID).retryNotBefore; !until.IsZero() && time.Now().Before(until) {
 			continue
 		}
 		if fam.MaxParallel > 0 && fam.InFlight >= fam.MaxParallel {

@@ -25,7 +25,7 @@ func TestEvalGuardCompoundTypedExpressions(t *testing.T) {
 		states: map[string]*step.State{
 			"analyze": {ID: "analyze", Result: &step.Result{Structured: json.RawMessage(`{"all_succeeded":true,"count":10,"status":"ready"}`)}},
 		},
-		structured: map[string]map[string]any{},
+		runtime: map[string]*stepRuntime{},
 	}
 	tests := []struct {
 		raw  string
@@ -96,7 +96,7 @@ func TestEvalGuardShortCircuitsAndFailsClosed(t *testing.T) {
 		states: map[string]*step.State{
 			"flag": {ID: "flag", Result: &step.Result{Verdict: "true"}},
 		},
-		structured: map[string]map[string]any{},
+		runtime: map[string]*stepRuntime{},
 	}
 	for raw, want := range map[string]bool{
 		"flag || missing.value == 'x'":   true,

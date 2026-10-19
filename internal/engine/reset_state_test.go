@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+	"time"
 	"unsafe"
 
 	"github.com/ryanflachman-liatrio/jig/internal/step"
@@ -24,10 +25,6 @@ var retainedOnReset = map[string]string{
 	"stepCancels":      "removed when the worker's stepDoneMsg is handled; reset requires no in-flight work",
 	"executionViews":   "released when the read-only dispatch finishes; reset requires no in-flight work",
 
-	"skippedByGuard":            "SUSPECT: a reset step stays transparent to depsReady until it re-runs",
-	"skippedByOperator":         "SUSPECT: a reset step stays transparent to depsReady until it re-runs",
-	"structured":                "SUSPECT: the cached decode of the pre-reset result outlives it",
-	"retryNotBefore":            "SUSPECT: a pre-reset retry backoff still delays the re-run",
 	"pendingQuestions":          "SUSPECT: questions from the pre-reset execution survive",
 	"restoredQuestionResponses": "SUSPECT: answers for the pre-reset execution survive",
 }
@@ -171,6 +168,10 @@ func nonNilZero(t reflect.Type) reflect.Value {
 func fillNonZero(v reflect.Value) {
 	for i := 0; i < v.NumField(); i++ {
 		f := reflect.NewAt(v.Field(i).Type(), unsafe.Pointer(v.Field(i).UnsafeAddr())).Elem()
+		if f.Type() == reflect.TypeOf(time.Time{}) {
+			f.Set(reflect.ValueOf(time.Unix(1, 0)))
+			continue
+		}
 		switch f.Kind() {
 		case reflect.String:
 			f.SetString("x")
@@ -178,6 +179,8 @@ func fillNonZero(v reflect.Value) {
 			f.SetBool(true)
 		case reflect.Int:
 			f.SetInt(1)
+		case reflect.Uint64:
+			f.SetUint(1)
 		case reflect.Map:
 			f.Set(reflect.MakeMap(f.Type()))
 			f.SetMapIndex(reflect.Zero(f.Type().Key()), nonNilZero(f.Type().Elem()))

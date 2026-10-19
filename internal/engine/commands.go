@@ -83,15 +83,15 @@ func (m stepDoneMsg) execute(s *scheduler) {
 	// returned so a resume keeps its captured session id, preserve its partial
 	// worktree diff on disk, and park it at StatusStopped — the run stays alive
 	// and becomes quiescent. Skip the failure policy and the post-exec chain.
-	if s.stopping[m.stepID] {
-		delete(s.stopping, m.stepID)
+	if s.rt(m.stepID).stopping {
+		s.rt(m.stepID).stopping = false
 		if m.result != nil {
 			s.states[m.stepID].Result = m.result
 		}
 		// Capture the partial diff now: on the normal path phCaptureWorktreeDiff
 		// does this, but a stopped worker never reaches the post-exec chain.
 		if path, ok := s.worktrees[m.stepID]; ok {
-			s.diffs[m.stepID] = captureDiff(path, s.wtBaseSHAs[m.stepID])
+			s.rt(m.stepID).diff = captureDiff(path, s.wtBaseSHAs[m.stepID])
 		}
 		from := s.states[m.stepID].Status
 		s.transition(m.stepID, from, step.StatusStopped)
@@ -226,7 +226,7 @@ func (m stopMsg) execute(s *scheduler)                { s.handleStop(m) }
 func (m resumeMsg) execute(s *scheduler)              { s.handleResume(m) }
 func (m resetMsg) execute(s *scheduler)               { s.handleReset(m) }
 func (m securityFindingMsg) execute(s *scheduler)     { s.handleSecurityFinding(m.sf) }
-func (m retryWakeMsg) execute(s *scheduler)           { delete(s.retryNotBefore, m.stepID) }
+func (m retryWakeMsg) execute(s *scheduler)           { s.rt(m.stepID).retryNotBefore = time.Time{} }
 func (m networkRequestMsg) execute(s *scheduler) {
 	s.networkRequests++
 	cap := s.wf.Defaults.MaxNetworkRequests
@@ -248,7 +248,7 @@ func (s *scheduler) scheduleAutomaticRetry(stepID string, wfStep *workflow.Step,
 	}
 	state.Attempt++
 	delay := retryDelay(wfStep.Retry, state.Attempt)
-	s.retryNotBefore[stepID] = time.Now().Add(delay)
+	s.rt(stepID).retryNotBefore = time.Now().Add(delay)
 	from := state.Status
 	s.transition(stepID, from, step.StatusPending)
 	if delay == 0 {

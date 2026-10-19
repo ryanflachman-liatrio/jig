@@ -110,7 +110,7 @@ func TestPrepareReviewPreservesTargetOrder(t *testing.T) {
 		"overview":   "short summary",
 		"proof_path": "proof.txt",
 	})
-	s.diffs["write"] = "diff --git a/a b/a\n"
+	s.rt("write").diff = "diff --git a/a b/a\n"
 	wf, err := workflow.Decode(`
 [workflow]
 name = "review-order"
@@ -164,8 +164,7 @@ func reviewScheduler(runWorktree string, fields map[string]any) *scheduler {
 			"write": {ID: "write", Result: &step.Result{Status: step.StatusSucceeded}},
 			"gate":  {ID: "gate"},
 		},
-		structured: map[string]map[string]any{"write": fields},
-		diffs:      make(map[string]string),
+		runtime: map[string]*stepRuntime{"write": {structured: fields}},
 	}
 }
 

@@ -226,7 +226,7 @@ run = "sleep 10"
 // TestStoppedStepCapturesDiff proves diff capture runs on cancel (white-box):
 // when a stopped step's worktree holds a modification, the scheduler records a
 // non-empty diff — the partial work is preserved, not discarded. It drives
-// handle(stepDoneMsg) directly with s.stopping set, since the captured diff is
+// handle(stepDoneMsg) directly with stepRuntime.stopping set, since the captured diff is
 // internal scheduler state.
 func TestStoppedStepCapturesDiff(t *testing.T) {
 	repo := t.TempDir()
@@ -278,14 +278,14 @@ run = "true"
 	s.worktrees["a"] = repo
 	s.wtBaseSHAs["a"] = baseSHA
 	s.stepCancels["a"] = func() {}
-	s.stopping["a"] = true
+	s.rt("a").stopping = true
 
 	s.handle(stepDoneMsg{stepID: "a", result: &step.Result{Status: step.StatusFailed, Err: "stopped"}})
 
 	if got := s.states["a"].Status; got != step.StatusStopped {
 		t.Fatalf("step status = %q after stop, want stopped", got)
 	}
-	if s.diffs["a"] == "" {
+	if s.rt("a").diff == "" {
 		t.Fatal("captured diff is empty; capture did not run on cancel")
 	}
 	if s.inFlight != 0 {

@@ -242,11 +242,11 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	s.reviewSessions = checkpoint.reviewSessions
 	s.restoredHold = checkpoint.hasParks()
 	for stepID := range checkpoint.recoverySkipped {
-		s.skippedByOperator[stepID] = true
+		s.rt(stepID).skippedByOperator = true
 	}
 	for i := range wf.Steps {
 		if checkpoint.states[wf.Steps[i].ID].Status == step.StatusSkipped && wf.Steps[i].When != "" {
-			s.skippedByGuard[wf.Steps[i].ID] = true
+			s.rt(wf.Steps[i].ID).skippedByGuard = true
 		}
 	}
 	// Rebuild runtime fan-out registries from the FanOutExpanded manifests
