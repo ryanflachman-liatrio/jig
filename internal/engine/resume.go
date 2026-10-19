@@ -254,10 +254,7 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	// authoritative creation record, never a fresh producer read (see
 	// rebuildFanOutFamily). These must be non-nil maps (dispatchForEach writes
 	// into them directly) even when the run has no foreach family at all.
-	s.fanOutFamilies = checkpoint.fanOutFamilies
-	s.fanOutFamilyOrder = checkpoint.fanOutFamilyOrder
-	s.fanOutChildren = checkpoint.fanOutChildren
-	s.fanOutItemByChild = checkpoint.fanOutItemByChild
+	s.foreach = checkpoint.fanOut
 	// A family left Running settles by ordinary child transitions during live
 	// execution (transitionRecovery's trySettleFamilyIfChild hook), which is
 	// edge-triggered on a child reaching a terminal status. If every child was
@@ -267,7 +264,7 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	// non-terminal child (trySettleFamily itself guards on that) and for a
 	// family that already settled before the crash (guarded by fam.Settled /
 	// state.Status != Running).
-	for _, familyID := range s.fanOutFamilyOrder {
+	for _, familyID := range s.foreach.order {
 		s.trySettleFamily(familyID)
 	}
 	if err := s.restoreRunBranch(len(checkpoint.integrations) > 0); err != nil {
@@ -351,14 +348,9 @@ type unfinishedCheckpoint struct {
 	missingInputPayload map[string]string
 	recoverySkipped     map[string]bool
 
-	// Runtime fan-out registries rebuilt from FanOutExpanded events (see
-	// rebuildFanOutFamily below). Mirrors scheduler.fanOutFamilies/
-	// fanOutFamilyOrder/fanOutChildren/fanOutItemByChild exactly — Resume
-	// copies these straight into the new scheduler.
-	fanOutFamilies    map[string]*fanOutFamily
-	fanOutFamilyOrder []string
-	fanOutChildren    map[string]*workflow.Step
-	fanOutItemByChild map[string]FanOutItem
+	// fanOut is rebuilt from FanOutExpanded events (see rebuildFanOutFamily
+	// below); Resume hands it straight to the new scheduler.
+	fanOut fanOutRegistry
 }
 
 // hasParks reports whether the run has an operator-visible gate to reopen. It
@@ -424,7 +416,7 @@ func (c *unfinishedCheckpoint) hasOutstandingWork() bool {
 	if c.hasParks() {
 		return true
 	}
-	for _, familyID := range c.fanOutFamilyOrder {
+	for _, familyID := range c.fanOut.order {
 		if st := c.states[familyID]; st != nil && st.Status == step.StatusRunning {
 			return true
 		}
@@ -449,10 +441,7 @@ func restoreUnfinishedCheckpoint(runDir datastore.Run, wf *workflow.Workflow, ev
 	recoverySkipped := make(map[string]bool)
 	interruptedRecovery := make(map[string]bool)
 	lostInputRecovery := make(map[string]bool)
-	fanOutFamilies := make(map[string]*fanOutFamily)
-	var fanOutFamilyOrder []string
-	fanOutChildren := make(map[string]*workflow.Step)
-	fanOutItemByChild := make(map[string]FanOutItem)
+	fanOut := newFanOutRegistry()
 	var started *RunStarted
 	var lastStatusAt time.Time
 	for _, event := range events {
@@ -473,15 +462,13 @@ func restoreUnfinishedCheckpoint(runDir datastore.Run, wf *workflow.Workflow, ev
 			if err != nil {
 				return nil, err
 			}
-			if _, exists := fanOutFamilies[event.FamilyID]; !exists {
-				fanOutFamilyOrder = append(fanOutFamilyOrder, event.FamilyID)
-			}
-			fanOutFamilies[event.FamilyID] = rebuilt.family
+			fanOut.addOrder(event.FamilyID)
+			fanOut.families[event.FamilyID] = rebuilt.family
 			for id, child := range rebuilt.children {
-				fanOutChildren[id] = child
+				fanOut.children[id] = child
 			}
 			for id, item := range rebuilt.items {
-				fanOutItemByChild[id] = item
+				fanOut.items[id] = item
 			}
 		case StepStatus:
 			if event.At.After(lastStatusAt) {
@@ -583,10 +570,7 @@ func restoreUnfinishedCheckpoint(runDir datastore.Run, wf *workflow.Workflow, ev
 		stopped:             make(map[string]bool),
 		missingInputPayload: make(map[string]string),
 		recoverySkipped:     recoverySkipped,
-		fanOutFamilies:      fanOutFamilies,
-		fanOutFamilyOrder:   fanOutFamilyOrder,
-		fanOutChildren:      fanOutChildren,
-		fanOutItemByChild:   fanOutItemByChild,
+		fanOut:              fanOut,
 	}
 
 	// classifyPark applies the same durable-status classification to any step
@@ -653,8 +637,8 @@ func restoreUnfinishedCheckpoint(runDir datastore.Run, wf *workflow.Workflow, ev
 			return nil, err
 		}
 	}
-	for _, familyID := range fanOutFamilyOrder {
-		fam := fanOutFamilies[familyID]
+	for _, familyID := range fanOut.order {
+		fam := fanOut.families[familyID]
 		if fam == nil {
 			continue
 		}
@@ -862,8 +846,8 @@ func (s *scheduler) rehydrateParks(checkpoint *unfinishedCheckpoint) ([]Event, e
 			return nil, err
 		}
 	}
-	for _, familyID := range checkpoint.fanOutFamilyOrder {
-		fam := checkpoint.fanOutFamilies[familyID]
+	for _, familyID := range checkpoint.fanOut.order {
+		fam := checkpoint.fanOut.families[familyID]
 		if fam == nil {
 			continue
 		}

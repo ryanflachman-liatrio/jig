@@ -3,8 +3,7 @@ package engine
 // Runtime fan-out expansion and barrier settlement for [step.foreach] families
 // (docs/plans/a8-dynamic-foreach-fan-out.md, Phase 2). A family is a declared
 // static step in wf.Steps; its runtime children never join wf.Steps — they
-// live only in the scheduler-owned registries below (fanOutFamilies,
-// fanOutChildren, fanOutItemByChild), keyed by their stable instance id. This
+// live only in the scheduler-owned fanOutRegistry, keyed by their stable instance id. This
 // keeps the static DAG pure while letting every ordinary lifecycle path
 // (dispatch, retry, recovery, worktree integration, snapshot) operate on a
 // child exactly as it would on any statically declared step.
@@ -212,8 +211,8 @@ func (s *scheduler) dispatchForEach(_ context.Context, st *workflow.Step) {
 			FanOutIndex: i,
 			FanOutTotal: len(items),
 		}
-		s.fanOutChildren[instanceID] = child
-		s.fanOutItemByChild[instanceID] = FanOutItem{
+		s.foreach.children[instanceID] = child
+		s.foreach.items[instanceID] = FanOutItem{
 			TemplateID: familyID,
 			InstanceID: instanceID,
 			Index:      i,
@@ -224,8 +223,8 @@ func (s *scheduler) dispatchForEach(_ context.Context, st *workflow.Step) {
 		}
 		fam.Order = append(fam.Order, instanceID)
 	}
-	s.fanOutFamilies[familyID] = fam
-	s.registerFanOutFamilyOrder(familyID)
+	s.foreach.families[familyID] = fam
+	s.foreach.addOrder(familyID)
 
 	if !s.transition(familyID, from, step.StatusRunning) {
 		return
@@ -236,20 +235,37 @@ func (s *scheduler) dispatchForEach(_ context.Context, st *workflow.Step) {
 	s.trySettleFamily(familyID)
 }
 
-// registerFanOutFamilyOrder appends familyID to fanOutFamilyOrder exactly
-// once. A family can expand more than once in a run's lifetime — a bounded
+// fanOutRegistry holds a run's runtime fan-out state, rebuilt on reopen from
+// FanOutExpanded events. The maps are always non-nil, because dispatchForEach
+// writes into them even for a run with no foreach family.
+type fanOutRegistry struct {
+	families map[string]*fanOutFamily // family id → its current expansion
+	order    []string                 // family ids in first-expansion order (deterministic snapshot order)
+	children map[string]*workflow.Step
+	items    map[string]FanOutItem
+}
+
+func newFanOutRegistry() fanOutRegistry {
+	return fanOutRegistry{
+		families: make(map[string]*fanOutFamily),
+		children: make(map[string]*workflow.Step),
+		items:    make(map[string]FanOutItem),
+	}
+}
+
+// addOrder appends familyID to order exactly once. A family can expand more than once in a run's lifetime — a bounded
 // route rewind or an operator reset invalidates the current expansion and
 // dispatchForEach runs again with a new generation/iteration (see "Reset,
 // routes, worktrees, and budgets") — and RunSnapshot folds children in by
-// walking fanOutFamilyOrder once per entry, so a duplicate entry here would
+// walking order once per entry, so a duplicate entry here would
 // double-count that family's (freshly overwritten, single) child set.
-func (s *scheduler) registerFanOutFamilyOrder(familyID string) {
-	for _, id := range s.fanOutFamilyOrder {
+func (r *fanOutRegistry) addOrder(familyID string) {
+	for _, id := range r.order {
 		if id == familyID {
 			return
 		}
 	}
-	s.fanOutFamilyOrder = append(s.fanOutFamilyOrder, familyID)
+	r.order = append(r.order, familyID)
 }
 
 // failForEach records an expansion failure and routes it through the family
@@ -269,7 +285,7 @@ func (s *scheduler) failForEach(familyID string, st *workflow.Step, err error) {
 // family right now" — callers continue scanning the rest of the static graph,
 // they do not stop dispatching altogether.
 func (s *scheduler) nextReadyChild(familyID string) (*workflow.Step, bool) {
-	fam := s.fanOutFamilies[familyID]
+	fam := s.foreach.families[familyID]
 	if fam == nil {
 		return nil, false
 	}
@@ -289,7 +305,7 @@ func (s *scheduler) nextReadyChild(familyID string) (*workflow.Step, bool) {
 		if fam.MaxParallel > 0 && fam.InFlight >= fam.MaxParallel {
 			return nil, false
 		}
-		child := s.fanOutChildren[childID]
+		child := s.foreach.children[childID]
 		if child == nil {
 			continue
 		}
@@ -312,7 +328,7 @@ func (s *scheduler) nextReadyChild(familyID string) (*workflow.Step, bool) {
 // resumed/recovered child, validation, and integration completion — settles
 // the family without any of those call sites needing to know about fan-out.
 func (s *scheduler) trySettleFamily(familyID string) {
-	fam := s.fanOutFamilies[familyID]
+	fam := s.foreach.families[familyID]
 	if fam == nil || fam.Settled {
 		return
 	}
@@ -355,7 +371,7 @@ func (s *scheduler) trySettleFamily(familyID string) {
 		case step.StatusSkipped:
 			entry.Status = "skipped"
 		}
-		if item, ok := s.fanOutItemByChild[childID]; ok {
+		if item, ok := s.foreach.items[childID]; ok {
 			var iv any
 			_ = json.Unmarshal(item.Item, &iv)
 			entry.Item = iv

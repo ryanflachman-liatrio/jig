@@ -120,8 +120,8 @@ run = "true"
 	if err != nil {
 		t.Fatalf("restoreUnfinishedCheckpoint: %v", err)
 	}
-	if len(checkpoint.fanOutFamilies) != 0 {
-		t.Fatalf("fanOutFamilies = %v, want none (no FanOutExpanded was journaled)", checkpoint.fanOutFamilies)
+	if len(checkpoint.fanOut.families) != 0 {
+		t.Fatalf("fanOut.families = %v, want none (no FanOutExpanded was journaled)", checkpoint.fanOut.families)
 	}
 	if got := checkpoint.states["analyze"].Status; got != step.StatusPending {
 		t.Fatalf("analyze status = %s, want Pending", got)
@@ -236,7 +236,7 @@ func TestRestoreUnfinishedCheckpoint_ForEach_ExactItemReuseAndMixedParkKinds(t *
 		t.Fatalf("restoreUnfinishedCheckpoint: %v", err)
 	}
 
-	fam := checkpoint.fanOutFamilies["analyze"]
+	fam := checkpoint.fanOut.families["analyze"]
 	if fam == nil {
 		t.Fatal("no family rebuilt for analyze")
 	}
@@ -250,7 +250,7 @@ func TestRestoreUnfinishedCheckpoint_ForEach_ExactItemReuseAndMixedParkKinds(t *
 		}
 	}
 	for i, id := range wantOrder {
-		item, ok := checkpoint.fanOutItemByChild[id]
+		item, ok := checkpoint.fanOut.items[id]
 		if !ok {
 			t.Fatalf("no FanOutItem rebuilt for %q", id)
 		}

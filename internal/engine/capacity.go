@@ -63,7 +63,7 @@ func (s *scheduler) releaseSlots(st *workflow.Step) {
 
 func (s *scheduler) familyOf(stepID string) *fanOutFamily {
 	if state := s.states[stepID]; state != nil && state.ParentID != "" {
-		return s.fanOutFamilies[state.ParentID]
+		return s.foreach.families[state.ParentID]
 	}
 	return nil
 }

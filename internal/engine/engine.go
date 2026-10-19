@@ -874,10 +874,7 @@ type scheduler struct {
 	// Runtime fan-out registries (see fanout.go). Runtime children are NEVER
 	// appended to wf.Steps — the static DAG stays pure and visualizable — so
 	// they live only here, keyed by their stable instance id.
-	fanOutFamilies    map[string]*fanOutFamily // family id → its current expansion
-	fanOutFamilyOrder []string                 // family ids in expansion order (deterministic snapshot order)
-	fanOutChildren    map[string]*workflow.Step
-	fanOutItemByChild map[string]FanOutItem
+	foreach fanOutRegistry
 }
 
 func newScheduler(
@@ -925,10 +922,8 @@ func newScheduler(
 			phCheckBlockOn,
 			phSquashMergeIntegration,
 		},
-		onDone:            onDone,
-		fanOutFamilies:    make(map[string]*fanOutFamily),
-		fanOutChildren:    make(map[string]*workflow.Step),
-		fanOutItemByChild: make(map[string]FanOutItem),
+		onDone:  onDone,
+		foreach: newFanOutRegistry(),
 	}
 }
 
@@ -1223,7 +1218,7 @@ func (s *scheduler) stepByID(id string) *workflow.Step {
 	}
 	// Runtime fan-out children live only in this registry, never in wf.Steps
 	// (see fanout.go).
-	if st, ok := s.fanOutChildren[id]; ok {
+	if st, ok := s.foreach.children[id]; ok {
 		return st
 	}
 	return nil
@@ -1829,7 +1824,7 @@ func (s *scheduler) buildRequest(
 		Guard:           guard,
 		FindingsPath:    findingsPath,
 	}
-	if item, ok := s.fanOutItemByChild[st.ID]; ok {
+	if item, ok := s.foreach.items[st.ID]; ok {
 		req.FanOutItem = &item
 	}
 	return req
@@ -2163,12 +2158,12 @@ func (s *scheduler) handleReset(m resetMsg) {
 	// the (static) closure — a fresh FanOutExpanded/manifest is written the
 	// next time the family becomes dependency-ready and dispatches (see
 	// dispatchForEach). The now-orphaned child ids remain in s.states/
-	// fanOutChildren/fanOutItemByChild as harmless historical residue (never
+	// fanOut.children/fanOut.items as harmless historical residue (never
 	// dispatched again, since they no longer appear in any family's Order) —
 	// deleting the family entry itself is what stops RunSnapshot from folding
 	// the just-reset children back in before the next expansion exists.
 	for _, id := range closure {
-		delete(s.fanOutFamilies, id)
+		delete(s.foreach.families, id)
 	}
 	s.restoredHold = false
 	reply(result, nil)
@@ -3352,7 +3347,7 @@ func (s *scheduler) expandFanOutClosure(closure []string) []string {
 	out := make([]string, 0, len(closure))
 	for _, id := range closure {
 		out = append(out, id)
-		if fam := s.fanOutFamilies[id]; fam != nil {
+		if fam := s.foreach.families[id]; fam != nil {
 			out = append(out, fam.Order...)
 		}
 	}
@@ -3636,8 +3631,8 @@ func (s *scheduler) snapshot() RunSnapshot {
 	// The family step itself is a zero-cost barrier (its own SpentUSD/Tokens
 	// stay at zero, counted once above) — only its children add to the totals,
 	// so nothing is double-counted.
-	for _, familyID := range s.fanOutFamilyOrder {
-		fam := s.fanOutFamilies[familyID]
+	for _, familyID := range s.foreach.order {
+		fam := s.foreach.families[familyID]
 		if fam == nil {
 			continue
 		}
