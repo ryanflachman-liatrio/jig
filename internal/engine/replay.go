@@ -223,70 +223,36 @@ func readJournalRecords(runDir datastore.Run) (int, []JournalRecord, error) {
 // (workflow.json present with a RunStarted) stay unfinished so Monitor / Runs
 // can offer Resume instead of a virtual RunFinished.
 func reconcileInterruptedRun(runDir datastore.Run, events []Event, forceOrphan bool) []Event {
-	var started *RunStarted
-	finished := false
-	states := make(map[string]step.Status)
-	lastStatus := make(map[string]StepStatus)
-
-	for _, event := range events {
-		switch event := event.(type) {
-		case RunStarted:
-			startedEvent := event
-			started = &startedEvent
-		case StepStatus:
-			states[event.StepID] = event.To
-			lastStatus[event.StepID] = event
-		case RunFinished:
-			finished = true
-		}
-	}
-	if finished {
+	sum := summarizeJournal(events)
+	if sum.finished {
 		return events
 	}
 	// Only a successfully decoded snapshot can make the run reopenable. A present
 	// but corrupt snapshot is an orphan just like a missing one (Spec 20 D7).
-	if !forceOrphan && started != nil {
+	if !forceOrphan && sum.started != nil {
 		if _, err := loadWorkflowSnapshot(runDir); err == nil {
 			return events
 		}
 	}
-
-	ordered := make([]string, 0, len(states))
-	seen := make(map[string]bool, len(states))
-	runID := ""
-	for _, event := range events {
-		status, ok := event.(StepStatus)
-		if !ok {
-			continue
-		}
-		if runID == "" {
-			runID = status.RunID
-		}
-		if !seen[status.StepID] {
-			seen[status.StepID] = true
-			ordered = append(ordered, status.StepID)
-		}
+	ordered := sum.order
+	if sum.started != nil {
+		ordered = sum.started.Steps
 	}
-	if started != nil {
-		runID = started.RunID
-		ordered = started.Steps
-		for _, stepID := range ordered {
-			if _, ok := states[stepID]; !ok {
-				states[stepID] = step.StatusPending
-			}
-		}
-	}
+	runID := sum.runID
 	if runID == "" {
 		return events
 	}
 
 	var recovered []Event
 	for _, stepID := range ordered {
-		from := states[stepID]
+		prior, ok := sum.last[stepID]
+		from := prior.To
+		if !ok {
+			from = step.StatusPending
+		}
 		if terminalStatus(from) {
 			continue
 		}
-		prior := lastStatus[stepID]
 		reason := orphanedRunErr
 		if from == step.StatusRunning || from == step.StatusValidating {
 			reason = interruptedSDKSessionErr

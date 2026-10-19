@@ -17,24 +17,15 @@ const (
 // should present when there is no live scheduler. Finished journals yield
 // UnfinishedNone.
 func ClassifyUnfinished(events []Event) UnfinishedKind {
-	finished := false
-	states := make(map[string]step.Status)
-	for _, event := range events {
-		switch event := event.(type) {
-		case RunFinished:
-			finished = true
-		case StepStatus:
-			states[event.StepID] = event.To
-		}
-	}
-	if finished {
+	sum := summarizeJournal(events)
+	if sum.finished {
 		return UnfinishedNone
 	}
 	hasReview := false
 	hasInterrupted := false
 	hasOther := false
-	for _, status := range states {
-		switch status {
+	for _, last := range sum.last {
+		switch last.To {
 		case step.StatusAwaitingReview:
 			hasReview = true
 		case step.StatusRunning, step.StatusValidating:
