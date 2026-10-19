@@ -77,7 +77,7 @@ run = "true"
 					t.Fatalf("snapshot=%+v live=%+v", got, live)
 				}
 				if persist {
-					events, err = ReplayJournalRaw(datastore.RunAt(runDir))
+					_, events, err = readJournal(datastore.RunAt(runDir))
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -128,7 +128,7 @@ func TestReplayTimingUsesOlderJournalTimestamps(t *testing.T) {
 	if err := os.WriteFile(datastore.RunAt(runDir).Journal(), []byte(journal), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	events, err := ReplayJournalRaw(datastore.RunAt(runDir))
+	_, events, err := readJournal(datastore.RunAt(runDir))
 	if err != nil {
 		t.Fatal(err)
 	}

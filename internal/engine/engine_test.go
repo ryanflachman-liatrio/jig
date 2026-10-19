@@ -2353,7 +2353,7 @@ skill = "agent"
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for dispatch")
 	}
-	events, err := ReplayJournalRaw(runDir)
+	_, events, err := readJournal(runDir)
 	if err != nil {
 		t.Fatal(err)
 	}

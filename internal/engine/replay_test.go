@@ -275,16 +275,16 @@ func TestReplayJournal_MissingRunStartedIsOrphaned(t *testing.T) {
 	}
 }
 
-func TestReplayJournalRawLeavesInterruptedRunUnfinished(t *testing.T) {
+func TestReadJournalLeavesInterruptedRunUnfinished(t *testing.T) {
 	runDir := datastore.RunAt(t.TempDir())
 	writeJournal(t, runDir, []Event{
 		RunStarted{RunID: "r1", Workflow: "feature", Steps: []string{"agent"}},
 		StepStatus{RunID: "r1", StepID: "agent", From: step.StatusPending, To: step.StatusRunning},
 	})
 
-	got, err := ReplayJournalRaw(runDir)
+	_, got, err := readJournal(runDir)
 	if err != nil {
-		t.Fatalf("ReplayJournalRaw: %v", err)
+		t.Fatalf("readJournal: %v", err)
 	}
 	if len(got) != 2 {
 		t.Fatalf("raw event count = %d, want 2 durable events", len(got))
@@ -385,8 +385,8 @@ func TestReplayJournal_CompleteInteriorCorruptionOrphansDisplayAndRejectsRaw(t *
 		t.Fatal(err)
 	}
 
-	if _, err := ReplayJournalRaw(runDir); err == nil {
-		t.Fatal("ReplayJournalRaw accepted newline-complete corruption")
+	if _, _, err := readJournal(runDir); err == nil {
+		t.Fatal("readJournal accepted newline-complete corruption")
 	}
 	got, err := ReplayJournal(runDir)
 	if err != nil {

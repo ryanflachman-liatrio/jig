@@ -89,17 +89,10 @@ func orphanTerminalHistory(runDir datastore.Run) []Event {
 	return append(events, RunFinished{RunID: runID, Failed: true})
 }
 
-// ReplayJournalRaw returns only events durably written by the original
-// scheduler. Ownership views use it to distinguish an unfinished paused run
-// from a terminal run without adding display-only crash reconciliation events.
-func ReplayJournalRaw(runDir datastore.Run) ([]Event, error) {
-	_, events, err := readJournal(runDir)
-	return events, err
-}
-
 // ReplayJournalRecords returns only records written by the scheduler, retaining
 // envelope timestamps and any decodable prefix before a complete corrupt line.
-// A crash-torn final line is ignored in the same way as ReplayJournalRaw.
+// A crash-torn final line is ignored. Unlike ReplayJournal, no display-only
+// crash reconciliation events are added.
 func ReplayJournalRecords(runDir datastore.Run) ([]JournalRecord, error) {
 	_, records, err := readJournalRecords(runDir)
 	return records, err

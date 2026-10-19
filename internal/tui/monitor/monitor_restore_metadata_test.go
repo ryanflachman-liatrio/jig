@@ -50,9 +50,13 @@ func TestMonitorLiveSnapshotAndJournalHaveSameMetadata(t *testing.T) {
 			if err := os.WriteFile(datastore.RunAt(runDir).Journal(), journal, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			replayed, err := engine.ReplayJournalRaw(datastore.RunAt(runDir))
+			records, err := engine.ReplayJournalRecords(datastore.RunAt(runDir))
 			if err != nil {
 				t.Fatal(err)
+			}
+			var replayed []engine.Event
+			for _, record := range records {
+				replayed = append(replayed, record.Event)
 			}
 			reopened := New("r")
 			reopened.RunDir = datastore.RunAt(runDir)
