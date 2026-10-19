@@ -20,10 +20,10 @@ scheduling, retries, routes, fan-out, reset or reopen.
   observers or snapshots can see it. If the journal write fails, the run stops
   progressing. Live deltas (agent text, tool calls) are lossy previews.
   Finalized content comes from `transcript.jsonl`.
-- **Identity checks.** A late `stepDoneMsg` from a stopped, reset or retried
-  execution must not change the replacement execution. Keep the
-  attempt/generation/epoch checks whenever you change stop, retry, reset or
-  reopen.
+- **Identity checks.** A late `stepDoneMsg` from a stopped, reset, retried or
+  escalation-reaped execution must not change the replacement execution
+  (see `stepRuntime.reaped`). Keep the attempt/generation/epoch checks
+  whenever you change stop, retry, reset or reopen.
 
 ## Extension points that already exist
 
@@ -55,11 +55,21 @@ Use these rather than adding more `if st.Type == ...` branches:
 
 ## Adding per-step scheduler state
 
-The scheduler keeps most per-step state in maps keyed by step ID. When you
-add a map, clear it everywhere a step's execution state is discarded: in
-`handleReset`, in `fireCoalescedLoop` (loop rewind), and wherever the
-dispatch path consumes one-shot inputs. If you miss a site, stale state
-survives a reset. Add a reset test that asserts the new state is cleared.
+Put per-step execution state in a field on `stepRuntime` (`runtime.go`) and
+access it through `s.rt(stepID)`. Don't add another `map[string]X` to
+`scheduler`. A reset replaces the struct with `afterReset()`, which keeps only
+the fields it copies explicitly. So a new field is cleared on reset unless you
+carry it over and list it in `runtimeRetainedOnReset`
+(`reset_state_test.go`).
+
+A step-keyed map that has to stay on `scheduler` (because code iterates over
+it or replaces it wholesale) must be cleared in `handleReset` or listed in
+`retainedOnReset`. `TestHandleResetClearsEveryStepKeyedMap` fails until you
+make that choice.
+
+Capacity is charged through `acquireSlots`/`releaseSlots` (`capacity.go`).
+Every path that ends a dispatched worker, including failures before the
+worker starts, calls `releaseSlots` exactly once.
 
 ## Adding a parked status
 
