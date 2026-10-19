@@ -25,13 +25,12 @@ func ClassifyUnfinished(events []Event) UnfinishedKind {
 	hasInterrupted := false
 	hasOther := false
 	for _, last := range sum.last {
-		switch last.To {
-		case step.StatusAwaitingReview:
+		switch {
+		case last.To == step.StatusAwaitingReview:
 			hasReview = true
-		case step.StatusRunning, step.StatusValidating:
+		case last.To.IsInFlight():
 			hasInterrupted = true
-		case step.StatusNeedsInput, step.StatusAwaitingRecovery,
-			step.StatusAwaitingIntegration, step.StatusStopped:
+		case last.To.IsParked():
 			hasOther = true
 		}
 	}

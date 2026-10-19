@@ -1280,28 +1280,10 @@ func (s *scheduler) anyPendingRunnable() bool {
 		if st.Status == step.StatusPending && !blocked[id] {
 			return true
 		}
-		// A step parked on human input is still "runnable" — it will unblock when
-		// the user delivers a verdict or input. Don't let the run terminate early.
-		if st.Status == step.StatusAwaitingReview {
-			return true
-		}
-		if st.Status == step.StatusNeedsInput {
-			return true
-		}
-		// A step parked for a recovery decision keeps the run alive: the human
-		// will retry, resume, skip, or abort.
-		if st.Status == step.StatusAwaitingRecovery {
-			return true
-		}
-		// A step parked on an integration conflict keeps the run alive: the human
-		// will resolve the conflict in the run worktree or abort (spec 06 A2).
-		if st.Status == step.StatusAwaitingIntegration {
-			return true
-		}
-		// A deliberately-stopped step keeps the run alive and quiescent (spec 07
-		// B1): the operator will resume it or (via Feature C) reset. Reaching zero
-		// in-flight workers must not be read as end-of-run while a stop is parked.
-		if st.Status == step.StatusStopped {
+		// A parked step (review, input, recovery, integration conflict, stop)
+		// keeps the run alive: an operator decision will unblock it, so zero
+		// in-flight workers is not end-of-run.
+		if st.Status.IsParked() {
 			return true
 		}
 	}
@@ -3478,7 +3460,7 @@ func (s *scheduler) transitionRecovery(stepID string, from, to step.Status, reco
 	// awaiting_integration, needs_input) are deliberately excluded: the
 	// family keeps waiting until that child later reaches a real terminal
 	// status.
-	if terminalStatus(to) {
+	if to.IsTerminal() {
 		s.trySettleFamilyIfChild(stepID)
 	}
 	return true
@@ -3585,7 +3567,7 @@ func (s *scheduler) emitBatch(events []Event) error {
 
 func (s *scheduler) terminalManifest(e Event) *manifest.StepTerminal {
 	ss, ok := e.(StepStatus)
-	if !ok || !terminalStatus(ss.To) {
+	if !ok || !ss.To.IsTerminal() {
 		return nil
 	}
 	state := s.states[ss.StepID]
@@ -3636,7 +3618,7 @@ func (s *scheduler) snapshot() RunSnapshot {
 	for i, wfStep := range s.wf.Steps {
 		st := s.states[wfStep.ID]
 		states[i] = *st
-		if !terminalStatus(st.Status) {
+		if !st.Status.IsTerminal() {
 			allDone = false
 		}
 		// Cumulative across every attempt (see step.State.SpentUSD), so a run that
@@ -3661,7 +3643,7 @@ func (s *scheduler) snapshot() RunSnapshot {
 				continue
 			}
 			states = append(states, *st)
-			if !terminalStatus(st.Status) {
+			if !st.Status.IsTerminal() {
 				allDone = false
 			}
 			totalCost += st.SpentUSD

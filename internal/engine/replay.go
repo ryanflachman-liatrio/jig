@@ -250,11 +250,11 @@ func reconcileInterruptedRun(runDir datastore.Run, events []Event, forceOrphan b
 		if !ok {
 			from = step.StatusPending
 		}
-		if terminalStatus(from) {
+		if from.IsTerminal() {
 			continue
 		}
 		reason := orphanedRunErr
-		if from == step.StatusRunning || from == step.StatusValidating {
+		if from.IsInFlight() {
 			reason = interruptedSDKSessionErr
 		}
 		recovered = append(recovered, StepStatus{

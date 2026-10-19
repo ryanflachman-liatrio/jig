@@ -125,7 +125,7 @@ func (f *checkpointFold) applyStepStatus(event StepStatus) error {
 	if event.Tokens > state.SpentTokens {
 		state.SpentTokens = event.Tokens
 	}
-	if terminalStatus(event.To) {
+	if event.To.IsTerminal() {
 		state.Result = loadPersistedResult(f.runDir, event.StepID, event.To, event.Err, event.Subtype)
 	}
 	if event.To == step.StatusFailed && event.RecoveryAction == RecoverSkip {

@@ -73,16 +73,14 @@ worker starts, calls `releaseSlots` exactly once.
 
 ## Adding a parked status
 
-A parked status keeps a run alive with nothing runnable. Update these places
-together:
+A parked status keeps a run alive while nothing is runnable. Add the constant
+to `step.Status`, then put it in exactly one of `IsInFlight`, `IsParked` or
+`IsTerminal`. `TestStatusClassesPartitionEveryStatus` (in `internal/step`)
+fails until you do. Liveness (`anyPendingRunnable`) and crash classification
+(`ClassifyUnfinished`) read those methods, so they need no change.
 
-- the parked checks in `anyPendingRunnable`
-- `ClassifyUnfinished`
-- the status switch in `restoreUnfinishedCheckpoint`
-- the `reopen` switch in `rehydrateParks`
-- the matching `WaitKind` in `observer.go`
-
-None of these switches fails loudly on an unknown status.
+Reopen needs one explicit case in each of `checkpointFold.classifyPark` and
+`rehydrateParks`. Both return an error for a parked status they don't handle.
 
 ## Errors and side effects
 

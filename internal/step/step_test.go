@@ -75,3 +75,25 @@ func TestTokenCount(t *testing.T) {
 		t.Errorf("partial usage: got (%d, %v), want (42, true)", n, ok)
 	}
 }
+
+// TestStatusClassesPartitionEveryStatus requires each status to be exactly one
+// of pending, in flight, parked, or terminal, so a new status cannot silently
+// fall through the engine's run-liveness and reopen checks.
+func TestStatusClassesPartitionEveryStatus(t *testing.T) {
+	all := []Status{
+		StatusPending, StatusRunning, StatusValidating, StatusAwaitingReview,
+		StatusNeedsInput, StatusAwaitingRecovery, StatusAwaitingIntegration,
+		StatusStopped, StatusSucceeded, StatusFailed, StatusSkipped,
+	}
+	for _, s := range all {
+		n := 0
+		for _, in := range []bool{s == StatusPending, s.IsInFlight(), s.IsParked(), s.IsTerminal()} {
+			if in {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("status %q is in %d classes, want exactly 1", s, n)
+		}
+	}
+}

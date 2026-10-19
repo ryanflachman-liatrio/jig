@@ -673,6 +673,12 @@ func (s *scheduler) rehydrateParks(checkpoint *unfinishedCheckpoint) ([]Event, e
 			}
 			request := checkpoint.integrations[stepID]
 			events = append(events, s.integrationConflictRequest(stepID, paths, request.Resolution))
+		case step.StatusAwaitingReview:
+			// Review parks reopen from checkpoint.reviewSessions (see Resume).
+		default:
+			if state.Status.IsParked() || state.Status.IsInFlight() {
+				return fmt.Errorf("resume: step %q has status %s with no reopen path", stepID, state.Status)
+			}
 		}
 		return nil
 	}
@@ -822,15 +828,6 @@ func (s *scheduler) stepCanResume(stepID, sessionID string) bool {
 		}
 	}
 	return true
-}
-
-func terminalStatus(status step.Status) bool {
-	switch status {
-	case step.StatusSucceeded, step.StatusFailed, step.StatusSkipped:
-		return true
-	default:
-		return false
-	}
 }
 
 func loadPersistedResult(runDir datastore.Run, stepID string, status step.Status, resultErr, subtype string) *step.Result {

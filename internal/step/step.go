@@ -40,6 +40,35 @@ const (
 	StatusSkipped   Status = "skipped" // when=false, or dep skipped/failed
 )
 
+// Every Status is exactly one of: pending, in flight, parked, or terminal.
+
+// IsTerminal reports a settled outcome: succeeded, failed, or skipped.
+func (s Status) IsTerminal() bool {
+	switch s {
+	case StatusSucceeded, StatusFailed, StatusSkipped:
+		return true
+	}
+	return false
+}
+
+// IsInFlight reports a status that has a live worker: running or validating.
+// A journal that ends in one of these was interrupted.
+func (s Status) IsInFlight() bool {
+	return s == StatusRunning || s == StatusValidating
+}
+
+// IsParked reports a status with no live worker that waits on an operator:
+// review, input, recovery, integration conflict, or stop. A parked step keeps
+// the run alive.
+func (s Status) IsParked() bool {
+	switch s {
+	case StatusAwaitingReview, StatusNeedsInput, StatusAwaitingRecovery,
+		StatusAwaitingIntegration, StatusStopped:
+		return true
+	}
+	return false
+}
+
 // State is the scheduler's mutable record for one step.
 // Only the scheduler goroutine reads or writes it.
 type State struct {
