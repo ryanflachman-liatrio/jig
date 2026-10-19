@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"slices"
 )
 
 // KeyChords is one [keys] entry: the chords bound to a named TUI action.
@@ -35,6 +36,8 @@ func (k *KeyChords) UnmarshalTOML(v any) error {
 // surface it alongside the file path.
 type keysError struct{ action string }
 
+func (keysError) safeDetail() {}
+
 func (e keysError) Error() string {
 	return fmt.Sprintf("keys.%q: needs one or more non-empty chords", e.action)
 }
@@ -60,7 +63,7 @@ func validateKeys(keys map[string]KeyChords) error {
 func KeyOverrides(keys map[string]KeyChords) map[string][]string {
 	out := make(map[string][]string, len(keys))
 	for id, chords := range keys {
-		out[id] = append([]string(nil), chords...)
+		out[id] = slices.Clone(chords)
 	}
 	return out
 }

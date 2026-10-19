@@ -2,13 +2,9 @@ package config
 
 import "github.com/ryanflachman-liatrio/jig/internal/telemetry"
 
-// telemetryDefaultsFromEnv builds the [telemetry] "built-in defaults" layer
-// by resolving telemetry.Config from process env only — no prefs file, no
-// workflow [telemetry] contribution — matching today's zero-config behavior
-// for a caller with only OTEL_*/JIG_TELEMETRY_* env vars set and no
-// config.toml. Load merges the user/project config.toml layers on top of
-// this base (merge.go's mergeTelemetry), and applyTelemetryKillSwitch forces
-// the result off afterward if OTEL_SDK_DISABLED is active.
+// telemetryDefaultsFromEnv builds the [telemetry] defaults layer by
+// resolving telemetry.Config from process env only (no prefs file, no
+// workflow [telemetry] contribution). Load merges config.toml layers on top.
 func telemetryDefaultsFromEnv() (TelemetryConfig, error) {
 	cfg, err := telemetry.ResolveConfig(telemetry.OSEnv(), telemetry.Prefs{}, telemetry.TelemetryFields{})
 	if err != nil {
@@ -17,10 +13,10 @@ func telemetryDefaultsFromEnv() (TelemetryConfig, error) {
 	return fromTelemetryConfig(cfg), nil
 }
 
-// fromTelemetryConfig converts telemetry.Config into TelemetryConfig. Paired
-// with ToTelemetryConfig below as the single named converter this package
-// owns; internal/telemetry does not grow its own mirror of this mapping.
+// fromTelemetryConfig converts telemetry.Config into TelemetryConfig; it is
+// the inverse of ToTelemetryConfig, so change the two together.
 func fromTelemetryConfig(c telemetry.Config) TelemetryConfig {
+	insecure := c.OTLPInsecure
 	return TelemetryConfig{
 		Mode:               string(c.Mode),
 		ServiceName:        c.ServiceName,
@@ -28,7 +24,7 @@ func fromTelemetryConfig(c telemetry.Config) TelemetryConfig {
 		OTLPEndpoint:       c.OTLPEndpoint,
 		OTLPProtocol:       c.OTLPProtocol,
 		OTLPHeaders:        c.OTLPHeaders,
-		OTLPInsecure:       c.OTLPInsecure,
+		OTLPInsecure:       &insecure,
 		MetricsExporter:    c.MetricsExporter,
 		TracesExporter:     c.TracesExporter,
 		PrometheusAddr:     c.PrometheusAddr,
@@ -37,9 +33,7 @@ func fromTelemetryConfig(c telemetry.Config) TelemetryConfig {
 }
 
 // ToTelemetryConfig converts the merged [telemetry] table back into
-// telemetry.Config for telemetry.Init. Exported so cmd/jig's setupTelemetry
-// can call it directly (Task 4.6) instead of internal/telemetry growing its
-// own mirror of this mapping.
+// telemetry.Config for telemetry.Init.
 func (c TelemetryConfig) ToTelemetryConfig() telemetry.Config {
 	return telemetry.Config{
 		Mode:               telemetry.Mode(c.Mode),
@@ -48,7 +42,7 @@ func (c TelemetryConfig) ToTelemetryConfig() telemetry.Config {
 		OTLPEndpoint:       c.OTLPEndpoint,
 		OTLPProtocol:       c.OTLPProtocol,
 		OTLPHeaders:        c.OTLPHeaders,
-		OTLPInsecure:       c.OTLPInsecure,
+		OTLPInsecure:       c.OTLPInsecure != nil && *c.OTLPInsecure,
 		MetricsExporter:    c.MetricsExporter,
 		TracesExporter:     c.TracesExporter,
 		PrometheusAddr:     c.PrometheusAddr,
@@ -57,12 +51,8 @@ func (c TelemetryConfig) ToTelemetryConfig() telemetry.Config {
 }
 
 // applyTelemetryKillSwitch forces Mode off when OTEL_SDK_DISABLED is active,
-// regardless of what any [telemetry] layer — including an explicit
-// config.toml value — set it to. Called once, as the final step after every
-// [telemetry] layer (env-derived base, user config, project config) has
-// been merged, mirroring telemetry.ResolveConfig's own kill-switch check so
-// a config.toml mode override can never silently re-enable telemetry the
-// kill switch disabled.
+// whatever any layer set. Load applies it once, after the final merge, so a
+// config.toml mode can never re-enable telemetry the kill switch disabled.
 func applyTelemetryKillSwitch(c TelemetryConfig) TelemetryConfig {
 	if telemetry.KillSwitchActive() {
 		c.Mode = string(telemetry.ModeOff)

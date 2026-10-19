@@ -55,6 +55,8 @@ func validateBackend(key, backend string) error {
 // backendError reports an unknown helper backend without the offending value.
 type backendError struct{ key string }
 
+func (backendError) safeDetail() {}
+
 func (e backendError) Error() string {
 	return fmt.Sprintf("%s must be one of %s", e.key, strings.Join(agentcfg.Backends, ", "))
 }

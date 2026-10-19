@@ -64,7 +64,7 @@ func TestLoadFileInvalidTOMLIsSanitized(t *testing.T) {
 	}
 }
 
-// TestGlyphPresetCaseSensitivity is the schema validation FR for Unit 3:
+// TestGlyphPresetCaseSensitivity checks that
 // [ui] glyph_preset accepts only the exact lowercase strings "ascii" and
 // "unicode"; any other casing (including an otherwise-correct value with the
 // wrong case) is ErrConfigInvalid, with no case-folding/normalization.

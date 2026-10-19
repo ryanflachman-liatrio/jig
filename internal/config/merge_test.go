@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/ryanflachman-liatrio/jig/internal/notification"
 )
 
 // telemetryEnvVars are every var telemetryDefaultsFromEnv's underlying
@@ -69,11 +71,8 @@ func TestLoadDefaultsOnly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: unexpected error %v", err)
 	}
-	// [telemetry]'s built-in-defaults layer is env-derived (Unit 4), not a
-	// hardcoded zero value like every other table, so with no config.toml
-	// present and no telemetry env vars set, want is Default() with Telemetry
-	// replaced by the (env-empty) env-derived base rather than Default()
-	// itself.
+	// [telemetry]'s defaults layer is env-derived, so want is Default() with
+	// Telemetry replaced by the (env-empty) env-derived base.
 	want := Default()
 	want.Telemetry, err = telemetryDefaultsFromEnv()
 	if err != nil {
@@ -119,5 +118,56 @@ func TestLoadInvalidProjectConfigIsSanitizedAndIdentifiesPath(t *testing.T) {
 	_, err := Load("", projectRoot)
 	if !errors.Is(err, ErrConfigInvalid) {
 		t.Fatalf("Load with invalid project config: err = %v, want errors.Is(err, ErrConfigInvalid)", err)
+	}
+}
+
+func TestMergeExplicitFalseOverridesTrue(t *testing.T) {
+	yes, no := true, false
+	base := Config{
+		Notifications: NotificationsConfig{Enabled: &yes},
+		Telemetry:     TelemetryConfig{OTLPInsecure: &yes},
+	}
+	overlay := Config{
+		Notifications: NotificationsConfig{Enabled: &no},
+		Telemetry:     TelemetryConfig{OTLPInsecure: &no},
+	}
+	got := Merge(base, overlay)
+	if got.Notifications.EnabledOrDefault() {
+		t.Error("notifications.enabled = false did not override true")
+	}
+	if got.Telemetry.ToTelemetryConfig().OTLPInsecure {
+		t.Error("telemetry.otlp_insecure = false did not override true")
+	}
+	if got := Merge(base, Config{}); !got.Notifications.EnabledOrDefault() {
+		t.Error("unset notifications.enabled did not fall through to base")
+	}
+}
+
+func TestMergeDoesNotAliasLayers(t *testing.T) {
+	yes := true
+	base := Config{
+		TUI:           TUIConfig{Bell: &yes},
+		Keys:          map[string]KeyChords{"a": {"x"}},
+		Notifications: NotificationsConfig{Destinations: []notification.Destination{{}}},
+		Telemetry:     TelemetryConfig{OTLPHeaders: map[string]string{"k": "v"}},
+	}
+	got := Merge(base, Config{})
+	*got.TUI.Bell = false
+	got.Keys["a"][0] = "y"
+	got.Keys["b"] = KeyChords{"z"}
+	got.Notifications.Destinations[0].ID = "changed"
+	got.Telemetry.OTLPHeaders["k"] = "changed"
+
+	if !*base.TUI.Bell {
+		t.Error("merged bool aliases base")
+	}
+	if base.Keys["a"][0] != "x" || len(base.Keys) != 1 {
+		t.Error("merged keys alias base")
+	}
+	if base.Notifications.Destinations[0].ID != "" {
+		t.Error("merged destinations alias base")
+	}
+	if base.Telemetry.OTLPHeaders["k"] != "v" {
+		t.Error("merged telemetry map aliases base")
 	}
 }

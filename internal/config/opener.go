@@ -12,9 +12,15 @@ type OpenerConfig struct {
 	Terminal *bool    `toml:"terminal"`
 }
 
+// TerminalOrDefault resolves Terminal, falling back to the built-in default
+// (true) when unset.
 func (c OpenerConfig) TerminalOrDefault() bool {
 	return c.Terminal == nil || *c.Terminal
 }
+
+// placeholderStripper removes the supported argv placeholders so any brace
+// left behind marks an unknown one.
+var placeholderStripper = strings.NewReplacer("{path}", "", "{line}", "", "{column}", "")
 
 // Validate returns only a fixed reason, never operator configuration contents.
 // A terminal-only overlay is valid independently of lower-layer argv.
@@ -34,7 +40,7 @@ func (c OpenerConfig) Validate() error {
 			hasPath = true
 		}
 		if i > 0 {
-			arg = strings.NewReplacer("{path}", "", "{line}", "", "{column}", "").Replace(arg)
+			arg = placeholderStripper.Replace(arg)
 		}
 		if strings.ContainsAny(arg, "{}") {
 			return ErrConfigInvalid
@@ -52,12 +58,6 @@ func mergeOpener(base, overlay OpenerConfig) OpenerConfig {
 		out.Argv = overlay.Argv
 	}
 	out.Argv = slices.Clone(out.Argv)
-	if overlay.Terminal != nil {
-		out.Terminal = overlay.Terminal
-	}
-	if out.Terminal != nil {
-		v := *out.Terminal
-		out.Terminal = &v
-	}
+	out.Terminal = mergeBool(base.Terminal, overlay.Terminal)
 	return out
 }

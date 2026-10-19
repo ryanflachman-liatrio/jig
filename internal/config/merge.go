@@ -1,56 +1,16 @@
 package config
 
-// Load resolves and merges every configuration layer, lowest to highest
-// precedence: built-in defaults -> user config -> project config. CLI flags
-// are the caller's responsibility to apply on top of the returned Config
-// (see cmd/jig's glyph-preset resolver, which consumes this Config as a
-// fallback rather than letting it override an explicit flag).
-//
-// userPathOverride, when non-empty, substitutes the resolved user-level
-// path (the --config flag). root is the caller's actual persistence root,
-// including "" for persistence-off; Load never substitutes a hardcoded
-// root itself.
-func Load(userPathOverride, root string) (Config, error) {
-	userPath := userPathOverride
-	if userPath == "" {
-		p, err := UserConfigPath()
-		if err != nil {
-			return Config{}, err
-		}
-		userPath = p
-	}
-
-	userCfg, err := loadFile(userPath)
-	if err != nil {
-		return Config{}, err
-	}
-
-	projectCfg, err := loadFile(ProjectConfigPath(root))
-	if err != nil {
-		return Config{}, err
-	}
-
-	// [telemetry]'s built-in-defaults layer is the one exception to a
-	// hardcoded zero value (Unit 4): it is populated from today's env vars
-	// at resolution time, so config.toml's user/project layers below can
-	// override an env-derived value instead of the other way around.
-	base := Default()
-	base.Telemetry, err = telemetryDefaultsFromEnv()
-	if err != nil {
-		return Config{}, err
-	}
-
-	merged := Merge(base, userCfg)
-	merged = Merge(merged, projectCfg)
-	merged.Telemetry = applyTelemetryKillSwitch(merged.Telemetry)
-	return merged, nil
-}
+import (
+	"maps"
+	"slices"
+)
 
 // Merge combines base and overlay per key/per table: a zero-value field in
 // overlay falls through to base's value; a non-zero field in overlay wins.
 // Each table's merge is written out explicitly per CONVENTIONS.md ("typed
-// structs, no stringly-typed maps") rather than via reflection, and is
-// extended as each unit adds fields to that table.
+// structs, no stringly-typed maps") rather than via reflection. The result
+// owns its maps, slices, and pointers: mutating it never writes through to
+// base or overlay.
 func Merge(base, overlay Config) Config {
 	return Config{
 		UI:            mergeUI(base.UI, overlay.UI),
@@ -74,15 +34,9 @@ func mergeUI(base, overlay UIConfig) UIConfig {
 func mergeTUI(base, overlay TUIConfig) TUIConfig {
 	out := base
 	out.Opener = mergeOpener(base.Opener, overlay.Opener)
-	if overlay.SimpleMode != nil {
-		out.SimpleMode = overlay.SimpleMode
-	}
-	if overlay.CompactToolGroups != nil {
-		out.CompactToolGroups = overlay.CompactToolGroups
-	}
-	if overlay.Bell != nil {
-		out.Bell = overlay.Bell
-	}
+	out.SimpleMode = mergeBool(base.SimpleMode, overlay.SimpleMode)
+	out.CompactToolGroups = mergeBool(base.CompactToolGroups, overlay.CompactToolGroups)
+	out.Bell = mergeBool(base.Bell, overlay.Bell)
 	return out
 }
 
@@ -90,26 +44,37 @@ func mergeTUI(base, overlay TUIConfig) TUIConfig {
 // the user's other remaps in place.
 func mergeKeys(base, overlay map[string]KeyChords) map[string]KeyChords {
 	if len(overlay) == 0 {
-		return base
+		return cloneKeys(base)
 	}
 	out := make(map[string]KeyChords, len(base)+len(overlay))
 	for id, chords := range base {
-		out[id] = chords
+		out[id] = slices.Clone(chords)
 	}
 	for id, chords := range overlay {
-		out[id] = chords
+		out[id] = slices.Clone(chords)
+	}
+	return out
+}
+
+// cloneKeys deep-copies keys, preserving nil.
+func cloneKeys(keys map[string]KeyChords) map[string]KeyChords {
+	if keys == nil {
+		return nil
+	}
+	out := make(map[string]KeyChords, len(keys))
+	for id, chords := range keys {
+		out[id] = slices.Clone(chords)
 	}
 	return out
 }
 
 func mergeNotifications(base, overlay NotificationsConfig) NotificationsConfig {
 	out := base
-	if overlay.Enabled {
-		out.Enabled = overlay.Enabled
-	}
+	out.Enabled = mergeBool(base.Enabled, overlay.Enabled)
 	if len(overlay.Destinations) > 0 {
 		out.Destinations = overlay.Destinations
 	}
+	out.Destinations = slices.Clone(out.Destinations)
 	return out
 }
 
@@ -135,9 +100,7 @@ func mergeTelemetry(base, overlay TelemetryConfig) TelemetryConfig {
 		out.OTLPProtocol = overlay.OTLPProtocol
 	}
 	out.OTLPHeaders = mergeStringMap(out.OTLPHeaders, overlay.OTLPHeaders)
-	if overlay.OTLPInsecure {
-		out.OTLPInsecure = overlay.OTLPInsecure
-	}
+	out.OTLPInsecure = mergeBool(base.OTLPInsecure, overlay.OTLPInsecure)
 	if overlay.MetricsExporter != "" {
 		out.MetricsExporter = overlay.MetricsExporter
 	}
@@ -153,19 +116,29 @@ func mergeTelemetry(base, overlay TelemetryConfig) TelemetryConfig {
 	return out
 }
 
-// mergeStringMap merges overlay's keys onto a copy of base, per key,
-// leaving base untouched. An empty overlay returns base as-is (no
-// allocation for the common no-override case).
+// mergeStringMap merges overlay's keys onto a copy of base, per key.
 func mergeStringMap(base, overlay map[string]string) map[string]string {
+	out := maps.Clone(base)
 	if len(overlay) == 0 {
-		return base
+		return out
 	}
-	out := make(map[string]string, len(base)+len(overlay))
-	for k, v := range base {
-		out[k] = v
+	if out == nil {
+		out = make(map[string]string, len(overlay))
 	}
-	for k, v := range overlay {
-		out[k] = v
-	}
+	maps.Copy(out, overlay)
 	return out
+}
+
+// mergeBool returns a fresh copy of overlay when set, else of base, so the
+// merged pointer never aliases a layer.
+func mergeBool(base, overlay *bool) *bool {
+	src := base
+	if overlay != nil {
+		src = overlay
+	}
+	if src == nil {
+		return nil
+	}
+	v := *src
+	return &v
 }

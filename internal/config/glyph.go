@@ -20,8 +20,7 @@ const (
 // ResolveGlyphPreset combines the CLI flag state with the merged Config to
 // pick the active glyph vocabulary: an explicit flag (either state) always
 // wins; an unset flag falls back to cfg.UI.GlyphPreset; no flag and no
-// config value defaults to Unicode. Called once in main.go's pre-dispatch
-// sequence, after loadEffectiveConfig(), uniformly across every entry point.
+// config value defaults to Unicode.
 func ResolveGlyphPreset(flag GlyphFlag, cfg Config) shared.SymbolPreset {
 	switch flag {
 	case GlyphFlagASCII:
@@ -29,7 +28,7 @@ func ResolveGlyphPreset(flag GlyphFlag, cfg Config) shared.SymbolPreset {
 	case GlyphFlagUnicode:
 		return shared.PresetUnicode
 	}
-	if cfg.UI.GlyphPreset == "ascii" {
+	if cfg.UI.GlyphPreset == GlyphPresetASCII {
 		return shared.PresetASCII
 	}
 	return shared.PresetUnicode

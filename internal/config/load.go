@@ -40,18 +40,59 @@ func UserConfigPath() (string, error) {
 	return filepath.Join(home, ".config", "jig", FileName), nil
 }
 
-// ProjectConfigPath resolves the project-level config file path relative to
-// root, which is already the .jig directory itself in every existing
-// caller (Runtime.root, runRun's --root), matching prefs.Path's join
-// convention (and notification.LoadLocalConfig's, before Unit 3 folded that
-// disk read into this package). An empty root means persistence-off: this
+// ProjectConfigPath resolves the project-level config file path inside root,
+// the .jig directory itself. An empty root means persistence-off: this
 // returns "" without joining, so callers never construct an unintended
-// relative path (AGENTS.md).
+// relative path.
 func ProjectConfigPath(root string) string {
 	if root == "" {
 		return ""
 	}
 	return filepath.Join(root, FileName)
+}
+
+// Load resolves and merges every configuration layer, lowest to highest
+// precedence: built-in defaults -> user config -> project config. CLI flags
+// are the caller's responsibility to apply on top of the returned Config
+// (see cmd/jig's glyph-preset resolver, which consumes this Config as a
+// fallback rather than letting it override an explicit flag).
+//
+// userPathOverride, when non-empty, substitutes the resolved user-level
+// path (the --config flag). root is the caller's actual persistence root,
+// including "" for persistence-off; Load never substitutes a hardcoded
+// root itself.
+func Load(userPathOverride, root string) (Config, error) {
+	userPath := userPathOverride
+	if userPath == "" {
+		p, err := UserConfigPath()
+		if err != nil {
+			return Config{}, err
+		}
+		userPath = p
+	}
+
+	userCfg, err := loadFile(userPath)
+	if err != nil {
+		return Config{}, err
+	}
+
+	projectCfg, err := loadFile(ProjectConfigPath(root))
+	if err != nil {
+		return Config{}, err
+	}
+
+	// [telemetry]'s defaults layer comes from env vars, so config.toml
+	// layers override env rather than the other way around.
+	base := Default()
+	base.Telemetry, err = telemetryDefaultsFromEnv()
+	if err != nil {
+		return Config{}, err
+	}
+
+	merged := Merge(base, userCfg)
+	merged = Merge(merged, projectCfg)
+	merged.Telemetry = applyTelemetryKillSwitch(merged.Telemetry)
+	return merged, nil
 }
 
 // loadFile reads and parses the TOML file at path into a Config. A missing
@@ -77,19 +118,20 @@ func loadFile(path string) (Config, error) {
 		return Config{}, fmt.Errorf("%w: %s", ErrConfigInvalid, path)
 	}
 	if err := cfg.validate(); err != nil {
-		// A backendError names only a key and its accepted values, never file
-		// content, so it is the one validation error safe to surface.
-		var be backendError
-		if errors.As(err, &be) {
-			return Config{}, fmt.Errorf("%w: %s: %v", ErrConfigInvalid, path, be)
-		}
-		var ke keysError
-		if errors.As(err, &ke) {
-			return Config{}, fmt.Errorf("%w: %s: %v", ErrConfigInvalid, path, ke)
+		var sd safeDetailError
+		if errors.As(err, &sd) {
+			return Config{}, fmt.Errorf("%w: %s: %v", ErrConfigInvalid, path, sd)
 		}
 		return Config{}, fmt.Errorf("%w: %s", ErrConfigInvalid, path)
 	}
 	return cfg, nil
+}
+
+// safeDetailError marks a validation error whose message names only keys and
+// accepted values, never configured values, so loadFile may surface it.
+type safeDetailError interface {
+	error
+	safeDetail()
 }
 
 // validate checks schema-level constraints across every table. Each unit
@@ -99,7 +141,7 @@ func (c Config) validate() error {
 	if err := c.TUI.Opener.Validate(); err != nil {
 		return err
 	}
-	if c.UI.GlyphPreset != "" && c.UI.GlyphPreset != "ascii" && c.UI.GlyphPreset != "unicode" {
+	if c.UI.GlyphPreset != "" && c.UI.GlyphPreset != GlyphPresetASCII && c.UI.GlyphPreset != GlyphPresetUnicode {
 		return ErrConfigInvalid
 	}
 	if err := validateKeys(c.Keys); err != nil {
