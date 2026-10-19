@@ -30,21 +30,10 @@ func (m stepDoneMsg) execute(s *scheduler) {
 	// view of the current run branch.
 	defer s.releaseExecutionViewForStep(m.stepID)
 
-	s.inFlight--
-	if wfStep := s.stepByID(m.stepID); wfStep != nil && wfStep.ResourceClass != "" {
-		s.classInFlight[wfStep.ResourceClass]--
-	}
-	if wfStep := s.stepByID(m.stepID); wfStep != nil && wfStep.Isolation == workflow.IsolationWorktree {
-		s.mutatingInFlight--
+	if wfStep := s.stepByID(m.stepID); wfStep != nil {
+		s.releaseSlots(wfStep)
 	} else {
-		s.readOnlyInFlight--
-	}
-	// A fan-out child releases its family's local slot symmetrically with the
-	// acquisition in dispatchWorker.
-	if state := s.states[m.stepID]; state != nil && state.ParentID != "" {
-		if fam := s.fanOutFamilies[state.ParentID]; fam != nil {
-			fam.InFlight--
-		}
+		s.releaseSlots(&workflow.Step{ID: m.stepID})
 	}
 	s.rt(m.stepID).questions = nil
 	// Accrue this attempt's cost/tokens once, before any early-return branch

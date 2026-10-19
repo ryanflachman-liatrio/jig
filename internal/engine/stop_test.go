@@ -274,7 +274,7 @@ run = "true"
 
 	// Simulate a step that was dispatched into the worktree and then stopped.
 	s.states["a"].Status = step.StatusRunning
-	s.inFlight = 1
+	s.slots.inFlight = 1
 	s.worktrees["a"] = repo
 	s.wtBaseSHAs["a"] = baseSHA
 	s.stepCancels["a"] = func() {}
@@ -288,8 +288,8 @@ run = "true"
 	if s.rt("a").diff == "" {
 		t.Fatal("captured diff is empty; capture did not run on cancel")
 	}
-	if s.inFlight != 0 {
-		t.Fatalf("inFlight = %d after stop, want 0", s.inFlight)
+	if s.slots.inFlight != 0 {
+		t.Fatalf("inFlight = %d after stop, want 0", s.slots.inFlight)
 	}
 	if _, ok := s.stepCancels["a"]; ok {
 		t.Fatal("stepCancels entry not released after the worker exited")

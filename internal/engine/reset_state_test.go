@@ -34,7 +34,6 @@ var runtimeRetainedOnReset = map[string]string{
 // notStepKeyed lists map[string]X scheduler fields whose keys are not step ids,
 // so the reset contract does not apply to them.
 var notStepKeyed = map[string]string{
-	"classInFlight":     "keyed by resource class",
 	"seenEscalations":   "keyed by security finding fingerprint",
 	"pendingLoops":      "keyed by route goto target; drained when the loop fires",
 	"fanOutChildren":    "keyed by child instance id; residue is dropped from Order on reset",

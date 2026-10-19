@@ -786,10 +786,7 @@ type scheduler struct {
 	// last-write-wins feedback clobber. Keyed by goto-target step id.
 	pendingLoops     map[string]*loopIntent
 	aborted          bool // true when the run was explicitly aborted (loop cap, etc.)
-	inFlight         int
-	classInFlight    map[string]int
-	readOnlyInFlight int
-	mutatingInFlight int
+	slots            capacity
 	securityFindings int
 	networkRequests  int
 	secretResolver   SecretResolver
@@ -911,7 +908,6 @@ func newScheduler(
 		writer:          writer,
 		runDir:          runDir,
 		pendingLoops:    make(map[string]*loopIntent),
-		classInFlight:   make(map[string]int),
 		jigRoot:         jigRoot,
 		repoRoot:        repoRoot,
 		worktrees:       make(map[string]string),
@@ -1002,7 +998,7 @@ func (s *scheduler) runLoop(ctx context.Context) {
 			}
 
 			// 1. Dispatch every ready step, respecting max_parallel.
-			for s.inFlight < maxPar {
+			for s.slots.inFlight < maxPar {
 				st, ok := s.nextReady(ctx)
 				if !ok {
 					break
@@ -1017,7 +1013,7 @@ func (s *scheduler) runLoop(ctx context.Context) {
 			//    finishing, present the final-merge gate (spec 06 A3) when the run branch
 			//    carries commits — this is a pre-RunFinished completion step, so the run
 			//    parks (does not emit RunFinished) until the operator lands or discards.
-			if s.inFlight == 0 && !s.anyPendingRunnable() {
+			if s.slots.inFlight == 0 && !s.anyPendingRunnable() {
 				if !s.requestFinalMergeIfNeeded() {
 					s.cleanupWorktrees()
 					s.emit(RunFinished{RunID: s.runID, Failed: s.anyFailed(), Cause: s.terminalCause()})
@@ -1214,17 +1210,7 @@ func (s *scheduler) depsReady(st *workflow.Step) bool {
 }
 
 func (s *scheduler) resourceAvailable(st *workflow.Step) bool {
-	if st.Isolation == workflow.IsolationWorktree {
-		if cap := s.wf.Defaults.MaxMutating; cap > 0 && s.mutatingInFlight >= cap {
-			return false
-		}
-	} else if cap := s.wf.Defaults.MaxReadOnly; cap > 0 && s.readOnlyInFlight >= cap {
-		return false
-	}
-	if st.ResourceClass == "" {
-		return true
-	}
-	return s.classInFlight[st.ResourceClass] < s.wf.Defaults.ResourceLimits[st.ResourceClass]
+	return s.slots.admits(st, s.wf.Defaults)
 }
 
 // stepByID returns a pointer into wf.Steps for the given ID, or nil.
@@ -1504,22 +1490,7 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 		releaseReaderView()
 		return
 	}
-	s.inFlight++
-	if st.Isolation == workflow.IsolationWorktree {
-		s.mutatingInFlight++
-	} else {
-		s.readOnlyInFlight++
-	}
-	if st.ResourceClass != "" {
-		s.classInFlight[st.ResourceClass]++
-	}
-	// A fan-out child additionally occupies its family's local slot, on top of
-	// every other cap above.
-	if parentID := s.states[st.ID].ParentID; parentID != "" {
-		if fam := s.fanOutFamilies[parentID]; fam != nil {
-			fam.InFlight++
-		}
-	}
+	s.acquireSlots(st)
 
 	runID, stepID := s.runID, st.ID
 	subs := s.subs
@@ -1578,45 +1549,21 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	secrets, err := s.resolveSecrets(st)
 	if err != nil {
 		releaseReaderView()
-		s.inFlight--
-		if st.Isolation == workflow.IsolationWorktree {
-			s.mutatingInFlight--
-		} else {
-			s.readOnlyInFlight--
-		}
-		if st.ResourceClass != "" {
-			s.classInFlight[st.ResourceClass]--
-		}
+		s.releaseSlots(st)
 		s.states[st.ID].Result = &step.Result{Status: step.StatusFailed, Err: err.Error()}
 		s.applyFailurePolicy(st.ID, st)
 		return
 	}
 	if err := s.resolveAllInputs(st, workspace.Dir); err != nil {
 		releaseReaderView()
-		s.inFlight--
-		if st.Isolation == workflow.IsolationWorktree {
-			s.mutatingInFlight--
-		} else {
-			s.readOnlyInFlight--
-		}
-		if st.ResourceClass != "" {
-			s.classInFlight[st.ResourceClass]--
-		}
+		s.releaseSlots(st)
 		s.states[st.ID].Result = &step.Result{Status: step.StatusFailed, Err: err.Error()}
 		s.applyFailurePolicy(st.ID, st)
 		return
 	}
 	if err := s.snapshotInputs(st.ID, s.rt(st.ID).preResolvedInputs); err != nil {
 		releaseReaderView()
-		s.inFlight--
-		if st.Isolation == workflow.IsolationWorktree {
-			s.mutatingInFlight--
-		} else {
-			s.readOnlyInFlight--
-		}
-		if st.ResourceClass != "" {
-			s.classInFlight[st.ResourceClass]--
-		}
+		s.releaseSlots(st)
 		s.states[st.ID].Result = &step.Result{Status: step.StatusFailed, Err: err.Error()}
 		s.applyFailurePolicy(st.ID, st)
 		return
@@ -2083,8 +2030,8 @@ func (s *scheduler) handleReset(m resetMsg) {
 		reply(ResetResult{}, &ResetError{Code: "settled", Target: m.stepID, Err: fmt.Errorf("run is already settled")})
 		return
 	}
-	if s.inFlight > 0 {
-		reply(ResetResult{}, &ResetError{Code: "in_flight", Target: m.stepID, Err: fmt.Errorf("run has %d worker(s) in flight", s.inFlight)})
+	if s.slots.inFlight > 0 {
+		reply(ResetResult{}, &ResetError{Code: "in_flight", Target: m.stepID, Err: fmt.Errorf("run has %d worker(s) in flight", s.slots.inFlight)})
 		return
 	}
 	if s.runWorktree == "" {
