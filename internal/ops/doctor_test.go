@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"github.com/ryanflachman-liatrio/jig/internal/engine"
 	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
@@ -176,5 +178,28 @@ func TestDoctorOperatorAllowlist(t *testing.T) {
 	}
 	if report.OK {
 		t.Fatal("doctor passed despite blanket auto-approval")
+	}
+}
+
+func TestCheckStoredRunsReportsCorruptSession(t *testing.T) {
+	root := t.TempDir()
+	run, err := datastore.Open(root).Create("r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeOpsJournal(t, run, engine.RunStarted{RunID: "r1", Workflow: "wf", Steps: []string{"a", "b"}})
+	if err := run.Step("a").WriteSession(datastore.SessionInfo{SessionID: "ok"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run.Step("b").Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(run.Step("b").Session(), []byte("{not-json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	check := checkStoredRuns(root)
+	if check.Status != CheckWarn || !strings.Contains(check.Message, "r1 (corrupt session.json: b)") {
+		t.Fatalf("check = %+v, want warning naming step b of r1", check)
 	}
 }

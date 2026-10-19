@@ -550,7 +550,7 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 
 	switch {
 	case keybind.Matches(msg, m.keys.Search):
-		if m.selKind == "" && m.RunDir != "" {
+		if m.selKind == "" && m.RunDir.Enabled() {
 			m.searchOpen = true
 			m.searchInput = shared.NewInputTextarea("find in loaded page", max(1, m.transcriptInnerW-6), 1, shared.WithoutBorder())
 			m.searchInput.SetValue(m.searchQuery)
@@ -560,7 +560,7 @@ func (m Model) updateTranscript(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 	case keybind.Matches(msg, m.keys.Filters):
-		if m.selKind == "" && m.RunDir != "" {
+		if m.selKind == "" && m.RunDir.Enabled() {
 			m.filterOpen = true
 			m.chatAutoScroll = false
 			m.refreshPanels()

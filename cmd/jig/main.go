@@ -163,8 +163,12 @@ func runPrune(args []string) int {
 	}
 
 	policy := datastore.RetentionPolicy{MaxAge: *maxAge, KeepLast: *keepLast}
+	if err := policy.Validate(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
 	if *dryRun {
-		ids, err := datastore.Prunable(".jig", policy, time.Now())
+		ids, err := datastore.Open(".jig").Prunable(policy, time.Now())
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 1
@@ -180,7 +184,7 @@ func runPrune(args []string) int {
 		return 0
 	}
 
-	pruned, err := datastore.Prune(".jig", policy, time.Now())
+	pruned, err := datastore.Open(".jig").Prune(policy, time.Now())
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1

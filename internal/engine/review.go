@@ -7,7 +7,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"github.com/ryanflachman-liatrio/jig/internal/review"
 	"github.com/ryanflachman-liatrio/jig/internal/step"
 	"github.com/ryanflachman-liatrio/jig/internal/workflow"
@@ -31,7 +30,7 @@ func (s *scheduler) dispatchReview(st *workflow.Step) {
 	s.emit(ReviewRequest{
 		RunID: s.runID, StepID: st.ID, RoundID: sess.RoundID,
 		Choices: reviewChoices(st), Documents: sess.Documents,
-		DraftPath: datastore.ReviewDraftPath(s.runDir, st.ID, sess.RoundID),
+		DraftPath: s.runDir.Step(st.ID).Review(sess.RoundID).Draft(),
 		Diff: func() string {
 			for _, d := range sess.Documents {
 				if d.Format == "diff" {
@@ -65,7 +64,7 @@ func (s *scheduler) prepareReview(st *workflow.Step) (review.Session, error) {
 		format := reviewFormat(target, sourcePath)
 		id := fmt.Sprintf("%02d-%s", i+1, sanitizeReviewName(target.Label))
 		d := review.Document{ID: id, Label: strings.TrimSpace(target.Label), Source: s.reviewSource(target, sourcePath), Format: format, SHA256: review.Digest(content), LineCount: len(strings.Split(content, "\n")), Content: content}
-		if dir := datastore.ReviewDocumentsDir(s.runDir, st.ID, roundID); dir != "" {
+		if dir := s.runDir.Step(st.ID).Review(roundID).Documents(); dir != "" {
 			path := filepath.Join(dir, id+reviewExtension(format))
 			d.SnapshotPath = path
 			if existing, readErr := os.ReadFile(path); readErr == nil {
@@ -234,20 +233,20 @@ func (s *scheduler) finalizeReview(id string, sub review.Submission) {
 	}
 	sub.SchemaVersion = 1
 	feedback := review.RenderFeedback(sess, sub)
-	if path := datastore.ReviewSubmissionPath(s.runDir, id, sess.RoundID); path != "" {
+	if path := s.runDir.Step(id).Review(sess.RoundID).Submission(); path != "" {
 		if err := review.WriteSubmission(path, sub); err != nil {
 			s.emit(RunError{RunID: s.runID, Err: err.Error()})
 			return
 		}
-		if err := review.WriteFeedback(datastore.ReviewFeedbackPath(s.runDir, id, sess.RoundID), feedback); err != nil {
+		if err := review.WriteFeedback(s.runDir.Step(id).Review(sess.RoundID).Feedback(), feedback); err != nil {
 			s.emit(RunError{RunID: s.runID, Err: err.Error()})
 			return
 		}
-		_ = review.WriteSubmission(datastore.OutputJSONPath(s.runDir, id), sub)
-		_ = review.WriteFeedback(datastore.OutputPath(s.runDir, id), feedback)
+		_ = review.WriteSubmission(s.runDir.Step(id).OutputJSON(), sub)
+		_ = review.WriteFeedback(s.runDir.Step(id).Output(), feedback)
 	}
 	state := s.states[id]
-	state.Result = &step.Result{Status: step.StatusSucceeded, Verdict: sub.Verdict, OutputPath: datastore.OutputPath(s.runDir, id)}
+	state.Result = &step.Result{Status: step.StatusSucceeded, Verdict: sub.Verdict, OutputPath: s.runDir.Step(id).Output()}
 	s.emit(ReviewSubmitted{RunID: s.runID, StepID: id, RoundID: sess.RoundID, Verdict: sub.Verdict, CommentCount: len(sub.Comments)})
 	s.transition(id, step.StatusAwaitingReview, step.StatusSucceeded)
 	delete(s.reviewSessions, id)

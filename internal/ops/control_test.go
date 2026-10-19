@@ -18,7 +18,7 @@ import (
 func TestPreviewResetIsReadOnly(t *testing.T) {
 	root := t.TempDir()
 	runID := "20260908-120000-reset123"
-	runDir, err := datastore.RunDir(root, runID)
+	runDir, err := datastore.Open(root).Create(runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ depends_on = ["a"]
 		engine.RunStarted{RunID: runID, Workflow: wf.Meta.Name, Steps: []string{"a", "b"}},
 		engine.StepStatus{RunID: runID, StepID: "a", To: step.StatusAwaitingRecovery},
 	)
-	before := directoryContents(t, runDir)
+	before := directoryContents(t, runDir.Dir())
 	preview, err := PreviewReset(root, runID, "a")
 	if err != nil {
 		t.Fatal(err)
@@ -55,16 +55,16 @@ depends_on = ["a"]
 	if got := []string{preview.Steps[0].ID, preview.Steps[1].ID}; !reflect.DeepEqual(got, []string{"a", "b"}) {
 		t.Fatalf("closure = %v", got)
 	}
-	after := directoryContents(t, runDir)
+	after := directoryContents(t, runDir.Dir())
 	if !reflect.DeepEqual(before, after) {
 		t.Fatalf("preview mutated run directory\nbefore=%v\nafter=%v", before, after)
 	}
-	if _, err := os.Stat(datastore.SchedulerLockPath(runDir)); !os.IsNotExist(err) {
+	if _, err := os.Stat(runDir.SchedulerLock()); !os.IsNotExist(err) {
 		t.Fatalf("preview created scheduler lock: %v", err)
 	}
 }
 
-func writeCapturedWorkflow(t *testing.T, runDir, source string, wf *workflow.Workflow) {
+func writeCapturedWorkflow(t *testing.T, runDir datastore.Run, source string, wf *workflow.Workflow) {
 	t.Helper()
 	sum := sha256.Sum256([]byte(source))
 	snapshot := struct {
@@ -82,7 +82,7 @@ func writeCapturedWorkflow(t *testing.T, runDir, source string, wf *workflow.Wor
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(datastore.WorkflowSnapshotPath(runDir), data, 0o644); err != nil {
+	if err := os.WriteFile(runDir.WorkflowSnapshot(), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

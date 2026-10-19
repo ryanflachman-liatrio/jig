@@ -69,7 +69,7 @@ type RunReport struct {
 // InspectRun returns a durable status view. A corrupt journal returns both its
 // decodable-prefix report and an error so clients can render diagnosis and fail.
 func InspectRun(root, runID string) (RunReport, error) {
-	runDir, err := datastore.ResolveRunDir(root, runID)
+	runDir, err := datastore.Open(root).Resolve(runID)
 	if err != nil {
 		return RunReport{RunID: runID}, err
 	}
@@ -103,7 +103,7 @@ func ListRuns(root string) ([]RunReport, error) {
 	if root == "" {
 		return nil, fmt.Errorf("status: persistence root is empty")
 	}
-	ids, err := datastore.ListRunIDs(root)
+	ids, err := datastore.Open(root).List()
 	if err != nil {
 		return nil, err
 	}

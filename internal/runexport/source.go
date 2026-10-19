@@ -13,7 +13,7 @@ import (
 )
 
 type request struct {
-	runDir string
+	runDir datastore.Run
 }
 
 // sourceRecord retains only filesystem consistency facts. It never retains
@@ -38,7 +38,7 @@ func resolveRequest(options Options) (request, error) {
 	if options.Root == "" || options.RunID == "" || options.Destination == "" {
 		return request{}, fmt.Errorf("%w: root, run id, and destination are required", ErrUsage)
 	}
-	runDir, err := datastore.ResolveRunDir(options.Root, options.RunID)
+	runDir, err := datastore.Open(options.Root).Resolve(options.RunID)
 	if err != nil {
 		return request{}, fmt.Errorf("%w: run cannot be resolved", ErrUsage)
 	}
@@ -77,8 +77,8 @@ func isWithin(root, path string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-func collectInventory(runDir string) (inventory, error) {
-	root, err := os.OpenRoot(runDir)
+func collectInventory(runDir datastore.Run) (inventory, error) {
+	root, err := os.OpenRoot(runDir.Dir())
 	if err != nil {
 		return inventory{}, fmt.Errorf("%w: run evidence is unavailable", ErrOperational)
 	}
@@ -148,7 +148,7 @@ func collectInventory(runDir string) (inventory, error) {
 // Recheck reports only that selected evidence changed, never the source name
 // or value. The lease prevents cooperative scheduler writes; this catches
 // detectable external changes before later publication.
-func (before inventory) Recheck(runDir string) error {
+func (before inventory) Recheck(runDir datastore.Run) error {
 	after, err := collectInventory(runDir)
 	if err != nil {
 		return fmt.Errorf("%w: selected evidence changed", ErrOperational)

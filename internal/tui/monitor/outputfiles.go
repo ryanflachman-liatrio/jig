@@ -58,20 +58,20 @@ func detectFileKind(path string) fileKind {
 	}
 }
 
-func stepOutputFiles(runDir string, stepId string, declaredOutput string) []outputFile {
+func stepOutputFiles(runDir datastore.Run, stepId string, declaredOutput string) []outputFile {
 
-	if runDir == "" {
+	if !runDir.Enabled() {
 		return nil
 	}
 
 	var paths []string
 
 	paths = append(paths,
-		datastore.InputPath(runDir, stepId),
-		datastore.OutputJSONPath(runDir, stepId),
-		datastore.OutputPath(runDir, stepId),
+		runDir.Step(stepId).Input(),
+		runDir.Step(stepId).OutputJSON(),
+		runDir.Step(stepId).Output(),
 	)
-	if securityPath := datastore.SecurityPath(runDir, stepId); fileExists(securityPath) {
+	if securityPath := runDir.Step(stepId).Security(); fileExists(securityPath) {
 		paths = append(paths, securityPath)
 	}
 	paths = append(paths, stepDiagnosticPaths(runDir, stepId)...)
@@ -88,8 +88,8 @@ func fileExists(path string) bool {
 	return err == nil && !fi.IsDir()
 }
 
-func stepDiagnosticPaths(runDir, stepID string) []string {
-	stepDir := filepath.Join(runDir, "steps", stepID)
+func stepDiagnosticPaths(runDir datastore.Run, stepID string) []string {
+	stepDir := runDir.Step(stepID).Dir()
 	entries, err := os.ReadDir(stepDir)
 	if err != nil {
 		return nil
@@ -108,7 +108,7 @@ func stepDiagnosticPaths(runDir, stepID string) []string {
 }
 
 func (m *Model) refreshLiveStepFiles(stepID string) {
-	if m.RunDir == "" {
+	if !m.RunDir.Enabled() {
 		return
 	}
 	if m.stepFiles == nil {

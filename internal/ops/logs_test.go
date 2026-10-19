@@ -15,7 +15,7 @@ import (
 func TestReadLogsMergesAndBounds(t *testing.T) {
 	root := t.TempDir()
 	runID := "20260908-120000-logs1234"
-	runDir, err := datastore.RunDir(root, runID)
+	runDir, err := datastore.Open(root).Create(runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,9 +38,9 @@ func TestReadLogsMergesAndBounds(t *testing.T) {
 	}
 }
 
-func writeOpsJournal(t *testing.T, runDir string, events ...engine.Event) {
+func writeOpsJournal(t *testing.T, runDir datastore.Run, events ...engine.Event) {
 	t.Helper()
-	f, err := os.Create(datastore.JournalPath(runDir))
+	f, err := os.Create(runDir.Journal())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,13 +56,13 @@ func writeOpsJournal(t *testing.T, runDir string, events ...engine.Event) {
 	}
 }
 
-func writeTranscript(t *testing.T, runDir, stepID string, entries []transcript.Entry) {
+func writeTranscript(t *testing.T, runDir datastore.Run, stepID string, entries []transcript.Entry) {
 	t.Helper()
-	dir := filepath.Dir(datastore.TranscriptPath(runDir, stepID))
+	dir := filepath.Dir(runDir.Step(stepID).Transcript())
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	f, err := os.Create(datastore.TranscriptPath(runDir, stepID))
+	f, err := os.Create(runDir.Step(stepID).Transcript())
 	if err != nil {
 		t.Fatal(err)
 	}

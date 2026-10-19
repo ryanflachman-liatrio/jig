@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"strings"
 	"testing"
 	"time"
@@ -116,7 +117,7 @@ func TestThinkingPulseAnimatesForRunningTrailingItem(t *testing.T) {
 		Blocks: []transcript.Block{{Type: transcript.BlockThinking, Text: "still working"}},
 	}})
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 	m, _ = m.Update(EngineEventMsg{Event: engine.StepStatus{RunID: "run-1", StepID: "a", To: step.StatusRunning}})
 	m.loadChatTail() // reload now that the step's status flipped to running
@@ -168,7 +169,7 @@ func TestThinkingSettledItemNeverAnimates(t *testing.T) {
 		Blocks: []transcript.Block{{Type: transcript.BlockThinking, Text: "already settled"}},
 	}})
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 
 	for _, item := range m.chatVisibleItems {

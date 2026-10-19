@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"os"
 	"path/filepath"
 	"sync"
@@ -269,7 +270,7 @@ run = "true"
 		t.Fatal(err)
 	}
 	s := newScheduler(wf, "run-diff", make(chan schedMsg, 8), nil, newStopTestExec(),
-		func() {}, nil, "", "", repo, func(RunSnapshot) {})
+		func() {}, nil, datastore.Run{}, "", repo, func(RunSnapshot) {})
 
 	// Simulate a step that was dispatched into the worktree and then stopped.
 	s.states["a"].Status = step.StatusRunning

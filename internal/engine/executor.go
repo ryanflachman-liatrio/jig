@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 
 	"github.com/ryanflachman-liatrio/jig/internal/interaction"
 	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
@@ -68,6 +69,9 @@ type StepRequest struct {
 	// non-empty the runner captures the full message stream there; "" disables
 	// transcript writes (persistence off, e.g. tests with no run dir).
 	TranscriptPath string
+	// StepDir addresses this step's persisted files (session.json, input.md,
+	// …). It is disabled when persistence is off.
+	StepDir datastore.Step
 	// Iteration and Attempt tag every transcript entry so loop iterations and
 	// retries (which append to the same file) can be distinguished on read.
 	Iteration  int

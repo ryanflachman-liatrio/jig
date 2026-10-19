@@ -95,12 +95,12 @@ func copyOutputFileCmd(path string, kind fileKind) tea.Cmd {
 // for a step in durable block order, subject to the shared caps. Path/step
 // identity are captured at admission time so navigation between steps cannot
 // redirect the export mid-flight.
-func copyTranscriptRequest(runDir, stepID string) shared.ClipboardRequest {
+func copyTranscriptRequest(runDir datastore.Run, stepID string) shared.ClipboardRequest {
 	target := shared.ClipboardTarget{
 		Surface: shared.ClipboardSurfaceTranscriptSnapshot,
 		Label:   stepID,
 	}
-	if runDir == "" || stepID == "" {
+	if !runDir.Enabled() || stepID == "" {
 		return shared.ClipboardRequest{
 			Target: target,
 			Loader: func() shared.ClipboardPayload {
@@ -108,7 +108,7 @@ func copyTranscriptRequest(runDir, stepID string) shared.ClipboardRequest {
 			},
 		}
 	}
-	path := datastore.TranscriptPath(runDir, stepID)
+	path := runDir.Step(stepID).Transcript()
 	return shared.ClipboardRequest{
 		Target: target,
 		Loader: func() shared.ClipboardPayload {
@@ -190,7 +190,7 @@ func exportRecordedTranscript(path string) (string, string, error) {
 }
 
 // copyTranscriptCmd wraps copyTranscriptRequest in a tea.Cmd.
-func copyTranscriptCmd(runDir, stepID string) tea.Cmd {
+func copyTranscriptCmd(runDir datastore.Run, stepID string) tea.Cmd {
 	req := copyTranscriptRequest(runDir, stepID)
 	return func() tea.Msg { return req }
 }

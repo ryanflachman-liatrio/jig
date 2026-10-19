@@ -7,7 +7,6 @@ import (
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"github.com/ryanflachman-liatrio/jig/internal/engine"
 	domainreview "github.com/ryanflachman-liatrio/jig/internal/review"
 	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
@@ -91,7 +90,7 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 			m.steps[i].end = time.Now()
 			// Re-discover step files when a step reaches a terminal state — the
 			// runner may have just written input.md/output.md/output.json.
-			if m.RunDir != "" {
+			if m.RunDir.Enabled() {
 				m.stepFiles[ev.StepID] = stepOutputFiles(m.RunDir, ev.StepID, "")
 			}
 		}
@@ -383,7 +382,7 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		}
 		// File is truth: read all findings from findings.jsonl to get the full
 		// Detail field (redacted-secret preview) that the event omits.
-		fPath := datastore.FindingsPath(m.RunDir)
+		fPath := m.RunDir.Findings()
 		if findings, err := sentinel.ReadAll(fPath); err == nil {
 			m.secFindings = findings
 		} else {

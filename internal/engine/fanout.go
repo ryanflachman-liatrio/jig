@@ -14,7 +14,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/ryanflachman-liatrio/jig/internal/datastore"
@@ -173,7 +172,7 @@ func (s *scheduler) dispatchForEach(_ context.Context, st *workflow.Step) {
 		SourceDigest:  datastore.ItemDigest(rawField),
 		Items:         manifestItems,
 	}
-	if err := datastore.WriteFanOutManifest(s.runDir, m); err != nil {
+	if err := s.runDir.Step(m.FamilyID).WriteFanOutManifest(m); err != nil {
 		s.failForEach(familyID, st, fmt.Errorf("write fanout manifest: %w", err))
 		return
 	}
@@ -380,9 +379,9 @@ func (s *scheduler) trySettleFamily(familyID string) {
 	}
 
 	outputPath := ""
-	if s.runDir != "" {
-		if dir, err := datastore.StepDir(s.runDir, familyID); err == nil {
-			outputPath = filepath.Join(dir, "output.json")
+	if s.runDir.Enabled() {
+		if err := s.runDir.Step(familyID).Ensure(); err == nil {
+			outputPath = s.runDir.Step(familyID).OutputJSON()
 			if werr := os.WriteFile(outputPath, data, 0o644); werr != nil {
 				famState.Result = &step.Result{Status: step.StatusFailed, Err: fmt.Sprintf("foreach %q: write aggregate: %v", familyID, werr)}
 				s.applyFailurePolicy(familyID, s.stepByID(familyID))

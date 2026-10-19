@@ -3,6 +3,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"time"
 )
 
@@ -28,7 +29,7 @@ func eventKind(e Event) string {
 	case RunStarted:
 		return "run_started"
 	case RunFinished:
-		return "run_finished"
+		return datastore.JournalKindRunFinished
 	case StepStatus:
 		return "step_status"
 	case StepOutput:
@@ -96,7 +97,7 @@ var decoders = map[string]func([]byte) (Event, error){
 		var e RunStarted
 		return e, json.Unmarshal(b, &e)
 	},
-	"run_finished": func(b []byte) (Event, error) {
+	datastore.JournalKindRunFinished: func(b []byte) (Event, error) {
 		var e RunFinished
 		return e, json.Unmarshal(b, &e)
 	},

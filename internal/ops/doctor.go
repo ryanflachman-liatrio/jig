@@ -2,6 +2,7 @@ package ops
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -194,13 +195,13 @@ func checkStoreAccess(root string) Check {
 }
 
 func checkStoredRuns(root string) Check {
-	ids, err := datastore.ListRunIDs(root)
+	ids, err := datastore.Open(root).List()
 	if err != nil {
 		return Check{ID: "store.runs", Status: CheckFail, Scope: root, Message: err.Error(), Remediation: "repair permissions under the runs directory"}
 	}
 	var unhealthy []string
 	for _, id := range ids {
-		runDir, resolveErr := datastore.ResolveRunDir(root, id)
+		runDir, resolveErr := datastore.Open(root).Resolve(id)
 		if resolveErr != nil {
 			unhealthy = append(unhealthy, id)
 			continue
@@ -208,12 +209,33 @@ func checkStoredRuns(root string) Check {
 		records, replayErr := engine.ReplayJournalRecords(runDir)
 		if replayErr != nil || len(records) == 0 {
 			unhealthy = append(unhealthy, id)
+			continue
+		}
+		if corrupt := corruptSessionSteps(runDir); len(corrupt) > 0 {
+			unhealthy = append(unhealthy, id+" (corrupt session.json: "+strings.Join(corrupt, ", ")+")")
 		}
 	}
 	if len(unhealthy) > 0 {
 		return Check{ID: "store.runs", Status: CheckWarn, Scope: root, Message: "unhealthy run directories: " + strings.Join(unhealthy, ", "), Remediation: "inspect with jig status RUN_ID"}
 	}
 	return Check{ID: "store.runs", Status: CheckPass, Scope: root, Message: fmt.Sprintf("%d persisted run(s) readable", len(ids))}
+}
+
+// corruptSessionSteps names the steps whose session.json exists but is
+// unusable. The engine silently degrades those to a fresh retry; doctor is
+// where the operator learns a resumable session was lost.
+func corruptSessionSteps(run datastore.Run) []string {
+	stepIDs, err := run.StepIDs()
+	if err != nil {
+		return nil
+	}
+	var corrupt []string
+	for _, stepID := range stepIDs {
+		if _, err := run.Step(stepID).ReadSession(); errors.Is(err, datastore.ErrSessionCorrupt) {
+			corrupt = append(corrupt, stepID)
+		}
+	}
+	return corrupt
 }
 
 func optionalBackendChecks(lookPath func(string) (string, error), cwd string) []Check {

@@ -130,7 +130,7 @@ func (e *AgentExecutor) Execute(ctx context.Context, req engine.StepRequest, rep
 	// dispatches keep the existing file so crash reopen and live Recover(resume)
 	// share one identity on disk.
 	if req.ResumeSessionID == "" {
-		if err := datastore.ClearSession(sessionRunDir(req), req.Step.ID); err != nil {
+		if err := req.StepDir.ClearSession(); err != nil {
 			return failResult(fmt.Sprintf("clear stale session: %v", err), start), nil
 		}
 	}
@@ -158,25 +158,18 @@ func (e *AgentExecutor) SupportsSessionResume(backend string) bool {
 	return h.Capabilities().Has(harness.CapSessionResume)
 }
 
-func sessionRunDir(req engine.StepRequest) string {
-	if req.TranscriptPath == "" {
-		return ""
-	}
-	// transcript.jsonl lives at steps/<id>/transcript.jsonl → run dir is two up.
-	return filepath.Dir(filepath.Dir(filepath.Dir(req.TranscriptPath)))
-}
-
 func persistSessionID(req engine.StepRequest, sessionID string) error {
-	if sessionID == "" || req.TranscriptPath == "" || req.Step == nil {
+	if sessionID == "" || req.Step == nil {
 		return nil
 	}
-	return datastore.WriteSession(sessionRunDir(req), req.Step.ID, datastore.SessionInfo{
+	return req.StepDir.WriteSession(datastore.SessionInfo{
 		SessionID:  sessionID,
 		Backend:    req.Step.Backend,
 		Attempt:    req.Attempt,
 		Iteration:  req.Iteration,
 		Generation: req.Generation,
 	})
+
 }
 
 func outboundToolCall(tool string, input map[string]any) bool {
@@ -194,10 +187,11 @@ func outboundToolCall(tool string, input map[string]any) bool {
 }
 
 func writeAgentInput(req engine.StepRequest, prompt string) error {
-	if req.TranscriptPath == "" {
+	path := req.StepDir.Input()
+	if path == "" {
 		return nil
 	}
-	return os.WriteFile(filepath.Join(filepath.Dir(req.TranscriptPath), "input.md"), []byte(prompt), 0o644)
+	return os.WriteFile(path, []byte(prompt), 0o644)
 }
 
 // buildSessionSpec carries a step's resolved agent (settled at load time from

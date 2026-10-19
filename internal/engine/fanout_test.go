@@ -728,8 +728,8 @@ func TestForEach_PersistenceOnWritesManifestAndAggregate(t *testing.T) {
 		t.Fatal("run should succeed")
 	}
 
-	runDir := filepath.Join(root, "runs", run.ID)
-	m, err := datastore.ReadFanOutManifest(runDir, "analyze", 0, 0)
+	runDir := datastore.RunAt(filepath.Join(root, "runs", run.ID))
+	m, err := runDir.Step("analyze").ReadFanOutManifest(0, 0)
 	if err != nil {
 		t.Fatalf("ReadFanOutManifest: %v", err)
 	}
@@ -761,7 +761,7 @@ func TestForEach_PersistenceOnWritesManifestAndAggregate(t *testing.T) {
 		t.Fatalf("FanOutExpanded.Instances has %d entries, want 2", len(sawExpanded.Instances))
 	}
 
-	aggPath := filepath.Join(runDir, "steps", "analyze", "output.json")
+	aggPath := runDir.Step("analyze").OutputJSON()
 	data, err := os.ReadFile(aggPath)
 	if err != nil {
 		t.Fatalf("read aggregate output.json: %v", err)

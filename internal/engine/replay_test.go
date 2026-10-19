@@ -14,10 +14,10 @@ import (
 )
 
 func TestReplayJournalRecordsPreservesEnvelopeMetadata(t *testing.T) {
-	runDir := t.TempDir()
+	runDir := datastore.RunAt(t.TempDir())
 	ts := time.Date(2026, 9, 8, 12, 34, 56, 0, time.UTC)
 	line := fmt.Sprintf(`{"seq":7,"ts":%q,"kind":"run_started","data":{"RunID":"r1","Workflow":"wf","Steps":["a"]}}`, ts.Format(time.RFC3339))
-	if err := os.WriteFile(datastore.JournalPath(runDir), []byte(line+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(runDir.Journal(), []byte(line+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	records, err := ReplayJournalRecords(runDir)
@@ -34,9 +34,9 @@ func TestReplayJournalRecordsPreservesEnvelopeMetadata(t *testing.T) {
 
 // writeJournal marshals evs (seq starting at 1) into runDir's journal.jsonl,
 // one line each, mirroring what manifest.Writer produces at run time.
-func writeJournal(t *testing.T, runDir string, evs []Event) {
+func writeJournal(t *testing.T, runDir datastore.Run, evs []Event) {
 	t.Helper()
-	f, err := os.Create(datastore.JournalPath(runDir))
+	f, err := os.Create(runDir.Journal())
 	if err != nil {
 		t.Fatalf("create journal: %v", err)
 	}
@@ -69,7 +69,7 @@ func eventData(t *testing.T, seq int, e Event) (string, string) {
 }
 
 func TestReplayJournal_RoundTrip(t *testing.T) {
-	runDir := t.TempDir()
+	runDir := datastore.RunAt(t.TempDir())
 	want := []Event{
 		RunStarted{RunID: "r1", Workflow: "feature", Steps: []string{"a", "b"}},
 		StepStatus{RunID: "r1", StepID: "a", From: step.StatusPending, To: step.StatusRunning},
@@ -97,8 +97,8 @@ func TestReplayJournal_RoundTrip(t *testing.T) {
 func TestReplayJournal_MissingJournal(t *testing.T) {
 	// A persisted run directory with no journal remains visible as a failed
 	// orphan row instead of silently disappearing from ownership views.
-	runDir := filepath.Join(t.TempDir(), "missing-journal-run")
-	if err := os.Mkdir(runDir, 0o755); err != nil {
+	runDir := datastore.RunAt(filepath.Join(t.TempDir(), "missing-journal-run"))
+	if err := os.Mkdir(runDir.Dir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	got, err := ReplayJournal(runDir)
@@ -117,11 +117,11 @@ func TestReplayJournal_MissingJournal(t *testing.T) {
 }
 
 func TestReplayJournal_FirstRecordCorruptionProducesOrphanHistory(t *testing.T) {
-	runDir := filepath.Join(t.TempDir(), "corrupt-journal-run")
-	if err := os.Mkdir(runDir, 0o755); err != nil {
+	runDir := datastore.RunAt(filepath.Join(t.TempDir(), "corrupt-journal-run"))
+	if err := os.Mkdir(runDir.Dir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(datastore.JournalPath(runDir), []byte("{ not json\n"), 0o644); err != nil {
+	if err := os.WriteFile(runDir.Journal(), []byte("{ not json\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	got, err := ReplayJournal(runDir)
@@ -138,7 +138,7 @@ func TestReplayJournal_FirstRecordCorruptionProducesOrphanHistory(t *testing.T) 
 
 func TestReplayJournal_RecoversRunningStepWithoutTerminalEvent(t *testing.T) {
 	// Orphan path: no workflow.json → virtual fail for display (Spec 20 D7).
-	runDir := t.TempDir()
+	runDir := datastore.RunAt(t.TempDir())
 	writeJournal(t, runDir, []Event{
 		RunStarted{RunID: "r1", Workflow: "feature", Steps: []string{"synthesize"}},
 		StepStatus{RunID: "r1", StepID: "synthesize", From: step.StatusPending, To: step.StatusRunning},
@@ -180,7 +180,7 @@ run = "true"
 	if err != nil {
 		t.Fatal(err)
 	}
-	runDir := t.TempDir()
+	runDir := datastore.RunAt(t.TempDir())
 	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
 		t.Fatal(err)
 	}
@@ -204,8 +204,8 @@ run = "true"
 }
 
 func TestReplayJournal_CorruptSnapshotIsOrphaned(t *testing.T) {
-	runDir := t.TempDir()
-	if err := os.WriteFile(datastore.WorkflowSnapshotPath(runDir), []byte(`{"broken":`), 0o644); err != nil {
+	runDir := datastore.RunAt(t.TempDir())
+	if err := os.WriteFile(runDir.WorkflowSnapshot(), []byte(`{"broken":`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	writeJournal(t, runDir, []Event{
@@ -235,7 +235,7 @@ func TestReplayJournal_OrphanedNonWorkerParksAreTerminalForDisplay(t *testing.T)
 		{name: "review", status: step.StatusAwaitingReview},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			runDir := t.TempDir()
+			runDir := datastore.RunAt(t.TempDir())
 			events := []Event{RunStarted{RunID: "r1", Workflow: "feature", Steps: []string{"gate"}}}
 			if tc.status != step.StatusPending {
 				events = append(events, StepStatus{RunID: "r1", StepID: "gate", From: step.StatusPending, To: tc.status})
@@ -258,7 +258,7 @@ func TestReplayJournal_OrphanedNonWorkerParksAreTerminalForDisplay(t *testing.T)
 }
 
 func TestReplayJournal_MissingRunStartedIsOrphaned(t *testing.T) {
-	runDir := t.TempDir()
+	runDir := datastore.RunAt(t.TempDir())
 	writeJournal(t, runDir, []Event{
 		StepStatus{RunID: "r1", StepID: "agent", From: step.StatusPending, To: step.StatusRunning},
 	})
@@ -276,7 +276,7 @@ func TestReplayJournal_MissingRunStartedIsOrphaned(t *testing.T) {
 }
 
 func TestReplayJournalRawLeavesInterruptedRunUnfinished(t *testing.T) {
-	runDir := t.TempDir()
+	runDir := datastore.RunAt(t.TempDir())
 	writeJournal(t, runDir, []Event{
 		RunStarted{RunID: "r1", Workflow: "feature", Steps: []string{"agent"}},
 		StepStatus{RunID: "r1", StepID: "agent", From: step.StatusPending, To: step.StatusRunning},
@@ -297,8 +297,8 @@ func TestReplayJournalRawLeavesInterruptedRunUnfinished(t *testing.T) {
 }
 
 func TestReplayJournalHydratesReviewDocumentSnapshot(t *testing.T) {
-	runDir := t.TempDir()
-	docDir := datastore.ReviewDocumentsDir(runDir, "gate", "g000-i000")
+	runDir := datastore.RunAt(t.TempDir())
+	docDir := runDir.Step("gate").Review("g000-i000").Documents()
 	if err := os.MkdirAll(docDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +326,7 @@ func TestReplayJournalHydratesReviewDocumentSnapshot(t *testing.T) {
 }
 
 func TestReplayJournal_ToleratesUnknownKindsAndTornTail(t *testing.T) {
-	runDir := t.TempDir()
+	runDir := datastore.RunAt(t.TempDir())
 	wf, err := workflow.Decode(`
 [workflow]
 name = "wf"
@@ -352,7 +352,7 @@ run = "true"
 	buf = append(buf, `{"seq":2,"ts":"2026-01-01T00:00:00Z","kind":"not_a_kind","data":{}}`...)
 	buf = append(buf, '\n')
 	buf = append(buf, `{"seq":3,"ts":"2026-01-01`...)
-	if err := os.WriteFile(datastore.JournalPath(runDir), buf, 0o644); err != nil {
+	if err := os.WriteFile(runDir.Journal(), buf, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -369,12 +369,12 @@ run = "true"
 }
 
 func TestReplayJournal_CompleteInteriorCorruptionOrphansDisplayAndRejectsRaw(t *testing.T) {
-	runDir := t.TempDir()
+	runDir := datastore.RunAt(t.TempDir())
 	writeJournal(t, runDir, []Event{
 		RunStarted{RunID: "r1", Workflow: "wf", Steps: []string{"a"}},
 		StepStatus{RunID: "r1", StepID: "a", From: step.StatusPending, To: step.StatusRunning},
 	})
-	f, err := os.OpenFile(datastore.JournalPath(runDir), os.O_APPEND|os.O_WRONLY, 0)
+	f, err := os.OpenFile(runDir.Journal(), os.O_APPEND|os.O_WRONLY, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +402,7 @@ func TestReplayJournal_CompleteInteriorCorruptionOrphansDisplayAndRejectsRaw(t *
 // unknown kinds are skipped (not dropped due to an error) and known kinds are
 // preserved in order.
 func TestReplayPostReset(t *testing.T) {
-	runDir := t.TempDir()
+	runDir := datastore.RunAt(t.TempDir())
 
 	evs := []Event{
 		RunStarted{RunID: "r1", Workflow: "wf", Steps: []string{"a", "b", "c"}},

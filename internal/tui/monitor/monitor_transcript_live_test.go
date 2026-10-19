@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"fmt"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"reflect"
 	"strings"
 	"testing"
@@ -275,7 +276,7 @@ func TestTranscriptLiveBlockRepaintsOnFrame(t *testing.T) {
 
 func TestTranscriptLiveBlockReplacesWaitingEmptyState(t *testing.T) {
 	m := newLiveModel(t, nil)
-	m.RunDir = t.TempDir()
+	m.RunDir = datastore.RunAt(t.TempDir())
 	if body := strippedBody(m); !strings.Contains(body, "Waiting for step to start") {
 		t.Fatalf("premise: running step with no output shows the waiting state:\n%s", body)
 	}
@@ -299,7 +300,7 @@ func newDiskLiveModel(t *testing.T, entries []transcript.Entry) (Model, string) 
 	t.Helper()
 	runDir := writeTranscript(t, "a", entries)
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 	m = sendEvent(m, engine.StepStatus{RunID: "run-1", StepID: "a", To: step.StatusRunning})
 	return m, runDir

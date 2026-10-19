@@ -4,7 +4,6 @@ import (
 	keybind "charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"github.com/ryanflachman-liatrio/jig/internal/engine"
 	"github.com/ryanflachman-liatrio/jig/internal/tui/detail"
 	"github.com/ryanflachman-liatrio/jig/internal/tui/monitor"
@@ -358,7 +357,7 @@ func (m rootModel) handleDeleteConfirmed() (rootModel, tea.Cmd) {
 		m.pendingDeletions[runID] = true
 		delete(m.handles, runID)
 	} else {
-		datastore.DeleteRun(m.manager.Root(), runID)
+		m.manager.Store().Delete(runID)
 	}
 	return m, nil
 }
@@ -393,7 +392,7 @@ func (m rootModel) updateEngineEvent(msg monitor.EngineEventMsg) (tea.Model, tea
 	// to it — signalled by RunFinished for a run in the pending-deletions set.
 	if fin, ok := msg.Event.(engine.RunFinished); ok {
 		if m.pendingDeletions[fin.RunID] {
-			datastore.DeleteRun(m.manager.Root(), fin.RunID)
+			m.manager.Store().Delete(fin.RunID)
 			delete(m.pendingDeletions, fin.RunID)
 		}
 	}

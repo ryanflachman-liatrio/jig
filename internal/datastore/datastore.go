@@ -3,289 +3,417 @@
 // The run directory convention is:
 //
 //	.jig/runs/<run-id>/
-//	  journal.jsonl          – one Envelope per line, written by manifest.Writer
+//	  journal.jsonl                  – one Envelope per line, written by manifest.Writer
+//	  workflow.json                  – immutable workflow snapshot taken at run start
+//	  scheduler.lock                 – advisory lock held by the live scheduler
+//	  findings.jsonl                 – append-only security findings (internal/sentinel)
+//	  security-monitor-state.json    – Tier-2 monitor cost accounting
 //	  steps/
 //	    <step-id>/
-//	      input.md           – assembled agent prompt for the latest dispatch
-//	      result.json        – written on terminal step status events
-//	      session.json       – mid-flight agent SessionID (crash reopen)
-//	      transcript.jsonl    – append-only agent/command conversation
-//	  artifacts/             – agent output (Phase 4+)
+//	      input.md                   – assembled agent prompt for the latest dispatch
+//	      output.md, output.json     – the step's prose and structured output
+//	      result.json                – written on terminal step status events
+//	      session.json               – mid-flight agent SessionID (crash reopen)
+//	      security.md                – rendered findings scoped to this step
+//	      transcript.jsonl           – append-only agent/command conversation
+//	      fanout/                    – per-generation foreach expansion manifests
+//	      review/<round-id>/         – human review drafts, submissions, feedback
+//	  artifacts/
 //
-// RunDir and StepDir create the directory tree on first call and return the
-// absolute path.  All callers are engine-internal; the root is .jig/ by
-// convention, passed in from Manager.
+// Locations are addressed through four value types layered like the
+// directories: Store (the .jig/ root), Run, Step, and ReviewRound. The zero
+// value of each means persistence is off, and every type follows one rule:
+//
+//   - path accessors return "" when disabled, so an empty root can never
+//     become a path relative to the working directory;
+//   - optional mutations and reads are no-ops (nil error, zero value) when
+//     disabled;
+//   - in an enabled location, an identifier that is not a single safe path
+//     segment disables the child location's paths and makes every mutation
+//     and read return the validation error;
+//   - required operations (Store.Create, Store.Resolve, Store.Prune) fail
+//     explicitly when the store is disabled.
 package datastore
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 )
 
-// ResolveRunDir validates runID and resolves an existing persisted run without
-// creating anything. Persisted identifiers are deliberately stricter than
-// ordinary path fragments because these paths are accepted from CLI input.
-func ResolveRunDir(root, runID string) (string, error) {
-	if root == "" {
-		return "", fmt.Errorf("datastore: persistence root is empty")
+// errDisabled reports a required operation attempted with persistence off.
+var errDisabled = errors.New("datastore: persistence root is empty")
+
+// validateSegment reports whether id can be joined as exactly one path
+// element. Identifiers reach the filesystem from CLI input and generated
+// fan-out ids (which contain dots), so the rule is per segment rather than an
+// alphabet: non-empty, not "." or "..", and free of separators and NUL.
+func validateSegment(kind, id string) error {
+	if id == "" || id == "." || id == ".." || strings.ContainsAny(id, "/\\\x00") ||
+		filepath.IsAbs(id) || filepath.Base(id) != id {
+		return fmt.Errorf("datastore: invalid %s id %q", kind, id)
 	}
-	if runID == "" || runID == "." || runID == ".." || filepath.IsAbs(runID) ||
-		filepath.Base(runID) != runID || strings.ContainsAny(runID, `/\\`) {
-		return "", fmt.Errorf("datastore: invalid run id %q", runID)
+	return nil
+}
+
+// Store is the .jig/ persistence root. The zero Store means persistence is
+// off: it lists nothing, deletes nothing, and refuses to create or resolve
+// runs.
+type Store struct{ root string }
+
+// Open returns the Store rooted at root. An empty root yields the disabled
+// zero Store.
+func Open(root string) Store { return Store{root: root} }
+
+// Enabled reports whether the store persists to disk.
+func (s Store) Enabled() bool { return s.root != "" }
+
+// Root returns the .jig/ directory, or "" when disabled.
+func (s Store) Root() string { return s.root }
+
+func (s Store) runsDir() string {
+	if s.root == "" {
+		return ""
+	}
+	return filepath.Join(s.root, "runs")
+}
+
+// Create creates (if necessary) the run directory for runID with its steps/
+// and artifacts/ subdirectories, so executors never need to mkdir
+// individually. Creating a run is required, so a disabled store is an error.
+func (s Store) Create(runID string) (Run, error) {
+	if !s.Enabled() {
+		return Run{}, errDisabled
+	}
+	if err := validateSegment("run", runID); err != nil {
+		return Run{}, err
+	}
+	dir := filepath.Join(s.runsDir(), runID)
+	for _, sub := range []string{dir, filepath.Join(dir, "steps"), filepath.Join(dir, "artifacts")} {
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			return Run{}, fmt.Errorf("datastore: create run dir %q: %w", sub, err)
+		}
+	}
+	return Run{dir: dir}, nil
+}
+
+// Resolve validates runID and resolves an existing persisted run without
+// creating anything. Neither runs/ nor the run may be a symlink, and the
+// resolved run must stay inside runs/, because these ids arrive from CLI
+// input.
+func (s Store) Resolve(runID string) (Run, error) {
+	if !s.Enabled() {
+		return Run{}, errDisabled
+	}
+	if err := validateSegment("run", runID); err != nil {
+		return Run{}, err
 	}
 
-	runsDir, err := filepath.Abs(filepath.Join(root, "runs"))
+	runsDir, err := filepath.Abs(s.runsDir())
 	if err != nil {
-		return "", fmt.Errorf("datastore: resolve runs directory: %w", err)
+		return Run{}, fmt.Errorf("datastore: resolve runs directory: %w", err)
 	}
 	info, err := os.Lstat(runsDir)
 	if err != nil {
-		return "", fmt.Errorf("datastore: access runs directory %q: %w", runsDir, err)
+		return Run{}, fmt.Errorf("datastore: access runs directory %q: %w", runsDir, err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("datastore: runs path %q must not be a symlink", runsDir)
+		return Run{}, fmt.Errorf("datastore: runs path %q must not be a symlink", runsDir)
 	}
 	if !info.IsDir() {
-		return "", fmt.Errorf("datastore: runs path %q is not a directory", runsDir)
+		return Run{}, fmt.Errorf("datastore: runs path %q is not a directory", runsDir)
 	}
 
 	dir := filepath.Join(runsDir, runID)
 	entry, err := os.Lstat(dir)
 	if err != nil {
-		return "", fmt.Errorf("datastore: access run %q: %w", runID, err)
+		return Run{}, fmt.Errorf("datastore: access run %q: %w", runID, err)
 	}
 	if entry.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("datastore: run %q must not be a symlink", runID)
+		return Run{}, fmt.Errorf("datastore: run %q must not be a symlink", runID)
 	}
 	if !entry.IsDir() {
-		return "", fmt.Errorf("datastore: run %q is not a directory", runID)
+		return Run{}, fmt.Errorf("datastore: run %q is not a directory", runID)
 	}
 
 	resolvedRuns, err := filepath.EvalSymlinks(runsDir)
 	if err != nil {
-		return "", fmt.Errorf("datastore: resolve runs directory %q: %w", runsDir, err)
+		return Run{}, fmt.Errorf("datastore: resolve runs directory %q: %w", runsDir, err)
 	}
 	resolvedRun, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return "", fmt.Errorf("datastore: resolve run %q: %w", runID, err)
+		return Run{}, fmt.Errorf("datastore: resolve run %q: %w", runID, err)
 	}
 	rel, err := filepath.Rel(resolvedRuns, resolvedRun)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("datastore: run %q escapes the persistence root", runID)
+		return Run{}, fmt.Errorf("datastore: run %q escapes the persistence root", runID)
 	}
-	return dir, nil
+	return Run{dir: dir}, nil
 }
 
-// RunDir creates (if necessary) the run directory for runID under root and
-// returns its path.  The subdirectories steps/ and artifacts/ are created at
-// the same time so executors never need to mkdir individually.
-//
-// root is the .jig/ directory (from Manager.root).  A non-empty root that
-// cannot be created returns an error.  Callers that pass "" opt out of
-// persistence (tests, Phase 1 compatibility).
-func RunDir(root, runID string) (string, error) {
-	if root == "" {
-		return "", fmt.Errorf("datastore: root is empty")
+// Locate addresses the run for runID without creating it or checking that
+// it exists — for readers that tolerate a missing run. A disabled store
+// yields the disabled zero Run; an invalid runID is an error.
+func (s Store) Locate(runID string) (Run, error) {
+	if err := validateSegment("run", runID); err != nil {
+		return Run{}, err
 	}
-	dir := filepath.Join(root, "runs", runID)
-	for _, sub := range []string{dir, filepath.Join(dir, "steps"), filepath.Join(dir, "artifacts")} {
-		if err := os.MkdirAll(sub, 0o755); err != nil {
-			return "", fmt.Errorf("datastore: create run dir %q: %w", sub, err)
-		}
+	if !s.Enabled() {
+		return Run{}, nil
 	}
-	return dir, nil
+	return Run{dir: filepath.Join(s.runsDir(), runID)}, nil
 }
 
-// ListRunIDs returns the IDs of the runs persisted under root's runs/ directory,
-// sorted ascending. Because run IDs are timestamp-prefixed (YYYYMMDD-HHMMSS-…),
-// ascending order is chronological — oldest first. Only subdirectories count as
-// runs; stray files are ignored.
-//
-// A missing runs/ directory yields nil with no error (nothing has run yet), and
-// an empty root (persistence off) yields nil as well — callers treat "no runs to
-// list" and "persistence disabled" identically.
-func ListRunIDs(root string) ([]string, error) {
-	if root == "" {
+// List returns the IDs of the persisted runs, sorted ascending. Because run
+// IDs are timestamp-prefixed (YYYYMMDD-HHMMSS-…), ascending order is
+// chronological — oldest first. Only subdirectories count as runs; stray
+// files are ignored. A disabled store or a missing runs/ directory yields nil
+// with no error: "no runs" and "persistence off" are treated identically.
+func (s Store) List() ([]string, error) {
+	if !s.Enabled() {
 		return nil, nil
 	}
-	runsDir := filepath.Join(root, "runs")
-	ents, err := os.ReadDir(runsDir)
+	return listDirs(s.runsDir())
+}
+
+// listDirs returns the names of dir's subdirectories, sorted. Stray files are
+// ignored and a missing dir yields nil with no error.
+func listDirs(dir string) ([]string, error) {
+	ents, err := os.ReadDir(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("datastore: read runs dir %q: %w", runsDir, err)
+		return nil, fmt.Errorf("datastore: read dir %q: %w", dir, err)
 	}
-	var ids []string
+	var names []string
 	for _, ent := range ents {
 		if ent.IsDir() {
-			ids = append(ids, ent.Name())
+			names = append(names, ent.Name())
 		}
 	}
-	sort.Strings(ids)
-	return ids, nil
+	slices.Sort(names)
+	return names, nil
 }
 
-// StepDir creates (if necessary) the per-step directory steps/<stepID>/ inside
-// runDir and returns its path.  runDir must already exist (RunDir creates it).
-func StepDir(runDir, stepID string) (string, error) {
-	dir := filepath.Join(runDir, "steps", stepID)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", fmt.Errorf("datastore: create step dir %q: %w", dir, err)
+// Delete removes the entire run directory for runID. It is a no-op when the
+// store is disabled or the run does not exist, and never creates directories
+// as a side effect. An invalid runID is an error, so no id can widen the
+// removal beyond runs/.
+func (s Store) Delete(runID string) error {
+	if !s.Enabled() {
+		return nil
 	}
-	return dir, nil
+	if err := validateSegment("run", runID); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(filepath.Join(s.runsDir(), runID)); err != nil {
+		return fmt.Errorf("datastore: delete run %q: %w", runID, err)
+	}
+	return nil
 }
 
-// JournalPath returns the path to journal.jsonl inside runDir.
-func JournalPath(runDir string) string { return filepath.Join(runDir, "journal.jsonl") }
+// Run addresses one run directory. The zero Run is disabled. Runs come from
+// Store.Create, Store.Resolve, or RunAt.
+type Run struct{ dir string }
 
-// ResultPath returns the path to result.json for a step inside runDir.
-func ResultPath(runDir, stepID string) string {
-	return filepath.Join(runDir, "steps", stepID, "result.json")
-}
+// RunAt wraps an existing run directory path — for code that receives a run
+// directory rather than a store and id, such as replay of an exported run.
+// An empty dir yields the disabled zero Run.
+func RunAt(dir string) Run { return Run{dir: dir} }
 
-// TranscriptPath returns the path to transcript.jsonl for a step inside runDir.
-// The append-only transcript lives beside result.json and holds the step's full
-// agent conversation (see internal/transcript).
-func TranscriptPath(runDir, stepID string) string {
-	return filepath.Join(runDir, "steps", stepID, "transcript.jsonl")
-}
+// Enabled reports whether the run persists to disk.
+func (r Run) Enabled() bool { return r.dir != "" }
 
-// InputPath returns the canonical path to input.md for a step inside runDir.
-// Agent steps write the fully assembled prompt here before opening the harness.
-func InputPath(runDir, stepID string) string {
-	return filepath.Join(runDir, "steps", stepID, "input.md")
-}
+// Dir returns the run directory, or "" when disabled.
+func (r Run) Dir() string { return r.dir }
 
-// FindingsPath returns the path to findings.jsonl for a run inside runDir.
-// The append-only findings file holds every security finding emitted by both
-// Tier-1 (guard) and Tier-2 (monitor fleet) for this run (see internal/sentinel).
-func FindingsPath(runDir string) string {
-	if runDir == "" {
+func (r Run) path(name string) string {
+	if r.dir == "" {
 		return ""
 	}
-	return filepath.Join(runDir, "findings.jsonl")
+	return filepath.Join(r.dir, name)
 }
 
-// SecurityMonitorStatePath returns the run-owned Tier-2 cost-accounting state.
-func SecurityMonitorStatePath(runDir string) string {
-	if runDir == "" {
-		return ""
-	}
-	return filepath.Join(runDir, "security-monitor-state.json")
-}
+// Journal returns journal.jsonl.
+func (r Run) Journal() string { return r.path("journal.jsonl") }
 
-// WorkflowSnapshotPath returns the immutable workflow definition captured when
-// a run starts. Historical resume uses it instead of whichever version happens
+// Artifacts returns the artifacts/ directory Store.Create pre-creates.
+func (r Run) Artifacts() string { return r.path("artifacts") }
+
+// Findings returns findings.jsonl, the append-only file holding every
+// security finding emitted by both Tier-1 (guard) and Tier-2 (monitor fleet)
+// for this run (see internal/sentinel).
+func (r Run) Findings() string { return r.path("findings.jsonl") }
+
+// SecurityMonitorState returns the run-owned Tier-2 cost-accounting state.
+func (r Run) SecurityMonitorState() string { return r.path("security-monitor-state.json") }
+
+// WorkflowSnapshot returns the immutable workflow definition captured when a
+// run starts. Historical resume uses it instead of whichever version happens
 // to be present in the working tree later.
-func WorkflowSnapshotPath(runDir string) string {
-	return filepath.Join(runDir, "workflow.json")
-}
+func (r Run) WorkflowSnapshot() string { return r.path("workflow.json") }
 
-// SchedulerLockPath names the advisory lock held for the lifetime of a live
+// SchedulerLock names the advisory lock held for the lifetime of a live
 // scheduler, preventing two jig processes from resuming the same run.
-func SchedulerLockPath(runDir string) string {
-	return filepath.Join(runDir, "scheduler.lock")
+func (r Run) SchedulerLock() string { return r.path("scheduler.lock") }
+
+// StepIDs lists the step directories present under steps/, sorted. A
+// disabled run or a missing steps/ directory yields nil with no error.
+func (r Run) StepIDs() ([]string, error) {
+	if r.dir == "" {
+		return nil, nil
+	}
+	return listDirs(filepath.Join(r.dir, "steps"))
 }
 
-// OutputPath returns the canonical path to output.md for a step inside runDir.
-// Content is the agent's raw_result base-schema field — the clean prose answer
-// written by the agent as its primary deliverable.
-func OutputPath(runDir, stepID string) string {
-	return filepath.Join(runDir, "steps", stepID, "output.md")
+// Step addresses steps/<id>/ inside the run. A Step from a disabled run is
+// disabled and every operation on it is a no-op: ids only need validating
+// before they touch the filesystem. A Step with an invalid id in an enabled
+// run is disabled and reports the validation error from every mutation and
+// read.
+func (r Run) Step(id string) Step {
+	if r.dir == "" {
+		return Step{}
+	}
+	if err := validateSegment("step", id); err != nil {
+		return Step{err: err}
+	}
+	return Step{dir: filepath.Join(r.dir, "steps", id)}
 }
 
-// OutputJSONPath returns the canonical path to output.json for a step inside
-// runDir. Content is the full structured output JSON (base fields + any
-// declared [step.schema] fields).
-func OutputJSONPath(runDir, stepID string) string {
-	return filepath.Join(runDir, "steps", stepID, "output.json")
+// Step addresses one step directory. The zero Step is disabled.
+type Step struct {
+	dir string
+	err error
 }
 
-// SecurityPath returns the canonical path to security.md for a step inside
-// runDir. Content is a human-readable rendering of every finding.jsonl entry
-// scoped to this step (see internal/sentinel.RenderMarkdown), refreshed each
-// time the run records a new finding for the step.
-func SecurityPath(runDir, stepID string) string {
-	return filepath.Join(runDir, "steps", stepID, "security.md")
-}
+// Enabled reports whether the step persists to disk.
+func (s Step) Enabled() bool { return s.dir != "" }
 
-func ReviewRoot(runDir, stepID string) string {
-	if runDir == "" {
+// Dir returns the step directory, or "" when disabled.
+func (s Step) Dir() string { return s.dir }
+
+// Err returns the id validation error, if the step was addressed with an
+// invalid id.
+func (s Step) Err() error { return s.err }
+
+func (s Step) path(elems ...string) string {
+	if s.dir == "" {
 		return ""
 	}
-	return filepath.Join(runDir, "steps", stepID, "review")
+	return filepath.Join(append([]string{s.dir}, elems...)...)
 }
 
-func ReviewRoundDir(runDir, stepID, roundID string) string {
-	if runDir == "" {
-		return ""
+// Ensure creates the step directory if necessary. A disabled step is a no-op.
+func (s Step) Ensure() error {
+	if s.err != nil {
+		return s.err
 	}
-	return filepath.Join(ReviewRoot(runDir, stepID), roundID)
-}
-
-func ReviewDraftPath(runDir, stepID, roundID string) string {
-	if dir := ReviewRoundDir(runDir, stepID, roundID); dir != "" {
-		return filepath.Join(dir, "draft.json")
-	}
-	return ""
-}
-
-func ReviewSubmissionPath(runDir, stepID, roundID string) string {
-	if dir := ReviewRoundDir(runDir, stepID, roundID); dir != "" {
-		return filepath.Join(dir, "submission.json")
-	}
-	return ""
-}
-
-func ReviewFeedbackPath(runDir, stepID, roundID string) string {
-	if dir := ReviewRoundDir(runDir, stepID, roundID); dir != "" {
-		return filepath.Join(dir, "feedback.md")
-	}
-	return ""
-}
-
-func ReviewDocumentsDir(runDir, stepID, roundID string) string {
-	if dir := ReviewRoundDir(runDir, stepID, roundID); dir != "" {
-		return filepath.Join(dir, "documents")
-	}
-	return ""
-}
-
-// DeleteRun removes the entire run directory for runID from disk.  It is a
-// no-op when root is empty (persistence-off path) or when the directory does
-// not exist.  It does not call RunDir, so no directories are created as a
-// side-effect.
-func DeleteRun(root, runID string) error {
-	if root == "" {
+	if s.dir == "" {
 		return nil
 	}
-	return os.RemoveAll(filepath.Join(root, "runs", runID))
+	if err := os.MkdirAll(s.dir, 0o755); err != nil {
+		return fmt.Errorf("datastore: create step dir %q: %w", s.dir, err)
+	}
+	return nil
 }
 
-// ClearStepOutputs removes the derived per-step inputs and outputs for stepID —
-// input.md, result.json, output.md, output.json, and session.json — so a reset
-// step starts fresh. transcript.jsonl is intentionally left intact: it is
+// Input returns input.md: the fully assembled prompt agent steps write
+// before opening the harness.
+func (s Step) Input() string { return s.path("input.md") }
+
+// Result returns result.json, written on terminal step status events.
+func (s Step) Result() string { return s.path("result.json") }
+
+// Output returns output.md: the agent's raw_result base-schema field, the
+// clean prose answer written as its primary deliverable.
+func (s Step) Output() string { return s.path("output.md") }
+
+// OutputJSON returns output.json: the full structured output (base fields
+// plus any declared [step.schema] fields).
+func (s Step) OutputJSON() string { return s.path("output.json") }
+
+// Transcript returns transcript.jsonl, the append-only record of the step's
+// full agent conversation (see internal/transcript).
+func (s Step) Transcript() string { return s.path("transcript.jsonl") }
+
+// Security returns security.md: a human-readable rendering of every
+// findings.jsonl entry scoped to this step (see sentinel.RenderMarkdown),
+// refreshed each time the run records a new finding for the step.
+func (s Step) Security() string { return s.path("security.md") }
+
+// ClearOutputs removes the derived per-step inputs and outputs — input.md,
+// result.json, output.md, output.json, and session.json — so a reset step
+// starts fresh. transcript.jsonl is intentionally left intact: it is
 // append-only and a re-run appends a new generation rather than overwriting
-// history. No-ops silently when runDir is empty (persistence-off path) or when
-// any individual file does not exist.
-func ClearStepOutputs(runDir, stepID string) error {
-	if runDir == "" {
+// history. A disabled step and missing files are no-ops.
+func (s Step) ClearOutputs() error {
+	if s.err != nil {
+		return s.err
+	}
+	if s.dir == "" {
 		return nil
 	}
-	for _, path := range []string{
-		InputPath(runDir, stepID),
-		ResultPath(runDir, stepID),
-		OutputPath(runDir, stepID),
-		OutputJSONPath(runDir, stepID),
-		SessionPath(runDir, stepID),
-	} {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("datastore: clear step %q artifact %q: %w", stepID, path, err)
+	for _, path := range []string{s.Input(), s.Result(), s.Output(), s.OutputJSON(), s.Session()} {
+		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("datastore: clear step artifact %q: %w", path, err)
 		}
 	}
 	return nil
 }
+
+// Review addresses review/<roundID>/ inside the step. It inherits the step's
+// disabled state and validation error.
+func (s Step) Review(roundID string) ReviewRound {
+	if s.err != nil {
+		return ReviewRound{err: s.err}
+	}
+	if s.dir == "" {
+		return ReviewRound{}
+	}
+	if err := validateSegment("review round", roundID); err != nil {
+		return ReviewRound{err: err}
+	}
+	return ReviewRound{dir: filepath.Join(s.dir, "review", roundID)}
+}
+
+// ReviewRound addresses one human review round. The zero ReviewRound is
+// disabled.
+type ReviewRound struct {
+	dir string
+	err error
+}
+
+// Enabled reports whether the round persists to disk.
+func (r ReviewRound) Enabled() bool { return r.dir != "" }
+
+// Dir returns the round directory, or "" when disabled.
+func (r ReviewRound) Dir() string { return r.dir }
+
+// Err returns the id validation error, if the round or its step was
+// addressed with an invalid id.
+func (r ReviewRound) Err() error { return r.err }
+
+func (r ReviewRound) path(name string) string {
+	if r.dir == "" {
+		return ""
+	}
+	return filepath.Join(r.dir, name)
+}
+
+// Draft returns the operator's in-progress review draft.
+func (r ReviewRound) Draft() string { return r.path("draft.json") }
+
+// Submission returns the operator's submitted review decision.
+func (r ReviewRound) Submission() string { return r.path("submission.json") }
+
+// Feedback returns the rendered feedback handed back to the agent.
+func (r ReviewRound) Feedback() string { return r.path("feedback.md") }
+
+// Documents returns the directory of documents under review.
+func (r ReviewRound) Documents() string { return r.path("documents") }

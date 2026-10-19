@@ -51,7 +51,7 @@ func TestStepOutputFiles(t *testing.T) {
 		{
 			name: "only_md",
 			setup: func(t *testing.T, runDir string) string {
-				mdPath := datastore.OutputPath(runDir, "plan")
+				mdPath := datastore.RunAt(runDir).Step("plan").Output()
 				if err := os.MkdirAll(filepath.Dir(mdPath), 0o755); err != nil {
 					t.Fatalf("mkdir: %v", err)
 				}
@@ -94,7 +94,7 @@ func TestStepOutputFiles(t *testing.T) {
 			name: "dedup",
 			setup: func(t *testing.T, runDir string) string {
 				seedCanonical(t, runDir)
-				return datastore.OutputPath(runDir, "plan")
+				return datastore.RunAt(runDir).Step("plan").Output()
 			},
 			expectedCount: 3,
 			assertions: func(t *testing.T, files map[string]outputFile) {
@@ -110,7 +110,7 @@ func TestStepOutputFiles(t *testing.T) {
 			name: "diagnostics",
 			setup: func(t *testing.T, runDir string) string {
 				seedCanonical(t, runDir)
-				stepDir := filepath.Dir(datastore.InputPath(runDir, "plan"))
+				stepDir := filepath.Dir(datastore.RunAt(runDir).Step("plan").Input())
 				for name, content := range map[string]string{
 					"acp-diagnostics.jsonl":  `{"event":"prompt_started"}` + "\n",
 					"acp-adapter.stderr.log": "adapter warning\n",
@@ -151,7 +151,7 @@ func TestStepOutputFiles(t *testing.T) {
 			if tc.persistOff {
 				runDir = ""
 			}
-			result := stepOutputFiles(runDir, "plan", declared)
+			result := stepOutputFiles(datastore.RunAt(runDir), "plan", declared)
 			if len(result) != tc.expectedCount {
 				t.Fatalf("got %d entries, want %d", len(result), tc.expectedCount)
 			}
@@ -167,10 +167,10 @@ func TestStepOutputFiles(t *testing.T) {
 func TestStepMessageDiscoversLiveStepFiles(t *testing.T) {
 	runDir := t.TempDir()
 	m := New("run-1")
-	m.RunDir = runDir
-	m.stepFiles["plan"] = stepOutputFiles(runDir, "plan", "")
+	m.RunDir = datastore.RunAt(runDir)
+	m.stepFiles["plan"] = stepOutputFiles(datastore.RunAt(runDir), "plan", "")
 
-	inputPath := datastore.InputPath(runDir, "plan")
+	inputPath := datastore.RunAt(runDir).Step("plan").Input()
 	if err := os.MkdirAll(filepath.Dir(inputPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -230,17 +230,17 @@ func TestCreateOutputFilesUsesShortestUniqueLabels(t *testing.T) {
 
 func seedCanonical(t *testing.T, runDir string) {
 	t.Helper()
-	mdPath := datastore.OutputPath(runDir, "plan")
+	mdPath := datastore.RunAt(runDir).Step("plan").Output()
 	if err := os.MkdirAll(filepath.Dir(mdPath), 0o755); err != nil {
 		t.Fatalf("mkdir step dir: %v", err)
 	}
 	if err := os.WriteFile(mdPath, []byte("md"), 0o644); err != nil {
 		t.Fatalf("write output.md: %v", err)
 	}
-	if err := os.WriteFile(datastore.InputPath(runDir, "plan"), []byte("prompt"), 0o644); err != nil {
+	if err := os.WriteFile(datastore.RunAt(runDir).Step("plan").Input(), []byte("prompt"), 0o644); err != nil {
 		t.Fatalf("write input.md: %v", err)
 	}
-	if err := os.WriteFile(datastore.OutputJSONPath(runDir, "plan"), []byte("{}"), 0o644); err != nil {
+	if err := os.WriteFile(datastore.RunAt(runDir).Step("plan").OutputJSON(), []byte("{}"), 0o644); err != nil {
 		t.Fatalf("write output.json: %v", err)
 	}
 }

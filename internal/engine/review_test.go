@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"os"
 	"path/filepath"
 	"strings"
@@ -158,7 +159,7 @@ output_type = { enum = ["approve"] }
 func reviewScheduler(runWorktree string, fields map[string]any) *scheduler {
 	return &scheduler{
 		runWorktree: runWorktree,
-		runDir:      tdir(runWorktree),
+		runDir:      datastore.RunAt(tdir(runWorktree)),
 		states: map[string]*step.State{
 			"write": {ID: "write", Result: &step.Result{Status: step.StatusSucceeded}},
 			"gate":  {ID: "gate"},

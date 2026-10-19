@@ -8,8 +8,8 @@ import (
 )
 
 func TestRunLeasePreservesExistingLockBytesAndIdentity(t *testing.T) {
-	runDir := t.TempDir()
-	path := datastore.SchedulerLockPath(runDir)
+	runDir := datastore.RunAt(t.TempDir())
+	path := runDir.SchedulerLock()
 	if err := os.WriteFile(path, []byte("coordination only"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -41,13 +41,13 @@ func TestRunLeasePreservesExistingLockBytesAndIdentity(t *testing.T) {
 }
 
 func TestRunLeaseCreatesMissingCoordinationFile(t *testing.T) {
-	runDir := t.TempDir()
+	runDir := datastore.RunAt(t.TempDir())
 	lease, err := AcquireRunLease(runDir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer lease.Close()
-	info, err := os.Stat(datastore.SchedulerLockPath(runDir))
+	info, err := os.Stat(runDir.SchedulerLock())
 	if err != nil {
 		t.Fatal(err)
 	}

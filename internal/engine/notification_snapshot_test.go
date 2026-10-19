@@ -38,7 +38,7 @@ run = "echo hi"
 
 func TestWorkflowSnapshotPersistsResolvedNotificationPolicy(t *testing.T) {
 	root := t.TempDir()
-	runDir, err := datastore.RunDir(root, "test-run")
+	runDir, err := datastore.Open(root).Create("test-run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +46,7 @@ func TestWorkflowSnapshotPersistsResolvedNotificationPolicy(t *testing.T) {
 	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(datastore.WorkflowSnapshotPath(runDir))
+	data, err := os.ReadFile(runDir.WorkflowSnapshot())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestWorkflowSnapshotPersistsResolvedNotificationPolicy(t *testing.T) {
 
 func TestWorkflowSnapshotDetectsPolicyTampering(t *testing.T) {
 	root := t.TempDir()
-	runDir, err := datastore.RunDir(root, "test-run")
+	runDir, err := datastore.Open(root).Create("test-run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestWorkflowSnapshotDetectsPolicyTampering(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Read, tamper with the notification policy, and write back.
-	path := datastore.WorkflowSnapshotPath(runDir)
+	path := runDir.WorkflowSnapshot()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -108,7 +108,7 @@ func TestWorkflowSnapshotDetectsPolicyTampering(t *testing.T) {
 
 func TestWorkflowSnapshotRestoresPolicyOnReopen(t *testing.T) {
 	root := t.TempDir()
-	runDir, err := datastore.RunDir(root, "test-run")
+	runDir, err := datastore.Open(root).Create("test-run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestWorkflowSnapshotRestoresPolicyOnReopen(t *testing.T) {
 // values, and Slack webhook paths must never appear.
 func TestNotificationSecretsNeverPersist(t *testing.T) {
 	root := t.TempDir()
-	runDir, err := datastore.RunDir(root, "test-run")
+	runDir, err := datastore.Open(root).Create("test-run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ run = "echo hi"
 	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(datastore.WorkflowSnapshotPath(runDir))
+	data, err := os.ReadFile(runDir.WorkflowSnapshot())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +197,7 @@ run = "echo hi"
 
 func TestWorkflowSnapshotOlderRecordTreatedAsDisabled(t *testing.T) {
 	root := t.TempDir()
-	runDir, err := datastore.RunDir(root, "test-run")
+	runDir, err := datastore.Open(root).Create("test-run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,7 @@ run = "echo hi"
 	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(datastore.WorkflowSnapshotPath(runDir))
+	data, err := os.ReadFile(runDir.WorkflowSnapshot())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,5 +235,5 @@ run = "echo hi"
 	if len(policy.Events) != 0 || len(policy.Routes) != 0 {
 		t.Fatalf("legacy snapshot acquired policy: %+v", policy)
 	}
-	_ = filepath.Dir(runDir)
+	_ = filepath.Dir(runDir.Dir())
 }

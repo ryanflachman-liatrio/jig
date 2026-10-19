@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"net"
 	"os"
 	"os/exec"
@@ -49,7 +50,7 @@ func TestBuildSystemPrompt(t *testing.T) {
 }
 
 func TestQuestionPanelRoundTrip(t *testing.T) {
-	m := New(nil, "", engine.RunSnapshot{}, config.HelpChatConfig{})
+	m := New(nil, datastore.Run{}, engine.RunSnapshot{}, config.HelpChatConfig{})
 	req := interaction.QuestionRequest{
 		ID: "help-q1",
 		Fields: []interaction.QuestionField{{
@@ -80,7 +81,7 @@ func TestQuestionPanelRoundTrip(t *testing.T) {
 }
 
 func TestQuestionEscapeOwnershipFollowsNestedPhase(t *testing.T) {
-	m := New(nil, "", engine.RunSnapshot{}, config.HelpChatConfig{})
+	m := New(nil, datastore.Run{}, engine.RunSnapshot{}, config.HelpChatConfig{})
 	req := interaction.QuestionRequest{
 		ID: "help-q1",
 		Fields: []interaction.QuestionField{{
@@ -130,7 +131,7 @@ func TestToolHandlersRegistersAllTen(t *testing.T) {
 	}
 	gateReq := make(chan struct{}, 1)
 	gateAns := make(chan bool, 1)
-	handlers := BuildToolHandlers(nil, "", func(tea.Msg) {}, gateReq, gateAns)
+	handlers := BuildToolHandlers(nil, datastore.Run{}, func(tea.Msg) {}, gateReq, gateAns)
 	if len(handlers) != len(wantTools) {
 		t.Fatalf("want %d tools, got %d: %v", len(wantTools), len(handlers), handlers)
 	}
@@ -245,7 +246,7 @@ func TestFinalMergeGate_ContextCancelledUnblocks(t *testing.T) {
 // Init returns a non-nil cmd, and CapturesText returns true initially.
 func TestModelInit(t *testing.T) {
 	snap := engine.RunSnapshot{ID: "r", Workflow: "wf"}
-	m := New(nil, "", snap, config.HelpChatConfig{})
+	m := New(nil, datastore.Run{}, snap, config.HelpChatConfig{})
 
 	// nil run → Init returns nil (unavailable path).
 	cmd := m.Init()
@@ -344,7 +345,7 @@ func TestToolServerDispatchesAllTenTools(t *testing.T) {
 	gateReq := make(chan struct{}, 1)
 	gateAns := make(chan bool, 1)
 	runDir := t.TempDir()
-	handlers := BuildToolHandlers(fakeRun("run-1"), runDir, dispatch, gateReq, gateAns)
+	handlers := BuildToolHandlers(fakeRun("run-1"), datastore.RunAt(runDir), dispatch, gateReq, gateAns)
 	srv, err := newToolServer(handlers)
 	if err != nil {
 		t.Fatalf("newToolServer: %v", err)
@@ -406,7 +407,7 @@ func TestToolServerAskUserFinalMergeRendezvous(t *testing.T) {
 	dispatch := func(msg tea.Msg) { dispatched <- msg }
 	gateReq := make(chan struct{}, 1)
 	gateAns := make(chan bool, 1)
-	handlers := BuildToolHandlers(fakeRun("run-2"), t.TempDir(), dispatch, gateReq, gateAns)
+	handlers := BuildToolHandlers(fakeRun("run-2"), datastore.RunAt(t.TempDir()), dispatch, gateReq, gateAns)
 	srv, err := newToolServer(handlers)
 	if err != nil {
 		t.Fatalf("newToolServer: %v", err)
@@ -451,7 +452,7 @@ func TestToolServerAskUserFinalMergeRendezvous(t *testing.T) {
 // TestToolServerAuthRejection covers the jig-facing auth boundary: a wrong or
 // missing token is rejected rather than acked.
 func TestToolServerAuthRejection(t *testing.T) {
-	handlers := BuildToolHandlers(nil, "", func(tea.Msg) {}, make(chan struct{}, 1), make(chan bool, 1))
+	handlers := BuildToolHandlers(nil, datastore.Run{}, func(tea.Msg) {}, make(chan struct{}, 1), make(chan bool, 1))
 	srv, err := newToolServer(handlers)
 	if err != nil {
 		t.Fatalf("newToolServer: %v", err)
@@ -531,7 +532,7 @@ func TestToolServerSurvivesSubprocessKillMidRequest(t *testing.T) {
 	dispatch := func(msg tea.Msg) { dispatched <- msg }
 	gateReq := make(chan struct{}, 1)
 	gateAns := make(chan bool, 1)
-	handlers := BuildToolHandlers(fakeRun("run-crash"), t.TempDir(), dispatch, gateReq, gateAns)
+	handlers := BuildToolHandlers(fakeRun("run-crash"), datastore.RunAt(t.TempDir()), dispatch, gateReq, gateAns)
 	srv, err := newToolServer(handlers)
 	if err != nil {
 		t.Fatalf("newToolServer: %v", err)
@@ -622,7 +623,7 @@ func (s *fakeHelpchatSession) Close() error {
 // live subprocess.
 func TestModelTurnRoundTripThroughFakeHarness(t *testing.T) {
 	run := fakeRun("run-turn")
-	m := New(run, t.TempDir(), engine.RunSnapshot{ID: "run-turn", Workflow: "wf"}, config.HelpChatConfig{})
+	m := New(run, datastore.RunAt(t.TempDir()), engine.RunSnapshot{ID: "run-turn", Workflow: "wf"}, config.HelpChatConfig{})
 	m.newHarness = func() (helpchatHarness, error) {
 		return &fakeHelpchatHarness{events: []harness.Event{
 			{Type: harness.EventTextDelta, Text: "Hello"},

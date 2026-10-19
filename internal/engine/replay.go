@@ -39,7 +39,7 @@ const orphanedRunErr = "run cannot be reopened because its durable workflow snap
 // record is tolerated as a crash-torn tail. A newline-complete corrupt record
 // is not skipped: display replay marks the decodable prefix orphaned, while
 // strict resume rejects the journal.
-func ReplayJournal(runDir string) ([]Event, error) {
+func ReplayJournal(runDir datastore.Run) ([]Event, error) {
 	_, events, err := readJournal(runDir)
 	if err != nil {
 		if len(events) == 0 {
@@ -58,15 +58,15 @@ func ReplayJournal(runDir string) ([]Event, error) {
 	return reconcileInterruptedRun(runDir, events, false), nil
 }
 
-func orphanTerminalHistory(runDir string) []Event {
-	if runDir == "" {
+func orphanTerminalHistory(runDir datastore.Run) []Event {
+	if !runDir.Enabled() {
 		return nil
 	}
-	info, err := os.Stat(runDir)
+	info, err := os.Stat(runDir.Dir())
 	if err != nil || !info.IsDir() {
 		return nil
 	}
-	runID := filepath.Base(filepath.Clean(runDir))
+	runID := filepath.Base(runDir.Dir())
 	if runID == "." || runID == string(filepath.Separator) || runID == "" {
 		return nil
 	}
@@ -91,7 +91,7 @@ func orphanTerminalHistory(runDir string) []Event {
 // ReplayJournalRaw returns only events durably written by the original
 // scheduler. Ownership views use it to distinguish an unfinished paused run
 // from a terminal run without adding display-only crash reconciliation events.
-func ReplayJournalRaw(runDir string) ([]Event, error) {
+func ReplayJournalRaw(runDir datastore.Run) ([]Event, error) {
 	_, events, err := readJournal(runDir)
 	return events, err
 }
@@ -99,12 +99,12 @@ func ReplayJournalRaw(runDir string) ([]Event, error) {
 // ReplayJournalRecords returns only records written by the scheduler, retaining
 // envelope timestamps and any decodable prefix before a complete corrupt line.
 // A crash-torn final line is ignored in the same way as ReplayJournalRaw.
-func ReplayJournalRecords(runDir string) ([]JournalRecord, error) {
+func ReplayJournalRecords(runDir datastore.Run) ([]JournalRecord, error) {
 	_, records, err := readJournalRecords(runDir)
 	return records, err
 }
 
-func hydrateReviewDocuments(runDir string, events []Event) []Event {
+func hydrateReviewDocuments(runDir datastore.Run, events []Event) []Event {
 	hydrated := append([]Event(nil), events...)
 	for i, event := range hydrated {
 		req, ok := event.(ReviewRequest)
@@ -116,7 +116,7 @@ func hydrateReviewDocuments(runDir string, events []Event) []Event {
 			path := req.Documents[j].SnapshotPath
 			data, err := os.ReadFile(path)
 			if err != nil {
-				path = filepath.Join(datastore.ReviewDocumentsDir(runDir, req.StepID, req.RoundID), req.Documents[j].ID+reviewExtension(req.Documents[j].Format))
+				path = filepath.Join(runDir.Step(req.StepID).Review(req.RoundID).Documents(), req.Documents[j].ID+reviewExtension(req.Documents[j].Format))
 				data, err = os.ReadFile(path)
 			}
 			if err != nil || review.Digest(string(data)) != req.Documents[j].SHA256 {
@@ -136,7 +136,7 @@ func hydrateReviewDocuments(runDir string, events []Event) []Event {
 // readJournal returns only durable events. Resume must not consume the virtual
 // failure events ReplayJournal adds for display, because those events were never
 // committed and would incorrectly make an interrupted run terminal.
-func readJournal(runDir string) (int, []Event, error) {
+func readJournal(runDir datastore.Run) (int, []Event, error) {
 	seq, records, err := readJournalRecords(runDir)
 	events := make([]Event, 0, len(records))
 	for _, record := range records {
@@ -147,11 +147,11 @@ func readJournal(runDir string) (int, []Event, error) {
 	return seq, events, err
 }
 
-func readJournalRecords(runDir string) (int, []JournalRecord, error) {
-	if runDir == "" {
+func readJournalRecords(runDir datastore.Run) (int, []JournalRecord, error) {
+	if !runDir.Enabled() {
 		return 0, nil, nil
 	}
-	f, err := os.Open(datastore.JournalPath(runDir))
+	f, err := os.Open(runDir.Journal())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return 0, nil, nil
@@ -197,7 +197,7 @@ func readJournalRecords(runDir string) (int, []JournalRecord, error) {
 // only for **orphaned** runs that cannot reopen (Spec 20 D7). Reopenable runs
 // (workflow.json present with a RunStarted) stay unfinished so Monitor / Runs
 // can offer Resume instead of a virtual RunFinished.
-func reconcileInterruptedRun(runDir string, events []Event, forceOrphan bool) []Event {
+func reconcileInterruptedRun(runDir datastore.Run, events []Event, forceOrphan bool) []Event {
 	var started *RunStarted
 	finished := false
 	states := make(map[string]step.Status)

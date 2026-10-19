@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -150,7 +151,7 @@ func TestCompactToolGroupsAcrossHiddenReasoning(t *testing.T) {
 		toolExchange("b", "websearch", map[string]any{"query": "second query"}, 0, 0, 0, false),
 	)
 	m := newMonitorWithSteps(t)
-	m.RunDir = t.TempDir()
+	m.RunDir = datastore.RunAt(t.TempDir())
 	m.focus = focusTranscript
 	m.chatStep = "a"
 	m.setChatPage(transcript.Page{Entries: entries})
@@ -657,7 +658,7 @@ func TestReadGroupsAcrossHiddenReasoning(t *testing.T) {
 		)...,
 	)
 	m := newMonitorWithSteps(t)
-	m.RunDir = t.TempDir()
+	m.RunDir = datastore.RunAt(t.TempDir())
 	m.focus = focusTranscript
 	m.chatStep = "a"
 	m.setChatPage(transcript.Page{Entries: entries})
@@ -1233,7 +1234,7 @@ func TestReadGroupReloadStepChangeClearsState(t *testing.T) {
 
 func TestReadGroupPersistenceOff(t *testing.T) {
 	m := newMonitorWithSteps(t)
-	m.RunDir = ""
+	m.RunDir = datastore.Run{}
 	m.chatStep = "a"
 	m.loadChatTail()
 	if len(m.chatItems) != 0 || len(m.chatEntries) != 0 || m.itemTranscriptBody() != "" {
@@ -1250,7 +1251,7 @@ func TestReadGroupTerminalSmoke(t *testing.T) {
 	entries = append(entries, transcript.Entry{Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "after grouped reads"}}})
 	runDir := writeTranscript(t, "a", entries)
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 
 	var proof strings.Builder
@@ -1538,7 +1539,7 @@ func TestMixedQuietGroupInteractions(t *testing.T) {
 		toolExchange("c", "glob", map[string]any{"pattern": "*.md"}, 0, 0, 0, false),
 	)
 	m := newMonitorWithSteps(t)
-	m.RunDir = t.TempDir()
+	m.RunDir = datastore.RunAt(t.TempDir())
 	m.focus = focusTranscript
 	m.chatStep = "a"
 	m.compactToolGroups = true
@@ -1584,7 +1585,7 @@ func TestMixedQuietBurstCapture(t *testing.T) {
 	entries := append([]transcript.Entry{{Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "before the exploration burst"}}}}, mixedQuietBurstEntries()...)
 	entries = append(entries, transcript.Entry{Role: transcript.RoleAssistant, Blocks: []transcript.Block{{Type: transcript.BlockText, Text: "after the exploration burst"}}})
 	m := newMonitorWithSteps(t).WithTUIConfig(config.TUIConfig{})
-	m.RunDir = writeTranscript(t, "a", entries)
+	m.RunDir = datastore.RunAt(writeTranscript(t, "a", entries))
 	m = enterChatStep(t, m, "a")
 	capture := fmt.Sprintf("Terminal: %dx%d; compact groups: %v (default config, no `c`)\n\n```text\n%s```\n", m.width, m.height, m.compactToolGroups, proofPlainText(m.chatBody()))
 	if err := os.MkdirAll(dir, 0o755); err != nil {

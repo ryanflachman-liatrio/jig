@@ -16,7 +16,6 @@ import (
 	acpsdk "github.com/coder/acp-go-sdk"
 
 	"github.com/ryanflachman-liatrio/jig/internal/config"
-	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"github.com/ryanflachman-liatrio/jig/internal/engine"
 	"github.com/ryanflachman-liatrio/jig/internal/harness"
 	"github.com/ryanflachman-liatrio/jig/internal/interaction"
@@ -474,7 +473,7 @@ isolation = "none"
 					t.Errorf("%s finding event was not published", id)
 				}
 			}
-			findings, err := sentinel.ReadAll(datastore.FindingsPath(manager.RunDir(run.ID)))
+			findings, err := sentinel.ReadAll(manager.RunDir(run.ID).Findings())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -773,7 +772,7 @@ func TestTier2PersistedReopenAcrossEveryACPHarness(t *testing.T) {
 			run.Cancel()
 			run.Wait()
 
-			findings, err := sentinel.ReadAll(datastore.FindingsPath(manager.RunDir(runID)))
+			findings, err := sentinel.ReadAll(manager.RunDir(runID).Findings())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -790,7 +789,7 @@ func TestTier2PersistedReopenAcrossEveryACPHarness(t *testing.T) {
 				SpentUSD float64 `json:"spent_usd"`
 				InFlight bool    `json:"in_flight"`
 			}
-			stateData, err := os.ReadFile(datastore.SecurityMonitorStatePath(manager.RunDir(runID)))
+			stateData, err := os.ReadFile(manager.RunDir(runID).SecurityMonitorState())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -875,7 +874,7 @@ isolation = "none"
 			t.Errorf("%s observed opted-out cursor step: %q", id, joined)
 		}
 	}
-	findings, err := sentinel.ReadAll(datastore.FindingsPath(manager.RunDir(run.ID)))
+	findings, err := sentinel.ReadAll(manager.RunDir(run.ID).Findings())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -986,7 +985,7 @@ isolation = "none"%s
 						t.Fatalf("classifier activity = %v, want %v (%d calls)", gotClassifierOn, policy.wantClassifierOn, fleet.totalCalls())
 					}
 					if policy.persistence && !policy.wantClassifierOn {
-						if _, err := os.Stat(datastore.SecurityMonitorStatePath(manager.RunDir(run.ID))); !os.IsNotExist(err) {
+						if _, err := os.Stat(manager.RunDir(run.ID).SecurityMonitorState()); !os.IsNotExist(err) {
 							t.Fatalf("disabled Tier-2 created accounting state: %v", err)
 						}
 					}

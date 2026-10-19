@@ -3,8 +3,8 @@ package sentinel
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"os"
-	"path/filepath"
 )
 
 const monitorStateVersion = 1
@@ -44,29 +44,5 @@ func writeMonitorState(path string, state monitorState) error {
 	if err != nil {
 		return fmt.Errorf("encode monitor state: %w", err)
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".security-monitor-state-*")
-	if err != nil {
-		return fmt.Errorf("create monitor state temp file: %w", err)
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write monitor state: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("sync monitor state: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close monitor state: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("replace monitor state: %w", err)
-	}
-	return nil
+	return datastore.WriteFileAtomic(path, data, 0o600)
 }

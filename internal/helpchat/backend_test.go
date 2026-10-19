@@ -1,6 +1,7 @@
 package helpchat
 
 import (
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"reflect"
 	"strings"
 	"testing"
@@ -63,7 +64,7 @@ func TestHelpChatBackendSelection(t *testing.T) {
 				{Type: harness.EventResult, SessionID: "sess-1"},
 			}}
 			probe := &harness.FakeHarness{NameVal: tc.backend, Caps: allHelpCaps}
-			m := newModel(fakeRun("run-help"), t.TempDir(), engine.RunSnapshot{ID: "run-help"}, tc.backend, tc.model, probe,
+			m := newModel(fakeRun("run-help"), datastore.RunAt(t.TempDir()), engine.RunSnapshot{ID: "run-help"}, tc.backend, tc.model, probe,
 				func() (helpchatHarness, error) { return h, nil })
 			specs := runTwoTurns(t, m, h)
 			if len(specs) != 2 {
@@ -98,7 +99,7 @@ func TestNewResolvesConfiguredBackend(t *testing.T) {
 		{config.HelpChatConfig{Backend: "cursor", Model: "sonnet-4"}, "cursor", "sonnet-4"},
 	}
 	for _, tc := range tests {
-		m := New(nil, "", engine.RunSnapshot{}, tc.cfg)
+		m := New(nil, datastore.Run{}, engine.RunSnapshot{}, tc.cfg)
 		if m.backend != tc.backend || m.model != tc.wantModel || m.newHarness == nil {
 			t.Errorf("New(%+v) = backend %q model %q, want %q %q", tc.cfg, m.backend, m.model, tc.backend, tc.wantModel)
 		}
@@ -118,7 +119,7 @@ func TestHelpChatUnavailableWithoutRequiredCapability(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			probe := &harness.FakeHarness{NameVal: "codex", Caps: tc.caps}
-			m := newModel(fakeRun("run-help"), t.TempDir(), engine.RunSnapshot{}, "codex", "", probe,
+			m := newModel(fakeRun("run-help"), datastore.RunAt(t.TempDir()), engine.RunSnapshot{}, "codex", "", probe,
 				func() (helpchatHarness, error) { t.Fatal("unavailable model opened a harness"); return nil, nil })
 			if m.Init() != nil {
 				t.Fatal("unavailable model started the tool server")

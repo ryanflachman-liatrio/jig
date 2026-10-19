@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -56,7 +57,7 @@ func TestConfinedInventoryRejectsSelectedSymlink(t *testing.T) {
 	if err := os.Symlink(filepath.Join(t.TempDir(), "journal"), filepath.Join(runDir, "journal.jsonl")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := collectInventory(runDir); !errors.Is(err, ErrOperational) {
+	if _, err := collectInventory(datastore.RunAt(runDir)); !errors.Is(err, ErrOperational) {
 		t.Fatalf("collectInventory error = %v, want operational refusal", err)
 	}
 }
@@ -78,13 +79,13 @@ func TestConfinedInventoryEnforcesStepInventoryLimit(t *testing.T) {
 	}
 	t.Run("at limit", func(t *testing.T) {
 		runDir := makeSteps(t, maxStepInventory)
-		if _, err := collectInventory(runDir); err != nil {
+		if _, err := collectInventory(datastore.RunAt(runDir)); err != nil {
 			t.Fatalf("collectInventory error = %v, want success at the boundary", err)
 		}
 	})
 	t.Run("above limit", func(t *testing.T) {
 		runDir := makeSteps(t, maxStepInventory+1)
-		if _, err := collectInventory(runDir); !errors.Is(err, ErrOperational) {
+		if _, err := collectInventory(datastore.RunAt(runDir)); !errors.Is(err, ErrOperational) {
 			t.Fatalf("collectInventory error = %v, want operational refusal above the boundary", err)
 		}
 	})
@@ -114,7 +115,7 @@ func TestResolveRequestRejectsMissingFileAndSymlinkRuns(t *testing.T) {
 
 func TestExportRejectsLiveScheduler(t *testing.T) {
 	root, runDir := makeRunStore(t)
-	lease, err := engine.AcquireRunLease(runDir)
+	lease, err := engine.AcquireRunLease(datastore.RunAt(runDir))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,14 +132,14 @@ func TestExportRejectsLiveScheduler(t *testing.T) {
 
 func TestConfinedInventoryRecheckDetectsSelectedChange(t *testing.T) {
 	_, runDir := makeRunStore(t)
-	before, err := collectInventory(runDir)
+	before, err := collectInventory(datastore.RunAt(runDir))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(runDir, "journal.jsonl"), []byte("changed"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := before.Recheck(runDir); !errors.Is(err, ErrOperational) {
+	if err := before.Recheck(datastore.RunAt(runDir)); !errors.Is(err, ErrOperational) {
 		t.Fatalf("Recheck error = %v, want selected-change refusal", err)
 	}
 }
@@ -155,7 +156,7 @@ func TestExportInventoryFailureReleasesLease(t *testing.T) {
 	if !errors.Is(err, ErrOperational) {
 		t.Fatalf("Export error = %v, want inventory refusal", err)
 	}
-	lease, err := engine.AcquireRunLease(runDir)
+	lease, err := engine.AcquireRunLease(datastore.RunAt(runDir))
 	if err != nil {
 		t.Fatalf("lease remained held after inventory failure: %v", err)
 	}
@@ -166,7 +167,7 @@ func TestExportInventoryFailureReleasesLease(t *testing.T) {
 
 func TestExportRejectsSeparateProcessLease(t *testing.T) {
 	if os.Getenv("JIG_EXPORT_LOCK_HELPER") == "1" {
-		lease, err := engine.AcquireRunLease(os.Getenv("JIG_EXPORT_LOCK_DIR"))
+		lease, err := engine.AcquireRunLease(datastore.RunAt(os.Getenv("JIG_EXPORT_LOCK_DIR")))
 		if err != nil {
 			os.Exit(2)
 		}
@@ -204,7 +205,7 @@ func TestExportRejectsSeparateProcessLease(t *testing.T) {
 	if err := cmd.Wait(); err != nil {
 		t.Fatal(err)
 	}
-	lease, err := engine.AcquireRunLease(runDir)
+	lease, err := engine.AcquireRunLease(datastore.RunAt(runDir))
 	if err != nil {
 		t.Fatalf("lease did not release after helper exit: %v", err)
 	}

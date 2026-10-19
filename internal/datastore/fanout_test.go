@@ -2,6 +2,8 @@ package datastore
 
 import (
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -23,13 +25,13 @@ func itoa(i int) string {
 }
 
 func TestFanOutManifestPath(t *testing.T) {
-	if got := FanOutManifestPath("", "analyze", 0, 0); got != "" {
+	if got := (Run{}).Step("analyze").FanOutManifest(0, 0); got != "" {
 		t.Fatalf("empty runDir must yield empty path, got %q", got)
 	}
-	if got := FanOutManifestPath("/run", "", 0, 0); got != "" {
+	if got := RunAt("/run").Step("").FanOutManifest(0, 0); got != "" {
 		t.Fatalf("empty familyID must yield empty path, got %q", got)
 	}
-	got := FanOutManifestPath("/run", "analyze", 1, 2)
+	got := RunAt("/run").Step("analyze").FanOutManifest(1, 2)
 	want := filepath.Join("/run", "steps", "analyze", "fanout", "generation-001-iteration-002.json")
 	if got != want {
 		t.Fatalf("FanOutManifestPath = %q, want %q", got, want)
@@ -37,7 +39,7 @@ func TestFanOutManifestPath(t *testing.T) {
 }
 
 func TestWriteReadFanOutManifest_RoundTripAndOrder(t *testing.T) {
-	runDir, err := RunDir(t.TempDir(), "run1")
+	runDir, err := Open(t.TempDir()).Create("run1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,11 +55,11 @@ func TestWriteReadFanOutManifest_RoundTripAndOrder(t *testing.T) {
 			mustItem(2, `{"name":"worker"}`),
 		},
 	}
-	if err := WriteFanOutManifest(runDir, m); err != nil {
+	if err := runDir.Step(m.FamilyID).WriteFanOutManifest(m); err != nil {
 		t.Fatalf("WriteFanOutManifest: %v", err)
 	}
 
-	got, err := ReadFanOutManifest(runDir, "analyze", 0, 0)
+	got, err := runDir.Step("analyze").ReadFanOutManifest(0, 0)
 	if err != nil {
 		t.Fatalf("ReadFanOutManifest: %v", err)
 	}
@@ -92,22 +94,22 @@ func TestWriteReadFanOutManifest_RoundTripAndOrder(t *testing.T) {
 }
 
 func TestWriteFanOutManifest_AtomicReplacement(t *testing.T) {
-	runDir, err := RunDir(t.TempDir(), "run1")
+	runDir, err := Open(t.TempDir()).Create("run1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	first := FanOutManifest{FamilyID: "analyze", Items: []FanOutItem{mustItem(0, `{"name":"a"}`)}}
-	if err := WriteFanOutManifest(runDir, first); err != nil {
+	if err := runDir.Step(first.FamilyID).WriteFanOutManifest(first); err != nil {
 		t.Fatal(err)
 	}
 	second := FanOutManifest{FamilyID: "analyze", Items: []FanOutItem{
 		mustItem(0, `{"name":"a"}`),
 		mustItem(1, `{"name":"b"}`),
 	}}
-	if err := WriteFanOutManifest(runDir, second); err != nil {
+	if err := runDir.Step(second.FamilyID).WriteFanOutManifest(second); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ReadFanOutManifest(runDir, "analyze", 0, 0)
+	got, err := runDir.Step("analyze").ReadFanOutManifest(0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,10 +117,8 @@ func TestWriteFanOutManifest_AtomicReplacement(t *testing.T) {
 		t.Fatalf("items = %d, want 2 (second write must fully replace the first)", len(got.Items))
 	}
 	// No leftover temp file after a successful rename.
-	path := FanOutManifestPath(runDir, "analyze", 0, 0)
-	if _, err := os.Stat(path + ".tmp"); !os.IsNotExist(err) {
-		t.Fatalf("temp file still present: %v", err)
-	}
+	path := runDir.Step("analyze").FanOutManifest(0, 0)
+	assertOnlyEntries(t, filepath.Dir(path), filepath.Base(path))
 }
 
 func TestFanOutManifestDigest_ChangesWithContent(t *testing.T) {
@@ -169,11 +169,11 @@ func TestValidateFanOutItems_OutOfOrderIndex(t *testing.T) {
 }
 
 func TestReadFanOutManifest_CorruptAndVersionMismatch(t *testing.T) {
-	runDir, err := RunDir(t.TempDir(), "run1")
+	runDir, err := Open(t.TempDir()).Create("run1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := FanOutManifestPath(runDir, "analyze", 0, 0)
+	path := runDir.Step("analyze").FanOutManifest(0, 0)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestReadFanOutManifest_CorruptAndVersionMismatch(t *testing.T) {
 	if err := os.WriteFile(path, []byte("{not-json"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ReadFanOutManifest(runDir, "analyze", 0, 0); err == nil {
+	if _, err := runDir.Step("analyze").ReadFanOutManifest(0, 0); err == nil {
 		t.Fatal("expected error decoding corrupt manifest")
 	}
 
@@ -193,26 +193,26 @@ func TestReadFanOutManifest_CorruptAndVersionMismatch(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ReadFanOutManifest(runDir, "analyze", 0, 0); err == nil {
+	if _, err := runDir.Step("analyze").ReadFanOutManifest(0, 0); err == nil {
 		t.Fatal("expected error reading unsupported schema_version")
 	}
 }
 
 func TestReadFanOutManifest_MissingFile(t *testing.T) {
-	runDir, err := RunDir(t.TempDir(), "run1")
+	runDir, err := Open(t.TempDir()).Create("run1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ReadFanOutManifest(runDir, "analyze", 0, 0); err == nil {
+	if _, err := runDir.Step("analyze").ReadFanOutManifest(0, 0); err == nil {
 		t.Fatal("expected error reading a manifest that was never written")
 	}
 }
 
 func TestFanOutManifest_PersistenceOff(t *testing.T) {
-	if err := WriteFanOutManifest("", FanOutManifest{FamilyID: "analyze"}); err != nil {
+	if err := (Run{}).Step(FanOutManifest{FamilyID: "analyze"}.FamilyID).WriteFanOutManifest(FanOutManifest{FamilyID: "analyze"}); err != nil {
 		t.Fatalf("persistence-off WriteFanOutManifest: %v", err)
 	}
-	got, err := ReadFanOutManifest("", "analyze", 0, 0)
+	got, err := (Run{}).Step("analyze").ReadFanOutManifest(0, 0)
 	if err != nil {
 		t.Fatalf("persistence-off ReadFanOutManifest: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestFanOutManifest_PersistenceOff(t *testing.T) {
 	}
 	// No filesystem writes: confirm nothing was created under any plausible
 	// relative path from the test's working directory.
-	if _, err := os.Stat("steps"); !os.IsNotExist(err) {
+	if _, err := os.Stat("steps"); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("persistence-off write touched the filesystem: %v", err)
 	}
 }

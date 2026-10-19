@@ -20,7 +20,7 @@ func ctrlO() tea.KeyPressMsg {
 
 func addTranscript(t *testing.T, runDir, stepID string, entries []transcript.Entry) {
 	t.Helper()
-	path := datastore.TranscriptPath(runDir, stepID)
+	path := datastore.RunAt(runDir).Step(stepID).Transcript()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir transcript dir: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestGateContextJumpAndReturnPreserveTranscriptState(t *testing.T) {
 	}})
 
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "b")
 	item := m.chatVisibleItems[0]
 	m.chatItemExpand[item.key] = true

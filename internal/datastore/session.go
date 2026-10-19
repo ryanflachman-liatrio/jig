@@ -2,9 +2,10 @@ package datastore
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -20,27 +21,24 @@ type SessionInfo struct {
 	UpdatedAt  string `json:"updated_at"`
 }
 
-// SessionPath returns the path to session.json for a step inside runDir.
-// An empty runDir (persistence off) yields "" so callers can no-op.
-func SessionPath(runDir, stepID string) string {
-	if runDir == "" || stepID == "" {
-		return ""
-	}
-	return filepath.Join(runDir, "steps", stepID, "session.json")
-}
+// Session returns session.json, or "" when the step is disabled.
+func (s Step) Session() string { return s.path("session.json") }
 
-// WriteSession atomically persists mid-flight session identity. Empty runDir
-// is a first-class no-op (persistence off). Empty SessionID is rejected so a
-// blank file can never advertise a resumable session.
-func WriteSession(runDir, stepID string, info SessionInfo) error {
-	path := SessionPath(runDir, stepID)
-	if path == "" {
+// WriteSession atomically persists mid-flight session identity (see
+// WriteFileAtomic). A disabled
+// step is a first-class no-op (persistence off). Empty SessionID is rejected
+// so a blank file can never advertise a resumable session.
+func (s Step) WriteSession(info SessionInfo) error {
+	if s.err != nil {
+		return s.err
+	}
+	if s.dir == "" {
 		return nil
 	}
 	if info.SessionID == "" {
 		return fmt.Errorf("datastore: session_id is empty")
 	}
-	if _, err := StepDir(runDir, stepID); err != nil {
+	if err := s.Ensure(); err != nil {
 		return err
 	}
 	if info.UpdatedAt == "" {
@@ -50,48 +48,52 @@ func WriteSession(runDir, stepID string, info SessionInfo) error {
 	if err != nil {
 		return fmt.Errorf("datastore: encode session: %w", err)
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return fmt.Errorf("datastore: write session temp: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("datastore: rename session: %w", err)
-	}
-	return nil
+	return WriteFileAtomic(s.Session(), data, 0o600)
 }
 
-// ReadSession loads session.json. Missing or corrupt files yield a zero
-// SessionInfo and a nil error so crash reopen can degrade to fresh retry.
-// Empty runDir is a no-op success.
-func ReadSession(runDir, stepID string) (SessionInfo, error) {
-	path := SessionPath(runDir, stepID)
-	if path == "" {
+// ErrSessionCorrupt reports a session.json that exists but cannot be used:
+// undecodable, or missing its session_id (WriteSession never writes one
+// without). Callers treat it like an absent session — crash reopen degrades
+// to a fresh retry — but can surface it, as jig doctor does.
+var ErrSessionCorrupt = errors.New("datastore: session.json is corrupt")
+
+// ReadSession loads session.json. A missing file yields a zero SessionInfo
+// and a nil error; a corrupt one yields a zero SessionInfo and an error
+// wrapping ErrSessionCorrupt. A disabled step is a no-op success.
+func (s Step) ReadSession() (SessionInfo, error) {
+	if s.err != nil {
+		return SessionInfo{}, s.err
+	}
+	if s.dir == "" {
 		return SessionInfo{}, nil
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(s.Session())
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return SessionInfo{}, nil
 		}
 		return SessionInfo{}, fmt.Errorf("datastore: read session: %w", err)
 	}
 	var info SessionInfo
-	if err := json.Unmarshal(data, &info); err != nil || info.SessionID == "" {
-		// Corrupt or empty: treat as absent so CanResume stays false.
-		return SessionInfo{}, nil
+	if err := json.Unmarshal(data, &info); err != nil {
+		return SessionInfo{}, fmt.Errorf("%w: %w", ErrSessionCorrupt, err)
+	}
+	if info.SessionID == "" {
+		return SessionInfo{}, fmt.Errorf("%w: session_id is empty", ErrSessionCorrupt)
 	}
 	return info, nil
 }
 
 // ClearSession removes session.json so a fresh attempt cannot resume a stale
-// backend conversation. Persistence-off and missing files are no-ops.
-func ClearSession(runDir, stepID string) error {
-	path := SessionPath(runDir, stepID)
-	if path == "" {
+// backend conversation. A disabled step and a missing file are no-ops.
+func (s Step) ClearSession() error {
+	if s.err != nil {
+		return s.err
+	}
+	if s.dir == "" {
 		return nil
 	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+	if err := os.Remove(s.Session()); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("datastore: clear session: %w", err)
 	}
 	return nil

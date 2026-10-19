@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"os"
 	"strings"
 	"testing"
@@ -112,7 +113,7 @@ func fixtureScheduler(t *testing.T, toml string) *scheduler {
 	}
 	_, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	return newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, "", "", "", func(RunSnapshot) {})
+	return newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, datastore.Run{}, "", "", func(RunSnapshot) {})
 }
 
 // TestBuildRequestWorkflowContext dispatches `plan` and asserts the assembled
@@ -310,7 +311,7 @@ func exampleScheduler(t *testing.T) *scheduler {
 	}
 	_, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, "", "", "", func(RunSnapshot) {})
+	s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, datastore.Run{}, "", "", func(RunSnapshot) {})
 	for _, id := range []string{"intake", "research_backend", "research_frontend"} {
 		s.states[id].Status = step.StatusSucceeded
 	}

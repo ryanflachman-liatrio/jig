@@ -23,14 +23,14 @@ type ControlError struct {
 func (e *ControlError) Error() string { return e.Message }
 
 type ControlPreflight struct {
-	RunDir   string
+	RunDir   datastore.Run
 	Report   RunReport
 	Workflow *workflow.Workflow
 	Records  []engine.JournalRecord
 }
 
 func PreflightControl(root, runID string) (ControlPreflight, error) {
-	runDir, err := datastore.ResolveRunDir(root, runID)
+	runDir, err := datastore.Open(root).Resolve(runID)
 	if err != nil {
 		return ControlPreflight{}, err
 	}
@@ -132,7 +132,7 @@ func resumeEligibility(preflight ControlPreflight, recoveryAction string) error 
 }
 
 func interruptedCanResume(preflight ControlPreflight, stepID string) bool {
-	info, err := datastore.ReadSession(preflight.RunDir, stepID)
+	info, err := preflight.RunDir.Step(stepID).ReadSession()
 	if err != nil || info.SessionID == "" {
 		return false
 	}
@@ -151,7 +151,7 @@ func interruptedCanResume(preflight ControlPreflight, stepID string) bool {
 		return false
 	}
 	if wfStep.Isolation == workflow.IsolationWorktree {
-		path := filepath.Join(filepath.Dir(preflight.RunDir), "..", "worktrees", preflight.Report.RunID, stepID)
+		path := filepath.Join(filepath.Dir(preflight.RunDir.Dir()), "..", "worktrees", preflight.Report.RunID, stepID)
 		stat, statErr := os.Stat(filepath.Clean(path))
 		return statErr == nil && stat.IsDir()
 	}
@@ -171,7 +171,7 @@ type ResetPreview struct {
 }
 
 func PreviewReset(root, runID, target string) (ResetPreview, error) {
-	runDir, err := datastore.ResolveRunDir(root, runID)
+	runDir, err := datastore.Open(root).Resolve(runID)
 	if err != nil {
 		return ResetPreview{}, err
 	}

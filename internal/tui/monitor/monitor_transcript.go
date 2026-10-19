@@ -8,7 +8,6 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"github.com/ryanflachman-liatrio/jig/internal/engine"
 	"github.com/ryanflachman-liatrio/jig/internal/step"
 	"github.com/ryanflachman-liatrio/jig/internal/transcript"
@@ -147,11 +146,11 @@ func (m *Model) loadChatTail() {
 	// Preserve the block cursor across same-step reloads (e.g. a new StepMessage
 	// arriving while the user is navigating). The saved key won't be found in a
 	// freshly-loaded different step, so cursor correctly resets to 0 on step changes.
-	if m.RunDir == "" || m.chatStep == "" {
+	if !m.RunDir.Enabled() || m.chatStep == "" {
 		m.setChatPage(transcript.Page{})
 		return
 	}
-	r, err := transcript.Open(datastore.TranscriptPath(m.RunDir, m.chatStep))
+	r, err := transcript.Open(m.RunDir.Step(m.chatStep).Transcript())
 	if err != nil {
 		return
 	}
@@ -448,10 +447,10 @@ func (m Model) hasActiveThinkingPulse() bool {
 }
 
 func (m *Model) loadOlderChat() {
-	if !m.chatPage.HasEarlier || m.RunDir == "" || m.chatStep == "" {
+	if !m.chatPage.HasEarlier || !m.RunDir.Enabled() || m.chatStep == "" {
 		return
 	}
-	r, err := transcript.Open(datastore.TranscriptPath(m.RunDir, m.chatStep))
+	r, err := transcript.Open(m.RunDir.Step(m.chatStep).Transcript())
 	if err != nil {
 		return
 	}
@@ -469,10 +468,10 @@ func (m *Model) loadOlderChat() {
 }
 
 func (m *Model) loadNewerChat() {
-	if !m.chatPage.HasLater || m.RunDir == "" || m.chatStep == "" {
+	if !m.chatPage.HasLater || !m.RunDir.Enabled() || m.chatStep == "" {
 		return
 	}
-	r, err := transcript.Open(datastore.TranscriptPath(m.RunDir, m.chatStep))
+	r, err := transcript.Open(m.RunDir.Step(m.chatStep).Transcript())
 	if err != nil {
 		return
 	}
@@ -490,10 +489,10 @@ func (m *Model) loadNewerChat() {
 }
 
 func (m *Model) loadChatBefore(end int64) bool {
-	if m.RunDir == "" || m.chatStep == "" {
+	if !m.RunDir.Enabled() || m.chatStep == "" {
 		return false
 	}
-	r, err := transcript.Open(datastore.TranscriptPath(m.RunDir, m.chatStep))
+	r, err := transcript.Open(m.RunDir.Step(m.chatStep).Transcript())
 	if err != nil {
 		return false
 	}
@@ -711,7 +710,7 @@ func (m *Model) chatBody() string {
 		if hasTail {
 			// Live output streams even when persistence is off.
 			b.WriteString(live)
-		} else if m.RunDir == "" {
+		} else if !m.RunDir.Enabled() {
 			b.WriteString(shared.RenderEmptyState(shared.EmptyState{
 				Title: "Transcript unavailable",
 				Body:  "Persistence is off for this run — nothing was captured.",

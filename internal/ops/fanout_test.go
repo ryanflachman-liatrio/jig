@@ -76,7 +76,7 @@ func TestFoldStatusReportsChildProvenanceAndOrdering(t *testing.T) {
 func TestReadLogsAllDiscoversFanOutChildren(t *testing.T) {
 	root := t.TempDir()
 	runID := "20260908-130000-fanoutlogs"
-	runDir, err := datastore.RunDir(root, runID)
+	runDir, err := datastore.Open(root).Create(runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestReadLogsAllDiscoversFanOutChildren(t *testing.T) {
 func TestPreviewResetStaysFamilyLevel(t *testing.T) {
 	root := t.TempDir()
 	runID := "20260908-140000-fanoutreset"
-	runDir, err := datastore.RunDir(root, runID)
+	runDir, err := datastore.Open(root).Create(runID)
 	if err != nil {
 		t.Fatal(err)
 	}

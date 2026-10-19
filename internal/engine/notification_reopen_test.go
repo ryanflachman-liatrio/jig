@@ -107,7 +107,7 @@ output_type = { enum = ["proceed", "narrow"] }
 	initRepo(t, repoRoot)
 	root := filepath.Join(repoRoot, ".jig")
 	runID := "reopen-observer-run"
-	runDir, err := datastore.RunDir(root, runID)
+	runDir, err := datastore.Open(root).Create(runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,14 +122,14 @@ output_type = { enum = ["proceed", "narrow"] }
 	if out, err := gitCmd(repoRoot, "worktree", "add", staleWorktree, branch); err != nil {
 		t.Fatalf("create stale worktree: %v — %s", err, out)
 	}
-	if _, err := datastore.StepDir(runDir, "scope"); err != nil {
+	if err := runDir.Step("scope").Ensure(); err != nil {
 		t.Fatal(err)
 	}
 	initial := `{"summary":"Too broad.","sizing":"too_large"}`
-	if err := os.WriteFile(datastore.OutputJSONPath(runDir, "scope"), []byte(initial), 0o644); err != nil {
+	if err := os.WriteFile(runDir.Step("scope").OutputJSON(), []byte(initial), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(datastore.OutputPath(runDir, "scope"), []byte("Too broad."), 0o644); err != nil {
+	if err := os.WriteFile(runDir.Step("scope").Output(), []byte("Too broad."), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	docContent := "Too broad."
@@ -138,7 +138,7 @@ output_type = { enum = ["proceed", "narrow"] }
 		SHA256: review.Digest(docContent), LineCount: 1,
 	}
 	roundID := "g000-i000"
-	docDir := datastore.ReviewDocumentsDir(runDir, "gate", roundID)
+	docDir := runDir.Step("gate").Review(roundID).Documents()
 	if err := os.MkdirAll(docDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ output_type = { enum = ["proceed", "narrow"] }
 		StepStatus{RunID: runID, StepID: "scope", From: step.StatusPending, To: step.StatusRunning},
 		StepStatus{RunID: runID, StepID: "scope", From: step.StatusRunning, To: step.StatusSucceeded},
 		StepStatus{RunID: runID, StepID: "gate", From: step.StatusPending, To: step.StatusAwaitingReview},
-		ReviewRequest{RunID: runID, StepID: "gate", RoundID: roundID, Choices: []string{"proceed", "narrow"}, Documents: []review.Document{doc}, DraftPath: datastore.ReviewDraftPath(runDir, "gate", roundID)},
+		ReviewRequest{RunID: runID, StepID: "gate", RoundID: roundID, Choices: []string{"proceed", "narrow"}, Documents: []review.Document{doc}, DraftPath: runDir.Step("gate").Review(roundID).Draft()},
 	})
 
 	exec := &testExec{outcomes: map[string]testOutcome{}}

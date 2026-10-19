@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"strings"
 	"testing"
 
@@ -163,7 +164,7 @@ func TestMonitorDiffBadgeAbsentErrored(t *testing.T) {
 // not emit a diff section or crash (FR-07.22).
 func TestMonitorDiffPersistenceOff(t *testing.T) {
 	m := newMonitorWithSteps(t)
-	m.RunDir = ""
+	m.RunDir = datastore.Run{}
 	m.chatStep = "a"
 	m.reloadTranscript()
 	body := stripANSI(m.chatBody())

@@ -3,6 +3,7 @@ package monitor
 import (
 	"encoding/json"
 	"errors"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"os"
 	"path/filepath"
 	"strings"
@@ -327,7 +328,7 @@ func TestClipboardFileCmdReturnsRequest(t *testing.T) {
 // TestClipboardTranscriptCmdRoutesToUnavailable proves that copyTranscriptCmd
 // with no run dir surfaces the unavailable rejection through the loader.
 func TestClipboardTranscriptCmdRoutesToUnavailable(t *testing.T) {
-	msg := copyTranscriptCmd("", "step")()
+	msg := copyTranscriptCmd(datastore.Run{}, "step")()
 	req, ok := msg.(shared.ClipboardRequest)
 	if !ok {
 		t.Fatalf("msg = %T", msg)
@@ -381,7 +382,7 @@ func TestClipboardTranscriptKeyReturnsCommand(t *testing.T) {
 	w.Close()
 
 	m := New("run")
-	m.RunDir = dir
+	m.RunDir = datastore.RunAt(dir)
 	m.chatStep = "step"
 	m.focus = focusTranscript
 	m.selKind = ""

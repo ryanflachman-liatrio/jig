@@ -19,11 +19,11 @@ type RunLease struct {
 // AcquireRunLease acquires the same non-blocking ownership lease used by
 // Start and Resume. It creates an absent coordination file but never truncates
 // an existing one.
-func AcquireRunLease(runDir string) (*RunLease, error) {
-	if runDir == "" {
+func AcquireRunLease(runDir datastore.Run) (*RunLease, error) {
+	if !runDir.Enabled() {
 		return nil, nil
 	}
-	f, err := os.OpenFile(datastore.SchedulerLockPath(runDir), os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(runDir.SchedulerLock(), os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, err
 	}
@@ -71,18 +71,18 @@ func (l *RunLease) Close() error {
 
 // RunLockState reports whether another process owns the scheduler lock. A
 // missing lock is free; probing never creates it or retains a lease.
-func RunLockState(runDir string) (bool, error) {
-	if runDir == "" {
+func RunLockState(runDir datastore.Run) (bool, error) {
+	if !runDir.Enabled() {
 		return false, fmt.Errorf("engine: persistence required to inspect a run lock")
 	}
-	info, err := os.Stat(runDir)
+	info, err := os.Stat(runDir.Dir())
 	if err != nil {
 		return false, fmt.Errorf("engine: inspect run directory: %w", err)
 	}
 	if !info.IsDir() {
 		return false, fmt.Errorf("engine: run path is not a directory")
 	}
-	f, err := os.Open(datastore.SchedulerLockPath(runDir))
+	f, err := os.Open(runDir.SchedulerLock())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return false, nil

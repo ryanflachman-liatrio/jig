@@ -18,12 +18,12 @@ import (
 )
 
 func TestRunLockState(t *testing.T) {
-	runDir := t.TempDir()
+	runDir := datastore.RunAt(t.TempDir())
 	held, err := RunLockState(runDir)
 	if err != nil || held {
 		t.Fatalf("missing lock: held=%t err=%v", held, err)
 	}
-	if _, err := os.Stat(datastore.SchedulerLockPath(runDir)); !os.IsNotExist(err) {
+	if _, err := os.Stat(runDir.SchedulerLock()); !os.IsNotExist(err) {
 		t.Fatalf("probe created lock file: %v", err)
 	}
 	lock, err := AcquireRunLease(runDir)
@@ -44,7 +44,7 @@ func TestRunLockState(t *testing.T) {
 }
 
 func TestResumeRecoveryBatchWriteFailureDoesNotFanOut(t *testing.T) {
-	w, err := manifest.NewWriter(t.TempDir())
+	w, err := manifest.NewWriter(datastore.RunAt(t.TempDir()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ depends_on = ["a"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	w, err := manifest.NewWriter(t.TempDir())
+	w, err := manifest.NewWriter(datastore.RunAt(t.TempDir()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ depends_on = ["a"]
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	exec := &crashRecordingExec{}
-	s := newScheduler(wf, "r", make(chan schedMsg, 1), nil, exec, cancel, w, "", "", "", func(RunSnapshot) {})
+	s := newScheduler(wf, "r", make(chan schedMsg, 1), nil, exec, cancel, w, datastore.Run{}, "", "", func(RunSnapshot) {})
 	s.states["a"].Status = step.StatusRunning
 
 	if s.transition("a", step.StatusRunning, step.StatusSucceeded) {
@@ -141,7 +141,7 @@ skill = "agent"
 				t.Fatal(err)
 			}
 			root := filepath.Join(t.TempDir(), ".jig")
-			runDir, err := datastore.RunDir(root, "repair-run")
+			runDir, err := datastore.Open(root).Create("repair-run")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -216,7 +216,7 @@ depends_on = ["scope", "gate"]
 	initRepo(t, repoRoot)
 	root := filepath.Join(repoRoot, ".jig")
 	runID := "historical-review"
-	runDir, err := datastore.RunDir(root, runID)
+	runDir, err := datastore.Open(root).Create(runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,14 +231,14 @@ depends_on = ["scope", "gate"]
 	if out, err := gitCmd(repoRoot, "worktree", "add", staleWorktree, branch); err != nil {
 		t.Fatalf("create stale historical worktree: %v — %s", err, out)
 	}
-	if _, err := datastore.StepDir(runDir, "scope"); err != nil {
+	if err := runDir.Step("scope").Ensure(); err != nil {
 		t.Fatal(err)
 	}
 	initial := `{"summary":"The proposal is too broad.","sizing":"too_large"}`
-	if err := os.WriteFile(datastore.OutputJSONPath(runDir, "scope"), []byte(initial), 0o644); err != nil {
+	if err := os.WriteFile(runDir.Step("scope").OutputJSON(), []byte(initial), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(datastore.OutputPath(runDir, "scope"), []byte("The proposal is too broad."), 0o644); err != nil {
+	if err := os.WriteFile(runDir.Step("scope").Output(), []byte("The proposal is too broad."), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	docContent := "The proposal is too broad."
@@ -246,7 +246,7 @@ depends_on = ["scope", "gate"]
 		ID: "01-scope", Label: "Scope", Source: "@scope.summary", Format: "markdown",
 		SHA256: review.Digest(docContent), LineCount: 1,
 	}
-	docDir := datastore.ReviewDocumentsDir(runDir, "gate", "g000-i000")
+	docDir := runDir.Step("gate").Review("g000-i000").Documents()
 	if err := os.MkdirAll(docDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ depends_on = ["scope", "gate"]
 		StepStatus{RunID: runID, StepID: "scope", From: step.StatusPending, To: step.StatusRunning},
 		StepStatus{RunID: runID, StepID: "scope", From: step.StatusRunning, To: step.StatusSucceeded},
 		StepStatus{RunID: runID, StepID: "gate", From: step.StatusPending, To: step.StatusAwaitingReview},
-		ReviewRequest{RunID: runID, StepID: "gate", RoundID: "g000-i000", Choices: []string{"proceed", "narrow"}, Documents: []review.Document{doc}, DraftPath: datastore.ReviewDraftPath(runDir, "gate", "g000-i000")},
+		ReviewRequest{RunID: runID, StepID: "gate", RoundID: "g000-i000", Choices: []string{"proceed", "narrow"}, Documents: []review.Document{doc}, DraftPath: runDir.Step("gate").Review("g000-i000").Draft()},
 	})
 
 	exec := &feedbackCapturingStructuredExec{structuredExec: structuredExec{
@@ -312,14 +312,14 @@ skill = "agent"
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), ".jig")
-	runDir, err := datastore.RunDir(root, "interrupted")
+	runDir, err := datastore.Open(root).Create("interrupted")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
 		t.Fatal(err)
 	}
-	if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{
+	if err := runDir.Step("agent").WriteSession(datastore.SessionInfo{
 		SessionID: "sess-crash", Backend: "claude",
 	}); err != nil {
 		t.Fatal(err)
@@ -359,7 +359,7 @@ skill = "agent"
 	if got := findStatus(events, "agent"); len(got) < 1 || got[len(got)-1] != step.StatusSucceeded {
 		t.Fatalf("after retry statuses = %v, want succeeded", got)
 	}
-	info, err := datastore.ReadSession(runDir, "agent")
+	info, err := runDir.Step("agent").ReadSession()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,7 +386,7 @@ run = "true"
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), ".jig")
-	runDir, err := datastore.RunDir(root, "validating")
+	runDir, err := datastore.Open(root).Create("validating")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -449,7 +449,7 @@ depends_on = ["gate"]
 	initRepo(t, repoRoot)
 	root := filepath.Join(repoRoot, ".jig")
 	runID := "mixed-crash"
-	runDir, err := datastore.RunDir(root, runID)
+	runDir, err := datastore.Open(root).Create(runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,13 +460,13 @@ depends_on = ["gate"]
 	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := datastore.StepDir(runDir, "writer"); err != nil {
+	if err := runDir.Step("writer").Ensure(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(datastore.OutputJSONPath(runDir, "writer"), []byte(`{"summary":"hi"}`), 0o644); err != nil {
+	if err := os.WriteFile(runDir.Step("writer").OutputJSON(), []byte(`{"summary":"hi"}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(datastore.OutputPath(runDir, "writer"), []byte("hi"), 0o644); err != nil {
+	if err := os.WriteFile(runDir.Step("writer").Output(), []byte("hi"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	docContent := "hi"
@@ -474,7 +474,7 @@ depends_on = ["gate"]
 		ID: "01-doc", Label: "Doc", Source: "@writer.summary", Format: "markdown",
 		SHA256: review.Digest(docContent), LineCount: 1,
 	}
-	docDir := datastore.ReviewDocumentsDir(runDir, "gate", "g000-i000")
+	docDir := runDir.Step("gate").Review("g000-i000").Documents()
 	if err := os.MkdirAll(docDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -487,7 +487,7 @@ depends_on = ["gate"]
 		StepStatus{RunID: runID, StepID: "writer", From: step.StatusPending, To: step.StatusRunning},
 		StepStatus{RunID: runID, StepID: "writer", From: step.StatusRunning, To: step.StatusSucceeded},
 		StepStatus{RunID: runID, StepID: "gate", From: step.StatusPending, To: step.StatusAwaitingReview},
-		ReviewRequest{RunID: runID, StepID: "gate", RoundID: "g000-i000", Choices: []string{"proceed"}, Documents: []review.Document{doc}, DraftPath: datastore.ReviewDraftPath(runDir, "gate", "g000-i000")},
+		ReviewRequest{RunID: runID, StepID: "gate", RoundID: "g000-i000", Choices: []string{"proceed"}, Documents: []review.Document{doc}, DraftPath: runDir.Step("gate").Review("g000-i000").Draft()},
 		StepStatus{RunID: runID, StepID: "worker", From: step.StatusPending, To: step.StatusRunning},
 	})
 	mgr := NewManager(&testExec{}, root)
@@ -533,14 +533,14 @@ skill = "agent"
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), ".jig")
-	runDir, err := datastore.RunDir(root, "needs-input")
+	runDir, err := datastore.Open(root).Create("needs-input")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
 		t.Fatal(err)
 	}
-	if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{SessionID: "input-session"}); err != nil {
+	if err := runDir.Step("agent").WriteSession(datastore.SessionInfo{SessionID: "input-session"}); err != nil {
 		t.Fatal(err)
 	}
 	writeJournal(t, runDir, []Event{
@@ -586,14 +586,14 @@ skill = "agent"
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), ".jig")
-	runDir, err := datastore.RunDir(root, "stopped-run")
+	runDir, err := datastore.Open(root).Create("stopped-run")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
 		t.Fatal(err)
 	}
-	if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{SessionID: "stopped-session"}); err != nil {
+	if err := runDir.Step("agent").WriteSession(datastore.SessionInfo{SessionID: "stopped-session"}); err != nil {
 		t.Fatal(err)
 	}
 	writeJournal(t, runDir, []Event{
@@ -634,14 +634,14 @@ skill = "agent"
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), ".jig")
-	runDir, err := datastore.RunDir(root, "question-run")
+	runDir, err := datastore.Open(root).Create("question-run")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
 		t.Fatal(err)
 	}
-	if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{SessionID: "question-session"}); err != nil {
+	if err := runDir.Step("agent").WriteSession(datastore.SessionInfo{SessionID: "question-session"}); err != nil {
 		t.Fatal(err)
 	}
 	request := interaction.QuestionRequest{ID: "q1", Fields: []interaction.QuestionField{{ID: "choice", Prompt: "Choose?", Kind: interaction.FieldText, Required: true}}}
@@ -691,7 +691,7 @@ skill = "agent"
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), ".jig")
-	runDir, err := datastore.RunDir(root, "lost-input-run")
+	runDir, err := datastore.Open(root).Create("lost-input-run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -734,14 +734,14 @@ skill = "agent"
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), ".jig")
-	runDir, err := datastore.RunDir(root, "recovery-run")
+	runDir, err := datastore.Open(root).Create("recovery-run")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
 		t.Fatal(err)
 	}
-	if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{SessionID: "recovery-session"}); err != nil {
+	if err := runDir.Step("agent").WriteSession(datastore.SessionInfo{SessionID: "recovery-session"}); err != nil {
 		t.Fatal(err)
 	}
 	writeJournal(t, runDir, []Event{
@@ -802,7 +802,7 @@ skill = "agent"
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), ".jig")
-	runDir, err := datastore.RunDir(root, "mixed-run")
+	runDir, err := datastore.Open(root).Create("mixed-run")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -810,7 +810,7 @@ skill = "agent"
 		t.Fatal(err)
 	}
 	for stepID, sessionID := range map[string]string{"stopped": "stopped-session", "input": "input-session"} {
-		if err := datastore.WriteSession(runDir, stepID, datastore.SessionInfo{SessionID: sessionID}); err != nil {
+		if err := runDir.Step(stepID).WriteSession(datastore.SessionInfo{SessionID: sessionID}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -887,7 +887,7 @@ isolation = "worktree"
 	if err != nil {
 		t.Fatal(err)
 	}
-	runDir, err := datastore.RunDir(root, runID)
+	runDir, err := datastore.Open(root).Create(runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -974,7 +974,7 @@ skill = "agent"
 	if err != nil {
 		t.Fatal(err)
 	}
-	runDir, err := datastore.RunDir(root, runID)
+	runDir, err := datastore.Open(root).Create(runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1017,7 +1017,7 @@ run = "true"
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), ".jig")
-	runDir, err := datastore.RunDir(root, "finished")
+	runDir, err := datastore.Open(root).Create("finished")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1050,14 +1050,14 @@ skill = "agent"
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), ".jig")
-	runDir, err := datastore.RunDir(root, "sess")
+	runDir, err := datastore.Open(root).Create("sess")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
 		t.Fatal(err)
 	}
-	if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{SessionID: "durable-1"}); err != nil {
+	if err := runDir.Step("agent").WriteSession(datastore.SessionInfo{SessionID: "durable-1"}); err != nil {
 		t.Fatal(err)
 	}
 	writeJournal(t, runDir, []Event{
@@ -1097,12 +1097,12 @@ func TestResumeRequiresReadableWorkflowSnapshot(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := filepath.Join(t.TempDir(), ".jig")
-			runDir, err := datastore.RunDir(root, tc.name)
+			runDir, err := datastore.Open(root).Create(tc.name)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if tc.corrupt {
-				if err := os.WriteFile(datastore.WorkflowSnapshotPath(runDir), []byte(`{"toml":`), 0o644); err != nil {
+				if err := os.WriteFile(runDir.WorkflowSnapshot(), []byte(`{"toml":`), 0o644); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -1135,7 +1135,7 @@ run = "true"
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), ".jig")
-	runDir, err := datastore.RunDir(root, "hold")
+	runDir, err := datastore.Open(root).Create("hold")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1190,7 +1190,7 @@ depends_on = ["failed"]
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), ".jig")
-	runDir, err := datastore.RunDir(root, "skip-reopen")
+	runDir, err := datastore.Open(root).Create("skip-reopen")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1234,14 +1234,14 @@ skill = "agent"
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), ".jig")
-	runDir, err := datastore.RunDir(root, "dead-session")
+	runDir, err := datastore.Open(root).Create("dead-session")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
 		t.Fatal(err)
 	}
-	if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{SessionID: "dead"}); err != nil {
+	if err := runDir.Step("agent").WriteSession(datastore.SessionInfo{SessionID: "dead"}); err != nil {
 		t.Fatal(err)
 	}
 	writeJournal(t, runDir, []Event{
@@ -1313,7 +1313,7 @@ isolation = "worktree"
 			if err != nil {
 				t.Fatal(err)
 			}
-			runDir, err := datastore.RunDir(root, runID)
+			runDir, err := datastore.Open(root).Create(runID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1372,7 +1372,7 @@ isolation = "worktree"
 					t.Fatalf("advance run branch: %v: %s", err, out)
 				}
 			}
-			if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{SessionID: "sess"}); err != nil {
+			if err := runDir.Step("agent").WriteSession(datastore.SessionInfo{SessionID: "sess"}); err != nil {
 				t.Fatal(err)
 			}
 			writeJournal(t, runDir, []Event{

@@ -197,7 +197,7 @@ finished:
 		t.Error("missing redo route to the already-selected task")
 	}
 
-	evidenceDir := filepath.Join(mgr.RunDir(run.ID), "steps", "implementation__quality", "evidence")
+	evidenceDir := filepath.Join(mgr.RunDir(run.ID).Step("implementation__quality").Dir(), "evidence")
 	findings, err := filepath.Glob(filepath.Join(evidenceDir, "generation-*-iteration-*-attempt-*.findings.json"))
 	if err != nil {
 		t.Fatal(err)

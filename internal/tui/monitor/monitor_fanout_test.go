@@ -152,10 +152,10 @@ func TestMonitorFanOutExpandCollapse(t *testing.T) {
 func TestMonitorFanOutNestedFileExpansion(t *testing.T) {
 	runDir := t.TempDir()
 	childID := "b__fanout__g000.r000.i0000"
-	if _, err := datastore.StepDir(runDir, childID); err != nil {
+	if err := datastore.RunAt(runDir).Step(childID).Ensure(); err != nil {
 		t.Fatalf("mkdir step dir: %v", err)
 	}
-	if err := os.WriteFile(datastore.OutputPath(runDir, childID), []byte("# child output\n"), 0o644); err != nil {
+	if err := os.WriteFile(datastore.RunAt(runDir).Step(childID).Output(), []byte("# child output\n"), 0o644); err != nil {
 		t.Fatalf("write child output: %v", err)
 	}
 
@@ -169,7 +169,7 @@ func TestMonitorFanOutNestedFileExpansion(t *testing.T) {
 		},
 	}
 	m := New("run-1")
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = m.WithSnapshot(snap)
 
 	m, _ = m.Update(key("j")) // a -> b

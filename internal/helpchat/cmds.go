@@ -3,6 +3,7 @@ package helpchat
 import (
 	"context"
 	"fmt"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -60,7 +61,7 @@ func helpAgent(backend, model string) agentcfg.Agent {
 func startServerCmd(
 	ctx context.Context,
 	run *engine.Run,
-	runDir string,
+	runDir datastore.Run,
 	dispatch DispatchFunc,
 	gateReq chan<- struct{},
 	gateAns <-chan bool,

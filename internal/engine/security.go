@@ -24,12 +24,12 @@ func (r *runSecurity) stop() {
 	r.once.Do(func() { r.cancel(); <-r.done })
 }
 
-func tier2Eligible(st *workflow.Step, runDir string, monitors []sentinel.MonitorDef) bool {
+func tier2Eligible(st *workflow.Step, runDir datastore.Run, monitors []sentinel.MonitorDef) bool {
 	return len(monitors) > 0 && stepTier2Enabled(st, runDir)
 }
 
-func stepTier2Enabled(st *workflow.Step, runDir string) bool {
-	if st == nil || st.Type != workflow.StepAgent || runDir == "" {
+func stepTier2Enabled(st *workflow.Step, runDir datastore.Run) bool {
+	if st == nil || st.Type != workflow.StepAgent || !runDir.Enabled() {
 		return false
 	}
 	securityOn := st.Security.Enabled == nil || *st.Security.Enabled
@@ -37,7 +37,7 @@ func stepTier2Enabled(st *workflow.Step, runDir string) bool {
 	return securityOn && tier2On
 }
 
-func workflowUsesTier2(wf *workflow.Workflow, runDir string, monitors []sentinel.MonitorDef) bool {
+func workflowUsesTier2(wf *workflow.Workflow, runDir datastore.Run, monitors []sentinel.MonitorDef) bool {
 	if wf == nil {
 		return false
 	}
@@ -49,7 +49,7 @@ func workflowUsesTier2(wf *workflow.Workflow, runDir string, monitors []sentinel
 	return false
 }
 
-func startRunSecurity(parent context.Context, wf *workflow.Workflow, runID, runDir string,
+func startRunSecurity(parent context.Context, wf *workflow.Workflow, runID string, runDir datastore.Run,
 	monitors []sentinel.MonitorDef, subs []sub, inbox chan<- schedMsg, resume bool) *runSecurity {
 	if !workflowUsesTier2(wf, runDir, monitors) {
 		return nil
@@ -68,7 +68,7 @@ func startRunSecurity(parent context.Context, wf *workflow.Workflow, runID, runD
 		default:
 		}
 	}
-	findingsPath := datastore.FindingsPath(runDir)
+	findingsPath := runDir.Findings()
 	sink, err := sentinel.NewWriter(findingsPath)
 	if err != nil {
 		notify(sentinel.Finding{RunID: runID, Tier: sentinel.TierMonitor, Monitor: "finding-persistence-failed",
@@ -80,10 +80,10 @@ func startRunSecurity(parent context.Context, wf *workflow.Workflow, runID, runD
 		Debounce:       time.Duration(wf.Defaults.Security.DebounceMs) * time.Millisecond,
 		BudgetUSD:      wf.Defaults.Security.FleetBudgetUSD,
 		ConcurrencyCap: wf.Defaults.Security.ConcurrencyCap,
-		StatePath:      datastore.SecurityMonitorStatePath(runDir), FindingsPath: findingsPath, Resume: resume,
+		StatePath:      runDir.SecurityMonitorState(), FindingsPath: findingsPath, Resume: resume,
 	}
 	supervisor := sentinel.NewSupervisor(runID, runtime.signals, sink, monitors,
-		func(stepID string) string { return datastore.TranscriptPath(runDir, stepID) }, notify, options)
+		func(stepID string) string { return runDir.Step(stepID).Transcript() }, notify, options)
 	go func() { defer close(runtime.done); supervisor.Run(ctx) }()
 	return runtime
 }

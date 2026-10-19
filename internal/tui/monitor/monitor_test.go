@@ -30,7 +30,7 @@ import (
 func writeTranscript(t *testing.T, stepID string, entries []transcript.Entry) string {
 	t.Helper()
 	runDir := t.TempDir()
-	path := datastore.TranscriptPath(runDir, stepID)
+	path := datastore.RunAt(runDir).Step(stepID).Transcript()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatalf("mkdir transcript dir: %v", err)
 	}
@@ -51,7 +51,7 @@ func writeTranscript(t *testing.T, stepID string, entries []transcript.Entry) st
 
 func appendTranscriptEntry(t *testing.T, runDir, stepID string, entry transcript.Entry) int {
 	t.Helper()
-	w, err := transcript.Create(datastore.TranscriptPath(runDir, stepID))
+	w, err := transcript.Create(datastore.RunAt(runDir).Step(stepID).Transcript())
 	if err != nil {
 		t.Fatalf("open transcript: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestMonitorChatCommandOutput(t *testing.T) {
 	})
 
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 
 	if !strings.Contains(m.chatBody(), "build output here") {
@@ -212,7 +212,7 @@ func TestMonitorWithJournal(t *testing.T) {
 	})
 
 	m := New("r1")
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = m.WithJournal([]engine.Event{
 		engine.RunStarted{RunID: "r1", Workflow: "feature", Steps: []string{"a", "b"}},
 		engine.StepStatus{RunID: "r1", StepID: "a", To: step.StatusSucceeded},
@@ -248,7 +248,7 @@ func TestMonitorWithJournal_RendersInterruptedSDKSessionFailure(t *testing.T) {
 		{Role: transcript.RoleUser, Blocks: []transcript.Block{{Type: transcript.BlockToolResult, Content: "completed"}}},
 	})
 	m := New("r1")
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = m.WithJournal([]engine.Event{
 		engine.RunStarted{RunID: "r1", Workflow: "feature", Steps: []string{"synthesize"}},
 		engine.StepStatus{RunID: "r1", StepID: "synthesize", To: step.StatusFailed, Err: errText},
@@ -267,7 +267,7 @@ func TestMonitorWithJournal_RendersInterruptedSDKSessionFailure(t *testing.T) {
 func TestMonitorWithJournal_InterruptedStaysUnfinished(t *testing.T) {
 	runDir := writeTranscript(t, "synthesize", nil)
 	m := New("r1")
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = m.WithJournal([]engine.Event{
 		engine.RunStarted{RunID: "r1", Workflow: "feature", Steps: []string{"synthesize"}},
 		engine.StepStatus{RunID: "r1", StepID: "synthesize", To: step.StatusRunning},
@@ -482,7 +482,7 @@ func TestMonitorItemNavigationKeepsCursorVisible(t *testing.T) {
 		Blocks: blocks,
 	}})
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 	m.transcriptInnerH = 6
 	m.chatVP.SetHeight(6)
@@ -543,7 +543,7 @@ func TestMonitorTallExpandedBlockKeepsHeaderVisible(t *testing.T) {
 		},
 	}})
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 	m.transcriptInnerH = 6
 	m.chatVP.SetHeight(6)
@@ -571,7 +571,7 @@ func TestMonitorStreamingPreservesBlockNavigationPosition(t *testing.T) {
 		Blocks: blocks,
 	}})
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 	m.transcriptInnerH = 6
 	m.chatVP.SetHeight(6)
@@ -613,7 +613,7 @@ func newFollowMonitor(t *testing.T) (Model, string) {
 		}},
 	}})
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 	if !m.chatVP.AtBottom() {
 		t.Fatal("follow fixture did not start at the bottom")
@@ -1644,7 +1644,7 @@ func TestMonitorEagerReload(t *testing.T) {
 		}},
 	})
 	// Write step "b" into the SAME run dir so both transcripts resolve.
-	pathB := datastore.TranscriptPath(runDirA, "b")
+	pathB := datastore.RunAt(runDirA).Step("b").Transcript()
 	if err := os.MkdirAll(filepath.Dir(pathB), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
@@ -1662,7 +1662,7 @@ func TestMonitorEagerReload(t *testing.T) {
 	}
 
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDirA
+	m.RunDir = datastore.RunAt(runDirA)
 	// Force the initial eager load now that runDir is set.
 	m.chatStep = ""
 	m.reloadTranscript()
@@ -2605,7 +2605,7 @@ func TestFileRowsDisableLifecycleActionsAndHints(t *testing.T) {
 // disk and the model reads them from there.
 func TestSecurityPane(t *testing.T) {
 	dir := t.TempDir()
-	fPath := datastore.FindingsPath(dir)
+	fPath := datastore.RunAt(dir).Findings()
 
 	// Write two findings to disk.
 	fw, err := sentinel.NewWriter(fPath)
@@ -2635,7 +2635,7 @@ func TestSecurityPane(t *testing.T) {
 
 	// Build a minimal Model with runDir set.
 	m := New("run1")
-	m.RunDir = dir
+	m.RunDir = datastore.RunAt(dir)
 	m.ready = true
 	m.width = 80
 	m.height = 24
@@ -3166,7 +3166,7 @@ func TestMonitorItemNavigationKeepsCursorVisibleFailedWithNotice(t *testing.T) {
 		Blocks: blocks,
 	}})
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 	i := m.index["a"]
 	m.steps[i].status = step.StatusFailed

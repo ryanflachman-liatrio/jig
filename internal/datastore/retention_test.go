@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -14,7 +15,7 @@ import (
 // run terminal; otherwise the run has only a start line and is non-terminal.
 func makeRun(t *testing.T, root, id string, finishedAt time.Time) string {
 	t.Helper()
-	dir, err := RunDir(root, id)
+	dir, err := Open(root).Create(id)
 	if err != nil {
 		t.Fatalf("RunDir(%s): %v", id, err)
 	}
@@ -23,10 +24,10 @@ func makeRun(t *testing.T, root, id string, finishedAt time.Time) string {
 		lines += fmt.Sprintf(`{"seq":2,"ts":%q,"kind":"run_finished","data":{}}`+"\n",
 			finishedAt.UTC().Format(time.RFC3339))
 	}
-	if err := os.WriteFile(JournalPath(dir), []byte(lines), 0o644); err != nil {
+	if err := os.WriteFile(dir.Journal(), []byte(lines), 0o644); err != nil {
 		t.Fatalf("write journal(%s): %v", id, err)
 	}
-	return dir
+	return dir.Dir()
 }
 
 func exists(t *testing.T, dir string) bool {
@@ -40,7 +41,7 @@ func TestPrune_ZeroPolicyIsNoop(t *testing.T) {
 	old := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	makeRun(t, root, "run-old", old)
 
-	pruned, err := Prune(root, RetentionPolicy{}, time.Now())
+	pruned, err := Open(root).Prune(RetentionPolicy{}, time.Now())
 	if err != nil {
 		t.Fatalf("Prune: %v", err)
 	}
@@ -58,7 +59,7 @@ func TestPrune_MaxAgeRemovesOldTerminalRuns(t *testing.T) {
 	makeRun(t, root, "run-old", now.Add(-48*time.Hour))
 	makeRun(t, root, "run-recent", now.Add(-1*time.Hour))
 
-	pruned, err := Prune(root, RetentionPolicy{MaxAge: 24 * time.Hour}, now)
+	pruned, err := Open(root).Prune(RetentionPolicy{MaxAge: 24 * time.Hour}, now)
 	if err != nil {
 		t.Fatalf("Prune: %v", err)
 	}
@@ -79,7 +80,7 @@ func TestPrune_NeverRemovesNonTerminalRuns(t *testing.T) {
 	// A very old, still-running (non-terminal) run must survive any policy.
 	makeRun(t, root, "run-live", time.Time{})
 
-	pruned, err := Prune(root, RetentionPolicy{MaxAge: time.Nanosecond, KeepLast: 0}, now)
+	pruned, err := Open(root).Prune(RetentionPolicy{MaxAge: time.Nanosecond, KeepLast: 0}, now)
 	if err != nil {
 		t.Fatalf("Prune: %v", err)
 	}
@@ -99,7 +100,7 @@ func TestPrune_KeepLastProtectsNewest(t *testing.T) {
 	makeRun(t, root, "run-3", now.Add(-1*time.Hour))
 
 	// KeepLast=1 with no age rule: keep only the newest, prune the rest.
-	pruned, err := Prune(root, RetentionPolicy{KeepLast: 1}, now)
+	pruned, err := Open(root).Prune(RetentionPolicy{KeepLast: 1}, now)
 	if err != nil {
 		t.Fatalf("Prune: %v", err)
 	}
@@ -118,7 +119,7 @@ func TestPrune_KeepLastProtectsAgainstMaxAge(t *testing.T) {
 	makeRun(t, root, "run-older", now.Add(-72*time.Hour))
 	makeRun(t, root, "run-old", now.Add(-48*time.Hour))
 
-	pruned, err := Prune(root, RetentionPolicy{MaxAge: 24 * time.Hour, KeepLast: 1}, now)
+	pruned, err := Open(root).Prune(RetentionPolicy{MaxAge: 24 * time.Hour, KeepLast: 1}, now)
 	if err != nil {
 		t.Fatalf("Prune: %v", err)
 	}
@@ -131,14 +132,14 @@ func TestPrune_KeepLastProtectsAgainstMaxAge(t *testing.T) {
 }
 
 func TestPrune_EmptyRootErrors(t *testing.T) {
-	if _, err := Prune("", RetentionPolicy{KeepLast: 1}, time.Now()); err == nil {
+	if _, err := Open("").Prune(RetentionPolicy{KeepLast: 1}, time.Now()); err == nil {
 		t.Error("expected error for empty root")
 	}
 }
 
 func TestPrune_MissingRunsDirIsNoop(t *testing.T) {
 	root := t.TempDir() // no runs/ subdirectory created
-	pruned, err := Prune(root, RetentionPolicy{KeepLast: 1}, time.Now())
+	pruned, err := Open(root).Prune(RetentionPolicy{KeepLast: 1}, time.Now())
 	if err != nil {
 		t.Fatalf("Prune: %v", err)
 	}
@@ -154,12 +155,67 @@ func equalSet(a, b []string) bool {
 	}
 	ac := append([]string(nil), a...)
 	bc := append([]string(nil), b...)
-	sort.Strings(ac)
-	sort.Strings(bc)
+	slices.Sort(ac)
+	slices.Sort(bc)
 	for i := range ac {
 		if ac[i] != bc[i] {
 			return false
 		}
 	}
 	return true
+}
+
+// TestRunFinishedAt_LongAndTornLines guards the journal scan: an envelope
+// larger than bufio.Scanner's default 64 KiB token must not hide a later
+// run_finished line, and a torn trailing write must not hide an earlier one.
+func TestRunFinishedAt_LongAndTornLines(t *testing.T) {
+	finished := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	big := strings.Repeat("x", 256<<10)
+	for name, journal := range map[string]string{
+		"long line before finish": `{"seq":1,"kind":"step_output","data":{"text":"` + big + `"}}` + "\n" +
+			`{"seq":2,"ts":"2026-07-01T12:00:00Z","kind":"run_finished","data":{}}` + "\n",
+		"torn line after finish": `{"seq":1,"ts":"2026-07-01T12:00:00Z","kind":"run_finished","data":{}}` + "\n" +
+			`{"seq":2,"kind":"step_out`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			run, err := Open(t.TempDir()).Create("r")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(run.Journal(), []byte(journal), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got, ok := runFinishedAt(run)
+			if !ok || !got.Equal(finished) {
+				t.Fatalf("runFinishedAt = %v, %v; want %v, true", got, ok, finished)
+			}
+		})
+	}
+}
+
+func TestRetentionPolicyValidate(t *testing.T) {
+	for _, p := range []RetentionPolicy{{}, {KeepLast: 3}, {MaxAge: time.Hour}, {KeepLast: 1, MaxAge: time.Hour}} {
+		if err := p.Validate(); err != nil {
+			t.Errorf("Validate(%+v) = %v, want nil", p, err)
+		}
+	}
+	for _, p := range []RetentionPolicy{{KeepLast: -1}, {MaxAge: -time.Hour}, {KeepLast: -1, MaxAge: time.Hour}} {
+		if err := p.Validate(); err == nil {
+			t.Errorf("Validate(%+v) = nil, want error", p)
+		}
+	}
+}
+
+// TestPrune_NegativeKnobErrors guards against a typo like --keep-last -1
+// silently disabling the count rule and letting MaxAge prune everything.
+func TestPrune_NegativeKnobErrors(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	makeRun(t, root, "run-old", now.Add(-48*time.Hour))
+	if _, err := Open(root).Prune(RetentionPolicy{KeepLast: -1, MaxAge: time.Hour}, now); err == nil {
+		t.Fatal("expected error for negative KeepLast")
+	}
+	if !exists(t, filepath.Join(root, "runs", "run-old")) {
+		t.Error("run-old removed despite an invalid policy")
+	}
 }

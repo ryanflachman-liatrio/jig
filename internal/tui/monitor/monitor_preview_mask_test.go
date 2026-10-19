@@ -3,6 +3,7 @@ package monitor
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,7 +122,7 @@ func TestExpandedAndCopyStayRaw(t *testing.T) {
 	exchange[1].Blocks[0].Tool.Output, _ = json.Marshal(map[string]any{"text": "FOO_TOKEN=" + fakePreviewSecret})
 	entries := toolGroupEntries(exchange)
 	m := previewMaskMonitor(t, 120, entries)
-	m.RunDir = t.TempDir()
+	m.RunDir = datastore.RunAt(t.TempDir())
 	m.focus = focusTranscript
 	if strings.Contains(ansi.Strip(m.itemTranscriptBody()), fakePreviewSecret) {
 		t.Fatal("collapsed row should be masked")
@@ -156,7 +157,7 @@ func TestMaskedBashRowCapture(t *testing.T) {
 		toolExchange("b", "edit", map[string]any{"file_path": "config.go"}, 0, 0, 0, false),
 	)
 	m := newMonitorWithSteps(t).WithTUIConfig(config.TUIConfig{})
-	m.RunDir = writeTranscript(t, "a", entries)
+	m.RunDir = datastore.RunAt(writeTranscript(t, "a", entries))
 	m = enterChatStep(t, m, "a")
 	body := proofPlainText(m.chatBody())
 	if strings.Contains(body, fakePreviewSecret) {

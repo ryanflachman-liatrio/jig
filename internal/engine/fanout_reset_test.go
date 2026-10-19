@@ -153,8 +153,8 @@ func TestForEachReset_FamilyRemovesChildCommitsAndReExpands(t *testing.T) {
 	if len(preChildIDs) != 2 {
 		t.Fatalf("pre-reset child commits = %v, want 2", preChildIDs)
 	}
-	runDir := filepath.Join(root, "runs", run.ID)
-	oldManifestPath := datastore.FanOutManifestPath(runDir, "analyze", 0, 0)
+	runDir := datastore.RunAt(filepath.Join(root, "runs", run.ID))
+	oldManifestPath := runDir.Step("analyze").FanOutManifest(0, 0)
 	if _, err := os.Stat(oldManifestPath); err != nil {
 		t.Fatalf("generation-0 manifest missing before reset: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestForEachReset_FamilyRemovesChildCommitsAndReExpands(t *testing.T) {
 	if _, err := os.Stat(oldManifestPath); err != nil {
 		t.Errorf("generation-0 manifest was removed by reset, want it kept as history: %v", err)
 	}
-	newManifestPath := datastore.FanOutManifestPath(runDir, "analyze", 1, 0)
+	newManifestPath := runDir.Step("analyze").FanOutManifest(1, 0)
 	if _, err := os.Stat(newManifestPath); err != nil {
 		t.Errorf("generation-1 manifest missing after re-expansion: %v", err)
 	}

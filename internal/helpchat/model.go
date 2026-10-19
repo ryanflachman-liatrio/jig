@@ -3,6 +3,7 @@ package helpchat
 import (
 	"context"
 	"fmt"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"strings"
 
 	keybind "charm.land/bubbles/v2/key"
@@ -53,7 +54,7 @@ type helpTurn struct {
 // methods persist across value copies — same pattern as monitor's render caches.
 type Model struct {
 	run    *engine.Run
-	runDir string
+	runDir datastore.Run
 	ctx    context.Context
 
 	// Harness state — replaced on each queryCmd ConnectedMsg (one session per
@@ -99,7 +100,7 @@ type Model struct {
 // backend and model cfg selects. When that backend lacks a capability the help
 // chat requires, it returns an unavailable Model whose text names the backend
 // and the missing capability instead.
-func New(run *engine.Run, runDir string, snap engine.RunSnapshot, cfg config.HelpChatConfig) Model {
+func New(run *engine.Run, runDir datastore.Run, snap engine.RunSnapshot, cfg config.HelpChatConfig) Model {
 	backend := cfg.BackendOrDefault()
 	h, err := harness.For(backend)
 	if err != nil {
@@ -111,7 +112,7 @@ func New(run *engine.Run, runDir string, snap engine.RunSnapshot, cfg config.Hel
 
 // newModel is New with the capability probe and per-turn harness factory
 // injected, so tests can drive any backend without a live CLI.
-func newModel(run *engine.Run, runDir string, snap engine.RunSnapshot, backend, model string, probe harness.Harness, factory func() (helpchatHarness, error)) Model {
+func newModel(run *engine.Run, runDir datastore.Run, snap engine.RunSnapshot, backend, model string, probe harness.Harness, factory func() (helpchatHarness, error)) Model {
 	if err := harness.Require(probe, helpCapabilities...); err != nil {
 		return newUnavailable(fmt.Sprintf("Help agent unavailable on backend %q: %v", backend, err))
 	}

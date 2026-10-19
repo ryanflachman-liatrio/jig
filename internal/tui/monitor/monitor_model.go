@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"strings"
 	"time"
 
@@ -141,7 +142,7 @@ func (r visibleRow) isFileRow() bool {
 // runs list.
 type Model struct {
 	RunID      string
-	RunDir     string
+	RunDir     datastore.Run
 	workflow   string
 	keys       monitorKeys
 	steps      []monitorStep
@@ -785,7 +786,7 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 	}
 	// Re-discover output files per step and clamp cursor to visible row count.
 	for _, st := range snap.Steps {
-		if m.RunDir != "" {
+		if m.RunDir.Enabled() {
 			m.stepFiles[st.ID] = stepOutputFiles(m.RunDir, st.ID, "")
 		}
 	}

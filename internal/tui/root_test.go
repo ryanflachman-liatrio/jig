@@ -42,7 +42,7 @@ func TestHydrateRunsMarksOrphansTerminal(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.corruptSnapshot {
-				if err := os.WriteFile(datastore.WorkflowSnapshotPath(runDir), []byte(`{"broken":`), 0o644); err != nil {
+				if err := os.WriteFile(datastore.RunAt(runDir).WorkflowSnapshot(), []byte(`{"broken":`), 0o644); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -59,7 +59,7 @@ func TestHydrateRunsMarksOrphansTerminal(t *testing.T) {
 				journal = append(journal, line...)
 				journal = append(journal, '\n')
 			}
-			if err := os.WriteFile(datastore.JournalPath(runDir), journal, 0o644); err != nil {
+			if err := os.WriteFile(datastore.RunAt(runDir).Journal(), journal, 0o644); err != nil {
 				t.Fatal(err)
 			}
 
@@ -92,7 +92,7 @@ func TestHydrateRunsKeepsMissingAndCorruptJournalRows(t *testing.T) {
 				t.Fatal(err)
 			}
 			if corrupt {
-				if err := os.WriteFile(datastore.JournalPath(runDir), []byte("{ bad\n"), 0o644); err != nil {
+				if err := os.WriteFile(datastore.RunAt(runDir).Journal(), []byte("{ bad\n"), 0o644); err != nil {
 					t.Fatal(err)
 				}
 			}

@@ -24,7 +24,7 @@ import (
 // (already valid JSON, e.g. `{"name":"api"}`) and returns it alongside a
 // matching FanOutExpanded event whose ManifestDigest is correct — callers that
 // want to prove fail-closed behavior mutate the returned event afterward.
-func writeFanOutManifestForTest(t *testing.T, runDir, familyID string, generation, iteration int, items ...string) (datastore.FanOutManifest, FanOutExpanded) {
+func writeFanOutManifestForTest(t *testing.T, runDir datastore.Run, familyID string, generation, iteration int, items ...string) (datastore.FanOutManifest, FanOutExpanded) {
 	t.Helper()
 	m := datastore.FanOutManifest{
 		FamilyID:     familyID,
@@ -41,12 +41,12 @@ func writeFanOutManifestForTest(t *testing.T, runDir, familyID string, generatio
 		m.Items = append(m.Items, datastore.FanOutItem{InstanceID: id, Index: i, Item: item, ItemSHA256: digest})
 		instances = append(instances, FanOutInstanceDescriptor{InstanceID: id, Index: i, ItemSHA256: digest})
 	}
-	if err := datastore.WriteFanOutManifest(runDir, m); err != nil {
+	if err := runDir.Step(m.FamilyID).WriteFanOutManifest(m); err != nil {
 		t.Fatalf("WriteFanOutManifest: %v", err)
 	}
 	// Re-read so m.SchemaVersion reflects what WriteFanOutManifest defaulted it
 	// to, keeping the digest computed here identical to what resume.go recomputes.
-	m, err := datastore.ReadFanOutManifest(runDir, familyID, generation, iteration)
+	m, err := runDir.Step(familyID).ReadFanOutManifest(generation, iteration)
 	if err != nil {
 		t.Fatalf("ReadFanOutManifest: %v", err)
 	}
@@ -106,7 +106,7 @@ run = "true"
 	if err != nil {
 		t.Fatal(err)
 	}
-	runDir := t.TempDir()
+	runDir := datastore.RunAt(t.TempDir())
 	events := []Event{
 		RunStarted{RunID: "r", Workflow: wf.Meta.Name, Steps: []string{"discover", "analyze", "solo"}},
 		StepStatus{RunID: "r", StepID: "discover", From: step.StatusPending, To: step.StatusRunning},
@@ -140,7 +140,7 @@ func TestRestoreUnfinishedCheckpoint_ForEach_ManifestDigestMismatchFailsClosed(t
 	if err != nil {
 		t.Fatal(err)
 	}
-	runDir := t.TempDir()
+	runDir := datastore.RunAt(t.TempDir())
 	_, ev := writeFanOutManifestForTest(t, runDir, "analyze", 0, 0, `{"name":"api","path":"services/api"}`)
 	ev.ManifestDigest = strings.Repeat("0", len(ev.ManifestDigest))
 	events := []Event{
@@ -166,7 +166,7 @@ func TestRestoreUnfinishedCheckpoint_ForEach_MissingManifestFailsClosed(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	runDir := t.TempDir()
+	runDir := datastore.RunAt(t.TempDir())
 	events := []Event{
 		RunStarted{RunID: "r", Workflow: wf.Meta.Name, Steps: []string{"discover", "analyze"}},
 		StepStatus{RunID: "r", StepID: "discover", From: step.StatusPending, To: step.StatusSucceeded},
@@ -186,8 +186,8 @@ func TestRestoreUnfinishedCheckpoint_ForEach_CorruptManifestFailsClosed(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	runDir := t.TempDir()
-	path := datastore.FanOutManifestPath(runDir, "analyze", 0, 0)
+	runDir := datastore.RunAt(t.TempDir())
+	path := runDir.Step("analyze").FanOutManifest(0, 0)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestRestoreUnfinishedCheckpoint_ForEach_ExactItemReuseAndMixedParkKinds(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	runDir := t.TempDir()
+	runDir := datastore.RunAt(t.TempDir())
 	m, ev := writeFanOutManifestForTest(t, runDir, "analyze", 0, 0,
 		`{"name":"a","path":"a"}`, `{"name":"b","path":"b"}`, `{"name":"c","path":"c"}`)
 	child0, child1, child2 := m.Items[0].InstanceID, m.Items[1].InstanceID, m.Items[2].InstanceID
@@ -297,7 +297,7 @@ func TestResumeForEach_SettlesBarrierForAlreadyTerminalChildren(t *testing.T) {
 	}
 	root := filepath.Join(t.TempDir(), ".jig")
 	runID := "foreach-settle-on-resume"
-	runDir, err := datastore.RunDir(root, runID)
+	runDir, err := datastore.Open(root).Create(runID)
 	if err != nil {
 		t.Fatal(err)
 	}

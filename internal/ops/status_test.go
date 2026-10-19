@@ -13,7 +13,7 @@ import (
 func TestInspectRunOrphanAndCorrupt(t *testing.T) {
 	root := t.TempDir()
 	orphanID := "20260908-120000-orphan12"
-	if _, err := datastore.RunDir(root, orphanID); err != nil {
+	if _, err := datastore.Open(root).Create(orphanID); err != nil {
 		t.Fatal(err)
 	}
 	report, err := InspectRun(root, orphanID)
@@ -22,7 +22,7 @@ func TestInspectRunOrphanAndCorrupt(t *testing.T) {
 	}
 
 	corruptID := "20260908-120001-corrupt1"
-	runDir, err := datastore.RunDir(root, corruptID)
+	runDir, err := datastore.Open(root).Create(corruptID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,7 +31,7 @@ func TestInspectRunOrphanAndCorrupt(t *testing.T) {
 		t.Fatal(err)
 	}
 	data := append(append(line, '\n'), []byte("not-json\n")...)
-	if err := os.WriteFile(datastore.JournalPath(runDir), data, 0o644); err != nil {
+	if err := os.WriteFile(runDir.Journal(), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	report, err = InspectRun(root, corruptID)

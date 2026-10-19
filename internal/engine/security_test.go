@@ -143,7 +143,7 @@ isolation = "none"
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), ".jig")
-	runDir, err := datastore.RunDir(root, "security-resume")
+	runDir, err := datastore.Open(root).Create("security-resume")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,10 +154,10 @@ isolation = "none"
 		RunStarted{RunID: "security-resume", Workflow: wf.Meta.Name, Steps: []string{"agent"}},
 		StepStatus{RunID: "security-resume", StepID: "agent", From: step.StatusPending, To: step.StatusRunning, Attempt: 1},
 	})
-	stepDir, err := datastore.StepDir(runDir, "agent")
-	if err != nil {
+	if err := runDir.Step("agent").Ensure(); err != nil {
 		t.Fatal(err)
 	}
+	stepDir := runDir.Step("agent").Dir()
 	w, err := transcript.Create(filepath.Join(stepDir, "transcript.jsonl"))
 	if err != nil {
 		t.Fatal(err)
@@ -168,7 +168,7 @@ isolation = "none"
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	statePath := datastore.SecurityMonitorStatePath(runDir)
+	statePath := runDir.SecurityMonitorState()
 	if err := os.WriteFile(statePath, []byte(`{"version":1,"spent_usd":0.25,"degraded":false,"in_flight":false}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestRunOwnedSecurityObservesPersistedTranscript(t *testing.T) {
 		t.Fatalf("finding = %+v", finding)
 	}
 	<-run.done
-	findings, err := sentinel.ReadAll(datastore.FindingsPath(mgr.RunDir(run.ID)))
+	findings, err := sentinel.ReadAll(mgr.RunDir(run.ID).Findings())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -275,7 +275,7 @@ func TestStepTier2Policy(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := stepTier2Enabled(tc.st, tc.runDir); got != tc.want {
+			if got := stepTier2Enabled(tc.st, datastore.RunAt(tc.runDir)); got != tc.want {
 				t.Fatalf("got %v, want %v", got, tc.want)
 			}
 		})
@@ -375,7 +375,7 @@ func TestCriticalTier2FindingOnlyEscalatesCurrentExecution(t *testing.T) {
 	wf := &workflow.Workflow{Meta: workflow.Meta{Name: "current-security"}, Steps: []workflow.Step{{ID: "agent", Type: workflow.StepAgent}}}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	scheduler := newScheduler(wf, "run", make(chan schedMsg, 4), nil, &testExec{}, cancel, nil, "", "", "", func(RunSnapshot) {})
+	scheduler := newScheduler(wf, "run", make(chan schedMsg, 4), nil, &testExec{}, cancel, nil, datastore.Run{}, "", "", func(RunSnapshot) {})
 	state := scheduler.states["agent"]
 	state.Status = step.StatusRunning
 	state.Generation, state.Iteration, state.Attempt = 2, 3, 4

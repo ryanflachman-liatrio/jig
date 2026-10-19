@@ -45,8 +45,8 @@ type Manager struct {
 	runs      map[string]*Run
 	exec      Executor
 	resolver  IntegrationResolver
-	root      string // .jig/ root (used in Phase 2+ for file I/O)
-	subs      []sub  // manager-level fan-out; TUI subscribes once
+	store     datastore.Store // .jig/ root; disabled when persistence is off
+	subs      []sub           // manager-level fan-out; TUI subscribes once
 	monitors  []sentinel.MonitorDef
 	secrets   SecretResolver
 	observers observerRegistry
@@ -82,9 +82,9 @@ func NewManager(exec Executor, root string) *Manager {
 		}
 	}
 	return &Manager{
-		runs: make(map[string]*Run),
-		exec: exec,
-		root: root,
+		runs:  make(map[string]*Run),
+		exec:  exec,
+		store: datastore.Open(root),
 	}
 }
 
@@ -111,17 +111,22 @@ func (m *Manager) SetSecretResolver(resolver SecretResolver) {
 
 // Root returns the .jig/ directory configured for this manager, or "" when
 // persistence is disabled.
-func (m *Manager) Root() string { return m.root }
+func (m *Manager) Root() string { return m.store.Root() }
 
-// RunDir returns the on-disk directory for runID without creating it, or "" when
-// persistence is disabled (root == ""). Readers such as the TUI transcript view
-// use it to locate a run's per-step transcript files; the path mirrors the
-// layout datastore.RunDir builds at run start.
-func (m *Manager) RunDir(runID string) string {
-	if m.root == "" {
-		return ""
+// Store returns the persistence store backing this manager. It is disabled
+// when persistence is off.
+func (m *Manager) Store() datastore.Store { return m.store }
+
+// RunDir addresses the on-disk run for runID without creating or checking
+// it. The result is disabled when persistence is off or runID is not a valid
+// run id. Readers such as the TUI transcript view use it to locate a run's
+// per-step transcript files.
+func (m *Manager) RunDir(runID string) datastore.Run {
+	run, err := m.store.Locate(runID)
+	if err != nil {
+		return datastore.Run{}
 	}
-	return filepath.Join(m.root, "runs", runID)
+	return run
 }
 
 // PersistedRuns lists the IDs of runs persisted on disk under .jig/runs/, oldest
@@ -134,7 +139,7 @@ func (m *Manager) RunDir(runID string) string {
 // for these runs beyond the on-disk layout, so this reads the directory each
 // call.
 func (m *Manager) PersistedRuns() ([]string, error) {
-	return datastore.ListRunIDs(m.root)
+	return m.store.List()
 }
 
 // RunSnapshot is the Memento pattern's memento: an opaque, point-in-time
@@ -183,9 +188,9 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	// configured. A missing or uncreatable root is non-fatal — runs still work,
 	// they just don't persist. This avoids breaking existing tests that pass "".
 	var w *manifest.Writer
-	var runDir string
-	if m.root != "" {
-		if rd, err := datastore.RunDir(m.root, runID); err == nil {
+	var runDir datastore.Run
+	if m.store.Enabled() {
+		if rd, err := m.store.Create(runID); err == nil {
 			runDir = rd
 			_ = persistWorkflowSnapshot(runDir, wf)
 			if lock, lockErr := AcquireRunLease(runDir); lockErr == nil {
@@ -204,8 +209,8 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	}
 
 	repoRoot := ""
-	if m.root != "" {
-		repoRoot = filepath.Dir(filepath.Clean(m.root))
+	if m.store.Enabled() {
+		repoRoot = filepath.Dir(filepath.Clean(m.store.Root()))
 	}
 	security := startRunSecurity(ctx, wf, runID, runDir, m.monitors, subs, inbox, false)
 
@@ -219,7 +224,7 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 		run.runLock = nil
 		close(run.done)
 	}
-	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir, m.root, repoRoot, onDone)
+	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir, m.store.Root(), repoRoot, onDone)
 	if security != nil {
 		s.securitySignals = security.signals
 	}
@@ -740,7 +745,7 @@ type scheduler struct {
 	resolver     IntegrationResolver
 	cancel       context.CancelFunc        // cancels the run context; used by abort policy
 	writer       *manifest.Writer          // nil when persistence is disabled (root = "")
-	runDir       string                    // .jig/runs/<runID>/; "" when persistence is disabled
+	runDir       datastore.Run             // .jig/runs/<runID>/; "" when persistence is disabled
 	structured   map[string]map[string]any // cached JSON decode of step Result.Structured
 	stepFeedback map[string]string         // gotoStepID → feedback for route replay
 	// rerunSource maps a route's goto target → the firing source step id. When a
@@ -907,7 +912,7 @@ func newScheduler(
 	exec Executor,
 	cancel context.CancelFunc,
 	writer *manifest.Writer,
-	runDir string,
+	runDir datastore.Run,
 	jigRoot string,
 	repoRoot string,
 	onDone func(RunSnapshot),
@@ -1497,8 +1502,8 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	// transcript there. The manifest writer also calls StepDir, but only on the
 	// step's terminal event — too late for the runner's mid-execution transcript
 	// writes, which would otherwise fail with "no such file or directory".
-	if s.runDir != "" {
-		if _, err := datastore.StepDir(s.runDir, st.ID); err != nil {
+	if s.runDir.Enabled() {
+		if err := s.runDir.Step(st.ID).Ensure(); err != nil {
 			releaseReaderView()
 			s.states[st.ID].Result = &step.Result{
 				Status: step.StatusFailed,
@@ -1511,7 +1516,7 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	// Clear a stale session before the durable running transition. If the process
 	// dies after that transition, session.json can only belong to this dispatch.
 	if st.Type == workflow.StepAgent && s.resumeSessions[st.ID] == "" {
-		if err := datastore.ClearSession(s.runDir, st.ID); err != nil {
+		if err := s.runDir.Step(st.ID).ClearSession(); err != nil {
 			releaseReaderView()
 			s.states[st.ID].Result = &step.Result{
 				Status: step.StatusFailed,
@@ -1594,9 +1599,9 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 		}
 	}
 	var artifactDir, transcriptPath string
-	if s.runDir != "" {
-		artifactDir = filepath.Join(s.runDir, "artifacts")
-		transcriptPath = datastore.TranscriptPath(s.runDir, st.ID)
+	if s.runDir.Enabled() {
+		artifactDir = s.runDir.Artifacts()
+		transcriptPath = s.runDir.Step(st.ID).Transcript()
 	}
 	secrets, err := s.resolveSecrets(st)
 	if err != nil {
@@ -1704,14 +1709,15 @@ type inputSnapshot struct {
 }
 
 func (s *scheduler) snapshotInputs(stepID string, inputs []ResolvedInput) error {
-	if s.runDir == "" {
+	if !s.runDir.Enabled() {
 		return nil
 	}
 	state := s.states[stepID]
-	dir, err := datastore.StepDir(s.runDir, stepID)
-	if err != nil {
+	stepDir := s.runDir.Step(stepID)
+	if err := stepDir.Ensure(); err != nil {
 		return fmt.Errorf("create input snapshot directory: %w", err)
 	}
+	dir := stepDir.Dir()
 	snapshots := make([]inputSnapshot, 0, len(inputs))
 	for i := range inputs {
 		data := []byte(inputs[i].Value)
@@ -1881,8 +1887,8 @@ func (s *scheduler) buildRequest(
 	var findingsPath string
 	if st.Tier1Enabled() {
 		guard = sentinel.NewGuard(st.Security.OutboundAllowlist)
-		if s.runDir != "" {
-			findingsPath = datastore.FindingsPath(s.runDir)
+		if s.runDir.Enabled() {
+			findingsPath = s.runDir.Findings()
 		}
 	}
 
@@ -1897,6 +1903,7 @@ func (s *scheduler) buildRequest(
 		ExecutionDir:    executionDir,
 		RepoRoot:        s.repoRoot,
 		TranscriptPath:  transcriptPath,
+		StepDir:         s.runDir.Step(st.ID),
 		Iteration:       state.Iteration,
 		Attempt:         state.Attempt,
 		Generation:      state.Generation,
@@ -1966,10 +1973,10 @@ func (s *scheduler) enterRecovery(stepID string) {
 // visible in the same file list. Best-effort: persistence-off runs and read
 // errors are silently skipped since findings.jsonl is authoritative.
 func (s *scheduler) writeStepSecurityMarkdown(stepID string) {
-	if s.runDir == "" || stepID == "" {
+	if !s.runDir.Enabled() || stepID == "" {
 		return
 	}
-	findings, err := sentinel.ReadAll(datastore.FindingsPath(s.runDir))
+	findings, err := sentinel.ReadAll(s.runDir.Findings())
 	if err != nil {
 		return
 	}
@@ -1979,10 +1986,10 @@ func (s *scheduler) writeStepSecurityMarkdown(stepID string) {
 			stepFindings = append(stepFindings, f)
 		}
 	}
-	if _, err := datastore.StepDir(s.runDir, stepID); err != nil {
+	if err := s.runDir.Step(stepID).Ensure(); err != nil {
 		return
 	}
-	_ = os.WriteFile(datastore.SecurityPath(s.runDir, stepID), []byte(sentinel.RenderMarkdown(stepID, stepFindings)), 0o644)
+	_ = os.WriteFile(s.runDir.Step(stepID).Security(), []byte(sentinel.RenderMarkdown(stepID, stepFindings)), 0o644)
 }
 
 // handleSecurityFinding escalates critical security findings to the recovery
@@ -2191,7 +2198,7 @@ func (s *scheduler) handleReset(m resetMsg) {
 	// removes the fixed per-step artifact paths, never that subdirectory, so
 	// older-generation manifests remain as immutable history.
 	for _, id := range expanded {
-		if err := datastore.ClearStepOutputs(s.runDir, id); err != nil {
+		if err := s.runDir.Step(id).ClearOutputs(); err != nil {
 			reply(ResetResult{}, &ResetError{Code: "artifact_cleanup", Target: m.stepID, Err: err})
 			return
 		}
@@ -2298,7 +2305,7 @@ func (s *scheduler) handleRecover(m recoverMsg) {
 			if state.Result != nil {
 				state.Result.SessionID = ""
 			}
-			if err := datastore.ClearSession(s.runDir, m.stepID); err != nil {
+			if err := s.runDir.Step(m.stepID).ClearSession(); err != nil {
 				s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("step %q: clear session before retry: %v", m.stepID, err)})
 				return
 			}

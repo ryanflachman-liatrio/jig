@@ -15,7 +15,7 @@ import (
 func TestFollowLogsEmitsAppendOnceAndStopsAtTerminal(t *testing.T) {
 	root := t.TempDir()
 	runID := "20260908-120000-follow12"
-	runDir, err := datastore.RunDir(root, runID)
+	runDir, err := datastore.Open(root).Create(runID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,13 +63,13 @@ func TestFollowLogsEmitsAppendOnceAndStopsAtTerminal(t *testing.T) {
 	}
 }
 
-func appendTranscriptEntry(t *testing.T, runDir, stepID string, entry transcript.Entry) {
+func appendTranscriptEntry(t *testing.T, runDir datastore.Run, stepID string, entry transcript.Entry) {
 	t.Helper()
 	line, err := json.Marshal(entry)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, err := os.OpenFile(datastore.TranscriptPath(runDir, stepID), os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(runDir.Step(stepID).Transcript(), os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,13 +81,13 @@ func appendTranscriptEntry(t *testing.T, runDir, stepID string, entry transcript
 	}
 }
 
-func appendJournalEvent(t *testing.T, runDir string, seq int, event engine.Event) {
+func appendJournalEvent(t *testing.T, runDir datastore.Run, seq int, event engine.Event) {
 	t.Helper()
 	line, err := engine.MarshalEnvelope(seq, event)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f, err := os.OpenFile(datastore.JournalPath(runDir), os.O_APPEND|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(runDir.Journal(), os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		t.Fatal(err)
 	}

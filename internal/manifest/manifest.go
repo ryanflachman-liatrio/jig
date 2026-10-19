@@ -40,20 +40,23 @@ import (
 // Writer appends events to journal.jsonl and materializes per-step result.json.
 // All methods are called from the scheduler goroutine; no synchronisation needed.
 type Writer struct {
-	runDir  string
+	run     datastore.Run
 	journal *os.File
 }
 
-// NewWriter opens (or creates) journal.jsonl inside runDir and returns a Writer
+// NewWriter opens (or creates) journal.jsonl inside run and returns a Writer
 // ready to receive events.  The caller is responsible for calling Close when
-// the run finishes.
-func NewWriter(runDir string) (*Writer, error) {
-	path := datastore.JournalPath(runDir)
+// the run finishes.  The journal is required, so a disabled run is an error.
+func NewWriter(run datastore.Run) (*Writer, error) {
+	if !run.Enabled() {
+		return nil, fmt.Errorf("manifest: open journal: persistence is off")
+	}
+	path := run.Journal()
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("manifest: open journal %q: %w", path, err)
 	}
-	return &Writer{runDir: runDir, journal: f}, nil
+	return &Writer{run: run, journal: f}, nil
 }
 
 // StepTerminal carries the minimal fields needed to write result.json when a
@@ -127,11 +130,11 @@ func (w *Writer) AppendBatch(lines [][]byte) error {
 // writeResult serialises the terminal step summary into steps/<stepID>/result.json.
 func (w *Writer) writeResult(t *StepTerminal) {
 	// Ensure the step subdirectory exists (RunDir pre-creates it, but be safe).
-	_, err := datastore.StepDir(w.runDir, t.StepID)
-	if err != nil {
+	st := w.run.Step(t.StepID)
+	if err := st.Ensure(); err != nil {
 		return
 	}
-	path := datastore.ResultPath(w.runDir, t.StepID)
+	path := st.Result()
 	result := stepResultJSON{
 		StepID:       t.StepID,
 		Status:       t.Status,

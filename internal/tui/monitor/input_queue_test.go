@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"os"
 	"strings"
 	"testing"
@@ -262,7 +263,7 @@ func TestGateOverlayPreservesTranscriptPositionAndDraft(t *testing.T) {
 		}},
 	}})
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m.chatStep = ""
 	m.reloadTranscript()
 	m.focus = focusTranscript

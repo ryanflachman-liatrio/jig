@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"fmt"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"html"
 	"os"
 	"path/filepath"
@@ -166,7 +167,7 @@ func TestTranscriptCardCacheLifecycleBounded(t *testing.T) {
 
 func TestTranscriptCardPageBoundsSearchExpansionAndClipboard(t *testing.T) {
 	m := newMonitorWithSteps(t)
-	m.RunDir = "/synthetic/nonexistent/run"
+	m.RunDir = datastore.RunAt("/synthetic/nonexistent/run")
 	m.transcriptInnerW = 72
 	m.setChatPage(syntheticExchangePage(150, 40)) // 300 transcript entries.
 	if len(m.chatEntries) != chatWindowMax || len(m.chatItems) != 150 {

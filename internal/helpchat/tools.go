@@ -37,7 +37,7 @@ type ToolHandler func(ctx context.Context, args map[string]any) (result string, 
 // gateReq, shows a TUI prompt, and writes the operator's yes/no to gateAns.
 func BuildToolHandlers(
 	run *engine.Run,
-	runDir string,
+	runDir datastore.Run,
 	dispatch DispatchFunc,
 	gateReq chan<- struct{},
 	gateAns <-chan bool,
@@ -69,7 +69,7 @@ func buildWorkflowSnapshot(run *engine.Run) ToolHandler {
 	}
 }
 
-func buildReadStepTranscript(run *engine.Run, runDir string) ToolHandler {
+func buildReadStepTranscript(run *engine.Run, runDir datastore.Run) ToolHandler {
 	return func(_ context.Context, args map[string]any) (string, bool) {
 		stepID, ok := args["step_id"].(string)
 		if !ok || stepID == "" {
@@ -80,7 +80,7 @@ func buildReadStepTranscript(run *engine.Run, runDir string) ToolHandler {
 			n = int(v)
 		}
 		_ = run // ensure run is accessible for future validation
-		tPath := datastore.TranscriptPath(runDir, stepID)
+		tPath := runDir.Step(stepID).Transcript()
 		r, err := transcript.Open(tPath)
 		if err != nil {
 			return fmt.Sprintf("open transcript: %v", err), true
@@ -102,14 +102,14 @@ func buildReadStepTranscript(run *engine.Run, runDir string) ToolHandler {
 	}
 }
 
-func buildReadStepResult(run *engine.Run, runDir string) ToolHandler {
+func buildReadStepResult(run *engine.Run, runDir datastore.Run) ToolHandler {
 	return func(_ context.Context, args map[string]any) (string, bool) {
 		stepID, ok := args["step_id"].(string)
 		if !ok || stepID == "" {
 			return "step_id is required", true
 		}
 		_ = run
-		path := datastore.ResultPath(runDir, stepID)
+		path := runDir.Step(stepID).Result()
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return fmt.Sprintf("read result: %v", err), true
@@ -118,14 +118,14 @@ func buildReadStepResult(run *engine.Run, runDir string) ToolHandler {
 	}
 }
 
-func buildReadStepOutput(run *engine.Run, runDir string) ToolHandler {
+func buildReadStepOutput(run *engine.Run, runDir datastore.Run) ToolHandler {
 	return func(_ context.Context, args map[string]any) (string, bool) {
 		stepID, ok := args["step_id"].(string)
 		if !ok || stepID == "" {
 			return "step_id is required", true
 		}
 		_ = run
-		resultPath := datastore.ResultPath(runDir, stepID)
+		resultPath := runDir.Step(stepID).Result()
 		data, err := os.ReadFile(resultPath)
 		if err != nil {
 			return fmt.Sprintf("read result: %v", err), true

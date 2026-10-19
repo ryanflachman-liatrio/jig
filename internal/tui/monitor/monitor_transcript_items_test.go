@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"testing"
 	"time"
 
@@ -121,7 +122,7 @@ func TestTranscriptReloadBuildsAndPrunesPageLocalItems(t *testing.T) {
 		{Role: transcript.RoleUser, Blocks: []transcript.Block{{Type: transcript.BlockToolResult, ToolUseID: "one", Content: "ok"}}},
 	})
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 	if len(m.chatItems) != 1 || m.chatItems[0].kind != transcriptItemToolExchange {
 		t.Fatalf("page items = %+v, want one paired exchange", m.chatItems)

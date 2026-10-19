@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"io"
 	"os"
 	"path/filepath"
@@ -70,7 +71,7 @@ func Export(ctx context.Context, options Options) (Result, error) {
 		return Result{}, err
 	}
 
-	root, err := os.OpenRoot(request.runDir)
+	root, err := os.OpenRoot(request.runDir.Dir())
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: run evidence is unavailable", ErrOperational)
 	}
@@ -297,7 +298,7 @@ func expectedTranscript(report ops.RunReport, stepName string) bool {
 	return false
 }
 
-func identifierReplacements(runID string, wf *workflow.Workflow, snapshotBaseDir string, aliases *aliasTable, runDir string) []idReplacement {
+func identifierReplacements(runID string, wf *workflow.Workflow, snapshotBaseDir string, aliases *aliasTable, runDir datastore.Run) []idReplacement {
 	var out []idReplacement
 	if runID != "" {
 		out = append(out, idReplacement{original: runID, replacement: runAlias, boundary: "token"})
@@ -311,8 +312,8 @@ func identifierReplacements(runID string, wf *workflow.Workflow, snapshotBaseDir
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		out = append(out, idReplacement{original: home, replacement: "[HOME]", boundary: "path"})
 	}
-	if runDir != "" {
-		out = append(out, idReplacement{original: runDir, replacement: "[RUN_ROOT]", boundary: "path"})
+	if runDir.Enabled() {
+		out = append(out, idReplacement{original: runDir.Dir(), replacement: "[RUN_ROOT]", boundary: "path"})
 	}
 	if snapshotBaseDir != "" {
 		out = append(out, idReplacement{original: snapshotBaseDir, replacement: "[SOURCE_DIR]", boundary: "path"})

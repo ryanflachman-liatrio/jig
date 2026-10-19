@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"strings"
 	"testing"
 
@@ -111,7 +112,7 @@ func TestFocusBadgeClearedWhenHelpOpen(t *testing.T) {
 
 func TestTranscriptEmptyStateNoFakeCTA(t *testing.T) {
 	m := newMonitorWithSteps(t)
-	m.RunDir = t.TempDir()
+	m.RunDir = datastore.RunAt(t.TempDir())
 	m = enterChatStep(t, m, "a")
 	// pending step with empty transcript
 	if i, ok := m.index["a"]; ok {

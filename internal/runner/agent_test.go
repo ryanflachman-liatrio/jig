@@ -84,7 +84,8 @@ func TestExecuteDerivesDiagnosticsDirOnlyWithTranscript(t *testing.T) {
 
 func TestExecuteWritesAssembledPromptToInputArtifact(t *testing.T) {
 	dir := t.TempDir()
-	tPath := filepath.Join(dir, "transcript.jsonl")
+	stepDir := testStepDir(t)
+	tPath := stepDir.Transcript()
 	skillDir := filepath.Join(dir, "skills", "review")
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -123,13 +124,14 @@ append_system_prompt = "Perform the requested review."
 		}},
 		WorkflowContext: "## Workflow context\n- Step: review\n---",
 		TranscriptPath:  tPath,
+		StepDir:         stepDir,
 	}
 
 	_, err = NewAgentExecutorFixed(h).Execute(context.Background(), req, &captureReporter{})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	got, err := os.ReadFile(filepath.Join(dir, "input.md"))
+	got, err := os.ReadFile(stepDir.Input())
 	if err != nil {
 		t.Fatalf("read input.md: %v", err)
 	}
@@ -144,7 +146,7 @@ append_system_prompt = "Perform the requested review."
 }
 
 func TestExecuteWritesTransportInjectedPromptToInputArtifact(t *testing.T) {
-	dir := t.TempDir()
+	stepDir := testStepDir(t)
 	h := &harness.FakeHarness{
 		Caps:    harness.NewCapabilitySet(harness.CapPermissionCallback),
 		NameVal: "fake",
@@ -155,14 +157,15 @@ func TestExecuteWritesTransportInjectedPromptToInputArtifact(t *testing.T) {
 	}
 	req := engine.StepRequest{
 		Step:           &workflow.Step{AppendSystemPrompt: "Base task."},
-		TranscriptPath: filepath.Join(dir, "transcript.jsonl"),
+		TranscriptPath: stepDir.Transcript(),
+		StepDir:        stepDir,
 	}
 
 	_, err := NewAgentExecutorFixed(h).Execute(context.Background(), req, &captureReporter{})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	got, err := os.ReadFile(filepath.Join(dir, "input.md"))
+	got, err := os.ReadFile(stepDir.Input())
 	if err != nil {
 		t.Fatalf("read input.md: %v", err)
 	}
@@ -172,7 +175,7 @@ func TestExecuteWritesTransportInjectedPromptToInputArtifact(t *testing.T) {
 }
 
 func TestExecuteWritesResumeMessageToInputArtifact(t *testing.T) {
-	dir := t.TempDir()
+	stepDir := testStepDir(t)
 	h := &harness.FakeHarness{
 		NameVal: "fake",
 		Caps:    harness.NewCapabilitySet(harness.CapSessionResume, harness.CapPermissionCallback),
@@ -180,7 +183,8 @@ func TestExecuteWritesResumeMessageToInputArtifact(t *testing.T) {
 	}
 	req := engine.StepRequest{
 		Step:            &workflow.Step{},
-		TranscriptPath:  filepath.Join(dir, "transcript.jsonl"),
+		TranscriptPath:  stepDir.Transcript(),
+		StepDir:         stepDir,
 		ResumeSessionID: "session-1",
 		Message:         "Continue with the operator's answer.",
 	}
@@ -189,13 +193,23 @@ func TestExecuteWritesResumeMessageToInputArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	got, err := os.ReadFile(filepath.Join(dir, "input.md"))
+	got, err := os.ReadFile(stepDir.Input())
 	if err != nil {
 		t.Fatalf("read input.md: %v", err)
 	}
 	if string(got) != req.Message {
 		t.Errorf("input.md = %q, want resume message %q", got, req.Message)
 	}
+}
+
+// testStepDir returns an existing step directory in a throwaway run.
+func testStepDir(t *testing.T) datastore.Step {
+	t.Helper()
+	st := datastore.RunAt(t.TempDir()).Step("agent")
+	if err := st.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	return st
 }
 
 // TestCaptureStream_RichCapture drives captureStream with a scripted assistant
@@ -803,20 +817,21 @@ func TestSessionIDCapturedAtStart(t *testing.T) {
 }
 
 func TestSessionIDPersistedToSessionJSON(t *testing.T) {
-	runDir, err := datastore.RunDir(t.TempDir(), "run1")
+	runDir, err := datastore.Open(t.TempDir()).Create("run1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := datastore.StepDir(runDir, "agent"); err != nil {
+	if err := runDir.Step("agent").Ensure(); err != nil {
 		t.Fatal(err)
 	}
-	tPath := datastore.TranscriptPath(runDir, "agent")
+	tPath := runDir.Step("agent").Transcript()
 	req := engine.StepRequest{
 		Step: &workflow.Step{
 			ID:      "agent",
 			Backend: "claude",
 		},
 		TranscriptPath: tPath,
+		StepDir:        runDir.Step("agent"),
 		Attempt:        1,
 	}
 	res, err := captureStream(scriptChan(
@@ -828,7 +843,7 @@ func TestSessionIDPersistedToSessionJSON(t *testing.T) {
 	if res.SessionID != "sess-disk" {
 		t.Fatalf("SessionID = %q", res.SessionID)
 	}
-	info, err := datastore.ReadSession(runDir, "agent")
+	info, err := runDir.Step("agent").ReadSession()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -838,14 +853,15 @@ func TestSessionIDPersistedToSessionJSON(t *testing.T) {
 }
 
 func TestSessionIDPersistenceFailureFailsAttempt(t *testing.T) {
-	runDir, err := datastore.RunDir(t.TempDir(), "run1")
+	runDir, err := datastore.Open(t.TempDir()).Create("run1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	stepDir, err := datastore.StepDir(runDir, "agent")
+	err = runDir.Step("agent").Ensure()
 	if err != nil {
 		t.Fatal(err)
 	}
+	stepDir := runDir.Step("agent").Dir()
 	sessionDir := filepath.Join(stepDir, "session.json")
 	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -858,7 +874,8 @@ func TestSessionIDPersistenceFailureFailsAttempt(t *testing.T) {
 		harness.Event{Type: harness.EventSessionID, SessionID: "sess-disk"},
 	), engine.StepRequest{
 		Step:           &workflow.Step{ID: "agent", Backend: "claude"},
-		TranscriptPath: datastore.TranscriptPath(runDir, "agent"),
+		TranscriptPath: runDir.Step("agent").Transcript(),
+		StepDir:        runDir.Step("agent"),
 	}, &captureReporter{}, time.Now(), "")
 	if err != nil {
 		t.Fatal(err)
@@ -869,14 +886,14 @@ func TestSessionIDPersistenceFailureFailsAttempt(t *testing.T) {
 }
 
 func TestFreshDispatchClearsSessionJSON(t *testing.T) {
-	runDir, err := datastore.RunDir(t.TempDir(), "run1")
+	runDir, err := datastore.Open(t.TempDir()).Create("run1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{SessionID: "stale"}); err != nil {
+	if err := runDir.Step("agent").WriteSession(datastore.SessionInfo{SessionID: "stale"}); err != nil {
 		t.Fatal(err)
 	}
-	tPath := datastore.TranscriptPath(runDir, "agent")
+	tPath := runDir.Step("agent").Transcript()
 	h := &harness.FakeHarness{
 		NameVal: "claude",
 		Caps:    harness.NewCapabilitySet(harness.CapSessionResume, harness.CapPermissionCallback),
@@ -885,11 +902,12 @@ func TestFreshDispatchClearsSessionJSON(t *testing.T) {
 	_, err = NewAgentExecutorFixed(h).Execute(context.Background(), engine.StepRequest{
 		Step:           &workflow.Step{ID: "agent", Type: workflow.StepAgent},
 		TranscriptPath: tPath,
+		StepDir:        runDir.Step("agent"),
 	}, &captureReporter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := datastore.ReadSession(runDir, "agent")
+	info, err := runDir.Step("agent").ReadSession()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -899,14 +917,14 @@ func TestFreshDispatchClearsSessionJSON(t *testing.T) {
 }
 
 func TestResumeDispatchKeepsSessionJSON(t *testing.T) {
-	runDir, err := datastore.RunDir(t.TempDir(), "run1")
+	runDir, err := datastore.Open(t.TempDir()).Create("run1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{SessionID: "keep-me"}); err != nil {
+	if err := runDir.Step("agent").WriteSession(datastore.SessionInfo{SessionID: "keep-me"}); err != nil {
 		t.Fatal(err)
 	}
-	tPath := datastore.TranscriptPath(runDir, "agent")
+	tPath := runDir.Step("agent").Transcript()
 	h := &harness.FakeHarness{
 		NameVal: "claude",
 		Caps:    harness.NewCapabilitySet(harness.CapSessionResume, harness.CapPermissionCallback),
@@ -918,13 +936,14 @@ func TestResumeDispatchKeepsSessionJSON(t *testing.T) {
 	_, err = NewAgentExecutorFixed(h).Execute(context.Background(), engine.StepRequest{
 		Step:            &workflow.Step{ID: "agent", Type: workflow.StepAgent},
 		TranscriptPath:  tPath,
+		StepDir:         runDir.Step("agent"),
 		ResumeSessionID: "keep-me",
 		Message:         "continue",
 	}, &captureReporter{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := datastore.ReadSession(runDir, "agent")
+	info, err := runDir.Step("agent").ReadSession()
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"fmt"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"os"
 	"path/filepath"
 	"strings"
@@ -30,7 +31,7 @@ func manyTranscriptEntries(n int) []transcript.Entry {
 func TestTranscriptPagingStaysBoundedAndNavigatesBothDirections(t *testing.T) {
 	runDir := writeTranscript(t, "a", manyTranscriptEntries(650))
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 
 	if len(m.chatEntries) != chatWindowMax || m.chatEntries[0].Seq != 351 || !m.chatPage.HasEarlier {
@@ -70,7 +71,7 @@ func TestTranscriptPageKeepsToolUseWithBoundaryResult(t *testing.T) {
 	}}}
 	runDir := writeTranscript(t, "a", entries)
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 
 	if len(m.chatEntries) > chatWindowMax+2*chatBoundaryContextMax {
@@ -96,7 +97,7 @@ func legacyResultOnlyToolGroupHasUsefulLabel(t *testing.T) {
 		}},
 	}})
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 
 	if body := ansiStrip(m.chatBody()); !strings.Contains(body, "1 tool result") || strings.Contains(body, "0 tool calls") {
@@ -107,7 +108,7 @@ func legacyResultOnlyToolGroupHasUsefulLabel(t *testing.T) {
 func TestPausedPagedTranscriptSurvivesStepMessage(t *testing.T) {
 	runDir := writeTranscript(t, "a", manyTranscriptEntries(350))
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 	m, _ = m.Update(key("["))
 	first := m.chatEntries[0].Seq
@@ -145,7 +146,7 @@ func TestTranscriptSearchFindsFilteredLoadedBlocks(t *testing.T) {
 		}},
 	})
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 
 	// FR-10.7: the settled thinking block is decluttered from the default
@@ -181,7 +182,7 @@ func TestTranscriptSearchFiltersRenderedPageAndKeepsToolContext(t *testing.T) {
 		}},
 	})
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 
 	m.searchQuery = "MATCH"
@@ -219,7 +220,7 @@ func TestTranscriptFilterDialogSpaceToggleRebuildsSearchView(t *testing.T) {
 		},
 	}})
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 
 	m, _ = m.Update(key("F"))
@@ -282,7 +283,7 @@ func TestErrorFilterKeepsAtomicToolContext(t *testing.T) {
 	// previously summarized an empty-Input result activity) doesn't compete
 	// with the full "permission denied" error hint for space.
 	m, _ = m.Update(tea.WindowSizeMsg{Width: 160, Height: 24})
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 	m.filters.errors = true
 	m.rebuildTranscriptItemState(m.selectedTranscriptItemKey())
@@ -320,7 +321,7 @@ func TestToolFilterPreservesHiddenBlockGroupBoundaries(t *testing.T) {
 		}},
 	})
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 	m.filters.tools = true
 	m.rebuildTranscriptItemState(m.selectedTranscriptItemKey())
@@ -338,7 +339,7 @@ func TestSearchInputAndContextualNavigation(t *testing.T) {
 		}},
 	})
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 
 	m, _ = m.Update(key("/"))
@@ -404,7 +405,7 @@ func TestTranscriptSearchChromePinnedOverLoadedItems(t *testing.T) {
 	blocks[25].Text = "the needle block"
 	runDir := writeTranscript(t, "a", []transcript.Entry{{Role: transcript.RoleAssistant, Blocks: blocks}})
 	m := newMonitorWithSteps(t)
-	m.RunDir = runDir
+	m.RunDir = datastore.RunAt(runDir)
 	m = enterChatStep(t, m, "a")
 	m.chatAutoScroll = false
 	m.chatVP.GotoBottom()

@@ -39,8 +39,8 @@ type workflowSnapshot struct {
 	NotificationSHA256 string                       `json:"notification_sha256,omitempty"`
 }
 
-func persistWorkflowSnapshot(runDir string, wf *workflow.Workflow) error {
-	if runDir == "" || wf == nil {
+func persistWorkflowSnapshot(runDir datastore.Run, wf *workflow.Workflow) error {
+	if !runDir.Enabled() || wf == nil {
 		return nil
 	}
 	path, source := wf.Source()
@@ -72,11 +72,11 @@ func persistWorkflowSnapshot(runDir string, wf *workflow.Workflow) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(datastore.WorkflowSnapshotPath(runDir), data, 0o644)
+	return os.WriteFile(runDir.WorkflowSnapshot(), data, 0o644)
 }
 
-func loadWorkflowSnapshot(runDir string) (*workflow.Workflow, error) {
-	data, err := os.ReadFile(datastore.WorkflowSnapshotPath(runDir))
+func loadWorkflowSnapshot(runDir datastore.Run) (*workflow.Workflow, error) {
+	data, err := os.ReadFile(runDir.WorkflowSnapshot())
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +85,7 @@ func loadWorkflowSnapshot(runDir string) (*workflow.Workflow, error) {
 
 // LoadWorkflowSnapshot reads and verifies the immutable workflow captured at
 // run start. Historical commands must use this instead of current author TOML.
-func LoadWorkflowSnapshot(runDir string) (*workflow.Workflow, error) {
+func LoadWorkflowSnapshot(runDir datastore.Run) (*workflow.Workflow, error) {
 	return loadWorkflowSnapshot(runDir)
 }
 
@@ -173,7 +173,7 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	}
 	m.mu.Unlock()
 
-	runDir, err := datastore.ResolveRunDir(m.root, runID)
+	runDir, err := m.store.Resolve(runID)
 	if err != nil {
 		return nil, fmt.Errorf("engine: resolve run: %w", err)
 	}
@@ -222,7 +222,7 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 		cancel()
 		return fail(err)
 	}
-	repoRoot := filepath.Dir(filepath.Clean(m.root))
+	repoRoot := filepath.Dir(filepath.Clean(m.store.Root()))
 	var security *runSecurity
 	onDone := func(snap RunSnapshot) {
 		run.finalSnap = snap
@@ -231,7 +231,7 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 		run.runLock = nil
 		close(run.done)
 	}
-	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir, m.root, repoRoot, onDone)
+	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir, m.store.Root(), repoRoot, onDone)
 	s.resolver = m.resolver
 	s.secretResolver = secrets
 	s.getCauseHint = run.causeSnapshot
@@ -430,7 +430,7 @@ func (c *unfinishedCheckpoint) hasOutstandingWork() bool {
 	return false
 }
 
-func restoreUnfinishedCheckpoint(runDir string, wf *workflow.Workflow, events []Event) (*unfinishedCheckpoint, error) {
+func restoreUnfinishedCheckpoint(runDir datastore.Run, wf *workflow.Workflow, events []Event) (*unfinishedCheckpoint, error) {
 	if wf == nil {
 		return nil, fmt.Errorf("resume: workflow is unavailable")
 	}
@@ -677,12 +677,12 @@ type rebuiltFanOutFamily struct {
 // it. It also registers a step.State for each child directly into states so
 // later StepStatus events for that instance id (processed in the same journal
 // pass, in order) find an existing entry exactly like a static step would.
-func rebuildFanOutFamily(runDir string, wf *workflow.Workflow, event FanOutExpanded, states map[string]*step.State) (*rebuiltFanOutFamily, error) {
+func rebuildFanOutFamily(runDir datastore.Run, wf *workflow.Workflow, event FanOutExpanded, states map[string]*step.State) (*rebuiltFanOutFamily, error) {
 	tmpl := wfStepByID(wf, event.FamilyID)
 	if tmpl == nil || tmpl.ForEach == nil {
 		return nil, fmt.Errorf("resume: fan-out family %q is not a foreach step in the current workflow", event.FamilyID)
 	}
-	m, err := datastore.ReadFanOutManifest(runDir, event.FamilyID, event.Generation, event.Iteration)
+	m, err := runDir.Step(event.FamilyID).ReadFanOutManifest(event.Generation, event.Iteration)
 	if err != nil {
 		return nil, fmt.Errorf("resume: fan-out family %q generation %d iteration %d: %w", event.FamilyID, event.Generation, event.Iteration, err)
 	}
@@ -869,7 +869,7 @@ func (s *scheduler) restoreParkSession(stepID string) {
 	if state.Result == nil {
 		state.Result = loadPersistedResult(s.runDir, stepID, state.Status, "", "")
 	}
-	if info, err := datastore.ReadSession(s.runDir, stepID); err == nil && info.SessionID != "" {
+	if info, err := s.runDir.Step(stepID).ReadSession(); err == nil && info.SessionID != "" {
 		state.Result.SessionID = info.SessionID
 	}
 }
@@ -932,7 +932,7 @@ func (s *scheduler) parkInterruptedWorker(stepID string) []Event {
 	if state.Result == nil {
 		state.Result = &step.Result{Status: step.StatusFailed}
 	}
-	if info, err := datastore.ReadSession(s.runDir, stepID); err == nil && info.SessionID != "" {
+	if info, err := s.runDir.Step(stepID).ReadSession(); err == nil && info.SessionID != "" {
 		state.Result.SessionID = info.SessionID
 	}
 	state.Result.Err = processInterruptedErr
@@ -988,12 +988,12 @@ func terminalStatus(status step.Status) bool {
 	}
 }
 
-func loadPersistedResult(runDir, stepID string, status step.Status, resultErr, subtype string) *step.Result {
+func loadPersistedResult(runDir datastore.Run, stepID string, status step.Status, resultErr, subtype string) *step.Result {
 	result := &step.Result{Status: status, Err: resultErr, Subtype: subtype}
-	if data, err := os.ReadFile(datastore.OutputJSONPath(runDir, stepID)); err == nil {
+	if data, err := os.ReadFile(runDir.Step(stepID).OutputJSON()); err == nil {
 		result.Structured = data
 	}
-	if path := datastore.OutputPath(runDir, stepID); fileExists(path) {
+	if path := runDir.Step(stepID).Output(); fileExists(path) {
 		result.OutputPath = path
 	}
 	return result
@@ -1009,12 +1009,12 @@ func directoryExists(path string) bool {
 	return err == nil && info.IsDir()
 }
 
-func restoreReviewSession(runDir string, req ReviewRequest) (review.Session, error) {
+func restoreReviewSession(runDir datastore.Run, req ReviewRequest) (review.Session, error) {
 	docs := append([]review.Document(nil), req.Documents...)
 	for i := range docs {
 		path := docs[i].SnapshotPath
 		if path == "" || !fileExists(path) {
-			path = filepath.Join(datastore.ReviewDocumentsDir(runDir, req.StepID, req.RoundID), docs[i].ID+reviewExtension(docs[i].Format))
+			path = filepath.Join(runDir.Step(req.StepID).Review(req.RoundID).Documents(), docs[i].ID+reviewExtension(docs[i].Format))
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {

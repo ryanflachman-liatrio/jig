@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"fmt"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"strings"
 	"testing"
 
@@ -437,7 +438,7 @@ func TestToolExchangeHeaderRunningToSuccessTransitionSwapsSignatureGlyph(t *test
 // so `RenderStatusLine` is not called and no card cache entries appear.
 func TestPersistenceOffKeepsEmptyStateOutOfStatusLineHeader(t *testing.T) {
 	m := newMonitorWithSteps(t)
-	m.RunDir = ""
+	m.RunDir = datastore.Run{}
 	m.chatStep = "a"
 	m.reloadTranscript()
 

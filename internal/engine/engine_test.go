@@ -95,12 +95,12 @@ type testOutcome struct {
 }
 
 type sessionBarrierExec struct {
-	runDir string
+	runDir datastore.Run
 	seen   chan datastore.SessionInfo
 }
 
 func (e *sessionBarrierExec) Execute(ctx context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
-	info, _ := datastore.ReadSession(e.runDir, req.Step.ID)
+	info, _ := e.runDir.Step(req.Step.ID).ReadSession()
 	e.seen <- info
 	<-ctx.Done()
 	return nil, ctx.Err()
@@ -2141,8 +2141,8 @@ max_iterations = 2
 	}
 	collectEvents(t, ch, 10*time.Second)
 
-	runDir := filepath.Join(jigRoot, "runs", run.ID)
-	wantPath := datastore.TranscriptPath(runDir, "a")
+	runDir := datastore.RunAt(filepath.Join(jigRoot, "runs", run.ID))
+	wantPath := runDir.Step("a").Transcript()
 
 	reqs := exec.reqsFor("a")
 	if len(reqs) < 2 {
@@ -2514,7 +2514,7 @@ command = "true"
 		if err != nil {
 			t.Fatal(err)
 		}
-		s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, "", "", "", func(RunSnapshot) {})
+		s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, datastore.Run{}, "", "", func(RunSnapshot) {})
 		s.states["check"].Status = step.StatusRunning
 		s.states["check"].Result = &step.Result{Status: step.StatusSucceeded}
 
@@ -2543,7 +2543,7 @@ command = "false"
 		if err != nil {
 			t.Fatal(err)
 		}
-		s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, "", "", "", func(RunSnapshot) {})
+		s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, datastore.Run{}, "", "", func(RunSnapshot) {})
 		s.states["check"].Status = step.StatusRunning
 		s.states["check"].Result = &step.Result{Status: step.StatusSucceeded}
 
@@ -2572,14 +2572,14 @@ command = "true"
 		if err != nil {
 			t.Fatal(err)
 		}
-		runDir, err := datastore.RunDir(t.TempDir(), "test")
+		runDir, err := datastore.Open(t.TempDir()).Create("test")
 		if err != nil {
 			t.Fatal(err)
 		}
-		stepDir, err := datastore.StepDir(runDir, "check")
-		if err != nil {
+		if err := runDir.Step("check").Ensure(); err != nil {
 			t.Fatal(err)
 		}
+		stepDir := runDir.Step("check").Dir()
 		sessionDir := filepath.Join(stepDir, "session.json")
 		if err := os.MkdirAll(sessionDir, 0o755); err != nil {
 			t.Fatal(err)
@@ -2614,11 +2614,11 @@ skill = "agent"
 		t.Fatal(err)
 	}
 	root := filepath.Join(t.TempDir(), ".jig")
-	runDir, err := datastore.RunDir(root, "fresh-session")
+	runDir, err := datastore.Open(root).Create("fresh-session")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := datastore.WriteSession(runDir, "agent", datastore.SessionInfo{SessionID: "stale"}); err != nil {
+	if err := runDir.Step("agent").WriteSession(datastore.SessionInfo{SessionID: "stale"}); err != nil {
 		t.Fatal(err)
 	}
 	writer, err := manifest.NewWriter(runDir)
@@ -2676,7 +2676,7 @@ block_on = "mystep.status == 'blocked'"
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, "", "", "", func(RunSnapshot) {})
+	s := newScheduler(wf, "test", make(chan schedMsg, 4), nil, nil, cancel, nil, datastore.Run{}, "", "", func(RunSnapshot) {})
 	sub := sub{live: make(chan Event, 4), ctrl: make(chan Event, 4)}
 	s.subs = append(s.subs, sub)
 	s.states["mystep"].Status = step.StatusRunning

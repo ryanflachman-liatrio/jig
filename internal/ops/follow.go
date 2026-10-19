@@ -20,7 +20,7 @@ func FollowLogs(ctx context.Context, root, runID string, opts LogOptions, interv
 	if interval <= 0 {
 		interval = 300 * time.Millisecond
 	}
-	runDir, err := datastore.ResolveRunDir(root, runID)
+	runDir, err := datastore.Open(root).Resolve(runID)
 	if err != nil {
 		return 0, err
 	}
@@ -109,11 +109,11 @@ func (h *followHeap) Pop() any {
 	return last
 }
 
-func mergeFollowPages(runDir, runID string, steps []string, cursors map[string]int64, emit func(LogEntry) error) error {
+func mergeFollowPages(runDir datastore.Run, runID string, steps []string, cursors map[string]int64, emit func(LogEntry) error) error {
 	h := &followHeap{}
 	heap.Init(h)
 	for order, id := range steps {
-		reader, err := transcript.Open(datastore.TranscriptPath(runDir, id))
+		reader, err := transcript.Open(runDir.Step(id).Transcript())
 		if err != nil {
 			return err
 		}

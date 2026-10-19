@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,7 +41,7 @@ isolation = "worktree"
 
 	_, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := newScheduler(wf, "run-1", make(chan schedMsg), nil, &testExec{}, cancel, nil, "", jigRoot, repo, nil)
+	s := newScheduler(wf, "run-1", make(chan schedMsg), nil, &testExec{}, cancel, nil, datastore.Run{}, jigRoot, repo, nil)
 	if err := s.setupRunBranch(); err != nil {
 		t.Fatalf("setup run branch: %v", err)
 	}
@@ -159,7 +160,7 @@ isolation = "worktree"
 
 	_, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := newScheduler(wf, "run-1", make(chan schedMsg), nil, &testExec{}, cancel, nil, "", "", "", nil)
+	s := newScheduler(wf, "run-1", make(chan schedMsg), nil, &testExec{}, cancel, nil, datastore.Run{}, "", "", nil)
 
 	for _, id := range []string{"reader", "mutator"} {
 		workspace, err := s.acquireExecutionWorkspace(s.stepByID(id))

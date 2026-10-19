@@ -3,11 +3,13 @@ package datastore
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -32,6 +34,19 @@ type RetentionPolicy struct {
 	KeepLast int
 }
 
+// Validate rejects negative knobs. Zero disables a rule, so a negative value
+// is never meaningful — most likely a typo that would otherwise silently
+// disable the rule it was meant to set.
+func (p RetentionPolicy) Validate() error {
+	if p.MaxAge < 0 {
+		return fmt.Errorf("datastore: retention max age %s is negative", p.MaxAge)
+	}
+	if p.KeepLast < 0 {
+		return fmt.Errorf("datastore: retention keep-last %d is negative", p.KeepLast)
+	}
+	return nil
+}
+
 // runInfo is a terminal run eligible for retention decisions.
 type runInfo struct {
 	id         string
@@ -39,18 +54,18 @@ type runInfo struct {
 	finishedAt time.Time
 }
 
-// Prune removes finished run directories under root according to policy and
+// Prune removes finished run directories in the store according to policy and
 // returns the IDs of the runs it deleted, in the order removed. It never
 // touches a run that has not reached a terminal RunFinished event ("file is
 // truth"): an in-progress or crashed run has no run_finished line in its
 // journal and is always preserved. now is injected so callers (and tests) can
 // pin the reference time.
 //
-// A missing runs/ directory is not an error (nothing to prune). root must be
-// non-empty — an empty root means persistence is off and there is nothing on
-// disk to prune.
-func Prune(root string, policy RetentionPolicy, now time.Time) ([]string, error) {
-	victims, err := selectPrunable(root, policy, now)
+// A missing runs/ directory is not an error (nothing to prune). A disabled
+// store is an error: pruning is an explicit operator request, and there is
+// nothing on disk to prune.
+func (s Store) Prune(policy RetentionPolicy, now time.Time) ([]string, error) {
+	victims, err := s.selectPrunable(policy, now)
 	if err != nil {
 		return nil, err
 	}
@@ -67,8 +82,8 @@ func Prune(root string, policy RetentionPolicy, now time.Time) ([]string, error)
 // Prunable reports the run IDs that Prune would remove for the given policy,
 // without deleting anything — the backing query for a `--dry-run`. Same rules
 // as Prune: only terminal runs are candidates.
-func Prunable(root string, policy RetentionPolicy, now time.Time) ([]string, error) {
-	victims, err := selectPrunable(root, policy, now)
+func (s Store) Prunable(policy RetentionPolicy, now time.Time) ([]string, error) {
+	victims, err := s.selectPrunable(policy, now)
 	if err != nil {
 		return nil, err
 	}
@@ -82,18 +97,21 @@ func Prunable(root string, policy RetentionPolicy, now time.Time) ([]string, err
 // selectPrunable computes the terminal runs a policy would remove, newest-last
 // in removal order. It performs no deletion, so Prune and Prunable share one
 // selection rule.
-func selectPrunable(root string, policy RetentionPolicy, now time.Time) ([]runInfo, error) {
-	if root == "" {
-		return nil, fmt.Errorf("datastore: prune with empty root")
+func (s Store) selectPrunable(policy RetentionPolicy, now time.Time) ([]runInfo, error) {
+	if !s.Enabled() {
+		return nil, errDisabled
 	}
-	if policy.MaxAge <= 0 && policy.KeepLast <= 0 {
+	if err := policy.Validate(); err != nil {
+		return nil, err
+	}
+	if policy.MaxAge == 0 && policy.KeepLast == 0 {
 		return nil, nil // conservative default: nothing to do
 	}
 
-	runsDir := filepath.Join(root, "runs")
+	runsDir := s.runsDir()
 	ents, err := os.ReadDir(runsDir)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("datastore: read runs dir %q: %w", runsDir, err)
@@ -106,7 +124,7 @@ func selectPrunable(root string, policy RetentionPolicy, now time.Time) ([]runIn
 			continue
 		}
 		dir := filepath.Join(runsDir, ent.Name())
-		ts, ok := runFinishedAt(dir)
+		ts, ok := runFinishedAt(RunAt(dir))
 		if !ok {
 			continue // not terminal — leave it alone
 		}
@@ -114,13 +132,16 @@ func selectPrunable(root string, policy RetentionPolicy, now time.Time) ([]runIn
 	}
 
 	// Newest first so KeepLast protects the head of the slice.
-	sort.Slice(finished, func(i, j int) bool {
-		return finished[i].finishedAt.After(finished[j].finishedAt)
+	slices.SortFunc(finished, func(a, b runInfo) int {
+		if c := b.finishedAt.Compare(a.finishedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(b.id, a.id) // deterministic among equal finish times
 	})
 
 	var victims []runInfo
 	for i, r := range finished {
-		if policy.KeepLast > 0 && i < policy.KeepLast {
+		if i < policy.KeepLast {
 			continue // protected: among the newest KeepLast
 		}
 		// Past the keep window (or KeepLast disabled). If MaxAge is set, the run
@@ -134,14 +155,20 @@ func selectPrunable(root string, policy RetentionPolicy, now time.Time) ([]runIn
 	return victims, nil
 }
 
-// runFinishedAt reports whether the run at dir is terminal and, if so, when it
-// finished. A run is terminal iff its journal.jsonl contains a run_finished
-// envelope; the returned time is that envelope's timestamp (falling back to the
+// JournalKindRunFinished is the journal envelope kind that marks a run
+// terminal. The engine journals RunFinished under this kind; retention keys
+// off it without importing the engine (engine already depends on datastore).
+const JournalKindRunFinished = "run_finished"
+
+// runFinishedAt reports whether run is terminal and, if so, when it finished.
+// A run is terminal iff its journal.jsonl contains a run_finished envelope;
+// the returned time is that envelope's timestamp (falling back to the
 // journal's modification time if the timestamp is absent). The journal is
 // decoded into a minimal local shape so datastore stays free of an engine
-// import (engine already depends on datastore).
-func runFinishedAt(dir string) (time.Time, bool) {
-	path := JournalPath(dir)
+// import. Lines are read without a length cap — envelopes can carry large
+// step output — and undecodable lines (a torn final write) are skipped.
+func runFinishedAt(run Run) (time.Time, bool) {
+	path := run.Journal()
 	f, err := os.Open(path)
 	if err != nil {
 		return time.Time{}, false
@@ -158,19 +185,14 @@ func runFinishedAt(dir string) (time.Time, bool) {
 	found := false
 	br := bufio.NewReader(f)
 	for {
-		line, readErr := br.ReadString('\n')
-		if len(line) > 0 {
-			var env envelope
-			if json.Unmarshal([]byte(line), &env) == nil && env.Kind == "run_finished" {
-				found = true
-				finishedTs = env.Ts
-			}
-		}
-		if readErr == io.EOF {
-			break
+		line, readErr := br.ReadBytes('\n')
+		var env envelope
+		if len(line) > 0 && json.Unmarshal(line, &env) == nil && env.Kind == JournalKindRunFinished {
+			found = true
+			finishedTs = env.Ts
 		}
 		if readErr != nil {
-			break
+			break // io.EOF, or a read error: judge on what was readable
 		}
 	}
 	if !found {

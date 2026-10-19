@@ -70,7 +70,7 @@ func loadAgentSnapshotFixture(t *testing.T) *workflow.Workflow {
 
 func TestWorkflowSnapshotAgentRoundTrip(t *testing.T) {
 	wf := loadAgentSnapshotFixture(t)
-	runDir := t.TempDir()
+	runDir := datastore.RunAt(t.TempDir())
 	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
 		t.Fatalf("persist: %v", err)
 	}
@@ -109,8 +109,8 @@ func TestWorkflowSnapshotRejectsPreAgentSchema(t *testing.T) {
   "meta": {"Name": "old", "Version": "1"},
   "expanded_steps": [{"ID": "worker", "Type": "agent", "Skill": "s", "Backend": "claude", "AllowedTools": ["Read"]}]
 }`)
-	runDir := t.TempDir()
-	if err := os.WriteFile(datastore.WorkflowSnapshotPath(runDir), data, 0o644); err != nil {
+	runDir := datastore.RunAt(t.TempDir())
+	if err := os.WriteFile(runDir.WorkflowSnapshot(), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	wf, err := loadWorkflowSnapshot(runDir)

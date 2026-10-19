@@ -36,14 +36,14 @@ type LogBatch struct {
 }
 
 func ReadLogs(root, runID string, opts LogOptions) (LogBatch, error) {
-	runDir, err := datastore.ResolveRunDir(root, runID)
+	runDir, err := datastore.Open(root).Resolve(runID)
 	if err != nil {
 		return LogBatch{}, err
 	}
 	return readLogsDir(runDir, runID, opts)
 }
 
-func readLogsDir(runDir, runID string, opts LogOptions) (LogBatch, error) {
+func readLogsDir(runDir datastore.Run, runID string, opts LogOptions) (LogBatch, error) {
 	records, err := engine.ReplayJournalRecords(runDir)
 	if err != nil && len(records) == 0 {
 		return LogBatch{}, fmt.Errorf("logs: read journal: %w", err)
@@ -90,7 +90,7 @@ func readLogsDir(runDir, runID string, opts LogOptions) (LogBatch, error) {
 
 	batch := LogBatch{Cursors: make(map[string]int64)}
 	for _, id := range steps {
-		reader, openErr := transcript.Open(datastore.TranscriptPath(runDir, id))
+		reader, openErr := transcript.Open(runDir.Step(id).Transcript())
 		if openErr != nil {
 			return LogBatch{}, openErr
 		}

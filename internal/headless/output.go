@@ -150,7 +150,7 @@ func buildEnvelope(mgr *engine.Manager, wf *workflow.Workflow, snap engine.RunSn
 		Failed:       fin.Failed,
 		TotalCostUSD: snap.TotalCostUSD,
 		TotalTokens:  snap.TotalTokens,
-		RunDir:       mgr.RunDir(snap.ID),
+		RunDir:       mgr.RunDir(snap.ID).Dir(),
 	}
 	if env.RunDir == "" && mgr.Root() != "" {
 		env.RunDir = filepath.Join(mgr.Root(), "runs", snap.ID)

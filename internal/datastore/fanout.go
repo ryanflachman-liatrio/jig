@@ -10,6 +10,8 @@ package datastore
 //
 //	steps/<family-id>/fanout/generation-000-iteration-000.json
 //
+// Manifests are addressed through the family's Step.
+//
 // Generation counts manual operator resets; iteration counts bounded route
 // rewinds within a generation. Both are zero-padded to three digits so
 // directory listings sort chronologically.
@@ -55,30 +57,31 @@ type FanOutManifest struct {
 	Items        []FanOutItem `json:"items"`
 }
 
-// FanOutManifestPath returns the path to one generation/iteration's manifest
-// inside runDir. An empty runDir or familyID (persistence off / no family)
-// yields "" so callers can no-op.
-func FanOutManifestPath(runDir, familyID string, generation, iteration int) string {
-	if runDir == "" || familyID == "" {
-		return ""
-	}
-	name := fmt.Sprintf("generation-%03d-iteration-%03d.json", generation, iteration)
-	return filepath.Join(runDir, "steps", familyID, "fanout", name)
+// FanOutManifest returns the path to one generation/iteration's manifest
+// for this family step, or "" when the step is disabled.
+func (s Step) FanOutManifest(generation, iteration int) string {
+	return s.path("fanout", fmt.Sprintf("generation-%03d-iteration-%03d.json", generation, iteration))
 }
 
-// WriteFanOutManifest atomically persists a family's expansion: written to a
-// temp file and renamed into place so a reader (or a crash) never observes a
-// partial manifest. SchemaVersion defaults to FanOutManifestVersion when zero
-// so callers can omit it. Persistence-off (runDir == "") is a first-class
-// no-op, matching every other datastore writer.
-func WriteFanOutManifest(runDir string, m FanOutManifest) error {
-	path := FanOutManifestPath(runDir, m.FamilyID, m.Generation, m.Iteration)
-	if path == "" {
+// WriteFanOutManifest atomically persists a family's expansion through
+// WriteFileAtomic, so a reader (or a crash) never observes a partial
+// manifest. The step must be the manifest's family. SchemaVersion
+// defaults to FanOutManifestVersion when zero so callers can omit it. A
+// disabled step is a first-class no-op, matching every other datastore writer.
+func (s Step) WriteFanOutManifest(m FanOutManifest) error {
+	if s.err != nil {
+		return s.err
+	}
+	if s.dir == "" {
 		return nil
+	}
+	if filepath.Base(s.dir) != m.FamilyID {
+		return fmt.Errorf("datastore: fanout manifest family %q written to step %q", m.FamilyID, filepath.Base(s.dir))
 	}
 	if m.SchemaVersion == 0 {
 		m.SchemaVersion = FanOutManifestVersion
 	}
+	path := s.FanOutManifest(m.Generation, m.Iteration)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("datastore: create fanout dir: %w", err)
 	}
@@ -90,30 +93,25 @@ func WriteFanOutManifest(runDir string, m FanOutManifest) error {
 	if err != nil {
 		return fmt.Errorf("datastore: encode fanout manifest: %w", err)
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return fmt.Errorf("datastore: write fanout manifest temp: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("datastore: rename fanout manifest: %w", err)
-	}
-	return nil
+	return WriteFileAtomic(path, data, 0o600)
 }
 
 // ReadFanOutManifest loads and decodes one generation/iteration's manifest.
-// Persistence-off (runDir == "") yields a zero manifest and a nil error, the
-// same "nothing to read" convention as ReadSession. A missing file, corrupt
-// JSON, or an unsupported schema_version all return an error: unlike a
-// session file, a fan-out manifest is the authoritative creation record for
-// runtime children, so silently degrading to "absent" would let Resume
-// recreate children from a fresh (and possibly different) producer read.
-func ReadFanOutManifest(runDir, familyID string, generation, iteration int) (FanOutManifest, error) {
-	path := FanOutManifestPath(runDir, familyID, generation, iteration)
-	if path == "" {
+// A disabled step yields a zero manifest and a nil error, the same "nothing
+// to read" convention as ReadSession. A missing file, corrupt JSON, or an
+// unsupported schema_version all return an error: unlike a session file, a
+// fan-out manifest is the authoritative creation record for runtime
+// children, so silently degrading to "absent" would let Resume recreate
+// children from a fresh (and possibly different) producer read.
+func (s Step) ReadFanOutManifest(generation, iteration int) (FanOutManifest, error) {
+	if s.err != nil {
+		return FanOutManifest{}, s.err
+	}
+	if s.dir == "" {
 		return FanOutManifest{}, nil
 	}
-	data, err := os.ReadFile(path)
+	familyID := filepath.Base(s.dir)
+	data, err := os.ReadFile(s.FanOutManifest(generation, iteration))
 	if err != nil {
 		return FanOutManifest{}, fmt.Errorf("datastore: read fanout manifest: %w", err)
 	}
