@@ -360,8 +360,8 @@ func (m agentQuestionAnswerMsg) execute(s *scheduler) {
 			if state.Result == nil || !s.stepCanResume(m.stepID, state.Result.SessionID) {
 				return
 			}
-			s.resumeSessions[m.stepID] = state.Result.SessionID
-			s.stepMessage[m.stepID] = restoredQuestionMessage(s.restoredQuestionResponses[m.stepID])
+			s.rt(m.stepID).resumeSession = state.Result.SessionID
+			s.rt(m.stepID).message = restoredQuestionMessage(s.restoredQuestionResponses[m.stepID])
 			delete(s.restoredQuestionResponses, m.stepID)
 			s.restoredHold = false
 			s.transition(m.stepID, step.StatusNeedsInput, step.StatusPending)

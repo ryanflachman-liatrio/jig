@@ -19,6 +19,7 @@ import (
 // struct (docs/plans/engine-quality-refactor.md, 3.1), not here.
 var retainedOnReset = map[string]string{
 	"states":           "the step's State is reset in place, not removed",
+	"runtime":          "replaced by afterReset; its fields are checked by runtimeRetainedOnReset",
 	"stickyUserInputs": "once=true answers are retained across rewinds by design",
 	"stepCancels":      "removed when the worker's stepDoneMsg is handled; reset requires no in-flight work",
 	"executionViews":   "released when the read-only dispatch finishes; reset requires no in-flight work",
@@ -27,11 +28,13 @@ var retainedOnReset = map[string]string{
 	"skippedByOperator":         "SUSPECT: a reset step stays transparent to depsReady until it re-runs",
 	"structured":                "SUSPECT: the cached decode of the pre-reset result outlives it",
 	"retryNotBefore":            "SUSPECT: a pre-reset retry backoff still delays the re-run",
-	"failedSessionResume":       "SUSPECT: a pre-reset dead session still forces CanResume=false",
-	"sessionResumeInFlight":     "SUSPECT: pre-reset resume marker outlives the dispatch it described",
 	"pendingQuestions":          "SUSPECT: questions from the pre-reset execution survive",
 	"restoredQuestionResponses": "SUSPECT: answers for the pre-reset execution survive",
 }
+
+// runtimeRetainedOnReset lists stepRuntime fields afterReset carries into the
+// new generation. Every other field must be zero after a reset.
+var runtimeRetainedOnReset = map[string]string{}
 
 // notStepKeyed lists map[string]X scheduler fields whose keys are not step ids,
 // so the reset contract does not apply to them.
@@ -92,6 +95,10 @@ run = "true"
 		}
 	}
 
+	for _, id := range []string{"target", "survivor"} {
+		fillNonZero(reflect.ValueOf(s.rt(id)).Elem())
+	}
+
 	reply := make(chan resetReply, 1)
 	s.handleReset(resetMsg{stepID: "target", reply: reply})
 	if r := <-reply; r.err != nil {
@@ -115,6 +122,16 @@ run = "true"
 	sort.Strings(lostSurvivor)
 	if len(leaked) > 0 {
 		t.Errorf("reset kept the target's entry in %v; clear it in handleReset or list it in retainedOnReset", leaked)
+	}
+	rt := reflect.ValueOf(s.rt("target")).Elem()
+	for i := 0; i < rt.NumField(); i++ {
+		name := rt.Type().Field(i).Name
+		if _, kept := runtimeRetainedOnReset[name]; !kept && !rt.Field(i).IsZero() {
+			t.Errorf("reset kept stepRuntime.%s; zero it in afterReset or list it in runtimeRetainedOnReset", name)
+		}
+	}
+	if reflect.ValueOf(s.rt("survivor")).Elem().IsZero() {
+		t.Error("reset of target cleared the survivor's stepRuntime")
 	}
 	if len(lostSurvivor) > 0 {
 		t.Errorf("reset of target removed the survivor's entry from %v", lostSurvivor)
@@ -147,4 +164,29 @@ func nonNilZero(t reflect.Type) reflect.Value {
 		return reflect.New(t.Elem())
 	}
 	return reflect.Zero(t)
+}
+
+// fillNonZero sets every field of struct v to a non-zero value so a test can
+// tell which fields an operation cleared.
+func fillNonZero(v reflect.Value) {
+	for i := 0; i < v.NumField(); i++ {
+		f := reflect.NewAt(v.Field(i).Type(), unsafe.Pointer(v.Field(i).UnsafeAddr())).Elem()
+		switch f.Kind() {
+		case reflect.String:
+			f.SetString("x")
+		case reflect.Bool:
+			f.SetBool(true)
+		case reflect.Int:
+			f.SetInt(1)
+		case reflect.Map:
+			f.Set(reflect.MakeMap(f.Type()))
+			f.SetMapIndex(reflect.Zero(f.Type().Key()), nonNilZero(f.Type().Elem()))
+		case reflect.Slice:
+			f.Set(reflect.MakeSlice(f.Type(), 1, 1))
+		case reflect.Pointer:
+			f.Set(reflect.New(f.Type().Elem()))
+		default:
+			panic("fillNonZero: unsupported kind " + f.Kind().String())
+		}
+	}
 }

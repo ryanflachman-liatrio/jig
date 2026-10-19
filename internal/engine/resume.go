@@ -971,7 +971,7 @@ func (s *scheduler) stepCanResume(stepID, sessionID string) bool {
 	if sessionID == "" {
 		return false
 	}
-	if s.failedSessionResume[stepID] {
+	if s.rt(stepID).failedSessionResume {
 		return false
 	}
 	st := s.stepByID(stepID)

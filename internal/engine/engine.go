@@ -759,6 +759,8 @@ type pendingQuestion struct {
 // ── scheduler ────────────────────────────────────────────────────────────────
 
 type scheduler struct {
+	// runtime holds per-step execution state; see stepRuntime.
+	runtime  map[string]*stepRuntime
 	wf       *workflow.Workflow
 	runID    string
 	states   map[string]*step.State
@@ -850,21 +852,12 @@ type scheduler struct {
 
 	// review-gate messaging: a human can send free-text to the reviewed agent
 	// step, which resumes the agent's SDK session and re-runs it before a
-	resumeSessions map[string]string // stepID → SDK session ID for next dispatch
-	stepMessage    map[string]string // stepID → human message for resumed query
 	reviewSessions map[string]review.Session
 
 	// block_on: tracks how many times a human has provided input to a blocked step.
-	stepInputCount map[string]int // stepID → input rounds delivered so far
 
 	// recovery gate: tracks retry/resume rounds per step so the human-driven
 	// recovery loop stays bounded (maxRecoverRounds).
-	recoverCount map[string]int // stepID → recovery rounds taken so far
-	// sessionResumeInFlight marks steps whose current dispatch used
-	// ResumeSessionID. A failure re-parks with CanResume=false (Spec 20 D19).
-	sessionResumeInFlight map[string]bool
-	// failedSessionResume forces CanResume=false after a dead-session resume.
-	failedSessionResume map[string]bool
 	// restoredHold prevents a reopened scheduler from dispatching pending work
 	// before the operator acknowledges one of its durable gates.
 	restoredHold bool
@@ -981,13 +974,7 @@ func newScheduler(
 		collectedUserInputs:       make(map[string][]ResolvedInput),
 		preResolvedInputs:         make(map[string][]ResolvedInput),
 		stickyUserInputs:          make(map[string][]ResolvedInput),
-		resumeSessions:            make(map[string]string),
-		stepMessage:               make(map[string]string),
 		reviewSessions:            make(map[string]review.Session),
-		stepInputCount:            make(map[string]int),
-		recoverCount:              make(map[string]int),
-		sessionResumeInFlight:     make(map[string]bool),
-		failedSessionResume:       make(map[string]bool),
 		seenEscalations:           make(map[string]bool),
 		skippedByOperator:         make(map[string]bool),
 		skippedByGuard:            make(map[string]bool),
@@ -995,6 +982,7 @@ func newScheduler(
 		restoredQuestionResponses: make(map[string][]interaction.QuestionResponse),
 		stepCancels:               make(map[string]context.CancelFunc),
 		stopping:                  make(map[string]bool),
+		runtime:                   make(map[string]*stepRuntime),
 		resolvingIntegration:      make(map[string]uint64),
 		postExecChain: []postExecHandler{
 			phCaptureWorktreeDiff,
@@ -1561,7 +1549,7 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	}
 	// Clear a stale session before the durable running transition. If the process
 	// dies after that transition, session.json can only belong to this dispatch.
-	if st.Type == workflow.StepAgent && s.resumeSessions[st.ID] == "" {
+	if st.Type == workflow.StepAgent && s.rt(st.ID).resumeSession == "" {
 		if err := s.runDir.Step(st.ID).ClearSession(); err != nil {
 			releaseReaderView()
 			s.states[st.ID].Result = &step.Result{
@@ -1704,17 +1692,17 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 		}
 	}
 	delete(s.preResolvedInputs, st.ID)
-	if sess := s.resumeSessions[st.ID]; sess != "" {
+	if sess := s.rt(st.ID).resumeSession; sess != "" {
 		req.ResumeSessionID = sess
-		req.Message = s.stepMessage[st.ID]
-		delete(s.resumeSessions, st.ID)
-		delete(s.stepMessage, st.ID)
-		s.sessionResumeInFlight[st.ID] = true
+		req.Message = s.rt(st.ID).message
+		s.rt(st.ID).resumeSession = ""
+		s.rt(st.ID).message = ""
+		s.rt(st.ID).sessionResumeInFlight = true
 	} else {
-		delete(s.sessionResumeInFlight, st.ID)
+		s.rt(st.ID).sessionResumeInFlight = false
 		// A fresh attempt may resume after a prior dead-session park; clear the
 		// force-false flag so a newly captured SessionID can offer resume again.
-		delete(s.failedSessionResume, st.ID)
+		s.rt(st.ID).failedSessionResume = false
 	}
 	// Clear the structured-output cache so block_on and when-guards always
 	// see fresh output after a re-run rather than a stale cached decode.
@@ -1996,11 +1984,11 @@ func (s *scheduler) enterRecovery(stepID string) {
 	if state.Result == nil {
 		state.Result = &step.Result{Status: step.StatusFailed}
 	}
-	if s.sessionResumeInFlight[stepID] {
+	if s.rt(stepID).sessionResumeInFlight {
 		// Spec 20 D19: a failed Recover(resume) must not keep advertising resume
 		// of a likely-dead backend session.
-		s.failedSessionResume[stepID] = true
-		delete(s.sessionResumeInFlight, stepID)
+		s.rt(stepID).failedSessionResume = true
+		s.rt(stepID).sessionResumeInFlight = false
 	}
 	if !s.transition(stepID, state.Status, step.StatusAwaitingRecovery) {
 		return
@@ -2112,7 +2100,7 @@ func (s *scheduler) handleStop(m stopMsg) {
 
 // handleResume brings a step parked at step.StatusStopped back up (spec 07 B2).
 // With a captured session id it continues the agent conversation with a new
-// message (reusing the resumeSessions/stepMessage machinery that dispatch and
+// message (reusing the stepRuntime resumeSession/message machinery that dispatch and
 // the runner's WithResume/WithContinueConversation path already implement);
 // without one it restarts the step fresh — a documented degrade, not an error.
 // Either way the step returns to StatusPending so the dispatch loop re-runs it,
@@ -2127,10 +2115,10 @@ func (s *scheduler) handleResume(m resumeMsg) {
 		// Resume-as-continue: hand the session id + operator message to the next
 		// dispatch. This continues the conversation; it does not recover the exact
 		// interrupted turn (an SDK limitation).
-		s.resumeSessions[m.stepID] = state.Result.SessionID
-		s.stepMessage[m.stepID] = m.message
+		s.rt(m.stepID).resumeSession = state.Result.SessionID
+		s.rt(m.stepID).message = m.message
 	}
-	// No captured session id → leave resumeSessions unset: dispatch builds the
+	// No captured session id → leave resumeSession unset: dispatch builds the
 	// full prompt and the runner starts a fresh session (documented degrade).
 	state.Attempt++
 	s.restoredHold = false
@@ -2284,14 +2272,11 @@ func (s *scheduler) handleReset(m resetMsg) {
 		delete(s.diffs, id)
 
 		delete(s.stepCommits, id)
-		delete(s.resumeSessions, id)
-		delete(s.stepMessage, id)
+		s.runtime[id] = s.rt(id).afterReset()
 		delete(s.stepFeedback, id)
 		delete(s.rerunSource, id)
 		delete(s.rerunMax, id)
-		delete(s.recoverCount, id)
 		delete(s.reviewSessions, id)
-		delete(s.stepInputCount, id)
 		delete(s.pendingUserInputs, id)
 		delete(s.collectedUserInputs, id)
 		delete(s.preResolvedInputs, id)
@@ -2338,7 +2323,7 @@ func (s *scheduler) handleRecover(m recoverMsg) {
 		s.transitionRecovery(m.stepID, state.Status, step.StatusFailed, RecoverSkip)
 
 	case RecoverRetry, RecoverResume:
-		if s.recoverCount[m.stepID] >= maxRecoverRounds {
+		if s.rt(m.stepID).recoverRounds >= maxRecoverRounds {
 			s.emit(RunError{
 				RunID: s.runID,
 				Err:   fmt.Sprintf("step %q: exceeded maximum recovery rounds (%d)", m.stepID, maxRecoverRounds),
@@ -2351,13 +2336,13 @@ func (s *scheduler) handleRecover(m recoverMsg) {
 			if state.Result == nil || state.Result.SessionID == "" || !s.stepCanResume(m.stepID, state.Result.SessionID) {
 				return
 			}
-			s.resumeSessions[m.stepID] = state.Result.SessionID
-			s.stepMessage[m.stepID] = composeRecoveryMessage(state.Result.Err, m.text)
+			s.rt(m.stepID).resumeSession = state.Result.SessionID
+			s.rt(m.stepID).message = composeRecoveryMessage(state.Result.Err, m.text)
 		} else {
 			// Spec 20 D20: fresh retry must not resume a stale backend session.
-			delete(s.resumeSessions, m.stepID)
-			delete(s.stepMessage, m.stepID)
-			delete(s.failedSessionResume, m.stepID)
+			s.rt(m.stepID).resumeSession = ""
+			s.rt(m.stepID).message = ""
+			s.rt(m.stepID).failedSessionResume = false
 			if state.Result != nil {
 				state.Result.SessionID = ""
 			}
@@ -2370,7 +2355,7 @@ func (s *scheduler) handleRecover(m recoverMsg) {
 				return
 			}
 		}
-		s.recoverCount[m.stepID]++
+		s.rt(m.stepID).recoverRounds++
 		state.Attempt++
 		s.restoredHold = false
 		s.transition(m.stepID, state.Status, step.StatusPending)
@@ -3049,17 +3034,17 @@ func (s *scheduler) handleAgentInput(m agentInputMsg) {
 		return
 	}
 	const maxInputRounds = 20
-	s.stepInputCount[m.stepID]++
-	if s.stepInputCount[m.stepID] > maxInputRounds {
+	s.rt(m.stepID).inputRounds++
+	if s.rt(m.stepID).inputRounds > maxInputRounds {
 		s.emit(RunError{
 			RunID: s.runID,
 			Err:   fmt.Sprintf("step %q: exceeded maximum input rounds (%d)", m.stepID, maxInputRounds),
 		})
-		s.stepInputCount[m.stepID]--
+		s.rt(m.stepID).inputRounds--
 		return
 	}
-	s.resumeSessions[m.stepID] = state.Result.SessionID
-	s.stepMessage[m.stepID] = m.text
+	s.rt(m.stepID).resumeSession = state.Result.SessionID
+	s.rt(m.stepID).message = m.text
 	s.restoredHold = false
 	s.transition(m.stepID, step.StatusNeedsInput, step.StatusPending)
 }

@@ -46,7 +46,7 @@ func (s *scheduler) acquireExecutionWorkspace(st *workflow.Step) (executionWorks
 
 	if kind == executionWorkspaceMutation {
 		if existing, ok := s.worktrees[st.ID]; ok {
-			if s.resumeSessions[st.ID] != "" && s.wtBaseSHAs[st.ID] != "" {
+			if s.rt(st.ID).resumeSession != "" && s.wtBaseSHAs[st.ID] != "" {
 				workspace.Dir = existing
 				workspace.BaseSHA = s.wtBaseSHAs[st.ID]
 				return workspace, nil
