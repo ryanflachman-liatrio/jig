@@ -16,84 +16,6 @@ import (
 	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
-// capturingExec records the Inputs slice received per step and delegates
-// execution to an embedded testExec.
-type capturingExec struct {
-	testExec
-	mu     sync.Mutex
-	inputs map[string][]ResolvedInput // stepID → Inputs received
-}
-
-func (e *capturingExec) Execute(ctx context.Context, req StepRequest, rep Reporter) (*step.Result, error) {
-	e.mu.Lock()
-	if e.inputs == nil {
-		e.inputs = make(map[string][]ResolvedInput)
-	}
-	e.inputs[req.Step.ID] = req.Inputs
-	e.mu.Unlock()
-	return e.testExec.Execute(ctx, req, rep)
-}
-
-// outputPathExec wraps capturingExec and additionally sets result.OutputPath
-// for one named step, simulating an agent that writes an artifact file.
-type outputPathExec struct {
-	capturingExec
-	stepID     string
-	outputPath string
-}
-
-func (e *outputPathExec) Execute(ctx context.Context, req StepRequest, rep Reporter) (*step.Result, error) {
-	r, err := e.capturingExec.Execute(ctx, req, rep)
-	if r != nil && req.Step.ID == e.stepID {
-		r.OutputPath = e.outputPath
-	}
-	return r, err
-}
-
-// inputCapturingStructuredExec combines structured-output injection with
-// input capture so that tests can verify what inputs a downstream step receives.
-type inputCapturingStructuredExec struct {
-	structuredExec
-	mu     sync.Mutex
-	inputs map[string][]ResolvedInput
-}
-
-type feedbackCapturingStructuredExec struct {
-	structuredExec
-	mu       sync.Mutex
-	feedback []string
-}
-
-func (e *feedbackCapturingStructuredExec) Execute(ctx context.Context, req StepRequest, rep Reporter) (*step.Result, error) {
-	if req.Step.ID == "scope" {
-		e.mu.Lock()
-		e.feedback = append(e.feedback, req.Feedback)
-		e.mu.Unlock()
-	}
-	return e.structuredExec.Execute(ctx, req, rep)
-}
-
-func (e *inputCapturingStructuredExec) Execute(ctx context.Context, req StepRequest, rep Reporter) (*step.Result, error) {
-	e.mu.Lock()
-	if e.inputs == nil {
-		e.inputs = make(map[string][]ResolvedInput)
-	}
-	e.inputs[req.Step.ID] = req.Inputs
-	e.mu.Unlock()
-	return e.structuredExec.Execute(ctx, req, rep)
-}
-
-// testExec is a minimal Executor used only in engine tests.
-// runner.FakeExecutor is the feature-complete version for TUI dry-run.
-type testExec struct {
-	outcomes map[string]testOutcome
-}
-
-type testOutcome struct {
-	delay time.Duration
-	fail  bool
-}
-
 type sessionBarrierExec struct {
 	runDir datastore.Run
 	seen   chan datastore.SessionInfo
@@ -104,24 +26,6 @@ func (e *sessionBarrierExec) Execute(ctx context.Context, req StepRequest, _ Rep
 	e.seen <- info
 	<-ctx.Done()
 	return nil, ctx.Err()
-}
-
-func (e *testExec) Execute(ctx context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
-	out, ok := e.outcomes[req.Step.ID]
-	if !ok {
-		out = testOutcome{delay: time.Millisecond}
-	}
-	if out.delay > 0 {
-		select {
-		case <-time.After(out.delay):
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
-	if out.fail {
-		return &step.Result{Status: step.StatusFailed, Err: "scripted failure"}, nil
-	}
-	return &step.Result{Status: step.StatusSucceeded}, nil
 }
 
 // collectEvents drains ch until RunFinished or timeout, returning all events.
@@ -502,26 +406,6 @@ run = "false"
 	}
 }
 
-// dirCheckExec records, per step, whether the step's transcript directory
-// existed at dispatch time. It reproduces the runner's mid-execution transcript
-// write, which fails if the engine hasn't created steps/<id>/ first.
-type dirCheckExec struct {
-	mu      sync.Mutex
-	present map[string]bool
-}
-
-func (e *dirCheckExec) Execute(_ context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
-	ok := true
-	if req.TranscriptPath != "" {
-		_, statErr := os.Stat(filepath.Dir(req.TranscriptPath))
-		ok = statErr == nil
-	}
-	e.mu.Lock()
-	e.present[req.Step.ID] = ok
-	e.mu.Unlock()
-	return &step.Result{Status: step.StatusSucceeded}, nil
-}
-
 // TestScheduler_StepDirExistsBeforeExecute guards the fix for a review/agent
 // step failing with "transcript open: … no such file or directory": the engine
 // must create steps/<id>/ before dispatching, not rely on the manifest writer's
@@ -541,7 +425,17 @@ run = "echo hi"
 	if err != nil {
 		t.Fatal(err)
 	}
-	exec := &dirCheckExec{present: make(map[string]bool)}
+	var (
+		mu      sync.Mutex
+		present = map[string]bool{}
+	)
+	exec := &testExec{respond: func(_ context.Context, req StepRequest, _ int) (*step.Result, error) {
+		_, statErr := os.Stat(filepath.Dir(req.TranscriptPath))
+		mu.Lock()
+		present[req.Step.ID] = req.TranscriptPath == "" || statErr == nil
+		mu.Unlock()
+		return &step.Result{Status: step.StatusSucceeded}, nil
+	}}
 	mgr := NewManager(exec, filepath.Join(t.TempDir(), ".jig"))
 	_, ch := mgr.Subscribe()
 
@@ -550,9 +444,9 @@ run = "echo hi"
 	}
 	collectEvents(t, ch, 5*time.Second)
 
-	exec.mu.Lock()
-	defer exec.mu.Unlock()
-	if !exec.present["only"] {
+	mu.Lock()
+	defer mu.Unlock()
+	if !present["only"] {
 		t.Error("step directory did not exist when the executor was dispatched")
 	}
 }
@@ -786,13 +680,9 @@ max_retries = 2
 	}
 
 	// Count how many times Execute is called for "flaky".
-	callCount := 0
-	exec := &countingExec{
-		inner: &testExec{outcomes: map[string]testOutcome{
-			"flaky": {fail: true},
-		}},
-		onExecute: func(id string) { callCount++ },
-	}
+	exec := &testExec{outcomes: map[string]testOutcome{
+		"flaky": {fail: true},
+	}}
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 
@@ -806,7 +696,7 @@ max_retries = 2
 	events := collectEventsAborting(t, ch, run, 5*time.Second)
 
 	// With max_retries=2 the step should be dispatched 3 times (1 original + 2 retries).
-	if callCount != 3 {
+	if callCount := exec.callCount("flaky"); callCount != 3 {
 		t.Errorf("expected 3 execute calls (1 + 2 retries), got %d", callCount)
 	}
 
@@ -852,11 +742,7 @@ idempotent = true
 	if err != nil {
 		t.Fatal(err)
 	}
-	calls := 0
-	exec := &countingExec{
-		inner:     &testExec{outcomes: map[string]testOutcome{"flaky": {fail: true}}},
-		onExecute: func(string) { calls++ },
-	}
+	exec := &testExec{outcomes: map[string]testOutcome{"flaky": {fail: true}}}
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 	run, err := mgr.Start(wf)
@@ -864,7 +750,7 @@ idempotent = true
 		t.Fatal(err)
 	}
 	collectEventsAborting(t, ch, run, 5*time.Second)
-	if calls != 3 {
+	if calls := exec.callCount("flaky"); calls != 3 {
 		t.Fatalf("calls = %d, want 3", calls)
 	}
 }
@@ -889,11 +775,7 @@ idempotent = true
 	if err != nil {
 		t.Fatal(err)
 	}
-	calls := 0
-	exec := &countingExec{
-		inner:     &testExec{outcomes: map[string]testOutcome{"slow": {delay: time.Second}}},
-		onExecute: func(string) { calls++ },
-	}
+	exec := &testExec{outcomes: map[string]testOutcome{"slow": {delay: time.Second}}}
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 	run, err := mgr.Start(wf)
@@ -901,7 +783,7 @@ idempotent = true
 		t.Fatal(err)
 	}
 	events := collectEventsAborting(t, ch, run, 5*time.Second)
-	if calls != 2 {
+	if calls := exec.callCount("slow"); calls != 2 {
 		t.Fatalf("calls = %d, want timeout retry to make 2 attempts", calls)
 	}
 	for _, event := range events {
@@ -909,23 +791,6 @@ idempotent = true
 			t.Fatalf("timeout failure = %q, want timeout provenance", status.Err)
 		}
 	}
-}
-
-// failCostExec returns a failing Result carrying a fixed cost/token usage on
-// every call, so a retried step accrues once per attempt.
-type failCostExec struct {
-	cost   float64
-	tokens int
-}
-
-func (e *failCostExec) Execute(_ context.Context, _ StepRequest, _ Reporter) (*step.Result, error) {
-	usage := map[string]any{"input_tokens": float64(e.tokens)}
-	return &step.Result{
-		Status:       step.StatusFailed,
-		Err:          "boom",
-		TotalCostUSD: &e.cost,
-		Usage:        &usage,
-	}, nil
 }
 
 // TestRunSnapshotCostCumulative verifies the run total counts every attempt: a
@@ -949,7 +814,9 @@ max_retries = 2
 		t.Fatal(err)
 	}
 
-	exec := &failCostExec{cost: 0.001, tokens: 500}
+	exec := &testExec{outcomes: map[string]testOutcome{
+		"flaky": {fail: true, failErr: "boom", cost: 0.001, tokens: 500},
+	}}
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 	run, err := mgr.Start(wf)
@@ -1248,34 +1115,7 @@ run = "echo x"
 	}
 }
 
-// countingExec wraps another Executor and calls onExecute for each dispatch.
-type countingExec struct {
-	inner     Executor
-	onExecute func(stepID string)
-}
-
-func (c *countingExec) Execute(ctx context.Context, req StepRequest, rep Reporter) (*step.Result, error) {
-	c.onExecute(req.Step.ID)
-	return c.inner.Execute(ctx, req, rep)
-}
-
 // ── Phase 3 tests ─────────────────────────────────────────────────────────────
-
-// verdictExec extends testExec to return a configurable Verdict in the Result.
-type verdictExec struct {
-	testExec
-	verdicts map[string]string // stepID → verdict string
-}
-
-func (e *verdictExec) Execute(ctx context.Context, req StepRequest, rep Reporter) (*step.Result, error) {
-	r, err := e.testExec.Execute(ctx, req, rep)
-	if r != nil && e.verdicts != nil {
-		if v, ok := e.verdicts[req.Step.ID]; ok {
-			r.Verdict = v
-		}
-	}
-	return r, err
-}
 
 // TestScheduler_WhenGuard_Skip verifies that a step with a when guard that
 // evaluates to false is skipped, and the run still finishes (not deadlocked).
@@ -1302,12 +1142,9 @@ when = "a == 'yes'"
 	if err != nil {
 		t.Fatal(err)
 	}
-	exec := &verdictExec{
-		testExec: testExec{outcomes: map[string]testOutcome{
-			"a": {delay: delay},
-		}},
-		verdicts: map[string]string{"a": "no"},
-	}
+	exec := &testExec{outcomes: map[string]testOutcome{
+		"a": {delay: delay, verdict: "no"},
+	}}
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 
@@ -1370,12 +1207,9 @@ depends_on = ["b"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	exec := &verdictExec{
-		testExec: testExec{outcomes: map[string]testOutcome{
-			"a": {delay: delay},
-		}},
-		verdicts: map[string]string{"a": "no"},
-	}
+	exec := &testExec{outcomes: map[string]testOutcome{
+		"a": {delay: delay, verdict: "no"},
+	}}
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 
@@ -1439,12 +1273,9 @@ inputs = ["@b.result"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	exec := &verdictExec{
-		testExec: testExec{outcomes: map[string]testOutcome{
-			"a": {delay: delay},
-		}},
-		verdicts: map[string]string{"a": "no"},
-	}
+	exec := &testExec{outcomes: map[string]testOutcome{
+		"a": {delay: delay, verdict: "no"},
+	}}
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 
@@ -1586,10 +1417,8 @@ feedback = "@gate"
 	if err != nil {
 		t.Fatal(err)
 	}
-	exec := &feedbackCapturingStructuredExec{structuredExec: structuredExec{
-		testExec:  testExec{outcomes: map[string]testOutcome{"scope": {delay: time.Millisecond}}},
-		stepID:    "scope",
-		responses: []string{`{"rationale":"Initial scope assessment"}`},
+	exec := &testExec{outcomes: map[string]testOutcome{
+		"scope": {delay: time.Millisecond, structured: []string{`{"rationale":"Initial scope assessment"}`}},
 	}}
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
@@ -1622,9 +1451,10 @@ feedback = "@gate"
 	})
 	waitForReviewEvent(t, ch, "gate", 5*time.Second)
 
-	exec.mu.Lock()
-	feedback := append([]string(nil), exec.feedback...)
-	exec.mu.Unlock()
+	var feedback []string
+	for _, req := range exec.requestsFor("scope") {
+		feedback = append(feedback, req.Feedback)
+	}
 	if len(feedback) != 2 {
 		t.Fatalf("scope executions = %d, want 2", len(feedback))
 	}
@@ -1646,36 +1476,6 @@ func waitForReviewEvent(t *testing.T, ch <-chan Event, stepID string, timeout ti
 			t.Fatalf("timeout waiting for review request %q", stepID)
 		}
 	}
-}
-
-// structuredExec wraps testExec to inject a scripted step.Result.Structured
-// payload and SessionID for one step, changing what it returns on the second
-// call — simulating an agent that resumes its session after human input and
-// reports a different structured answer the second time.
-type structuredExec struct {
-	testExec
-	stepID    string
-	sessionID string
-	responses []string // raw JSON, one per call; the last is reused once exhausted
-	mu        sync.Mutex
-	calls     int
-}
-
-func (e *structuredExec) Execute(ctx context.Context, req StepRequest, rep Reporter) (*step.Result, error) {
-	r, err := e.testExec.Execute(ctx, req, rep)
-	if r == nil || req.Step.ID != e.stepID {
-		return r, err
-	}
-	e.mu.Lock()
-	i := e.calls
-	if i >= len(e.responses) {
-		i = len(e.responses) - 1
-	}
-	e.calls++
-	e.mu.Unlock()
-	r.SessionID = e.sessionID
-	r.Structured = []byte(e.responses[i])
-	return r, err
 }
 
 // TestScheduler_BlockOn verifies that block_on parks an agent step at
@@ -1710,12 +1510,10 @@ depends_on = ["chat"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	exec := &structuredExec{
-		testExec:  testExec{outcomes: map[string]testOutcome{"chat": {delay: delay}, "after": {delay: delay}}},
-		stepID:    "chat",
-		sessionID: "sess-1",
-		responses: []string{`{"needs_input":true,"rounds":1}`, `{"needs_input":false,"rounds":2}`},
-	}
+	exec := &testExec{outcomes: map[string]testOutcome{
+		"chat":  {delay: delay, sessionID: "sess-1", structured: []string{`{"needs_input":true,"rounds":1}`, `{"needs_input":false,"rounds":2}`}},
+		"after": {delay: delay},
+	}}
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 
@@ -1796,12 +1594,9 @@ block_on = "chat.needs_input"
 	if err != nil {
 		t.Fatal(err)
 	}
-	exec := &structuredExec{
-		testExec:  testExec{outcomes: map[string]testOutcome{"chat": {delay: delay}}},
-		stepID:    "chat",
-		sessionID: "sess-1",
-		responses: []string{`{"needs_input":true}`, `{"needs_input":false}`},
-	}
+	exec := &testExec{outcomes: map[string]testOutcome{
+		"chat": {delay: delay, sessionID: "sess-1", structured: []string{`{"needs_input":true}`, `{"needs_input":false}`}},
+	}}
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 
@@ -1891,13 +1686,10 @@ max_iterations = 2
 	if err != nil {
 		t.Fatal(err)
 	}
-	exec := &verdictExec{
-		testExec: testExec{outcomes: map[string]testOutcome{
-			"a": {delay: delay},
-			"b": {delay: delay},
-		}},
-		verdicts: map[string]string{"a": "yes"},
-	}
+	exec := &testExec{outcomes: map[string]testOutcome{
+		"a": {delay: delay, verdict: "yes"},
+		"b": {delay: delay},
+	}}
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 
@@ -1942,34 +1734,6 @@ max_iterations = 2
 	if !hasCap {
 		t.Error("expected RouteCapExceeded event when route exceeds max_iterations")
 	}
-}
-
-type failingCheckThenPassExec struct {
-	mu        sync.Mutex
-	checkRuns int
-}
-
-func (e *failingCheckThenPassExec) Execute(_ context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if req.Step.ID == "quality" {
-		e.checkRuns++
-		verdict := "pass"
-		if e.checkRuns == 1 {
-			verdict = "fail"
-		}
-		return &step.Result{Status: step.StatusSucceeded, Verdict: verdict}, nil
-	}
-	if req.Step.ID == "ready" {
-		return &step.Result{Status: step.StatusSucceeded, Verdict: "true"}, nil
-	}
-	return &step.Result{Status: step.StatusSucceeded}, nil
-}
-
-func (e *failingCheckThenPassExec) runs() int {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.checkRuns
 }
 
 func TestScheduler_CheckFailureRoutesBeforeDownstreamReview(t *testing.T) {
@@ -2023,7 +1787,17 @@ label = "Quality evidence"
 	if err != nil {
 		t.Fatal(err)
 	}
-	exec := &failingCheckThenPassExec{}
+	exec := &testExec{respond: func(_ context.Context, req StepRequest, call int) (*step.Result, error) {
+		switch {
+		case req.Step.ID == "quality" && call == 0:
+			return &step.Result{Status: step.StatusSucceeded, Verdict: "fail"}, nil
+		case req.Step.ID == "quality":
+			return &step.Result{Status: step.StatusSucceeded, Verdict: "pass"}, nil
+		case req.Step.ID == "ready":
+			return &step.Result{Status: step.StatusSucceeded, Verdict: "true"}, nil
+		}
+		return &step.Result{Status: step.StatusSucceeded}, nil
+	}}
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 	run, err := mgr.Start(wf)
@@ -2039,8 +1813,8 @@ label = "Quality evidence"
 		case event := <-ch:
 			events = append(events, event)
 			if request, ok := event.(ReviewRequest); ok && request.StepID == "continue_gate" {
-				if exec.runs() != 2 {
-					t.Fatalf("continue gate opened after %d quality run(s), want remediation check to pass first", exec.runs())
+				if exec.callCount("quality") != 2 {
+					t.Fatalf("continue gate opened after %d quality run(s), want remediation check to pass first", exec.callCount("quality"))
 				}
 				resolved = true
 				run.Resolve("continue_gate", "continue")
@@ -2057,43 +1831,12 @@ done:
 	if !resolved {
 		t.Fatal("continue gate was never opened")
 	}
-	if exec.runs() != 2 {
-		t.Fatalf("quality runs = %d, want 2", exec.runs())
+	if exec.callCount("quality") != 2 {
+		t.Fatalf("quality runs = %d, want 2", exec.callCount("quality"))
 	}
 	if got := findStatus(events, "continue_gate"); len(got) == 0 || got[len(got)-1] != step.StatusSucceeded {
 		t.Fatalf("continue gate statuses = %v, want succeeded", got)
 	}
-}
-
-// recordingExec captures every StepRequest it receives (across retries/loops)
-// and returns a configurable verdict so loop conditions can hold.
-type recordingExec struct {
-	mu       sync.Mutex
-	requests []StepRequest
-	verdicts map[string]string
-}
-
-func (e *recordingExec) Execute(ctx context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
-	e.mu.Lock()
-	e.requests = append(e.requests, req)
-	e.mu.Unlock()
-	r := &step.Result{Status: step.StatusSucceeded}
-	if v, ok := e.verdicts[req.Step.ID]; ok {
-		r.Verdict = v
-	}
-	return r, nil
-}
-
-func (e *recordingExec) reqsFor(stepID string) []StepRequest {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	var out []StepRequest
-	for _, r := range e.requests {
-		if r.Step.ID == stepID {
-			out = append(out, r)
-		}
-	}
-	return out
 }
 
 // TestScheduler_StepRequestTranscript verifies that, when persistence is
@@ -2131,7 +1874,7 @@ max_iterations = 2
 	}
 
 	jigRoot := t.TempDir()
-	exec := &recordingExec{verdicts: map[string]string{"a": "yes"}}
+	exec := &testExec{outcomes: map[string]testOutcome{"a": {verdict: "yes"}}}
 	mgr := NewManager(exec, jigRoot)
 	_, ch := mgr.Subscribe()
 
@@ -2144,7 +1887,7 @@ max_iterations = 2
 	runDir := datastore.RunAt(filepath.Join(jigRoot, "runs", run.ID))
 	wantPath := runDir.Step("a").Transcript()
 
-	reqs := exec.reqsFor("a")
+	reqs := exec.requestsFor("a")
 	if len(reqs) < 2 {
 		t.Fatalf("expected step a to be dispatched at least twice (looped); got %d", len(reqs))
 	}
@@ -2177,7 +1920,7 @@ run = "echo a"
 	if err != nil {
 		t.Fatal(err)
 	}
-	exec := &recordingExec{}
+	exec := &testExec{outcomes: map[string]testOutcome{}}
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 	if _, err := mgr.Start(wf); err != nil {
@@ -2185,7 +1928,7 @@ run = "echo a"
 	}
 	collectEvents(t, ch, 10*time.Second)
 
-	reqs := exec.reqsFor("a")
+	reqs := exec.requestsFor("a")
 	if len(reqs) == 0 {
 		t.Fatal("step a was never dispatched")
 	}
@@ -2226,14 +1969,10 @@ inputs     = ["@a.areas"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	exec := &inputCapturingStructuredExec{
-		structuredExec: structuredExec{
-			testExec:  testExec{outcomes: map[string]testOutcome{"a": {delay: delay}, "b": {delay: delay}}},
-			stepID:    "a",
-			sessionID: "sess-1",
-			responses: []string{`{"areas":["backend","frontend"]}`},
-		},
-	}
+	exec := &testExec{outcomes: map[string]testOutcome{
+		"a": {delay: delay, sessionID: "sess-1", structured: []string{`{"areas":["backend","frontend"]}`}},
+		"b": {delay: delay},
+	}}
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 
@@ -2242,9 +1981,7 @@ inputs     = ["@a.areas"]
 	}
 	collectEvents(t, ch, 5*time.Second)
 
-	exec.mu.Lock()
-	inputs := exec.inputs["b"]
-	exec.mu.Unlock()
+	inputs := exec.lastInputs("b")
 
 	if len(inputs) != 1 {
 		t.Fatalf("step b: expected 1 input, got %d", len(inputs))
@@ -2273,7 +2010,7 @@ inputs = ["testdata/request.md"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	exec := &capturingExec{testExec: testExec{outcomes: map[string]testOutcome{"b": {delay: delay}}}}
+	exec := &testExec{outcomes: map[string]testOutcome{"b": {delay: delay}}}
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 
@@ -2282,9 +2019,7 @@ inputs = ["testdata/request.md"]
 	}
 	collectEvents(t, ch, 5*time.Second)
 
-	exec.mu.Lock()
-	inputs := exec.inputs["b"]
-	exec.mu.Unlock()
+	inputs := exec.lastInputs("b")
 
 	if len(inputs) != 1 {
 		t.Fatalf("step b: expected 1 input, got %d", len(inputs))
@@ -2381,13 +2116,10 @@ inputs     = ["@a"]
 	if err != nil {
 		t.Fatal(err)
 	}
-	exec := &outputPathExec{
-		capturingExec: capturingExec{
-			testExec: testExec{outcomes: map[string]testOutcome{"a": {delay: delay}, "b": {delay: delay}}},
-		},
-		stepID:     "a",
-		outputPath: "/tmp/a-out.txt",
-	}
+	exec := &testExec{outcomes: map[string]testOutcome{
+		"a": {delay: delay, outputPath: "/tmp/a-out.txt"},
+		"b": {delay: delay},
+	}}
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 
@@ -2396,37 +2128,13 @@ inputs     = ["@a"]
 	}
 	collectEvents(t, ch, 5*time.Second)
 
-	exec.mu.Lock()
-	inputs := exec.inputs["b"]
-	exec.mu.Unlock()
+	inputs := exec.lastInputs("b")
 
 	if len(inputs) != 1 {
 		t.Fatalf("step b: expected 1 input, got %d", len(inputs))
 	}
 	if inputs[0].Value != "/tmp/a-out.txt" {
 		t.Errorf("step b input Value = %q, want %q", inputs[0].Value, "/tmp/a-out.txt")
-	}
-}
-
-type artifactInputExec struct {
-	mu     sync.Mutex
-	inputs map[string][]ResolvedInput
-}
-
-func (e *artifactInputExec) Execute(_ context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.inputs == nil {
-		e.inputs = make(map[string][]ResolvedInput)
-	}
-	e.inputs[req.Step.ID] = append([]ResolvedInput(nil), req.Inputs...)
-	switch req.Step.ID {
-	case "ready":
-		return &step.Result{Status: step.StatusSucceeded, Verdict: "true"}, nil
-	case "tests":
-		return &step.Result{Status: step.StatusSucceeded, Verdict: "pass", Artifacts: map[string]string{"coverage_profile": "/run/evidence/coverage.out"}}, nil
-	default:
-		return &step.Result{Status: step.StatusSucceeded}, nil
 	}
 }
 
@@ -2472,7 +2180,15 @@ run = "true"
 	if err != nil {
 		t.Fatal(err)
 	}
-	exec := &artifactInputExec{}
+	exec := &testExec{respond: func(_ context.Context, req StepRequest, _ int) (*step.Result, error) {
+		switch req.Step.ID {
+		case "ready":
+			return &step.Result{Status: step.StatusSucceeded, Verdict: "true"}, nil
+		case "tests":
+			return &step.Result{Status: step.StatusSucceeded, Verdict: "pass", Artifacts: map[string]string{"coverage_profile": "/run/evidence/coverage.out"}}, nil
+		}
+		return &step.Result{Status: step.StatusSucceeded}, nil
+	}}
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 	if _, err := mgr.Start(wf); err != nil {
@@ -2480,9 +2196,7 @@ run = "true"
 	}
 	collectEvents(t, ch, 5*time.Second)
 
-	exec.mu.Lock()
-	inputs := exec.inputs["coverage"]
-	exec.mu.Unlock()
+	inputs := exec.lastInputs("coverage")
 	if len(inputs) != 1 || inputs[0].Value != "/run/evidence/coverage.out" {
 		t.Fatalf("coverage inputs = %+v, want engine-owned artifact path", inputs)
 	}
@@ -2718,35 +2432,6 @@ drain:
 	_ = ctx
 }
 
-// costExec is a testExec variant whose outcomes carry TotalCostUSD and a token
-// usage map so TestRunSnapshotCost can verify the snapshot sums them correctly.
-type costOutcome struct {
-	cost   float64
-	tokens int
-}
-
-type costExec struct {
-	outcomes map[string]costOutcome
-}
-
-func (e *costExec) Execute(_ context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
-	out := e.outcomes[req.Step.ID]
-	res := &step.Result{Status: step.StatusSucceeded}
-	if out.cost != 0 {
-		res.TotalCostUSD = &out.cost
-	}
-	if out.tokens != 0 {
-		// Split across input/output the way the SDK reports usage; TokenCount sums
-		// the buckets back to the total.
-		usage := map[string]any{
-			"input_tokens":  float64(out.tokens - out.tokens/4),
-			"output_tokens": float64(out.tokens / 4),
-		}
-		res.Usage = &usage
-	}
-	return res, nil
-}
-
 // TestRunSnapshotCost verifies that RunSnapshot.TotalCostUSD sums per-step
 // costs, and that steps without cost contribute 0 (not causing a nil-deref).
 func TestRunSnapshotCost(t *testing.T) {
@@ -2777,7 +2462,7 @@ depends_on = ["b"]
 		t.Fatal(err)
 	}
 
-	exec := &costExec{outcomes: map[string]costOutcome{
+	exec := &testExec{outcomes: map[string]testOutcome{
 		"a": {cost: 0.001, tokens: 1000},
 		"b": {cost: 0.002, tokens: 2000},
 		// "c" has no cost/usage reported: TotalCostUSD stays nil, tokens 0

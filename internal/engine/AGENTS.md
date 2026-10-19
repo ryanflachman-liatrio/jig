@@ -98,8 +98,11 @@ go test ./internal/engine -count=1
 go test -race ./internal/engine
 ```
 
-Tests are in package `engine`. Before writing a new `Executor` fake, look for
-an existing one in the test files that already records requests, returns
-canned per-step results, or blocks on a gate. Lifecycle changes need an
+Tests are in package `engine`. Use the shared `testExec` in
+`engine_fakes_test.go` for scripted per-step results (`outcomes`), custom
+logic (`respond`), and recorded requests (`requestsFor`, `lastInputs`,
+`callCount`). Write a bespoke fake only when a test needs `Reporter`
+callbacks, a capability interface such as `SessionResumeSupport`, or a
+dispatch held open on a channel. Lifecycle changes need an
 adversarial case: a late result, a journal write failure, a crash between
 journal and publication, or a missing artifact.

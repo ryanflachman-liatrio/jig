@@ -268,9 +268,8 @@ depends_on = ["scope", "gate"]
 		ReviewRequest{RunID: runID, StepID: "gate", RoundID: "g000-i000", Choices: []string{"proceed", "narrow"}, Documents: []review.Document{doc}, DraftPath: runDir.Step("gate").Review("g000-i000").Draft()},
 	})
 
-	exec := &feedbackCapturingStructuredExec{structuredExec: structuredExec{
-		testExec: testExec{outcomes: map[string]testOutcome{}},
-		stepID:   "scope", responses: []string{`{"summary":"Now focused.","sizing":"just_right"}`},
+	exec := &testExec{outcomes: map[string]testOutcome{
+		"scope": {structured: []string{`{"summary":"Now focused.","sizing":"just_right"}`}},
 	}}
 	mgr := NewManager(exec, root)
 	_, ctrl := mgr.Subscribe()
@@ -292,9 +291,10 @@ depends_on = ["scope", "gate"]
 	if got := findStatus(events, "scope"); len(got) < 2 || got[0] != step.StatusPending || got[1] != step.StatusRunning {
 		t.Fatalf("resumed scope statuses = %v, want pending then running", got)
 	}
-	exec.mu.Lock()
-	feedback := append([]string(nil), exec.feedback...)
-	exec.mu.Unlock()
+	var feedback []string
+	for _, req := range exec.requestsFor("scope") {
+		feedback = append(feedback, req.Feedback)
+	}
 	if len(feedback) != 1 || !strings.Contains(feedback[0], comment) {
 		t.Fatalf("resumed feedback = %q, want saved review comment", feedback)
 	}

@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -11,21 +10,12 @@ import (
 	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
-// coalesceExec drives the parallel-loopers scenario: `implement` always
+// coalesceResponder drives the parallel-loopers scenario: `implement` always
 // succeeds; the gates `a` and `b` return a distinct "redo" verdict on the first
 // wave (iteration 0) so their loops fire, then a passing verdict once re-run, so
-// the run terminates. otherDelay staggers the two gates to prove the rewind
-// waits for the slower sibling. Every StepRequest is recorded for inspection.
-type coalesceExec struct {
-	mu   sync.Mutex
-	reqs []StepRequest
-}
-
-func (e *coalesceExec) Execute(ctx context.Context, req StepRequest, _ Reporter) (*step.Result, error) {
-	e.mu.Lock()
-	e.reqs = append(e.reqs, req)
-	e.mu.Unlock()
-
+// the run terminates. The gates' delays are staggered to prove the rewind waits
+// for the slower sibling.
+func coalesceResponder(ctx context.Context, req StepRequest, _ int) (*step.Result, error) {
 	switch req.Step.ID {
 	case "a":
 		if req.Iteration == 0 {
@@ -42,18 +32,6 @@ func (e *coalesceExec) Execute(ctx context.Context, req StepRequest, _ Reporter)
 	default: // implement
 		return &step.Result{Status: step.StatusSucceeded}, nil
 	}
-}
-
-func (e *coalesceExec) reqsFor(id string) []StepRequest {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	var out []StepRequest
-	for _, r := range e.reqs {
-		if r.Step.ID == id {
-			out = append(out, r)
-		}
-	}
-	return out
 }
 
 // TestScheduler_ParallelLoopsCoalesce proves that two parallel gates that both
@@ -105,7 +83,7 @@ feedback       = "@b"
 	if err != nil {
 		t.Fatal(err)
 	}
-	exec := &coalesceExec{}
+	exec := &testExec{respond: coalesceResponder}
 	mgr := NewManager(exec, "")
 	_, ch := mgr.Subscribe()
 	if _, err := mgr.Start(wf); err != nil {
@@ -122,7 +100,7 @@ feedback       = "@b"
 
 	// implement ran exactly twice: the initial wave and ONE coalesced rewind — not
 	// twice-rewound (which is the bug this fixes: each gate firing its own reset).
-	implReqs := exec.reqsFor("implement")
+	implReqs := exec.requestsFor("implement")
 	if len(implReqs) != 2 {
 		t.Fatalf("implement dispatched %d times, want 2 (one coalesced rewind)", len(implReqs))
 	}
