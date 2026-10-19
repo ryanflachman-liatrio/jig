@@ -185,8 +185,8 @@ func TestStepsResetRoundTrip(t *testing.T) {
 
 // allEventInstances enumerates one representative value for every Event union
 // member. TestEventExhaustiveness uses this to verify the journal handles them all.
-// ADD NEW EVENT TYPES HERE — the test will fail if eventKind returns "unknown"
-// or if no decoder exists for the kind.
+// ADD NEW EVENT TYPES HERE — TestAllEventInstancesCoversEveryEvent fails when
+// an isEvent implementation is missing from this list.
 var allEventInstances = []Event{
 	RunStarted{RunID: "r", Workflow: "w", Steps: []string{"a"}},
 	RunFinished{RunID: "r", Failed: false},
@@ -196,7 +196,9 @@ var allEventInstances = []Event{
 	StepMessage{RunID: "r", StepID: "s", Seq: 1, Iteration: 0},
 	GateResult{RunID: "r", StepID: "s", Passed: true},
 	RouteSelected{RunID: "r", StepID: "s", RouteIndex: 1, Goto: "s", Iteration: 1, Max: 3},
+	RouteCapExceeded{RunID: "r", StepID: "s", RouteIndex: 1, Goto: "s", Iteration: 4, Max: 3},
 	ReviewRequest{RunID: "r", StepID: "s", Choices: []string{"approve"}},
+	ReviewSubmitted{RunID: "r", StepID: "s", RoundID: "g000-i000", Verdict: "approve", CommentCount: 2},
 	InputRequest{RunID: "r", StepID: "s"},
 	RunError{RunID: "r", Err: "boom"},
 	RecoveryRequest{RunID: "r", StepID: "s", Err: "failed"},
