@@ -137,7 +137,7 @@ func phRunValidateGate(s *scheduler, m stepDoneMsg, wfStep *workflow.Step) postE
 // No-ops when there is no run branch (persistence-off / non-git) or the step has
 // no worktree (read-only step): nothing to integrate.
 func phSquashMergeIntegration(s *scheduler, m stepDoneMsg, _ *workflow.Step) postExecDecision {
-	if s.runBranch == "" {
+	if s.branch.name == "" {
 		return decisionContinue
 	}
 	wt, ok := s.worktrees[m.stepID]
@@ -146,7 +146,7 @@ func phSquashMergeIntegration(s *scheduler, m stepDoneMsg, _ *workflow.Step) pos
 	}
 
 	sha, conflict, err := squashMergeStep(
-		s.repoRoot, s.runWorktree, wt.path, s.stepBranchName(m.stepID), m.stepID,
+		s.repoRoot, s.branch.worktree, wt.path, s.stepBranchName(m.stepID), m.stepID,
 	)
 	if err != nil {
 		res := ensureResult(s, m.stepID)
@@ -161,7 +161,7 @@ func phSquashMergeIntegration(s *scheduler, m stepDoneMsg, _ *workflow.Step) pos
 		// auto-resolving. The conflicted state is left in the run worktree for the
 		// operator to resolve; the step parks but the run stays alive. Resolution
 		// arrives via Run.ResolveIntegration → handleResolveIntegration.
-		paths := mergeConflictPaths(s.runWorktree)
+		paths := mergeConflictPaths(s.branch.worktree)
 		from := s.states[m.stepID].Status
 		s.transition(m.stepID, from, step.StatusAwaitingIntegration)
 		s.emit(s.integrationConflictRequest(m.stepID, paths, ""))
@@ -176,7 +176,7 @@ func phSquashMergeIntegration(s *scheduler, m stepDoneMsg, _ *workflow.Step) pos
 func (s *scheduler) integrationConflictRequest(stepID string, paths []string, resolution string) IntegrationConflictRequest {
 	st := s.stepByID(stepID)
 	return IntegrationConflictRequest{
-		RunID: s.runID, StepID: stepID, Paths: paths, Worktree: s.runWorktree,
+		RunID: s.runID, StepID: stepID, Paths: paths, Worktree: s.branch.worktree,
 		CanAgentResolve: s.resolver != nil && st != nil && st.Type == workflow.StepAgent,
 		Resolution:      resolution,
 	}

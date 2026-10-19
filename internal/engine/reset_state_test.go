@@ -58,12 +58,12 @@ run = "true"
 `)
 	repo := t.TempDir()
 	initRepo(t, repo)
-	s.repoRoot, s.runWorktree = repo, repo
+	s.repoRoot, s.branch.worktree = repo, repo
 	head, err := currentHEAD(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s.runBaseSHA = head
+	s.branch.baseSHA = head
 	s.states["target"].Status = step.StatusSucceeded
 	s.states["survivor"].Status = step.StatusSucceeded
 

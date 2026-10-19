@@ -45,6 +45,10 @@ type stepRuntime struct {
 	// does not block its dependents.
 	skippedByOperator bool
 
+	// reaped marks a live worker cancelled because a security escalation
+	// parked its step. Its completion only records the result: by the time it
+	// lands the operator may already have settled the step.
+	reaped bool
 	// stopping marks a worker cancelled by Run.Stop. Its stepDoneMsg routes to
 	// StatusStopped instead of the failure path.
 	stopping bool

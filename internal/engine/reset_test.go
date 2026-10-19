@@ -162,8 +162,8 @@ run = "echo d"
 
 	// Build a scheduler with the run worktree and stepCommits populated.
 	s := buildScheduler(t, toml)
-	s.runWorktree = wtPath
-	s.runBaseSHA = baseSHA
+	s.branch.worktree = wtPath
+	s.branch.baseSHA = baseSHA
 	s.stepCommits = map[string]string{
 		"a": shaA,
 		"d": shaD,

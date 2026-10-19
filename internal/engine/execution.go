@@ -40,7 +40,7 @@ func (s *scheduler) acquireExecutionWorkspace(st *workflow.Step) (executionWorks
 	// An empty run worktree is the persistence-off/non-git path. There is no
 	// durable repository state to snapshot, so callers retain their existing
 	// configured-CWD behavior.
-	if s.runWorktree == "" {
+	if s.branch.worktree == "" {
 		return workspace, nil
 	}
 
@@ -51,7 +51,7 @@ func (s *scheduler) acquireExecutionWorkspace(st *workflow.Step) (executionWorks
 				workspace.BaseSHA = existing.base
 				return workspace, nil
 			}
-			tip, err := currentHEAD(s.runWorktree)
+			tip, err := currentHEAD(s.branch.worktree)
 			if err != nil {
 				return executionWorkspace{}, fmt.Errorf("read run branch tip for step %q: %w", st.ID, err)
 			}
@@ -70,7 +70,7 @@ func (s *scheduler) acquireExecutionWorkspace(st *workflow.Step) (executionWorks
 		}
 
 		path := filepath.Join(s.jigRoot, "worktrees", s.runID, st.ID)
-		baseSHA, err := createWorktreeAt(s.repoRoot, path, s.stepBranchName(st.ID), s.runBranch)
+		baseSHA, err := createWorktreeAt(s.repoRoot, path, s.stepBranchName(st.ID), s.branch.name)
 		if err != nil {
 			return executionWorkspace{}, fmt.Errorf("create mutation workspace for step %q: %w", st.ID, err)
 		}
@@ -85,7 +85,7 @@ func (s *scheduler) acquireExecutionWorkspace(st *workflow.Step) (executionWorks
 	}
 
 	path := filepath.Join(s.jigRoot, "worktrees", s.runID, "views", st.ID)
-	baseSHA, err := createWorktreeAt(s.repoRoot, path, s.executionViewBranchName(st.ID), s.runBranch)
+	baseSHA, err := createWorktreeAt(s.repoRoot, path, s.executionViewBranchName(st.ID), s.branch.name)
 	if err != nil {
 		return executionWorkspace{}, fmt.Errorf("create read-only execution view for step %q: %w", st.ID, err)
 	}

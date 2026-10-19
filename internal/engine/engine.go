@@ -809,10 +809,7 @@ type scheduler struct {
 	// maps stepID → the sha of that step's squash commit, reconstructable from the
 	// run branch's `jig-step:` trailers. All three stay "" / empty on the
 	// persistence-off / non-git path, where steps run in place with no integration.
-	runBranch   string            // per-run integration branch name; "" when persistence-off
-	runWorktree string            // run worktree absolute path; "" when persistence-off
-	runBaseSHA  string            // working-branch HEAD the run branch was rooted at
-	baseBranch  string            // user's working branch name (final-merge target)
+	branch      runBranch         // per-run integration branch; zero when persistence-off
 	stepCommits map[string]string // stepID → squash-merge commit sha on the run branch
 
 	// Final-merge gate (spec 06 A3): a pre-RunFinished completion step. When the
@@ -1315,6 +1312,15 @@ func (s *scheduler) anyFailed() bool {
 	return false
 }
 
+// runBranch is the run's integration branch (spec 06). Every field is "" on
+// the persistence-off / non-git path, and integration keys off that.
+type runBranch struct {
+	name     string // per-run integration branch name
+	worktree string // run worktree absolute path
+	baseSHA  string // working-branch HEAD the run branch was rooted at
+	base     string // user's working branch name (final-merge target)
+}
+
 // setupRunBranch creates the per-run integration branch at the working-branch
 // HEAD and a run worktree checked out on it, recorded on the scheduler. It runs
 // once at run start on the scheduler goroutine, before the dispatch loop.
@@ -1344,21 +1350,21 @@ func (s *scheduler) setupRunBranch() error {
 	if _, err := createWorktree(s.repoRoot, wtPath, branch); err != nil {
 		return err
 	}
-	s.runBranch = branch
-	s.runWorktree = wtPath
-	s.runBaseSHA = head
+	s.branch.name = branch
+	s.branch.worktree = wtPath
+	s.branch.baseSHA = head
 	// Record the user's working branch as the final-merge target (spec 06 A3).
 	// A detached HEAD yields "HEAD" here; the final merge still lands onto whatever
 	// repoRoot has checked out, so the name is informational for the gate.
 	if out, berr := gitCmd(s.repoRoot, "rev-parse", "--abbrev-ref", "HEAD"); berr == nil {
-		s.baseBranch = strings.TrimSpace(out)
+		s.branch.base = strings.TrimSpace(out)
 	}
 	return nil
 }
 
 // cleanupWorktrees removes all active step worktrees (and their ephemeral
 // per-run branches) plus the run worktree. It is idempotent: it clears
-// s.worktrees and s.runWorktree as it goes, so a second call is a no-op.
+// s.worktrees and s.branch.worktree as it goes, so a second call is a no-op.
 // Callers must invoke this BEFORE emitting RunFinished so that the git
 // subprocesses finish before the caller's goroutine signals completion.
 func (s *scheduler) cleanupWorktrees() {
@@ -1376,9 +1382,9 @@ func (s *scheduler) cleanupWorktrees() {
 	}
 	// Remove the run worktree but KEEP the run branch: it is the run's
 	// integration history, left for inspection and for the final merge gate.
-	if s.runWorktree != "" {
-		_ = removeWorktree(s.repoRoot, s.runWorktree)
-		s.runWorktree = ""
+	if s.branch.worktree != "" {
+		_ = removeWorktree(s.repoRoot, s.branch.worktree)
+		s.branch.worktree = ""
 	}
 }
 
@@ -1948,8 +1954,12 @@ func (s *scheduler) handleSecurityFinding(sf SecurityFinding) {
 		// inFlight. The step is already parked at StatusAwaitingRecovery, so the
 		// completing worker is recorded-and-kept-parked (see handle(stepDoneMsg))
 		// rather than double-counted when the human later retries.
+		// The registry entry goes with it, so a replacement dispatch registers
+		// its own and the reaped completion cannot cancel that.
 		if cancel, ok := s.stepCancels[sf.StepID]; ok {
 			cancel()
+			delete(s.stepCancels, sf.StepID)
+			s.rt(sf.StepID).reaped = true
 		}
 		// StatusAwaitingRecovery: already parked; finding recorded above.
 		// Terminal states (succeeded, failed, skipped, stopped): record only.
@@ -2027,7 +2037,7 @@ func (s *scheduler) handleReset(m resetMsg) {
 		reply(ResetResult{}, &ResetError{Code: "in_flight", Target: m.stepID, Err: fmt.Errorf("run has %d worker(s) in flight", s.slots.inFlight)})
 		return
 	}
-	if s.runWorktree == "" {
+	if s.branch.worktree == "" {
 		reply(ResetResult{}, &ResetError{Code: "persistence_required", Target: m.stepID, Err: fmt.Errorf("run has no git worktree")})
 		return
 	}
@@ -2085,20 +2095,20 @@ func (s *scheduler) handleReset(m resetMsg) {
 
 	// Rewind the run branch and replay independent survivors.
 	if rewindTo != "" {
-		if out, err := gitCmd(s.runWorktree, "reset", "--hard", rewindTo); err != nil {
+		if out, err := gitCmd(s.branch.worktree, "reset", "--hard", rewindTo); err != nil {
 			s.emit(RunError{RunID: s.runID,
 				Err: fmt.Sprintf("reset: git reset --hard %s: %v — %s", rewindTo, err, strings.TrimSpace(out))})
 			reply(ResetResult{}, &ResetError{Code: "git_reset", Target: m.stepID, Err: fmt.Errorf("git reset --hard %s: %w: %s", rewindTo, err, strings.TrimSpace(out))})
 			return
 		}
 		for _, sha := range survivors {
-			out, err := gitCmd(s.runWorktree, "cherry-pick", sha)
+			out, err := gitCmd(s.branch.worktree, "cherry-pick", sha)
 			if err != nil {
 				// Conflict: abort the cherry-pick and leave the run parked. The
 				// conflicted paths are surfaced via IntegrationConflictRequest,
 				// reusing the gate from Foundation A (spec 06 A2).
-				_, _ = gitCmd(s.runWorktree, "cherry-pick", "--abort")
-				paths := mergeConflictPaths(s.runWorktree)
+				_, _ = gitCmd(s.branch.worktree, "cherry-pick", "--abort")
+				paths := mergeConflictPaths(s.branch.worktree)
 				s.emit(IntegrationConflictRequest{RunID: s.runID, StepID: m.stepID, Paths: paths})
 				s.emit(RunError{RunID: s.runID,
 					Err: fmt.Sprintf("reset: cherry-pick %s: conflict — %s", sha, strings.TrimSpace(out))})
@@ -2293,7 +2303,7 @@ func (s *scheduler) handleResolveIntegration(m resolveIntegrationMsg) {
 	if m.abort {
 		// Discard the conflicted/staged squash so the run worktree is clean, then
 		// fail the step through the normal failure policy (→ recovery gate).
-		if out, err := gitCmd(s.runWorktree, "reset", "--hard"); err != nil {
+		if out, err := gitCmd(s.branch.worktree, "reset", "--hard"); err != nil {
 			// The run worktree still holds the conflicted squash; failing the step
 			// now would let the next integration build on it. Stay parked.
 			s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("abort integration for %q: reset run worktree: %v — %s", m.stepID, err, strings.TrimSpace(out))})
@@ -2314,14 +2324,14 @@ func (s *scheduler) handleResolveIntegration(m resolveIntegrationMsg) {
 
 	// Resolve: refuse while unmerged paths remain — the operator must `git add`
 	// their resolution first (standard git conflict resolution).
-	if len(mergeConflictPaths(s.runWorktree)) > 0 {
+	if len(mergeConflictPaths(s.branch.worktree)) > 0 {
 		s.emit(RunError{
 			RunID: s.runID,
 			Err:   fmt.Sprintf("step %q: unresolved conflicts remain in the run worktree", m.stepID),
 		})
 		return // stay parked
 	}
-	if out, err := gitCmd(s.runWorktree, "add", "-A"); err != nil {
+	if out, err := gitCmd(s.branch.worktree, "add", "-A"); err != nil {
 		s.emit(RunError{
 			RunID: s.runID,
 			Err:   fmt.Sprintf("stage resolved conflict for %q: %v — %s", m.stepID, err, strings.TrimSpace(out)),
@@ -2329,14 +2339,14 @@ func (s *scheduler) handleResolveIntegration(m resolveIntegrationMsg) {
 		return
 	}
 	msg := m.stepID + "\n\njig-step: " + m.stepID
-	if out, err := gitCmd(s.runWorktree, "commit", "-m", msg); err != nil {
+	if out, err := gitCmd(s.branch.worktree, "commit", "-m", msg); err != nil {
 		s.emit(RunError{
 			RunID: s.runID,
 			Err:   fmt.Sprintf("commit resolved conflict for %q: %v — %s", m.stepID, err, strings.TrimSpace(out)),
 		})
 		return // stay parked
 	}
-	if sha, err := currentHEAD(s.runWorktree); err == nil {
+	if sha, err := currentHEAD(s.branch.worktree); err == nil {
 		s.stepCommits[m.stepID] = sha
 	}
 	wfStep := s.stepByID(m.stepID)
@@ -2362,7 +2372,7 @@ func (s *scheduler) handleResolveIntegrationWithAgent(m resolveIntegrationWithAg
 		return
 	}
 	s.restoredHold = false
-	paths := mergeConflictPaths(s.runWorktree)
+	paths := mergeConflictPaths(s.branch.worktree)
 	if len(paths) == 0 {
 		s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("step %q: no unresolved integration conflict remains", m.stepID)})
 		return
@@ -2371,7 +2381,7 @@ func (s *scheduler) handleResolveIntegrationWithAgent(m resolveIntegrationWithAg
 	seq := s.integrationSeq
 	s.rt(m.stepID).resolvingSeq = seq
 	ctx, resolver, inbox := s.runCtx, s.resolver, s.inbox
-	req := IntegrationResolutionRequest{RunID: s.runID, Step: st, Worktree: s.runWorktree, Conflicts: paths}
+	req := IntegrationResolutionRequest{RunID: s.runID, Step: st, Worktree: s.branch.worktree, Conflicts: paths}
 	go func() {
 		result, err := resolver.ResolveIntegration(ctx, req, conflictReporter{})
 		select {
@@ -2404,12 +2414,12 @@ func (s *scheduler) handleIntegrationResolved(m integrationResolvedMsg) {
 		s.emit(RunError{RunID: s.runID, Err: detail})
 		return
 	}
-	if unresolved := mergeConflictPaths(s.runWorktree); len(unresolved) > 0 {
+	if unresolved := mergeConflictPaths(s.branch.worktree); len(unresolved) > 0 {
 		s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("step %q: agent left unresolved conflicts: %s", m.stepID, strings.Join(unresolved, ", "))})
 		return
 	}
 	if len(st.MutationPaths) > 0 {
-		changed := strings.Fields(strings.TrimSpace(gitOutput(s.runWorktree, "diff", "--name-only", "HEAD")))
+		changed := strings.Fields(strings.TrimSpace(gitOutput(s.branch.worktree, "diff", "--name-only", "HEAD")))
 		for _, path := range changed {
 			if !mutationPathAllowed(path, st.MutationPaths) {
 				s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("step %q: agent changed %q outside mutation_paths", m.stepID, path)})
@@ -2445,15 +2455,15 @@ func (s *scheduler) requestFinalMergeIfNeeded() bool {
 	if s.awaitingFinalMerge {
 		return true // gate already presented; still waiting on the operator
 	}
-	if s.runBranch == "" || s.runWorktree == "" || s.anyFailed() {
+	if s.branch.name == "" || s.branch.worktree == "" || s.anyFailed() {
 		return false
 	}
-	head, err := currentHEAD(s.runWorktree)
-	if err != nil || head == s.runBaseSHA {
+	head, err := currentHEAD(s.branch.worktree)
+	if err != nil || head == s.branch.baseSHA {
 		return false // run branch is empty — nothing to merge
 	}
 	s.awaitingFinalMerge = true
-	s.emit(FinalMergeRequest{RunID: s.runID, RunBranch: s.runBranch, Base: s.baseBranch})
+	s.emit(FinalMergeRequest{RunID: s.runID, RunBranch: s.branch.name, Base: s.branch.base})
 	return true
 }
 
@@ -2467,7 +2477,7 @@ func (s *scheduler) handleFinalMerge(m finalMergeMsg) {
 		return // stale or duplicate
 	}
 	if m.approve {
-		conflict, err := finalMerge(s.repoRoot, s.baseBranch, s.runBranch)
+		conflict, err := finalMerge(s.repoRoot, s.branch.base, s.branch.name)
 		if err != nil {
 			s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("final merge: %v", err)})
 			return // stay parked; the operator can retry or discard
@@ -2478,7 +2488,7 @@ func (s *scheduler) handleFinalMerge(m finalMergeMsg) {
 			// and stay parked so the operator can discard (or fix base and re-approve).
 			s.emit(RunError{
 				RunID: s.runID,
-				Err:   fmt.Sprintf("final merge conflicts with %s; run branch %s left for manual merge", s.baseBranch, s.runBranch),
+				Err:   fmt.Sprintf("final merge conflicts with %s; run branch %s left for manual merge", s.branch.base, s.branch.name),
 			})
 			return
 		}
@@ -3360,7 +3370,7 @@ func (s *scheduler) expandFanOutClosure(closure []string) []string {
 //     closure but sit after the rewind point; the caller cherry-picks these back
 //     after the reset to preserve independent parallel branches.
 func (s *scheduler) rewindPlan(targetID string) (rewindTo string, survivors []string) {
-	if s.runWorktree == "" || len(s.stepCommits) == 0 {
+	if s.branch.worktree == "" || len(s.stepCommits) == 0 {
 		return "", nil
 	}
 
@@ -3388,8 +3398,8 @@ func (s *scheduler) rewindPlan(targetID string) (rewindTo string, survivors []st
 
 	// Walk the run-branch commits oldest-first. Using runBaseSHA..HEAD keeps
 	// us in the run branch's own history without touching the user's branch.
-	out, err := gitCmd(s.runWorktree, "log", "--format=%H", "--reverse",
-		s.runBaseSHA+"..HEAD")
+	out, err := gitCmd(s.branch.worktree, "log", "--format=%H", "--reverse",
+		s.branch.baseSHA+"..HEAD")
 	if err != nil || strings.TrimSpace(out) == "" {
 		return "", nil
 	}
@@ -3416,7 +3426,7 @@ func (s *scheduler) rewindPlan(targetID string) (rewindTo string, survivors []st
 	// If the earliest closure commit is the very first run-branch commit,
 	// rewind all the way back to the base SHA (the run-branch root).
 	if firstIdx == 0 {
-		rewindTo = s.runBaseSHA
+		rewindTo = s.branch.baseSHA
 	} else {
 		rewindTo = commits[firstIdx-1]
 	}

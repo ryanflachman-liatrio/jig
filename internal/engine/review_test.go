@@ -158,8 +158,8 @@ output_type = { enum = ["approve"] }
 
 func reviewScheduler(runWorktree string, fields map[string]any) *scheduler {
 	return &scheduler{
-		runWorktree: runWorktree,
-		runDir:      datastore.RunAt(tdir(runWorktree)),
+		branch: runBranch{worktree: runWorktree},
+		runDir: datastore.RunAt(tdir(runWorktree)),
 		states: map[string]*step.State{
 			"write": {ID: "write", Result: &step.Result{Status: step.StatusSucceeded}},
 			"gate":  {ID: "gate"},

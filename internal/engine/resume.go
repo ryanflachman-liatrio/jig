@@ -306,9 +306,9 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 		m.mu.Lock()
 		delete(m.runs, runID)
 		m.mu.Unlock()
-		if s.runWorktree != "" && len(checkpoint.integrations) == 0 {
-			_ = removeWorktree(s.repoRoot, s.runWorktree)
-			s.runWorktree = ""
+		if s.branch.worktree != "" && len(checkpoint.integrations) == 0 {
+			_ = removeWorktree(s.repoRoot, s.branch.worktree)
+			s.branch.worktree = ""
 		}
 		_ = w.Close()
 		cancel()
@@ -821,7 +821,7 @@ func (s *scheduler) rehydrateParks(checkpoint *unfinishedCheckpoint) ([]Event, e
 				events = append(events, request)
 			}
 		case step.StatusAwaitingIntegration:
-			paths := mergeConflictPaths(s.runWorktree)
+			paths := mergeConflictPaths(s.branch.worktree)
 			if len(paths) == 0 {
 				return fmt.Errorf("resume: step %q is awaiting integration but the run worktree has no unresolved conflict markers", stepID)
 			}
@@ -887,7 +887,7 @@ func (s *scheduler) reattachStepWorktree(stepID string) {
 	if !registeredWorktree(s.repoRoot, path, s.stepBranchName(stepID)) {
 		return
 	}
-	if base, err := gitCmd(path, "merge-base", "HEAD", s.runBranch); err == nil {
+	if base, err := gitCmd(path, "merge-base", "HEAD", s.branch.name); err == nil {
 		wt.base = strings.TrimSpace(base)
 	}
 }
@@ -1066,21 +1066,21 @@ func (s *scheduler) restoreRunBranch(preserveConflict bool) error {
 			return err
 		}
 	}
-	s.runBranch = branch
-	s.runWorktree = wtPath
-	s.runBaseSHA = base
+	s.branch.name = branch
+	s.branch.worktree = wtPath
+	s.branch.baseSHA = base
 	if out, err := gitCmd(s.repoRoot, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
-		s.baseBranch = strings.TrimSpace(out)
+		s.branch.base = strings.TrimSpace(out)
 	}
-	if s.baseBranch != "" {
-		if out, err := gitCmd(s.repoRoot, "merge-base", branch, s.baseBranch); err == nil {
-			s.runBaseSHA = strings.TrimSpace(out)
+	if s.branch.base != "" {
+		if out, err := gitCmd(s.repoRoot, "merge-base", branch, s.branch.base); err == nil {
+			s.branch.baseSHA = strings.TrimSpace(out)
 		}
 	}
 	commits, err := stepCommitsFromLog(s.repoRoot, branch)
 	if err != nil {
 		_ = removeWorktree(s.repoRoot, wtPath)
-		s.runWorktree = ""
+		s.branch.worktree = ""
 		return err
 	}
 	s.stepCommits = commits

@@ -35,7 +35,6 @@ func (m stepDoneMsg) execute(s *scheduler) {
 	} else {
 		s.releaseSlots(&workflow.Step{ID: m.stepID})
 	}
-	s.rt(m.stepID).questions = nil
 	// Accrue this attempt's cost/tokens once, before any early-return branch
 	// (stopped, recovery-parked, failed) — every executor invocation was paid
 	// for, so retries, loop re-runs, and resumed sessions all add to the step's
@@ -49,6 +48,19 @@ func (m stepDoneMsg) execute(s *scheduler) {
 			st.SpentTokens += tok
 		}
 	}
+	// A worker reaped by a security escalation already had its context
+	// cancelled. Its step was parked when it was reaped and the operator may
+	// since have skipped, retried, or aborted it, so the completion must not
+	// drive the failure policy or touch a replacement worker's cancel func.
+	if rt := s.rt(m.stepID); rt.reaped {
+		rt.reaped = false
+		if st := s.states[m.stepID]; st != nil && st.Status == step.StatusAwaitingRecovery && m.result != nil {
+			st.Result = m.result
+		}
+		return
+	}
+	s.rt(m.stepID).questions = nil
+
 	// Release the worker's child context and drop it from the registry — the
 	// worker has exited, so its CancelFunc has no further use.
 	if cancel, ok := s.stepCancels[m.stepID]; ok {

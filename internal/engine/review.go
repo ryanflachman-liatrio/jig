@@ -90,7 +90,7 @@ func (s *scheduler) reviewContent(stepID string, target workflow.ReviewTarget) (
 		if err != nil {
 			return "", "", err
 		}
-		path, err := workflow.ExecutionPath(s.runWorktree, value)
+		path, err := workflow.ExecutionPath(s.branch.worktree, value)
 		if err != nil {
 			return "", "", fmt.Errorf("file target %q: %w", target.File, err)
 		}
@@ -160,8 +160,8 @@ func (s *scheduler) reviewSource(target workflow.ReviewTarget, path string) stri
 	if target.Kind() != workflow.ReviewTargetFile || path == "" {
 		return target.Reference()
 	}
-	if s.runWorktree != "" {
-		if rel, err := filepath.Rel(s.runWorktree, path); err == nil {
+	if s.branch.worktree != "" {
+		if rel, err := filepath.Rel(s.branch.worktree, path); err == nil {
 			return target.File + " (" + filepath.ToSlash(rel) + ")"
 		}
 	}

@@ -59,11 +59,11 @@ isolation = "worktree"
 		t.Errorf("reader view path = %q, want %q", firstView.Dir, want)
 	}
 
-	if err := os.WriteFile(filepath.Join(s.runWorktree, "integrated.txt"), []byte("new run state\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(s.branch.worktree, "integrated.txt"), []byte("new run state\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mustGit(t, s.runWorktree, "add", "integrated.txt")
-	mustGit(t, s.runWorktree, "commit", "-m", "integrate reader input")
+	mustGit(t, s.branch.worktree, "add", "integrated.txt")
+	mustGit(t, s.branch.worktree, "commit", "-m", "integrate reader input")
 	if err := os.WriteFile(filepath.Join(firstView.Dir, "stale-view.txt"), []byte("stale\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -103,11 +103,11 @@ isolation = "worktree"
 	if err := os.WriteFile(filepath.Join(firstMutation.Dir, "stale-mutation.txt"), []byte("stale\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(s.runWorktree, "next-iteration.txt"), []byte("new tip\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(s.branch.worktree, "next-iteration.txt"), []byte("new tip\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	mustGit(t, s.runWorktree, "add", "next-iteration.txt")
-	mustGit(t, s.runWorktree, "commit", "-m", "advance run branch")
+	mustGit(t, s.branch.worktree, "add", "next-iteration.txt")
+	mustGit(t, s.branch.worktree, "commit", "-m", "advance run branch")
 	thirdMutation, err := s.acquireExecutionWorkspace(mutator)
 	if err != nil {
 		t.Fatalf("recreate stale mutation workspace: %v", err)
