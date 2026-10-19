@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"github.com/ryanflachman-liatrio/jig/internal/interaction"
@@ -428,129 +427,27 @@ func restoreUnfinishedCheckpoint(runDir datastore.Run, wf *workflow.Workflow, ev
 	if wf == nil {
 		return nil, errors.New("resume: workflow is unavailable")
 	}
-	states := make(map[string]*step.State, len(wf.Steps))
-	for i := range wf.Steps {
-		states[wf.Steps[i].ID] = &step.State{ID: wf.Steps[i].ID, Status: step.StatusPending}
-	}
-	reviewRequests := make(map[string]ReviewRequest)
-	recoveryRequests := make(map[string]RecoveryRequest)
-	inputRequests := make(map[string]InputRequest)
-	questions := make(map[string][]AgentQuestion)
-	integrationRequests := make(map[string]IntegrationConflictRequest)
-	verdicts := make(map[string]string)
-	recoverySkipped := make(map[string]bool)
-	interruptedRecovery := make(map[string]bool)
-	lostInputRecovery := make(map[string]bool)
-	fanOut := newFanOutRegistry()
-	var started *RunStarted
-	var lastStatusAt time.Time
+	f := newCheckpointFold(runDir, wf)
 	for _, event := range events {
-		switch event := event.(type) {
-		case RunStarted:
-			startedEvent := event
-			started = &startedEvent
-		case RunFinished:
-			return nil, fmt.Errorf("resume: %w", ErrRunFinished)
-		case FanOutExpanded:
-			// FanOutExpanded is the authoritative creation record for runtime
-			// children (docs/plans/a8-dynamic-foreach-fan-out.md, "Durability,
-			// replay, and crash reopen"): rebuild the family and its children
-			// from the matching on-disk manifest — never by re-reading the
-			// producer — and register their step.State entries before any
-			// later StepStatus event for a child instance id is folded below.
-			rebuilt, err := rebuildFanOutFamily(runDir, wf, event, states)
-			if err != nil {
-				return nil, err
-			}
-			fanOut.addOrder(event.FamilyID)
-			fanOut.families[event.FamilyID] = rebuilt.family
-			for id, child := range rebuilt.children {
-				fanOut.children[id] = child
-			}
-			for id, item := range rebuilt.items {
-				fanOut.items[id] = item
-			}
-		case StepStatus:
-			if event.At.After(lastStatusAt) {
-				lastStatusAt = event.At
-			}
-			state := states[event.StepID]
-			if state == nil {
-				return nil, fmt.Errorf("resume: workflow no longer contains step %q", event.StepID)
-			}
-			state.Timing = event.ProjectTiming(state.Timing)
-			state.Status = event.To
-			state.Attempt = event.Attempt
-			state.Iteration = event.Iteration
-			state.Generation = event.Generation
-			if event.Cost != nil {
-				state.SpentUSD = *event.Cost
-			}
-			if event.Tokens > state.SpentTokens {
-				state.SpentTokens = event.Tokens
-			}
-			if terminalStatus(event.To) {
-				state.Result = loadPersistedResult(runDir, event.StepID, event.To, event.Err, event.Subtype)
-			}
-			if event.To == step.StatusFailed && event.RecoveryAction == RecoverSkip {
-				recoverySkipped[event.StepID] = true
-			} else if event.To != step.StatusFailed {
-				delete(recoverySkipped, event.StepID)
-			}
-			if event.To == step.StatusAwaitingRecovery && event.RecoveryAction == processInterruptedRecoveryAction {
-				interruptedRecovery[event.StepID] = true
-			} else {
-				delete(interruptedRecovery, event.StepID)
-			}
-			if event.To == step.StatusAwaitingRecovery && event.RecoveryAction == lostInputRecoveryAction {
-				lostInputRecovery[event.StepID] = true
-			} else {
-				delete(lostInputRecovery, event.StepID)
-			}
-			if event.To != step.StatusAwaitingReview {
-				delete(reviewRequests, event.StepID)
-			}
-			if event.To != step.StatusAwaitingRecovery {
-				delete(recoveryRequests, event.StepID)
-			}
-			if event.To != step.StatusNeedsInput {
-				delete(inputRequests, event.StepID)
-				delete(questions, event.StepID)
-			}
-			if event.To != step.StatusAwaitingIntegration {
-				delete(integrationRequests, event.StepID)
-			}
-		case ReviewRequest:
-			reviewRequests[event.StepID] = event
-		case ReviewSubmitted:
-			verdicts[event.StepID] = event.Verdict
-			delete(reviewRequests, event.StepID)
-		case RecoveryRequest:
-			recoveryRequests[event.StepID] = event
-		case InputRequest:
-			inputRequests[event.StepID] = event
-		case AgentQuestion:
-			questions[event.StepID] = upsertQuestion(questions[event.StepID], event)
-		case AgentQuestionResolved:
-			questions[event.StepID] = removeQuestion(questions[event.StepID], event.RequestID)
-		case IntegrationConflictRequest:
-			integrationRequests[event.StepID] = event
+		if err := f.apply(event); err != nil {
+			return nil, err
 		}
 	}
+	states, started, fanOut := f.states, f.started, f.fanOut
 	if started == nil || started.Workflow != wf.Meta.Name || len(started.Steps) != len(wf.Steps) {
 		return nil, errors.New("resume: workflow does not match the historical run")
 	}
 	// The process was absent after its last durable observation. Do not turn
 	// that unobserved interval into execution time when recovery parks workers.
 	for _, state := range states {
-		state.Timing.Pause(lastStatusAt)
+		state.Timing.Pause(f.lastStatusAt)
 	}
 	for i, id := range started.Steps {
 		if wf.Steps[i].ID != id {
 			return nil, fmt.Errorf("resume: workflow step order changed at %q", id)
 		}
 	}
-	for id, verdict := range verdicts {
+	for id, verdict := range f.verdicts {
 		if state := states[id]; state != nil {
 			if state.Result == nil {
 				state.Result = &step.Result{Status: state.Status}
@@ -569,59 +466,8 @@ func restoreUnfinishedCheckpoint(runDir datastore.Run, wf *workflow.Workflow, ev
 		integrations:        make(map[string]IntegrationConflictRequest),
 		stopped:             make(map[string]bool),
 		missingInputPayload: make(map[string]string),
-		recoverySkipped:     recoverySkipped,
+		recoverySkipped:     f.recoverySkipped,
 		fanOut:              fanOut,
-	}
-
-	// classifyPark applies the same durable-status classification to any step
-	// id — static or a runtime fan-out child — so a child parked mid-flight
-	// reopens through exactly the same Specs 20/21 path as a static step (the
-	// plan's "Durability, replay, and crash reopen").
-	classifyPark := func(id string) error {
-		state := states[id]
-		switch state.Status {
-		case step.StatusPending, step.StatusSucceeded, step.StatusSkipped, step.StatusFailed:
-		case step.StatusAwaitingReview:
-			req, ok := reviewRequests[id]
-			if !ok {
-				return fmt.Errorf("resume: step %q has no durable review request", id)
-			}
-			sess, err := restoreReviewSession(runDir, req)
-			if err != nil {
-				return err
-			}
-			checkpoint.reviewSessions[id] = sess
-		case step.StatusRunning, step.StatusValidating:
-			checkpoint.interrupted[id] = true
-		case step.StatusAwaitingRecovery:
-			req, ok := recoveryRequests[id]
-			if !ok {
-				errText := "step was awaiting recovery when the jig process exited"
-				if interruptedRecovery[id] {
-					errText = processInterruptedErr
-				} else if lostInputRecovery[id] {
-					errText = "process exited while step needed input, but its durable input could not be restored"
-				}
-				req = RecoveryRequest{RunID: started.RunID, StepID: id, Err: errText}
-			}
-			checkpoint.recoveries[id] = req
-		case step.StatusNeedsInput:
-			switch {
-			case len(questions[id]) > 0:
-				checkpoint.questions[id] = questions[id]
-			case inputRequests[id].StepID != "":
-				checkpoint.inputs[id] = inputRequests[id]
-			default:
-				checkpoint.missingInputPayload[id] = "process exited while step needed input, but no durable input request was found"
-			}
-		case step.StatusAwaitingIntegration:
-			checkpoint.integrations[id] = integrationRequests[id]
-		case step.StatusStopped:
-			checkpoint.stopped[id] = true
-		default:
-			return fmt.Errorf("resume: step %q has unsupported durable status %s", id, state.Status)
-		}
-		return nil
 	}
 
 	for i := range wf.Steps {
@@ -633,7 +479,7 @@ func restoreUnfinishedCheckpoint(runDir datastore.Run, wf *workflow.Workflow, ev
 		if wf.Steps[i].ForEach != nil && states[id].Status == step.StatusRunning {
 			continue
 		}
-		if err := classifyPark(id); err != nil {
+		if err := f.classifyPark(checkpoint, id); err != nil {
 			return nil, err
 		}
 	}
@@ -643,12 +489,12 @@ func restoreUnfinishedCheckpoint(runDir datastore.Run, wf *workflow.Workflow, ev
 			continue
 		}
 		for _, childID := range fam.Order {
-			if err := classifyPark(childID); err != nil {
+			if err := f.classifyPark(checkpoint, childID); err != nil {
 				return nil, err
 			}
 		}
 	}
-	if !checkpoint.hasOutstandingWork() && len(recoverySkipped) == 0 {
+	if !checkpoint.hasOutstandingWork() && len(f.recoverySkipped) == 0 {
 		return nil, errors.New("resume: run has no reopenable park")
 	}
 	return checkpoint, nil
