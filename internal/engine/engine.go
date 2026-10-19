@@ -3011,13 +3011,12 @@ func (s *scheduler) recordRoutes(stepID string, wfStep *workflow.Step, submitted
 				continue
 			}
 		}
-		automaticCheckRoute := wfStep.Type == workflow.StepCheck && s.states[stepID].Result != nil && (s.states[stepID].Result.Verdict == "fail" || s.states[stepID].Result.Verdict == "error")
-		s.recordRouteIntent(stepID, wfStep, route, i+1, submittedFeedback, automaticCheckRoute)
+		s.recordRouteIntent(stepID, wfStep, route, i+1, submittedFeedback)
 		return
 	}
 }
 
-func (s *scheduler) recordRouteIntent(stepID string, wfStep *workflow.Step, route workflow.Route, routeIndex int, submittedFeedback string, automaticCheckRoute bool) {
+func (s *scheduler) recordRouteIntent(stepID string, wfStep *workflow.Step, route workflow.Route, routeIndex int, submittedFeedback string) {
 	state := s.states[stepID]
 	s.emit(RouteSelected{RunID: s.runID, StepID: stepID, RouteIndex: routeIndex, When: route.When, Goto: route.Goto, Iteration: state.Iteration + 1, Max: route.MaxIterations})
 
@@ -3066,8 +3065,14 @@ func (s *scheduler) recordRouteIntent(stepID string, wfStep *workflow.Step, rout
 		max:                 route.MaxIterations,
 		routeIndex:          routeIndex,
 		when:                route.When,
-		automaticCheckRoute: automaticCheckRoute,
+		automaticCheckRoute: isFailedCheck(wfStep, state.Result),
 	})
+}
+
+// isFailedCheck reports whether a check step's verdict is a failure, which
+// makes its route an automatic remediation back-edge.
+func isFailedCheck(wfStep *workflow.Step, result *step.Result) bool {
+	return wfStep.Type == workflow.StepCheck && result != nil && (result.Verdict == "fail" || result.Verdict == "error")
 }
 
 // deferredByAutomaticCheckRoute prevents an evidence failure from racing into

@@ -19,7 +19,7 @@ func fireLoopNow(s *scheduler, loopers ...string) {
 	var gotoID string
 	for _, id := range loopers {
 		st := s.stepByID(id)
-		s.recordRouteIntent(id, st, st.Routes[0], 1, "", false)
+		s.recordRouteIntent(id, st, st.Routes[0], 1, "")
 		gotoID = st.Routes[0].Goto
 	}
 	if intent := s.pendingLoops[gotoID]; intent != nil {
