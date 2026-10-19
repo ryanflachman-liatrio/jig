@@ -795,10 +795,9 @@ type scheduler struct {
 	securitySignals  chan<- sentinel.StepSignal
 
 	// Phase 5: worktree lifecycle.
-	jigRoot    string            // .jig/ root; "" when persistence is disabled
-	repoRoot   string            // git repo root (parent of jigRoot)
-	worktrees  map[string]string // stepID → active worktree absolute path
-	wtBaseSHAs map[string]string // stepID → HEAD SHA captured at worktree creation
+	jigRoot   string                  // .jig/ root; "" when persistence is disabled
+	repoRoot  string                  // git repo root (parent of jigRoot)
+	worktrees map[string]stepWorktree // active mutation worktree per step
 	// executionViews holds read-only dispatch snapshots separately from mutation
 	// worktrees so they can never be captured, validated, or integrated as edits.
 	executionViews map[string]executionWorkspace
@@ -907,8 +906,7 @@ func newScheduler(
 		pendingLoops:    make(map[string]*loopIntent),
 		jigRoot:         jigRoot,
 		repoRoot:        repoRoot,
-		worktrees:       make(map[string]string),
-		wtBaseSHAs:      make(map[string]string),
+		worktrees:       make(map[string]stepWorktree),
 		executionViews:  make(map[string]executionWorkspace),
 		stepCommits:     make(map[string]string),
 		reviewSessions:  make(map[string]review.Session),
@@ -1371,8 +1369,8 @@ func (s *scheduler) cleanupWorktrees() {
 	// Best-effort: this also runs as the deferred safety net after RunFinished,
 	// when no further event may be journaled. Leftovers are reclaimed by the
 	// stale worktree retry in createWorktreeAt.
-	for stepID, path := range s.worktrees {
-		_ = removeWorktree(s.repoRoot, path)
+	for stepID, wt := range s.worktrees {
+		_ = removeWorktree(s.repoRoot, wt.path)
 		_, _ = gitCmd(s.repoRoot, "branch", "-D", s.stepBranchName(stepID))
 		delete(s.worktrees, stepID)
 	}
@@ -2139,15 +2137,14 @@ func (s *scheduler) handleReset(m resetMsg) {
 		// Remove the step worktree so re-dispatch creates a fresh one rooted at
 		// the (now-rewound) run branch HEAD. Leaving a stale worktree would cause
 		// squash-merge to diverge from the reset state.
-		if path, ok := s.worktrees[id]; ok {
-			if err := removeWorktree(s.repoRoot, path); err != nil {
-				s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("reset %q: remove worktree %s: %v", id, path, err)})
+		if wt, ok := s.worktrees[id]; ok {
+			if err := removeWorktree(s.repoRoot, wt.path); err != nil {
+				s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("reset %q: remove worktree %s: %v", id, wt.path, err)})
 			}
 			if out, err := gitCmd(s.repoRoot, "branch", "-D", s.stepBranchName(id)); err != nil {
 				s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("reset %q: delete branch %s: %v — %s", id, s.stepBranchName(id), err, strings.TrimSpace(out))})
 			}
 			delete(s.worktrees, id)
-			delete(s.wtBaseSHAs, id)
 		}
 
 		delete(s.stepCommits, id)
@@ -2234,7 +2231,7 @@ func (s *scheduler) handleRecover(m recoverMsg) {
 }
 
 func (s *scheduler) discardMutationWorkspace(stepID string) error {
-	path := s.worktrees[stepID]
+	path := s.worktrees[stepID].path
 	if path == "" {
 		return nil
 	}
@@ -2267,7 +2264,6 @@ func (s *scheduler) discardMutationWorkspace(stepID string) error {
 		_, _ = gitCmd(s.repoRoot, "worktree", "prune")
 	}
 	delete(s.worktrees, stepID)
-	delete(s.wtBaseSHAs, stepID)
 	s.rt(stepID).diff = ""
 	// createWorktreeAt uses -B and therefore resets any surviving branch ref to
 	// the current run tip. Branch deletion is only cleanup, not correctness.

@@ -882,14 +882,13 @@ func (s *scheduler) reattachStepWorktree(stepID string) {
 	if !directoryExists(path) {
 		return
 	}
-	s.worktrees[stepID] = path
+	wt := stepWorktree{path: path}
+	defer func() { s.worktrees[stepID] = wt }()
 	if !registeredWorktree(s.repoRoot, path, s.stepBranchName(stepID)) {
 		return
 	}
 	if base, err := gitCmd(path, "merge-base", "HEAD", s.runBranch); err == nil {
-		if base = strings.TrimSpace(base); base != "" {
-			s.wtBaseSHAs[stepID] = base
-		}
+		wt.base = strings.TrimSpace(base)
 	}
 }
 
@@ -967,11 +966,12 @@ func (s *scheduler) stepCanResume(stepID, sessionID string) bool {
 		return false
 	}
 	if st.Isolation == workflow.IsolationWorktree {
-		path := s.worktrees[stepID]
+		wt := s.worktrees[stepID]
+		path := wt.path
 		if path == "" && s.jigRoot != "" {
 			path = filepath.Join(s.jigRoot, "worktrees", s.runID, stepID)
 		}
-		if path == "" || !directoryExists(path) || s.wtBaseSHAs[stepID] == "" {
+		if path == "" || !directoryExists(path) || wt.base == "" {
 			return false
 		}
 	}

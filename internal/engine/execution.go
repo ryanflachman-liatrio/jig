@@ -46,28 +46,27 @@ func (s *scheduler) acquireExecutionWorkspace(st *workflow.Step) (executionWorks
 
 	if kind == executionWorkspaceMutation {
 		if existing, ok := s.worktrees[st.ID]; ok {
-			if s.rt(st.ID).resumeSession != "" && s.wtBaseSHAs[st.ID] != "" {
-				workspace.Dir = existing
-				workspace.BaseSHA = s.wtBaseSHAs[st.ID]
+			if s.rt(st.ID).resumeSession != "" && existing.base != "" {
+				workspace.Dir = existing.path
+				workspace.BaseSHA = existing.base
 				return workspace, nil
 			}
 			tip, err := currentHEAD(s.runWorktree)
 			if err != nil {
 				return executionWorkspace{}, fmt.Errorf("read run branch tip for step %q: %w", st.ID, err)
 			}
-			if s.wtBaseSHAs[st.ID] == tip {
-				workspace.Dir = existing
+			if existing.base == tip {
+				workspace.Dir = existing.path
 				workspace.BaseSHA = tip
 				return workspace, nil
 			}
-			if err := removeWorktree(s.repoRoot, existing); err != nil {
+			if err := removeWorktree(s.repoRoot, existing.path); err != nil {
 				return executionWorkspace{}, fmt.Errorf("replace stale mutation workspace for step %q: %w", st.ID, err)
 			}
 			if _, err := gitCmd(s.repoRoot, "branch", "-D", s.stepBranchName(st.ID)); err != nil {
 				return executionWorkspace{}, fmt.Errorf("delete stale mutation branch for step %q: %w", st.ID, err)
 			}
 			delete(s.worktrees, st.ID)
-			delete(s.wtBaseSHAs, st.ID)
 		}
 
 		path := filepath.Join(s.jigRoot, "worktrees", s.runID, st.ID)
@@ -75,8 +74,7 @@ func (s *scheduler) acquireExecutionWorkspace(st *workflow.Step) (executionWorks
 		if err != nil {
 			return executionWorkspace{}, fmt.Errorf("create mutation workspace for step %q: %w", st.ID, err)
 		}
-		s.worktrees[st.ID] = path
-		s.wtBaseSHAs[st.ID] = baseSHA
+		s.worktrees[st.ID] = stepWorktree{path: path, base: baseSHA}
 		workspace.Dir = path
 		workspace.BaseSHA = baseSHA
 		return workspace, nil
@@ -117,13 +115,21 @@ func (s *scheduler) releaseExecutionViewForStep(stepID string) {
 	}
 }
 
+// stepWorktree is a step's mutation worktree and the run-branch commit it was
+// created from (or, after reopen, its merge base), which diffs are taken
+// against. base is "" when it could not be determined.
+type stepWorktree struct {
+	path string
+	base string
+}
+
 // executionDirForStep returns the dispatch snapshot still held for a running
 // or just-completed step. Reader views live outside the mutation-worktree map
 // so validation cannot accidentally fall back to the caller's checkout.
 func (s *scheduler) executionDirForStep(stepID string) string {
 	st := s.stepByID(stepID)
 	if st != nil && st.Isolation == workflow.IsolationWorktree {
-		return s.worktrees[stepID]
+		return s.worktrees[stepID].path
 	}
 	if workspace, ok := s.executionViews[stepID]; ok {
 		return workspace.Dir

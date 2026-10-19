@@ -34,10 +34,10 @@ type postExecHandler func(s *scheduler, m stepDoneMsg, wfStep *workflow.Step) po
 // phCaptureWorktreeDiff snapshots the worktree diff after every execution
 // so downstream review steps always see the most-recent state.
 func phCaptureWorktreeDiff(s *scheduler, m stepDoneMsg, _ *workflow.Step) postExecDecision {
-	if path, ok := s.worktrees[m.stepID]; ok {
-		s.rt(m.stepID).diff = captureDiff(path, s.wtBaseSHAs[m.stepID])
+	if wt, ok := s.worktrees[m.stepID]; ok {
+		s.rt(m.stepID).diff = captureDiff(wt.path, wt.base)
 		if result := s.states[m.stepID].Result; result != nil {
-			result.ChangedFiles = changedFiles(path, s.wtBaseSHAs[m.stepID])
+			result.ChangedFiles = changedFiles(wt.path, wt.base)
 		}
 	}
 	return decisionContinue
@@ -140,13 +140,13 @@ func phSquashMergeIntegration(s *scheduler, m stepDoneMsg, _ *workflow.Step) pos
 	if s.runBranch == "" {
 		return decisionContinue
 	}
-	stepWorktree, ok := s.worktrees[m.stepID]
+	wt, ok := s.worktrees[m.stepID]
 	if !ok {
 		return decisionContinue // read-only step: no worktree, no commit
 	}
 
 	sha, conflict, err := squashMergeStep(
-		s.repoRoot, s.runWorktree, stepWorktree, s.stepBranchName(m.stepID), m.stepID,
+		s.repoRoot, s.runWorktree, wt.path, s.stepBranchName(m.stepID), m.stepID,
 	)
 	if err != nil {
 		res := ensureResult(s, m.stepID)

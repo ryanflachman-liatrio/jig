@@ -79,8 +79,8 @@ func (m stepDoneMsg) execute(s *scheduler) {
 		}
 		// Capture the partial diff now: on the normal path phCaptureWorktreeDiff
 		// does this, but a stopped worker never reaches the post-exec chain.
-		if path, ok := s.worktrees[m.stepID]; ok {
-			s.rt(m.stepID).diff = captureDiff(path, s.wtBaseSHAs[m.stepID])
+		if wt, ok := s.worktrees[m.stepID]; ok {
+			s.rt(m.stepID).diff = captureDiff(wt.path, wt.base)
 		}
 		from := s.states[m.stepID].Status
 		s.transition(m.stepID, from, step.StatusStopped)

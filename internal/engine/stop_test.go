@@ -275,8 +275,7 @@ run = "true"
 	// Simulate a step that was dispatched into the worktree and then stopped.
 	s.states["a"].Status = step.StatusRunning
 	s.slots.inFlight = 1
-	s.worktrees["a"] = repo
-	s.wtBaseSHAs["a"] = baseSHA
+	s.worktrees["a"] = stepWorktree{path: repo, base: baseSHA}
 	s.stepCancels["a"] = func() {}
 	s.rt("a").stopping = true
 
