@@ -1,9 +1,6 @@
 package monitor
 
 import (
-	"encoding/json"
-	"net/url"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -44,6 +41,7 @@ func quietMember(item transcriptItem, policy toolGroupPolicy) bool {
 }
 
 var compactToolPolicies = map[string]toolGroupPolicy{
+	"read":         {title: "Read", kind: "read"},
 	"edit":         {title: "Edit", kind: "edit"},
 	"write":        {title: "Write", kind: "write"},
 	"notebookedit": {title: "Edit notebook", kind: "notebookedit"},
@@ -114,6 +112,9 @@ func compactToolActivity(item transcriptItem, entries []transcript.Entry) *toolc
 	if activity.Title == "" {
 		activity.Title = use.Title
 	}
+	if activity.Summary == "" && len(activity.Input) == 0 {
+		activity.Summary = use.Summary
+	}
 	if activity.Kind == "" {
 		activity.Kind = use.Kind
 	}
@@ -123,6 +124,11 @@ func compactToolActivity(item transcriptItem, entries []transcript.Entry) *toolc
 	if len(activity.Input) == 0 {
 		activity.Input = append(activity.Input[:0], use.Input...)
 	}
+	if len(activity.Locations) == 0 {
+		locations := &toolcall.Activity{Locations: use.Locations}
+		activity.Locations = locations.Clone().Locations
+	}
+
 	return activity
 }
 
@@ -249,7 +255,11 @@ func readCompactRows(item transcriptItem, entries []transcript.Entry) []compactT
 		}
 		// target.path stays raw: it is the read-tree merge key, and masking it
 		// could merge two distinct files. Only the displayed text is masked.
-		row.text = previewText(shortFile(target.path))
+		if target.detail != "" {
+			row.text = previewText(target.detail)
+		} else {
+			row.text = previewText(shortFile(target.path))
+		}
 		if selectors := compactReadSelectors(target.selectors); len(selectors) > 0 {
 			row.suffix = shared.Theme.Chat.ToolMeta.Render(":" + strings.Join(selectors, ", "))
 		}
@@ -270,6 +280,7 @@ type readTarget struct {
 }
 
 type readGroupRow struct {
+	detail    string
 	path      string
 	selectors []string
 	state     toolDisplayState
@@ -290,55 +301,11 @@ func readTargetForActivity(activity *toolcall.Activity) (readTarget, bool) {
 	return readTarget{path: target}, true
 }
 
-func localReadPath(path string) bool {
-	if strings.Contains(path, "://") || strings.HasPrefix(strings.ToLower(path), "data:") {
-		return false
-	}
-	parsed, err := url.Parse(path)
-	if err != nil {
-		return false
-	}
-	// filepath.VolumeName preserves Windows drive paths while still rejecting
-	// URI schemes such as ssh:, https:, and file:.
-	return parsed.Scheme == "" || filepath.VolumeName(path) != ""
-}
-
 func readTargetForItem(item transcriptItem, entries []transcript.Entry) (readTarget, bool) {
 	if item.kind != transcriptItemToolExchange || item.toolUse == nil || !validBlockRef(*item.toolUse, entries) {
 		return readTarget{}, false
 	}
-	return readTargetForActivity(entries[item.toolUse.entryIdx].Blocks[item.toolUse.blockIdx].Activity())
-}
-
-func positiveIntArg(args map[string]json.RawMessage, key string) (int, bool) {
-	raw, ok := args[key]
-	if !ok {
-		return 0, false
-	}
-	var value int
-	if json.Unmarshal(raw, &value) != nil || value <= 0 {
-		return 0, false
-	}
-	return value, true
-}
-
-func readSelector(activity *toolcall.Activity) string {
-	if activity == nil {
-		return ""
-	}
-	args := decodeToolArgs(activity.Input)
-	if offset, ok := positiveIntArg(args, "offset"); ok {
-		if limit, hasLimit := positiveIntArg(args, "limit"); hasLimit {
-			return strconv.Itoa(offset) + "-" + strconv.Itoa(offset+limit-1)
-		}
-		return strconv.Itoa(offset)
-	}
-	for _, location := range activity.Locations {
-		if location.Line != nil && *location.Line > 0 {
-			return strconv.Itoa(*location.Line)
-		}
-	}
-	return ""
+	return readTargetForActivity(compactToolActivity(item, entries))
 }
 
 func readGroupRows(group transcriptItem, entries []transcript.Entry) []readGroupRow {
@@ -348,6 +315,11 @@ func readGroupRows(group transcriptItem, entries []transcript.Entry) []readGroup
 	for _, member := range group.groupMembers {
 		target, ok := readTargetForItem(member, entries)
 		if !ok {
+			// Location/title-only activities still have a useful summary, but
+			// no input path to use as a read-tree merge key.
+			if detail, usable := readSummaryForActivity(compactToolActivity(member, entries)); usable {
+				rows = append(rows, readGroupRow{detail: detail, state: member.displayState})
+			}
 			continue
 		}
 		idx, found := indexes[target.path]
@@ -359,7 +331,7 @@ func readGroupRows(group transcriptItem, entries []transcript.Entry) []readGroup
 		} else {
 			rows[idx].state = aggregateToolGroupState([]transcriptItem{{displayState: rows[idx].state}, member})
 		}
-		activity := entries[member.toolUse.entryIdx].Blocks[member.toolUse.blockIdx].Activity()
+		activity := compactToolActivity(member, entries)
 		selector := readSelector(activity)
 		if selector == "" {
 			continue

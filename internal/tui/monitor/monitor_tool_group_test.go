@@ -89,6 +89,7 @@ func TestCompactToolPolicyRegistry(t *testing.T) {
 		kind string
 		args map[string]any
 	}{
+		{"read", map[string]any{"file_path": "a.go"}},
 		{"edit", map[string]any{"file_path": "a.go"}},
 		{"write", map[string]any{"file_path": "a.go"}},
 		{"notebookedit", map[string]any{"notebook_path": "a.ipynb"}},
@@ -1593,5 +1594,39 @@ func TestMixedQuietBurstCapture(t *testing.T) {
 	}
 	if err := os.WriteFile(filepath.Join(dir, "06-task-02-mixed-burst.md"), []byte(capture), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestReadGroupUsesCompletedActivity(t *testing.T) {
+	for _, inputOnResult := range []bool{false, true} {
+		t.Run(fmt.Sprintf("input_on_result_%v", inputOnResult), func(t *testing.T) {
+			entries := readExchange("read", "synthetic/source.go", 0, 0, 0)
+			use, result := entries[0].Blocks[0].Tool, entries[1].Blocks[0].Tool
+			use.Title, use.Kind = "Tool", ""
+			result.Input = json.RawMessage(`{"file_path":"synthetic/source.go","offset":7,"limit":3}`)
+			if inputOnResult {
+				use.Input = nil
+			} else {
+				use.Input, result.Input = result.Input, nil
+			}
+			m := newMonitorWithSteps(t)
+			m.focus = focusTranscript
+			m.chatStep = "a"
+			m.compactToolGroups = true
+			m.setChatPage(transcript.Page{Entries: entries})
+			if len(m.chatItems) != 1 || m.chatItems[0].kind != transcriptItemToolGroup {
+				t.Fatalf("completed read was not grouped: %+v", m.chatItems)
+			}
+			body := ansi.Strip(m.itemTranscriptBody())
+			if !strings.Contains(body, "source.go:7-9") || strings.Contains(body, "synthetic output") {
+				t.Fatalf("unexpected collapsed read:\n%s", body)
+			}
+			m, _ = m.Update(key("enter"))
+			m, _ = m.Update(key("n"))
+			m, _ = m.Update(key("enter"))
+			if !strings.Contains(ansi.Strip(m.itemTranscriptBody()), "synthetic output") {
+				t.Fatal("expanded read lost completed output")
+			}
+		})
 	}
 }

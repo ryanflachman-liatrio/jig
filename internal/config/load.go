@@ -96,6 +96,9 @@ func loadFile(path string) (Config, error) {
 // that adds fields with a restricted domain (e.g. [ui] glyph_preset) extends
 // this method.
 func (c Config) validate() error {
+	if err := c.TUI.Opener.Validate(); err != nil {
+		return err
+	}
 	if c.UI.GlyphPreset != "" && c.UI.GlyphPreset != "ascii" && c.UI.GlyphPreset != "unicode" {
 		return ErrConfigInvalid
 	}

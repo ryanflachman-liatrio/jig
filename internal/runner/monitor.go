@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -100,16 +102,33 @@ func (a *MonitorAdapter) Dispatch(ctx context.Context, spec sentinel.MonitorSpec
 	dispatchCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	started := time.Now()
+	attempts := 1
 	result, launched, retryable, err := a.attempt(dispatchCtx, spec, windowText)
 	everLaunched := launched
 	if err != nil && launched && retryable {
 		// Single retry on a fresh session: a decode failure is treated as
 		// classifier flakiness, not a connection/timeout problem, so it gets
 		// exactly one more try inside the same dispatch timeout budget.
+		attempts++
 		result, launched, _, err = a.attempt(dispatchCtx, spec, windowText)
 		everLaunched = everLaunched || launched
 	}
 	result.Launched = everLaunched
+	if err != nil {
+		info := monitorFailureInfo(err)
+		info.Backend, info.Model = a.backend, spec.Model
+		cause := err
+		for errors.Unwrap(cause) != nil {
+			cause = errors.Unwrap(cause)
+		}
+		info.ErrorType = fmt.Sprintf("%T", cause)
+		if info.Model == "" {
+			info.Model = "backend default"
+		}
+		info.Attempts, info.ElapsedMS, info.TimeoutMS = attempts, time.Since(started).Milliseconds(), timeout.Milliseconds()
+		err = sentinel.NewMonitorFailure(info, err)
+	}
 	return result, err
 }
 
@@ -121,14 +140,21 @@ func (a *MonitorAdapter) Dispatch(ctx context.Context, spec sentinel.MonitorSpec
 func (a *MonitorAdapter) attempt(ctx context.Context, spec sentinel.MonitorSpec, windowText string) (result sentinel.MonitorResult, launched, retryable bool, err error) {
 	h, err := a.newHarness()
 	if err != nil {
-		return sentinel.MonitorResult{}, false, false, fmt.Errorf("monitor harness: %w", err)
+		return sentinel.MonitorResult{}, false, false, &monitorStageError{stage: "adapter_start", err: err}
 	}
 	sess, err := h.Open(ctx, monitorSessionSpec(a.backend, spec, windowText))
 	if err != nil {
-		return sentinel.MonitorResult{}, false, false, fmt.Errorf("monitor open: %w", err)
+		return sentinel.MonitorResult{}, false, false, &monitorStageError{stage: "session_open", err: err}
 	}
 	defer sess.Close()
 	result, retryable, err = drainMonitorEvents(ctx, sess.Messages())
+	if err != nil {
+		stage := "response"
+		if retryable {
+			stage = "verdict"
+		}
+		err = &monitorStageError{stage: stage, err: err}
+	}
 	return result, true, retryable, err
 }
 
@@ -238,4 +264,64 @@ func extractMonitorJSON(text string) (json.RawMessage, error) {
 		return nil, fmt.Errorf("no valid JSON found in response: %w", err)
 	}
 	return raw, nil
+}
+
+// Provider messages can include arbitrary transcript content. Classify them
+// into fixed explanations rather than copying their text into findings.
+type monitorStageError struct {
+	stage string
+	err   error
+}
+
+func (e *monitorStageError) Error() string { return e.err.Error() }
+func (e *monitorStageError) Unwrap() error { return e.err }
+
+func monitorFailureInfo(err error) sentinel.MonitorFailure {
+	info := sentinel.MonitorFailure{Stage: "dispatch", Reason: "backend_error", Summary: "The security classifier backend failed", NextStep: "Check the configured security.monitor_backend and security.monitor_model, and verify that backend works outside jig. Restart jig after fixing it."}
+	var stage *monitorStageError
+	if errors.As(err, &stage) {
+		info.Stage = stage.stage
+	}
+	text := strings.ToLower(err.Error())
+	var executable *exec.Error
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		info.Reason, info.Summary = "timeout", "The security classifier exceeded its time limit"
+		info.NextStep = "Check backend availability and response latency. Restart jig to re-enable this check."
+	case errors.Is(err, context.Canceled):
+		info.Reason, info.Summary = "canceled", "The security classifier was canceled"
+	case errors.As(err, &executable):
+		info.Reason, info.Summary = "adapter_unavailable", "The classifier executable could not be started"
+		info.NextStep = "Install the configured backend and ensure its executable and npx are available on PATH. Restart jig afterward."
+	case strings.Contains(text, "authentication") || strings.Contains(text, "not authenticated") || strings.Contains(text, "unauthorized") || strings.Contains(text, "not logged in"):
+		info.Reason, info.Summary = "authentication", "The classifier backend requires authentication"
+		info.NextStep = "Sign in to the configured monitor backend, then restart jig. The monitor backend can differ from the workflow agent backend."
+	case strings.Contains(text, "rate limit") || strings.Contains(text, "rate_limit") || strings.Contains(text, "429"):
+		info.Reason, info.Summary = "rate_limited", "The classifier backend rate limit was reached"
+		info.NextStep = "Wait for the provider limit to reset or select another monitor backend/model, then restart jig."
+	case strings.Contains(text, "model") && (strings.Contains(text, "unavailable") || strings.Contains(text, "not found") || strings.Contains(text, "not supported")):
+		info.Reason, info.Summary = "model_unavailable", "The configured classifier model is unavailable"
+		info.NextStep = "Choose a model available to your monitor backend in security.monitor_model, then restart jig."
+	case strings.Contains(text, "cwd") || strings.Contains(text, "working directory"):
+		info.Reason, info.Summary = "working_directory", "The adapter rejected the classifier working directory"
+		info.NextStep = "Check the classifier session working-directory configuration and directory access, then restart jig."
+	case strings.Contains(text, "did not advertise") || strings.Contains(text, "set model"):
+		info.Reason, info.Summary = "session_configuration", "The adapter could not apply the classifier session settings"
+		info.NextStep = "Check that the monitor model and backend are compatible with the installed adapter, then restart jig."
+	case info.Stage == "verdict":
+		info.Reason, info.Summary = "invalid_verdict", "The classifier did not return a valid security verdict"
+		if strings.Contains(text, "missing required fields") {
+			info.Summary = "The classifier verdict is missing required fields (flagged, severity, detail)"
+		} else if strings.Contains(text, "unknown severity") {
+			info.Summary = "The classifier returned an unsupported severity; expected low, medium, high, or critical"
+		} else if strings.Contains(text, "no structured output") {
+			info.Summary = "The classifier returned no structured security verdict"
+		} else if strings.Contains(text, "unknown field") {
+			info.Summary = "The classifier returned unexpected JSON fields; only flagged, severity, and detail are accepted"
+		}
+		info.NextStep = "Use a monitor model that follows the required JSON schema. One fresh-session retry was exhausted; restart jig after changing the monitor configuration."
+	case strings.Contains(text, "closed without result"):
+		info.Reason, info.Summary = "session_closed", "The classifier session ended without a result"
+	}
+	return info
 }

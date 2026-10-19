@@ -3487,9 +3487,9 @@ func (s *scheduler) transition(stepID string, from, to step.Status) bool {
 
 func (s *scheduler) transitionRecovery(stepID string, from, to step.Status, recoveryAction string) bool {
 	state := s.states[stepID]
-	previous := state.Status
+	previous, previousTiming := state.Status, state.Timing
 	if err := s.emit(s.transitionEvent(stepID, from, to, recoveryAction)); err != nil {
-		state.Status = previous
+		state.Status, state.Timing = previous, previousTiming
 		return false
 	}
 	// Centralized fan-out barrier settlement: every path that can complete a
@@ -3514,7 +3514,12 @@ func (s *scheduler) transitionRecovery(stepID string, from, to step.Status, reco
 func (s *scheduler) transitionEvent(stepID string, from, to step.Status, recoveryAction string) StepStatus {
 	state := s.states[stepID]
 	state.Status = to
+	at := time.Now().UTC()
+	state.Timing.Apply(to, at)
+	timing := state.Timing
 	ev := StepStatus{
+		At:             at,
+		Timing:         &timing,
 		RunID:          s.runID,
 		StepID:         stepID,
 		From:           from,

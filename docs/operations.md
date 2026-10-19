@@ -76,6 +76,35 @@ content, emits no duplicates, drains once after `RunFinished`, and otherwise
 continues until SIGINT/SIGTERM. Transcript content may contain model/tool
 secrets; this command does not claim retrospective redaction.
 
+## Read agent results
+
+For a persisted agent step, open `.jig/runs/<run-id>/steps/<step-id>/output.md`
+for its full human-readable deliverable. The Monitor file list exposes these
+artifacts:
+
+| File | Content |
+|---|---|
+| `output.md` | Final prose followed by rendered declared output fields, when present. |
+| `metadata.md` | Base status, confidence, summary, assumptions, issues, and block reason. Empty fields are omitted. |
+| `output.json` | Complete structured result, including base fields and declared documents/data. |
+| `transcript.jsonl` | Finalized conversation content, including the original response and tool activity; read through the transcript viewer or `jig logs`. |
+
+A matching final JSON envelope is removed from the readable deliverable; earlier
+JSON examples remain. JSON-only document responses are rendered as Markdown. If
+the agent supplies only base metadata, `output.md` renders that as its fallback.
+Bare downstream references such as `@research` consume the full `output.md`;
+field references such as `@edit.synthesis` continue to consume structured values.
+A declared agent `output` path receives the same readable deliverable.
+
+Per-attempt evidence under `evidence/` uses the generation/iteration/attempt
+prefix with `.output.md`, `.metadata.md`, and `.output.json` suffixes. Reset
+clears the current derived artifacts while retaining transcripts and attempt
+evidence. Persistence-off execution writes none of these files.
+
+New executions use this layout. Existing run artifacts are not rewritten:
+older runs can have a short structured rendering in `output.md` and the full
+response in `raw_result.md`. The original transcript remains available.
+
 ## Preflight a workflow
 
 ```bash
@@ -136,6 +165,35 @@ supervisor. Reset never means deleting a run. Resetting after `RunFinished` is
 still deferred.
 
 ## Export a run
+
+### Research workflow deliverables
+
+The repository's `.agents/jig/research.toml` reviews a research synthesis, a
+proposed implementation/action plan, five specialist reports, and the editorial
+response ledger. After approval, a deterministic command (requires Python 3)
+publishes the exact digest-verified review snapshots to
+`research-output/<run-id>/`: `report.md`, `plan.md`, specialist and response
+appendices, an index `README.md`, and a provenance `manifest.json`. Publication
+failure fails the step; no additional model call rewrites approved content.
+
+This directory is outside `.jig`, survives run cleanup, and is git-ignored by
+default. It is local output, not an automatic backup. Repository-relative links
+in approved Markdown retain their original source context. Research approval
+does not authorize executing the proposed plan.
+
+Publication can also be retried manually for a run with all eight approved
+documents (older runs without the plan do not satisfy this contract):
+
+```bash
+python3 scripts/publish_research.py \
+  --run-dir .jig/runs/RUN_ID --destination research-output
+```
+
+The publisher refuses an existing destination for that run and rejects missing,
+empty, oversized, altered, or unapproved document sets. Changing the workflow
+does not add steps to already completed runs.
+
+### Run evidence ZIP
 
 ```bash
 jig export RUN_ID --destination ./run-report.zip

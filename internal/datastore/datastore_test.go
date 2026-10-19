@@ -396,3 +396,36 @@ func TestStepIDs(t *testing.T) {
 		t.Fatalf("disabled StepIDs = %v, %v", ids, err)
 	}
 }
+
+func TestClearOutputsRemovesMetadataPreservingHistory(t *testing.T) {
+	st := RunAt(t.TempDir()).Step("research")
+	if err := st.Ensure(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(st.Dir(), "evidence"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	paths := []string{st.Output(), st.OutputJSON(), st.Metadata()}
+	history := []string{st.Transcript(), filepath.Join(st.Dir(), "evidence", "generation-000-iteration-000-attempt-000.output.md")}
+	for _, path := range append(paths, history...) {
+		if err := os.WriteFile(path, []byte("synthetic evidence"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.ClearOutputs(); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range paths {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Errorf("derived artifact remains: %s: %v", path, err)
+		}
+	}
+	for _, path := range history {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("history removed: %s: %v", path, err)
+		}
+	}
+	if (Run{}).Step("research").Metadata() != "" {
+		t.Error("persistence-off metadata path must be empty")
+	}
+}

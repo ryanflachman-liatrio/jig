@@ -170,10 +170,13 @@ func (b *Block) UnmarshalJSON(data []byte) error {
 // Retries and loop iterations append to the same file; entries are
 // distinguished by Attempt, Iteration, and Generation.
 type Entry struct {
-	Seq       int    `json:"seq"`     // monotonic per file, 1-based
-	Ts        string `json:"ts"`      // RFC3339 UTC, second precision
-	Iteration int    `json:"iter"`    // loop iteration (step.State.Iteration)
-	Attempt   int    `json:"attempt"` // retry attempt (step.State.Attempt)
+	// ExecutionDir is the runtime-resolved session directory, never tool input.
+	// Older records omit it; relative file targets then have unknown origin.
+	ExecutionDir string `json:"execution_dir,omitempty"`
+	Seq          int    `json:"seq"`     // monotonic per file, 1-based
+	Ts           string `json:"ts"`      // RFC3339 UTC, second precision
+	Iteration    int    `json:"iter"`    // loop iteration (step.State.Iteration)
+	Attempt      int    `json:"attempt"` // retry attempt (step.State.Attempt)
 	// Generation counts manual operator resets (step.State.Generation). A new
 	// generation appends to the same file; the monitor renders a separator.
 	Generation int     `json:"gen,omitempty"` // 0 on first run (omitted from JSON)

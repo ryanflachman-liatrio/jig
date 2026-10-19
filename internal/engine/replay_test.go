@@ -72,8 +72,8 @@ func TestReplayJournal_RoundTrip(t *testing.T) {
 	runDir := datastore.RunAt(t.TempDir())
 	want := []Event{
 		RunStarted{RunID: "r1", Workflow: "feature", Steps: []string{"a", "b"}},
-		StepStatus{RunID: "r1", StepID: "a", From: step.StatusPending, To: step.StatusRunning},
-		StepStatus{RunID: "r1", StepID: "a", From: step.StatusRunning, To: step.StatusSucceeded},
+		StepStatus{At: time.Date(2026, 10, 1, 10, 0, 0, 123456789, time.UTC), RunID: "r1", StepID: "a", From: step.StatusPending, To: step.StatusRunning},
+		StepStatus{At: time.Date(2026, 10, 1, 10, 0, 0, 123456789, time.UTC), RunID: "r1", StepID: "a", From: step.StatusRunning, To: step.StatusSucceeded},
 		RunFinished{RunID: "r1", Failed: false},
 	}
 	writeJournal(t, runDir, want)

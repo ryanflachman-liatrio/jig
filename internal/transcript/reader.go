@@ -148,7 +148,21 @@ func (r *Reader) Tail(n int) ([]Entry, error) {
 // TailPage returns the newest limit well-formed entries using memory
 // proportional to the page rather than the transcript.
 func (r *Reader) TailPage(limit int) (Page, error) {
-	return r.PageBefore(-1, limit)
+	end, err := r.CompleteCursor()
+	if err != nil {
+		return Page{}, err
+	}
+	return r.PageBefore(end, limit)
+}
+
+// LatestSeq returns the last finalized entry's sequence without scanning the
+// full transcript. A partial trailing append is not a finalized message.
+func (r *Reader) LatestSeq() (int, error) {
+	page, err := r.TailPage(1)
+	if err != nil || len(page.Entries) == 0 {
+		return 0, err
+	}
+	return page.Entries[len(page.Entries)-1].Seq, nil
 }
 
 // PageBefore returns up to limit well-formed entries ending before the opaque

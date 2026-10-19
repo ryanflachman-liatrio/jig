@@ -5,7 +5,7 @@ package monitor
 //
 //   1. running-step-no-step-end  — interior boundary row appears in the
 //      two-line gap between iteration 0 and iteration 1; the step-end
-//      row is absent because monitorStep.end is zero.
+//      row is absent because monitorStep.timing.EndedAt is zero.
 //   2. settled-success-step-end  — the step has succeeded; the step-end
 //      row appears below the last item with cost and tokens.
 //   3. settled-failed-step-end   — the step has failed; the error banner
@@ -131,7 +131,7 @@ func TestTurnMetadataRowVisualProof(t *testing.T) {
 			m.steps[stepIdx].status = tc.status
 			m.steps[stepIdx].cost = tc.cost
 			m.steps[stepIdx].tokens = tc.tokens
-			m.steps[stepIdx].end = tc.end
+			m.steps[stepIdx].timing.EndedAt = tc.end
 			m.steps[stepIdx].err = tc.errText
 
 			m.refreshPanels()
@@ -149,7 +149,7 @@ func TestTurnMetadataRowVisualProof(t *testing.T) {
 				m.transcriptInnerW, len(m.chatItems), len(m.chatVisibleItems))
 			fmt.Fprintf(&notes, "monitorStep{status=%s cost=%v tokens=%d end.IsZero=%v err=%q}\n",
 				m.steps[stepIdx].status, m.steps[stepIdx].cost, m.steps[stepIdx].tokens,
-				m.steps[stepIdx].end.IsZero(), m.steps[stepIdx].err)
+				m.steps[stepIdx].timing.EndedAt.IsZero(), m.steps[stepIdx].err)
 
 			visibleKeys := make([]transcriptItemKey, 0, len(m.chatVisibleItems))
 			for _, item := range m.chatVisibleItems {

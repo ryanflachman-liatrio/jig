@@ -116,7 +116,7 @@ func TestBoundaryBannerVisualProof(t *testing.T) {
 
 			stepIdx := m.index["a"]
 			m.steps[stepIdx].status = step.StatusRunning
-			m.steps[stepIdx].end = time.Time{}
+			m.steps[stepIdx].timing.EndedAt = time.Time{}
 
 			m.refreshPanels()
 			view := m.View()

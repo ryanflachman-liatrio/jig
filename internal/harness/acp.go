@@ -737,6 +737,17 @@ func applyACPEvent(tool *toolcall.Activity, ev acp.Event) {
 	if ev.HasInput || len(ev.Input) > 0 {
 		tool.Input = append(json.RawMessage(nil), ev.Input...)
 	}
+	// Execution tools such as Claude's Bash carry a human-readable description
+	// in rawInput. Do not infer a summary from content, which may be output.
+	tool.Summary = ""
+	if tool.Kind == "bash" {
+		var input struct {
+			Description string `json:"description"`
+		}
+		if json.Unmarshal(tool.Input, &input) == nil {
+			tool.Summary = strings.TrimSpace(input.Description)
+		}
+	}
 	if ev.HasOutput || len(ev.Output) > 0 {
 		tool.Output = append(json.RawMessage(nil), ev.Output...)
 	}

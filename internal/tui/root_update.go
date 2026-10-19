@@ -21,6 +21,7 @@ var _ = clipboardState{}
 func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
+		m.opener.notice = ""
 		if m2, cmd, ok := m.handleGlobalKey(msg); ok {
 			return m2, cmd
 		}
@@ -52,7 +53,7 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// The monitor's live-clock tick is routed unconditionally (like engine events)
 	// so the loop keeps advancing even while the user is on another screen; the
 	// monitor stops re-arming it once no step is running.
-	case monitor.TickMsg:
+	case monitor.TickMsg, monitor.SecurityLoadedMsg:
 		var mc tea.Cmd
 		m.monitor, mc = m.monitor.Update(msg)
 		return m, mc
@@ -119,11 +120,14 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.monitor = monitor.New(msg.runID).WithTUIConfig(m.tuiConfig).WithDiagnostics(m.diagnostics).WithTelemetryMode(m.telemetryMode).WithHelpChatConfig(m.helpChatConfig)
 		m.monitor.RunDir = m.manager.RunDir(msg.runID)
 		m.monitor = m.monitor.WithJournal(msg.events)
+		// Replay restores gates; the live snapshot supplies the current timing
+		// projection, including any work started since that history was read.
+		m.monitor = m.monitor.WithSnapshot(msg.run.Snapshot())
 		m.monitor.SetRun(msg.run)
 		m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})
 		m.monitor = m.monitor.FocusPendingInput()
 		m.active = screenMonitor
-		return m, m.monitor.EnsureFrame()
+		return m, tea.Batch(m.monitor.EnsureFrame(), m.monitor.LoadSecurityCmd())
 
 	case runs.ShowMonitorMsg:
 		return m.openMonitor(msg.RunID)
@@ -218,11 +222,19 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case runs.ResumeRunMsg:
 		return m, resumeRunCmd(m.manager, msg.RunID)
 
+	case shared.OpenLocationRequest:
+		return m.admitOpenLocation(msg)
+	case openerPreparedMsg:
+		return m.preparedOpenLocation(msg)
+	case shared.OpenLocationResult:
+		return m.completeOpenLocation(msg)
+
 	// ── clipboard ────────────────────────────────────────────────────────
 	// A ClipboardRequest is admitted here before any active-screen handler
 	// runs, so navigation cannot orphan a pending request nor let a stale
 	// completion overwrite a newer one.
 	case shared.ClipboardRequest:
+		m.opener.notice = ""
 		return m.admitClipboard(msg)
 
 	case clipboardResultMsg:
@@ -251,7 +263,7 @@ func (m rootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // when it should fall through to the active screen's Update.
 func (m rootModel) handleGlobalKey(msg tea.KeyPressMsg) (rootModel, tea.Cmd, bool) {
 	if keybind.Matches(msg, shared.KeyQuit) {
-		return m, tea.Quit, true
+		return m, m.quitAfterOpener(), true
 	}
 	// Dirty-leave confirm (0.4 A6): y leaves to Home; anything else cancels.
 	if m.leaveConfirm {
@@ -424,7 +436,7 @@ func (m rootModel) openMonitor(runID string) (tea.Model, tea.Cmd) {
 	m.active = screenMonitor
 	// A run seeded from a snapshot/journal may already have a step running (or the
 	// prior frame loop fell silent while off-screen); restart the live clock.
-	return m, m.monitor.EnsureFrame()
+	return m, tea.Batch(m.monitor.EnsureFrame(), m.monitor.LoadSecurityCmd())
 }
 
 func (m rootModel) handleResetRequest(msg monitor.RequestResetMsg) (tea.Model, tea.Cmd) {
@@ -462,7 +474,7 @@ func (m rootModel) startRun(wf *workflow.Workflow) (tea.Model, tea.Cmd) {
 	m.handles[run.ID] = run
 	m.runs = m.runs.WithWorkflow(wf)
 	// Navigate straight to the monitor so prompts and review gates are visible immediately.
-	m.monitor = monitor.New(run.ID).WithTUIConfig(m.tuiConfig).WithDiagnostics(m.diagnostics).WithTelemetryMode(m.telemetryMode).WithWorkflow(wf).WithHelpChatConfig(m.helpChatConfig)
+	m.monitor = monitor.New(run.ID).WithTUIConfig(m.tuiConfig).WithDiagnostics(m.diagnostics).WithTelemetryMode(m.telemetryMode).WithHelpChatConfig(m.helpChatConfig)
 	m.monitor.RunDir = m.manager.RunDir(run.ID)
 	m.monitor.SetRun(run)
 	m.monitor, _ = m.monitor.Update(tea.WindowSizeMsg{Width: m.width, Height: m.height})

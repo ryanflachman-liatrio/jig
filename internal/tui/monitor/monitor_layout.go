@@ -266,6 +266,8 @@ func (m *Model) rebuildRenderer() {
 		insetWidth = 1
 	}
 	m.insetRenderer = newMarkdownRenderer(fileStyle, insetWidth)
+	// Compact children reserve their tree branch in addition to detail inset.
+	m.groupInsetRenderer = newMarkdownRenderer(fileStyle, max(1, insetWidth-lipgloss.Width("  "+shared.TreePrefix(false))))
 
 	// thinkingRenderer renders reasoning blocks italic/muted at the same word
 	// wrap as m.renderer (FR-10.1); it is built from the shared themed

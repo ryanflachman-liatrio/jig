@@ -81,8 +81,11 @@ func (m Model) eventAffectsChat(e engine.Event) bool {
 // anyRunning reports whether at least one step is currently executing — the
 // condition under which the frame loop keeps advancing the live clock.
 func (m Model) anyRunning() bool {
+	if m.historical {
+		return false
+	}
 	for _, s := range m.steps {
-		if s.status == step.StatusRunning {
+		if s.status == step.StatusRunning || s.status == step.StatusValidating {
 			return true
 		}
 	}

@@ -115,18 +115,17 @@ func TestWriteItemDetailHiddenLinesHintSingular(t *testing.T) {
 	}
 }
 
-// TestWriteNewCodeCardsHiddenLinesHint locks FR-06.6 for the second call
-// site: writeNewCodeCards emits the shared hint with its four-space indent.
-func TestWriteNewCodeCardsHiddenLinesHint(t *testing.T) {
+// Recorded source uses navigable windows; generic detail keeps its crop hints.
+func TestTranscriptSourceWindowHints(t *testing.T) {
 	m := newMonitorWithSteps(t)
 	m.transcriptInnerW = 96
 	m.chatItemExpandAll = true
 	m.setChatPage(transcript.Page{Entries: diffExchange("edit-hint", "internal/synthetic/file.go", 20)})
 
 	plain := stripANSI(m.itemTranscriptBody())
-	want := "… 8 more lines [y: Copy full]"
+	want := "Lines 1–12 · 1/2 · more below"
 	if !strings.Contains(plain, want) {
-		t.Fatalf("writeNewCodeCards hidden-lines hint missing %q:\n%s", want, plain)
+		t.Fatalf("recorded-source position missing %q:\n%s", want, plain)
 	}
 	if strings.Contains(plain, "lines hidden") {
 		t.Fatalf("retired wording \"lines hidden\" still rendered:\n%s", plain)
@@ -209,9 +208,7 @@ func TestExpandedDetailNeverOffersExpand(t *testing.T) {
 
 // TestTruncationVocabularyRetirement is FR-06.8: a grep-based Monitor
 // package regression that fails if any of the retired literals reappears in
-// a non-test source file. expandView's byte-elision marker is exempted via
-// an explicit allowlist since it reports a distinct concept (KB elision
-// inside a single blob, not a hidden-rows count).
+// a non-test source file. Security-pane wording is outside this contract.
 func TestTruncationVocabularyRetirement(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -222,8 +219,7 @@ func TestTruncationVocabularyRetirement(t *testing.T) {
 	// literal, with the reason so a maintainer editing this test can
 	// re-justify each exception in one place.
 	allowed := map[string]string{
-		"monitor_transcript.go": "expandView's byte-elision marker (\"\\n… %d KB elided …\\n\") is out of scope per slice 06 non-goal 1",
-		"monitor_view.go":       "Security pane's \"… %d more finding\" wording is out of scope per slice 06 non-goal 7 (Security pane, not Transcript panel)",
+		"monitor_view.go": "Security pane's \"… %d more finding\" wording is out of scope per slice 06 non-goal 7 (Security pane, not Transcript panel)",
 	}
 	// Retired quantitative-hint literals. The regex catches any bare
 	// "… " prefix followed on the same line by a %d conversion.

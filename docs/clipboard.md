@@ -23,6 +23,7 @@ Delivery is a property of the terminal, not of jig — see
 | Home · Runs list                       | selected **run ID** (no newline)  | *(not bound)*                                       |
 | Monitor · Transcript panel (messages)  | selected **transcript item**      | recorded **step transcript** snapshot               |
 | Monitor · Transcript panel (file view) | *(not bound — no line cursor)*    | selected **output file**                            |
+| Monitor · Security inspector            | selected **group details and records** | *(not bound)*                                   |
 | Monitor · Steps overview               | *(not bound)*                     | current step's **recorded transcript**              |
 | Review · source browse                 | current **source line**           | whole **document**                                  |
 | Review · select-range (`v`)            | inclusive **source range**        | whole **document**                                  |
@@ -48,7 +49,8 @@ advertises a key that will not run.
   complete records are counted and reported in the notice; an incomplete
   trailing record is ignored.
 - **Transcript item (`y` in messages)** copies only what is loaded on the
-  current page. Missing tool counterparts, unsupported block types, and
+  current page. Diff/source mode and source-window navigation do not narrow the copied exchange.
+  Missing tool counterparts, unsupported block types, and
   durably-truncated content are labeled in the notice — jig never
   scans backward through the transcript to reconstruct a partial item.
 - **Review documents** are copied from the immutable content of the round

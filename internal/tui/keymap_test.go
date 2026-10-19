@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	keybind "charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/ryanflachman-liatrio/jig/internal/tui/monitor"
 	"github.com/ryanflachman-liatrio/jig/internal/tui/palette"
@@ -59,6 +61,11 @@ func TestConfigureKeymapRejectsBadOverrides(t *testing.T) {
 		"global shadow":   {map[string][]string{"runs.delete": {"ctrl+c"}}, `"ctrl+c" is bound to both`},
 		"both remapped":   {map[string][]string{"runs.delete": {"Z"}, "runs.copy_id": {"Z"}}, `"Z" is bound to both`},
 		"fixed list keys": {map[string][]string{"selector.open": {"/"}}, `"/" is bound to both`},
+		"security key":    {map[string][]string{"monitor.copy_item": {"i"}}, `"i" is bound to both`},
+		"opener key":      {map[string][]string{"monitor.copy_item": {"e"}}, `"e" is bound to both`},
+		"source key":      {map[string][]string{"monitor.copy_item": {"v"}}, `"v" is bound to both`},
+		"source window":   {map[string][]string{"monitor.copy_item": {"alt+j"}}, `"alt+j" is bound to both`},
+		"picker confirm":  {map[string][]string{"monitor.down": {"enter"}}, `"enter" is bound to both`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := ConfigureKeymap(tc.overrides)
@@ -110,6 +117,75 @@ func TestRemapKeepsContextualLabels(t *testing.T) {
 	}
 	if strings.Contains(hint, "B bell") {
 		t.Fatalf("monitor sections %q still show the default bell key", hint)
+	}
+}
+
+func TestRemapSecurityInspector(t *testing.T) {
+	withKeymap(t, map[string][]string{"monitor.security_inspector": {"ctrl+i"}})
+	m := monitor.New("run-1")
+	m, _ = m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	before := m.View()
+	m, _ = m.Update(palette.ParseKey("i"))
+	if m.View() != before {
+		t.Fatal("default inspector key remained active after remap")
+	}
+	m, _ = m.Update(palette.ParseKey("ctrl+i"))
+	if !strings.Contains(ansi.Strip(m.View()), "Security inspector") {
+		t.Fatal("remapped inspector key did not open the inspector")
+	}
+}
+
+func TestRemapRecordedEvidenceActions(t *testing.T) {
+	withKeymap(t, map[string][]string{
+		"monitor.open_location": {"E"},
+		"monitor.source_mode":   {"V"},
+		"monitor.source_last":   {"alt+e"},
+	})
+	m, _ := newOpenerFixture(t, t.Context(), "windows")
+	before := m.monitor.View()
+	m.monitor, _ = m.monitor.Update(palette.ParseKey("v"))
+	if m.monitor.View() != before {
+		t.Fatal("default source binding remained active after remap")
+	}
+	m.monitor, _ = m.monitor.Update(palette.ParseKey("V"))
+	if !strings.Contains(ansi.Strip(m.monitor.View()), "FIRST recorded source") {
+		t.Fatal("remapped mode action did not show recorded source")
+	}
+	foundOpener := false
+	for _, command := range m.paletteCommands() {
+		switch command.Title {
+		case "open file in editor":
+			foundOpener = true
+			if command.Key != "E" {
+				t.Fatalf("opener palette key = %q", command.Key)
+			}
+		}
+	}
+	if !foundOpener {
+		t.Fatal("remapped opener missing from palette")
+	}
+	m.palette = m.palette.Show(m.paletteCommands())
+	next, _ := m.Update(tea.KeyPressMsg{Code: 'l', Text: "last recorded source window"})
+	m = next.(rootModel)
+	selected, ok := m.palette.Selected()
+	if !ok || selected.Key != "alt+e" {
+		t.Fatalf("remapped palette action = %+v", selected)
+	}
+	next, cmd := m.Update(palette.ParseKey("enter"))
+	if cmd == nil {
+		t.Fatal("palette did not dispatch remapped source action")
+	}
+	next, _ = next.Update(cmd())
+	m = next.(rootModel)
+	if !strings.Contains(ansi.Strip(m.monitor.View()), "FINAL without newline") {
+		t.Fatal("remapped palette action did not reach final source window")
+	}
+	_, request := m.monitor.Update(palette.ParseKey("E"))
+	if request == nil {
+		t.Fatal("remapped opener did not emit a request")
+	}
+	if req, ok := request().(shared.OpenLocationRequest); !ok || req.Target.Path == "" || req.Unavailable != "" {
+		t.Fatalf("remapped opener request = %+v", req)
 	}
 }
 

@@ -65,7 +65,12 @@ func (m *Model) reloadTranscript() {
 		}
 		return
 	}
+	m.sourceStates = nil
+	m.sourceWindows = nil
+	m.sourceDiffs = nil
+	m.sourcePicker = nil
 	m.chatStep = stepID
+	m.chatPausedLive = nil
 	m.chatItems = nil
 	m.chatVisibleItems = nil
 	m.chatCursorTargets = nil
@@ -116,9 +121,14 @@ func (m Model) showsTranscriptFollow() bool {
 }
 
 func (m *Model) resumeTranscriptFollow() {
+	hadPausedLive := m.chatPausedLive != nil
+	m.chatPausedLive = nil
 	m.chatAutoScroll = true
 	m.chatSeenSeq = m.latestChatSeq()
 	if m.ready {
+		if hadPausedLive {
+			m.setChatContent()
+		}
 		m.chatVP.GotoBottom()
 	}
 }
@@ -129,7 +139,7 @@ func (m *Model) updateTranscriptFollow(atBottom bool) {
 		if n := len(m.chatEntries); n > 0 {
 			loadedSeq = m.chatEntries[n-1].Seq
 		}
-		if m.msgCount[m.chatStep] > loadedSeq {
+		if m.RunDir.Enabled() && m.msgCount[m.chatStep] > loadedSeq {
 			m.loadChatTail()
 			m.refreshPanels()
 		}
@@ -159,7 +169,37 @@ func (m *Model) loadChatTail() {
 		return
 	}
 	page = completeToolBoundaryContext(r, page)
+	if n := len(page.Entries); n > 0 {
+		m.recordTranscriptSeq(m.chatStep, page.Entries[n-1].Seq)
+	}
+	m.chatPausedLive = nil
 	m.setChatPage(page)
+}
+
+// refreshTranscriptCount uses the same durable sequence for initial hydration
+// and live refresh. Read only the tail, not the entire transcript. Liveness
+// signals may be dropped; status transitions and selecting a step also refresh.
+func (m *Model) refreshTranscriptCount(stepID string) {
+	if !m.RunDir.Enabled() {
+		return
+	}
+	r, err := transcript.Open(m.RunDir.Step(stepID).Transcript())
+	if err != nil {
+		return
+	}
+	seq, err := r.LatestSeq()
+	if err == nil {
+		m.recordTranscriptSeq(stepID, seq)
+	}
+}
+
+func (m *Model) recordTranscriptSeq(stepID string, seq int) {
+	if m.msgCount == nil {
+		m.msgCount = make(map[string]int)
+	}
+	if seq > m.msgCount[stepID] {
+		m.msgCount[stepID] = seq
+	}
 }
 
 func (m *Model) setChatPage(page transcript.Page) {
@@ -459,6 +499,7 @@ func (m *Model) loadOlderChat() {
 		return
 	}
 	page = completeToolBoundaryContext(r, page)
+	m.chatPausedLive = nil
 	m.setChatPage(page)
 	m.chatAutoScroll = false
 	if m.ready {
@@ -480,6 +521,7 @@ func (m *Model) loadNewerChat() {
 		return
 	}
 	page = completeToolBoundaryContext(r, page)
+	m.chatPausedLive = nil
 	m.setChatPage(page)
 	m.chatAutoScroll = false
 	if m.ready {
@@ -501,6 +543,7 @@ func (m *Model) loadChatBefore(end int64) bool {
 		return false
 	}
 	page = completeToolBoundaryContext(r, page)
+	m.chatPausedLive = nil
 	m.setChatPage(page)
 	return true
 }
@@ -543,6 +586,7 @@ func toolOnlyEntry(entry transcript.Entry) bool {
 }
 
 func (m *Model) prunePageState() {
+	m.pruneSourceState()
 	loadedItems := make(map[transcriptItemKey]struct{}, len(m.chatItems))
 	for _, item := range m.chatItems {
 		loadedItems[item.key] = struct{}{}
@@ -655,15 +699,16 @@ func (m Model) transcriptPanelContent() string {
 }
 
 // chatBody renders one step's agent chat chain from its transcript. Loaded
-// entries delegate to the normalized item renderer; this branch owns only the
-// empty state.
+// entries delegate to the normalized item renderer, with an ephemeral live tail
+// after the saved content. Live output never becomes a finalized transcript item.
 func (m *Model) chatBody() string {
 	if m.selKind == "file" && m.selFile != "" {
 		return m.fileBody()
 	}
+	live := m.liveBlock()
 	if len(m.chatItems) > 0 {
 		body := m.itemTranscriptBody()
-		if live := m.liveBlock(); live != "" {
+		if live != "" {
 			// One blank row separates the live block from the last item, the
 			// same rhythm as between items. It sits after every line range.
 			body += "\n" + live
@@ -696,9 +741,11 @@ func (m *Model) chatBody() string {
 	header := indicator + "  " + statusStyle(s.status).Render(string(s.status))
 	b.WriteString("  " + header + "\n\n")
 
+	if live != "" {
+		b.WriteString(live)
+		return b.String()
+	}
 	running := s.status == step.StatusRunning
-	live := m.liveBlock()
-	hasTail := live != ""
 
 	if len(m.chatEntries) == 0 {
 		// Review steps have no transcript. Their immutable document inventory is
@@ -707,10 +754,7 @@ func (m *Model) chatBody() string {
 			m.writeReviewOverview(&b, rev)
 			return b.String()
 		}
-		if hasTail {
-			// Live output streams even when persistence is off.
-			b.WriteString(live)
-		} else if !m.RunDir.Enabled() {
+		if !m.RunDir.Enabled() {
 			b.WriteString(shared.RenderEmptyState(shared.EmptyState{
 				Title: "Transcript unavailable",
 				Body:  "Persistence is off for this run — nothing was captured.",
@@ -737,6 +781,33 @@ func (m *Model) chatBody() string {
 		}
 	}
 	return b.String()
+}
+
+// liveTranscriptTail is a preview of the selected step only. A historical page
+// must not place current output beside older evidence; finalized messages replace
+// this buffer through StepMessage and the transcript file.
+func (m Model) liveTranscriptTail() string {
+	if buf := m.liveTranscriptBuffer(); buf != nil {
+		return buf.render(m.transcriptInnerW)
+	}
+	return ""
+}
+
+func (m Model) liveTranscriptBuffer() *liveTranscriptBuffer {
+	if m.selKind == "file" || m.chatPage.HasLater {
+		return nil
+	}
+	if !m.chatAutoScroll && m.chatPausedLive != nil {
+		return m.chatPausedLive
+	}
+	loadedSeq := 0
+	if n := len(m.chatEntries); n > 0 {
+		loadedSeq = m.chatEntries[n-1].Seq
+	}
+	if m.RunDir.Enabled() && m.msgCount[m.chatStep] > loadedSeq {
+		return nil
+	}
+	return m.stepOutput[m.chatStep]
 }
 
 func (m *Model) writeReviewOverview(b *strings.Builder, request engine.ReviewRequest) {
@@ -892,7 +963,7 @@ func (m Model) renderInsetMarkdown(key blockKey, text string) string {
 // fenceJSON pretty-prints s as a ```json fenced markdown block so it can be
 // rendered with syntax highlighting via renderMarkdown. Returns "" when s is
 // not valid JSON so callers can fall back to plain text. The caller is
-// responsible for bounding s before passing it in (e.g. via expandView) when
+// responsible for bounding s before passing it in when
 // the source is an unbounded transcript block; file content is pre-bounded by
 // readOutputFile's 256 KiB cap so no truncation is needed there.
 func fenceJSON(s string) string {
@@ -931,29 +1002,7 @@ func jsonlToMarkdown(content string) string {
 	return sb.String()
 }
 
-// expandView bounds a block's expanded content: below chatExpandMax it returns
-// the content unchanged; above it, a head+tail with the middle elided so a
-// write-capped 256 KiB result never lays out in full.
-func expandView(s string) string {
-	if len(s) <= chatExpandMax {
-		return s
-	}
-	half := chatExpandMax / 2
-	head := clampRunes(s[:half])
-	tail := clampRunesTail(s[len(s)-half:])
-	elided := len(s) - len(head) - len(tail)
-	return head + fmt.Sprintf("\n%s %d KB elided %s\n", shared.EllipsisGlyph, elided/1024, shared.EllipsisGlyph) + tail
-}
-
-// clampRunes / clampRunesTail back a byte slice off to a rune boundary so
-// expandView never splits a multibyte rune at the elision seam.
-func clampRunes(s string) string {
-	for len(s) > 0 && !utf8.ValidString(s) {
-		s = s[:len(s)-1]
-	}
-	return s
-}
-
+// clampRunesTail advances a search excerpt to a valid UTF-8 boundary.
 func clampRunesTail(s string) string {
 	for len(s) > 0 && !utf8.ValidString(s) {
 		s = s[1:]
@@ -1123,69 +1172,24 @@ func (m Model) fileBody() string {
 // (two-column prefix, disclosure marker, space).
 const liveIndent = "    "
 
-// liveBlock renders the open step's not-yet-finalized output (agent text
-// deltas or command stdout) as verbatim rows ending in the typing cursor. It is
-// appended after itemTranscriptBody and recorded in no line range, so it is
-// never a navigation, search, copy, or click target. It returns "" unless the
-// step is running with a non-blank buffer.
-//
-// The block is tail-anchored so a long stream cannot grow the viewport without
-// limit: command steps use the tool-output clamp (transcriptDetailBytes /
-// transcriptDetailRows), agent steps only the chatTextCollapseBytes byte cap so
-// prose stays readable while typing. Dropped rows surface the shared
-// EarlierItems hint.
+// liveBlock renders the selected live scrollback as literal rows ending in a
+// typing cursor. It follows the same page and paused-reader rules as the raw
+// live preview and never joins item navigation, search, copy, or click targets.
 func (m Model) liveBlock() string {
-	i, ok := m.index[m.chatStep]
-	if !ok || m.steps[i].status != step.StatusRunning {
+	buf := m.liveTranscriptBuffer()
+	if buf == nil || buf.text.Len() == 0 {
 		return ""
 	}
-	buf, ok := m.stepOutput[m.chatStep]
-	if !ok {
-		return ""
-	}
-	text := strings.TrimRight(buf.String(), " \t\r\n")
+	width := max(m.transcriptInnerW-len(liveIndent), 1)
+	text := strings.TrimRight(buf.render(width), " \t\r\n")
 	if strings.TrimSpace(text) == "" {
 		return ""
 	}
-	s := m.steps[i]
-	command := m.commandSteps[s.id] || (s.parentID != "" && m.commandSteps[s.parentID])
-	byteLimit := chatTextCollapseBytes
-	if command {
-		byteLimit = transcriptDetailBytes
-	}
-	dropped := 0
-	if len(text) > byteLimit {
-		cut := len(text) - byteLimit
-		dropped = strings.Count(text[:cut], "\n")
-		partial := text[cut-1] != '\n'
-		text = clampRunesTail(text[cut:])
-		if j := strings.IndexByte(text, '\n'); partial && j >= 0 {
-			// Drop the line the cut lands in rather than show half of it.
-			text = text[j+1:]
-			dropped++
-		}
-	}
-	width := max(m.transcriptInnerW-len(liveIndent), 1)
-	var rows []string
-	for _, line := range strings.Split(text, "\n") {
-		for ansi.StringWidth(line) > width {
-			row, rest := splitDetailRow(line, width)
-			rows = append(rows, row)
-			line = rest
-		}
-		rows = append(rows, line)
-	}
-	if command && len(rows) > transcriptDetailRows {
-		dropped += len(rows) - transcriptDetailRows
-		rows = rows[len(rows)-transcriptDetailRows:]
-	}
+	rows := strings.Split(text, "\n")
 	// The cursor sits after the last glyph, or wraps to its own row when the
 	// last row already fills the panel.
 	cursor := shared.Theme.Accent.Render(shared.LiveCursor)
 	var b strings.Builder
-	if dropped > 0 {
-		b.WriteString(liveIndent + shared.Theme.Chat.Hint.Render(shared.EarlierItems(dropped, "line", "lines")) + "\n")
-	}
 	for n, row := range rows {
 		b.WriteString(liveIndent + row)
 		if n == len(rows)-1 {

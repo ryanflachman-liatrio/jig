@@ -330,9 +330,13 @@ func (s Step) Input() string { return s.path("input.md") }
 // Result returns result.json, written on terminal step status events.
 func (s Step) Result() string { return s.path("result.json") }
 
-// Output returns output.md: the agent's raw_result base-schema field, the
-// clean prose answer written as its primary deliverable.
+// Output returns output.md: the agent's final prose and rendered declared
+// fields, its full human-readable deliverable. Base status fields live in
+// metadata.md.
 func (s Step) Output() string { return s.path("output.md") }
+
+// Metadata returns metadata.md: the base status fields rendered as Markdown.
+func (s Step) Metadata() string { return s.path("metadata.md") }
 
 // OutputJSON returns output.json: the full structured output (base fields
 // plus any declared [step.schema] fields).
@@ -348,7 +352,7 @@ func (s Step) Transcript() string { return s.path("transcript.jsonl") }
 func (s Step) Security() string { return s.path("security.md") }
 
 // ClearOutputs removes the derived per-step inputs and outputs — input.md,
-// result.json, output.md, output.json, and session.json — so a reset step
+// result.json, output.md, output.json, metadata.md, and session.json — so a reset step
 // starts fresh. transcript.jsonl is intentionally left intact: it is
 // append-only and a re-run appends a new generation rather than overwriting
 // history. A disabled step and missing files are no-ops.
@@ -359,7 +363,7 @@ func (s Step) ClearOutputs() error {
 	if s.dir == "" {
 		return nil
 	}
-	for _, path := range []string{s.Input(), s.Result(), s.Output(), s.OutputJSON(), s.Session()} {
+	for _, path := range []string{s.Input(), s.Result(), s.Output(), s.OutputJSON(), s.Metadata(), s.Session()} {
 		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("datastore: clear step artifact %q: %w", path, err)
 		}

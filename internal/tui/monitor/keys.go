@@ -84,7 +84,18 @@ type monitorKeys struct {
 	// NotificationDiagnostics opens/closes the bounded diagnostics overlay
 	// (spec 23-spec-run-notifications FR-17). Command-palette discoverable via
 	// PaletteSections; never auto-opened by an arriving diagnostic.
+	SecurityInspector       keybind.Binding
 	NotificationDiagnostics keybind.Binding // matched (ctrl+g)
+
+	// Open a recorded local file through the root-owned editor launcher.
+	OpenLocation   keybind.Binding
+	SourceMode     keybind.Binding
+	SourceNext     keybind.Binding
+	SourcePrevious keybind.Binding
+	SourceFirst    keybind.Binding
+	SourceLast     keybind.Binding
+	PickerConfirm  keybind.Binding
+	PickerCancel   keybind.Binding
 
 	// Copy actions (spec 23-spec-clipboard-yank).
 	// CopyItem (y) copies the current transcript item / tool exchange.
@@ -170,10 +181,19 @@ func baseMonitorKeys() monitorKeys {
 		ToggleHelp:   keybind.NewBinding(keybind.WithKeys("ctrl+\\"), keybind.WithHelp("ctrl+\\", "help agent")),
 		ToggleSimple: keybind.NewBinding(keybind.WithKeys("ctrl+shift+a"), keybind.WithHelp("ctrl+shift+a", "simple/advanced")),
 
+		SecurityInspector:       keybind.NewBinding(keybind.WithKeys("i"), keybind.WithHelp("i", "security inspector")),
 		NotificationDiagnostics: shared.KeyNotificationDiagnostics,
 
-		CopyItem: keybind.NewBinding(keybind.WithKeys("y"), keybind.WithHelp("y", "copy")),
-		CopyAll:  keybind.NewBinding(keybind.WithKeys("Y"), keybind.WithHelp("Y", "copy all")),
+		SourceNext:     keybind.NewBinding(keybind.WithKeys("alt+j"), keybind.WithHelp("alt+j", "next recorded source window")),
+		SourcePrevious: keybind.NewBinding(keybind.WithKeys("alt+k"), keybind.WithHelp("alt+k", "previous recorded source window")),
+		SourceFirst:    keybind.NewBinding(keybind.WithKeys("alt+g"), keybind.WithHelp("alt+g", "first recorded source window")),
+		SourceLast:     keybind.NewBinding(keybind.WithKeys("alt+G", "alt+shift+g"), keybind.WithHelp("alt+G", "last recorded source window")),
+		SourceMode:     keybind.NewBinding(keybind.WithKeys("v"), keybind.WithHelp("v", "diff / recorded source")),
+		PickerConfirm:  keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "open target")),
+		PickerCancel:   keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "cancel")),
+		OpenLocation:   keybind.NewBinding(keybind.WithKeys("e"), keybind.WithHelp("e", "open file in editor")),
+		CopyItem:       keybind.NewBinding(keybind.WithKeys("y"), keybind.WithHelp("y", "copy")),
+		CopyAll:        keybind.NewBinding(keybind.WithKeys("Y"), keybind.WithHelp("Y", "copy all")),
 	}
 }
 
@@ -186,6 +206,7 @@ func (k *monitorKeys) actions() []shared.Action {
 		all        = "monitor"
 		steps      = "monitor.steps"
 		transcript = "monitor.transcript"
+		picker     = "monitor.picker"
 		gate       = "monitor.gate"
 	)
 	a := func(id string, b *keybind.Binding, contexts ...string) shared.Action {
@@ -203,9 +224,10 @@ func (k *monitorKeys) actions() []shared.Action {
 		a("toggle_help_agent", &k.ToggleHelp, all),
 		a("toggle_simple", &k.ToggleSimple, all),
 		a("gate_context", &k.GateContext, all),
+		a("security_inspector", &k.SecurityInspector, all),
 
-		a("down", &k.Down, steps),
-		a("up", &k.Up, steps),
+		a("down", &k.Down, steps, picker),
+		a("up", &k.Up, steps, picker),
 		a("open_transcript", &k.OpenTranscript, steps),
 		a("toggle_tree", &k.ToggleTree, steps),
 		a("steps_leave", &k.StepsLeave, steps),
@@ -231,6 +253,14 @@ func (k *monitorKeys) actions() []shared.Action {
 		a("page_older", &k.PageOlder, transcript),
 		a("page_newer", &k.PageNewer, transcript),
 		a("copy_item", &k.CopyItem, transcript),
+		a("open_location", &k.OpenLocation, transcript),
+		a("source_mode", &k.SourceMode, transcript),
+		a("source_next", &k.SourceNext, transcript),
+		a("source_previous", &k.SourcePrevious, transcript),
+		a("source_first", &k.SourceFirst, transcript),
+		a("source_last", &k.SourceLast, transcript),
+		fixed("picker_confirm", &k.PickerConfirm, picker),
+		fixed("picker_cancel", &k.PickerCancel, picker),
 
 		fixed("gate_submit", &k.Submit, gate+".request", gate+".prompt", gate+".recovery"),
 		fixed("gate_blur", &k.GateBlur, gate),

@@ -180,6 +180,12 @@ func readJournalRecords(runDir datastore.Run) (int, []JournalRecord, error) {
 			if env.Seq > lastSeq {
 				lastSeq = env.Seq
 			}
+			// Older journals carry time only in the envelope. Keep that recorded
+			// precision instead of substituting the time of replay.
+			if status, ok := e.(StepStatus); ok && status.At.IsZero() {
+				status.At = env.Ts
+				e = status
+			}
 			records = append(records, JournalRecord{Seq: env.Seq, Timestamp: env.Ts, Event: e})
 		}
 		if readErr != nil {
@@ -267,6 +273,7 @@ func reconcileInterruptedRun(runDir datastore.Run, events []Event, forceOrphan b
 			reason = interruptedSDKSessionErr
 		}
 		recovered = append(recovered, StepStatus{
+			At:         prior.At,
 			RunID:      runID,
 			StepID:     stepID,
 			From:       from,

@@ -1,9 +1,6 @@
 package monitor
 
 import (
-	"strings"
-	"time"
-
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 
@@ -72,9 +69,8 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 			// Live output belongs to one running attempt: leaving running drops
 			// text no StepMessage finalized, and re-entering running on a retry
 			// must not resurface the failed attempt's tail.
-			if buf, ok := m.stepOutput[ev.StepID]; ok {
-				buf.Reset()
-			}
+			m.preservePausedLive(ev.StepID)
+			delete(m.stepOutput, ev.StepID)
 		}
 		m.steps[i].status = ev.To
 		m.steps[i].iteration = ev.Iteration
@@ -83,11 +79,14 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 			m.steps[i].err = ev.Err
 			m.steps[i].subtype = ev.Subtype
 		}
-		if ev.To == step.StatusRunning {
-			m.steps[i].start = time.Now()
+		m.steps[i].timing = ev.ProjectTiming(m.steps[i].timing)
+		if !m.historical {
+			m.refreshTranscriptCount(ev.StepID)
+			if m.RunDir.Enabled() && ev.StepID == m.chatStep && m.chatAutoScroll {
+				m.loadChatTail()
+			}
 		}
 		if ev.To == step.StatusSucceeded || ev.To == step.StatusFailed || ev.To == step.StatusSkipped {
-			m.steps[i].end = time.Now()
 			// Re-discover step files when a step reaches a terminal state — the
 			// runner may have just written input.md/output.md/output.json.
 			if m.RunDir.Enabled() {
@@ -291,13 +290,16 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		if ev.RunID != m.RunID {
 			return m, nil
 		}
+		m.preservePausedLive(ev.StepID)
 		if m.msgCount == nil {
 			m.msgCount = make(map[string]int)
 		}
 		if m.stepFiles == nil {
 			m.stepFiles = make(map[string][]outputFile)
 		}
-		if ev.Seq > m.msgCount[ev.StepID] {
+		if m.RunDir.Enabled() {
+			m.refreshTranscriptCount(ev.StepID)
+		} else if ev.Seq > m.msgCount[ev.StepID] {
 			m.msgCount[ev.StepID] = ev.Seq
 		}
 		m.refreshLiveStepFiles(ev.StepID)
@@ -305,9 +307,7 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		// the live-typing tail for that step is now on disk: reset it (the next
 		// deltas belong to the next, not-yet-finalized bubble). If that step's
 		// chat is open, re-read the transcript so the finalized entry appears.
-		if buf, ok := m.stepOutput[ev.StepID]; ok {
-			buf.Reset()
-		}
+		delete(m.stepOutput, ev.StepID)
 		// The Transcript panel always shows the cursor's step, so re-read whenever
 		// the finalized entry belongs to it and follow is active. A paused or
 		// paged-back view keeps its byte window stable until the operator follows
@@ -349,14 +349,17 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.stepOutput == nil {
-			m.stepOutput = make(map[string]*strings.Builder)
+			m.stepOutput = make(map[string]*liveTranscriptBuffer)
 		}
 		buf, ok := m.stepOutput[ev.StepID]
 		if !ok {
-			buf = &strings.Builder{}
+			buf = &liveTranscriptBuffer{}
 			m.stepOutput[ev.StepID] = buf
 		}
-		buf.WriteString(ev.Delta)
+		if buf.text.Len()+len(ev.Delta) > liveScrollbackBytes {
+			m.preservePausedLive(ev.StepID)
+		}
+		buf.append(ev.Delta)
 
 	case engine.RunError:
 		if ev.RunID != m.RunID {
@@ -382,8 +385,10 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 		}
 		// File is truth: read all findings from findings.jsonl to get the full
 		// Detail field (redacted-secret preview) that the event omits.
+		selectedGroup, _ := m.selectedSecurityGroup()
 		fPath := m.RunDir.Findings()
-		if findings, err := sentinel.ReadAll(fPath); err == nil {
+		findings, err := sentinel.ReadAll(fPath)
+		if m.RunDir.Enabled() && err == nil {
 			m.secFindings = findings
 		} else {
 			// Persistence off or file not yet written — synthesize a minimal record
@@ -397,6 +402,7 @@ func (m Model) handleEngineEvent(e engine.Event) (Model, tea.Cmd) {
 				Fingerprint: ev.Fingerprint,
 			})
 		}
+		m.retainSecuritySelection(selectedGroup.Key)
 		// Findings arrive after WindowSizeMsg, so the existing viewports still
 		// occupy the rows now needed by the security summary until they are refit.
 		m.resize()

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"github.com/ryanflachman-liatrio/jig/internal/interaction"
@@ -452,6 +453,7 @@ func restoreUnfinishedCheckpoint(runDir datastore.Run, wf *workflow.Workflow, ev
 	fanOutChildren := make(map[string]*workflow.Step)
 	fanOutItemByChild := make(map[string]FanOutItem)
 	var started *RunStarted
+	var lastStatusAt time.Time
 	for _, event := range events {
 		switch event := event.(type) {
 		case RunStarted:
@@ -481,10 +483,14 @@ func restoreUnfinishedCheckpoint(runDir datastore.Run, wf *workflow.Workflow, ev
 				fanOutItemByChild[id] = item
 			}
 		case StepStatus:
+			if event.At.After(lastStatusAt) {
+				lastStatusAt = event.At
+			}
 			state := states[event.StepID]
 			if state == nil {
 				return nil, fmt.Errorf("resume: workflow no longer contains step %q", event.StepID)
 			}
+			state.Timing = event.ProjectTiming(state.Timing)
 			state.Status = event.To
 			state.Attempt = event.Attempt
 			state.Iteration = event.Iteration
@@ -545,6 +551,11 @@ func restoreUnfinishedCheckpoint(runDir datastore.Run, wf *workflow.Workflow, ev
 	}
 	if started == nil || started.Workflow != wf.Meta.Name || len(started.Steps) != len(wf.Steps) {
 		return nil, fmt.Errorf("resume: workflow does not match the historical run")
+	}
+	// The process was absent after its last durable observation. Do not turn
+	// that unobserved interval into execution time when recovery parks workers.
+	for _, state := range states {
+		state.Timing.Pause(lastStatusAt)
 	}
 	for i, id := range started.Steps {
 		if wf.Steps[i].ID != id {
@@ -841,6 +852,9 @@ func (s *scheduler) rehydrateParks(checkpoint *unfinishedCheckpoint) ([]Event, e
 		// matching special case in restoreUnfinishedCheckpoint. Its children
 		// are reopened independently below.
 		if s.wf.Steps[i].ForEach != nil && s.states[stepID].Status == step.StatusRunning {
+			// Resume the barrier's clock after the process-absence interval. Like
+			// restored gates, this projection is published in the recovery batch.
+			events = append(events, s.transitionEvent(stepID, step.StatusRunning, step.StatusRunning, ""))
 			continue
 		}
 		if err := reopen(stepID); err != nil {

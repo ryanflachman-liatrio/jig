@@ -33,6 +33,7 @@ const ClipboardMaxTranscriptScanBytes = 8 * 1024 * 1024
 type ClipboardSurface string
 
 const (
+	ClipboardSurfaceSecurity           ClipboardSurface = "security details"
 	ClipboardSurfaceRunID              ClipboardSurface = "run ID"
 	ClipboardSurfaceMonitorFile        ClipboardSurface = "output file"
 	ClipboardSurfaceTranscriptItem     ClipboardSurface = "transcript item"
@@ -172,6 +173,17 @@ func sanitizeClipboardText(raw string) string {
 		i += size
 	}
 	return b.String()
+}
+
+// DisplayLiteralText shares clipboard control-sequence normalization while
+// making line endings and indentation safe for a literal terminal preview.
+// Unlike copying, display tolerates malformed UTF-8 and has no payload limit;
+// callers bound their source before rendering.
+func DisplayLiteralText(raw string) string {
+	text := sanitizeClipboardText(raw)
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "")
+	return strings.ReplaceAll(text, "\t", "    ")
 }
 
 // skipEscapeSequence returns the number of bytes to skip past an ANSI escape

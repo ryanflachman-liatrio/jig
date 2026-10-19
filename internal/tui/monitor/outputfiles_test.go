@@ -49,6 +49,23 @@ func TestStepOutputFiles(t *testing.T) {
 			},
 		},
 		{
+			name: "metadata",
+			setup: func(t *testing.T, runDir string) string {
+				seedCanonical(t, runDir)
+				if err := os.WriteFile(datastore.RunAt(runDir).Step("plan").Metadata(), []byte("## Status\n\nsucceeded"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return ""
+			},
+			expectedCount: 4,
+			assertions: func(t *testing.T, files map[string]outputFile) {
+				f, ok := files["metadata.md"]
+				if !ok || f.kind != kindMarkdown || f.err != nil {
+					t.Fatalf("metadata.md missing or unreadable: %+v", f)
+				}
+			},
+		},
+		{
 			name: "only_md",
 			setup: func(t *testing.T, runDir string) string {
 				mdPath := datastore.RunAt(runDir).Step("plan").Output()

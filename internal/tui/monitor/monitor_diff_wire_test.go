@@ -33,7 +33,7 @@ func diffExchangeEntries(id, path string, oldText *string, newText string) []tra
 
 // TestMonitorDiffSectionLabel verifies that a real diff (OldText != nil)
 // renders under `Diff · <path>` and not the resulting-source
-// `New code · <path>` label (FR-07.15).
+// `Recorded new source · <path>` label (FR-07.15).
 func TestMonitorDiffSectionLabel(t *testing.T) {
 	old := "a\nb\nc\n"
 	entries := diffExchangeEntries("e", "sample.go", &old, "a\nB\nc\n")
@@ -43,20 +43,20 @@ func TestMonitorDiffSectionLabel(t *testing.T) {
 	if !strings.Contains(body, "Diff · sample.go") {
 		t.Fatalf("expected Diff label; body:\n%s", body)
 	}
-	if strings.Contains(body, "New code · sample.go") {
+	if strings.Contains(body, "Recorded new source · sample.go") {
 		t.Fatalf("unexpected fallback label present:\n%s", body)
 	}
 }
 
 // TestMonitorDiffFileCreationFallback asserts that OldText == nil
 // preserves the historical resulting-source card verbatim: the
-// `New code · <path>` label appears and no fallback hint (FR-07.16).
+// `Recorded new source · <path>` label appears and no fallback hint (FR-07.16).
 func TestMonitorDiffFileCreationFallback(t *testing.T) {
 	entries := diffExchangeEntries("e", "brand-new.go", nil, "package new\n")
 	m := newMonitorWithSteps(t)
 	m.setChatPage(transcript.Page{Entries: entries})
 	body := stripANSI(m.itemTranscriptBody())
-	if !strings.Contains(body, "New code · brand-new.go") {
+	if !strings.Contains(body, "Recorded new source · brand-new.go") {
 		t.Fatalf("expected fallback label; body:\n%s", body)
 	}
 	if strings.Contains(body, "Diff · brand-new.go") {
@@ -74,13 +74,13 @@ func TestMonitorDiffComputeFailureFallback(t *testing.T) {
 	// 200 KiB > diffComputeMaxBytes (128 KiB).
 	big := strings.Repeat("x", 200*1024)
 	entries := diffExchangeEntries("e", "big.txt", &big, "x")
-	m := newMonitorWithSteps(t)
-	m.setChatPage(transcript.Page{Entries: entries})
+	// Use a wide viewport to assert the complete hint; narrow chrome is clipped.
+	m := newTranscriptClickModel(t, entries)
 	body := stripANSI(m.itemTranscriptBody())
 	if !strings.Contains(body, "diff unavailable; showing resulting source") {
 		t.Fatalf("expected diff-unavailable hint:\n%s", body)
 	}
-	if !strings.Contains(body, "New code · big.txt") {
+	if !strings.Contains(body, "Recorded new source · big.txt") {
 		t.Fatalf("expected fallback label; body:\n%s", body)
 	}
 	if strings.Contains(body, "Diff · big.txt") {
@@ -202,7 +202,7 @@ func TestMonitorDiffLineRangesCoverBody(t *testing.T) {
 	}
 	// The range's last row should include the last diff row content.
 	last := stripANSI(rows[rng.end])
-	if !strings.Contains(last, "│") && !strings.Contains(last, "New code") {
+	if !strings.Contains(last, "│") && !strings.Contains(last, "Recorded new source") {
 		t.Fatalf("last row in range does not look like a diff or fallback body: %q", last)
 	}
 }

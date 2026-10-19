@@ -258,7 +258,7 @@ func searchableActivity(activity *toolcall.Activity) string {
 	if activity == nil {
 		return ""
 	}
-	parts := []string{activity.Title, activity.Kind, string(activity.Input), string(activity.Output)}
+	parts := []string{activity.Title, activity.Summary, activity.Kind, string(activity.Input), string(activity.Output)}
 	for _, location := range activity.Locations {
 		parts = append(parts, location.Path)
 	}

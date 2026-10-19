@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"time"
+
 	"github.com/ryanflachman-liatrio/jig/internal/interaction"
 	"github.com/ryanflachman-liatrio/jig/internal/review"
 	"github.com/ryanflachman-liatrio/jig/internal/step"
@@ -49,6 +51,11 @@ const (
 
 // StepStatus records a single status transition for one step.
 type StepStatus struct {
+	// At is stamped once by the scheduler and preserved in the journal.
+	At time.Time
+	// Timing is the scheduler's projection after this transition. Keeping it in
+	// the event makes reconnects and recovery independent of observer history.
+	Timing     *step.Timing `json:",omitempty"`
 	RunID      string
 	StepID     string
 	From       step.Status
@@ -75,6 +82,16 @@ type StepStatus struct {
 	// Cost separates "unknown" from a reported "$0.00".
 	Cost   *float64
 	Tokens int
+}
+
+// ProjectTiming uses the engine projection when present, or folds the recorded
+// timestamp for journals written before timing was included in status events.
+func (e StepStatus) ProjectTiming(prior step.Timing) step.Timing {
+	if e.Timing != nil {
+		return *e.Timing
+	}
+	prior.Apply(e.To, e.At)
+	return prior
 }
 
 // StepOutput carries a streaming text delta from an in-flight agent step.

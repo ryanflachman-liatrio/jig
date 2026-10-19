@@ -89,60 +89,29 @@ func TestTranscriptLiveBlockRendersAgentDeltas(t *testing.T) {
 	}
 }
 
-func TestTranscriptLiveBlockClampsCommandOutput(t *testing.T) {
-	t.Run("command rows", func(t *testing.T) {
+func TestTranscriptLiveBlockPreservesLongOutput(t *testing.T) {
+	for _, text := range []string{
+		strings.Repeat("command line\n", 30),
+		strings.Repeat("x", transcriptDetailBytes) + "\nlast line",
+		strings.Repeat("héllo wörld\n", chatTextCollapseBytes/10) + "final ünïcode line",
+	} {
 		m := newLiveModel(t, liveEntries(1))
-		m.commandSteps = map[string]bool{"a": true}
-		for i := 1; i <= 30; i++ {
-			m = sendDelta(m, "a", fmt.Sprintf("line %02d\n", i))
-		}
+		m = sendDelta(m, "a", text)
 		m = flushFrame(m)
 		body := strippedBody(m)
-		if !strings.Contains(body, shared.EarlierItems(30-transcriptDetailRows, "line", "lines")) {
-			t.Fatalf("missing earlier-lines hint:\n%s", body)
+		if strings.Contains(body, "earlier") || strings.ContainsRune(body, '\uFFFD') {
+			t.Fatal("live block elided output or split a multibyte rune")
 		}
-		if strings.Contains(body, "line 18") || !strings.Contains(body, "line 19") || !strings.Contains(body, "line 30"+shared.LiveCursor) {
-			t.Fatalf("command block did not keep the newest %d rows:\n%s", transcriptDetailRows, body)
-		}
-	})
-	t.Run("command bytes", func(t *testing.T) {
-		m := newLiveModel(t, liveEntries(1))
-		m.commandSteps = map[string]bool{"a": true}
-		m = sendDelta(m, "a", strings.Repeat("x", transcriptDetailBytes)+"\nlast line\n")
-		m = flushFrame(m)
-		body := strippedBody(m)
-		if !strings.Contains(body, "last line"+shared.LiveCursor) || !strings.Contains(body, "earlier") {
-			t.Fatalf("byte clamp lost the tail or the hint:\n%s", body)
-		}
-	})
-	t.Run("agent under byte cap shows every row", func(t *testing.T) {
-		m := newLiveModel(t, liveEntries(1))
-		for i := 1; i <= 30; i++ {
-			m = sendDelta(m, "a", fmt.Sprintf("prose %02d\n", i))
-		}
-		m = flushFrame(m)
-		body := strippedBody(m)
-		for i := 1; i <= 30; i++ {
-			if !strings.Contains(body, fmt.Sprintf("prose %02d", i)) {
-				t.Fatalf("agent row %d missing:\n%s", i, body)
+		if got := m.liveTranscriptTail(); got != text {
+			// The unbroken command wraps visually; its full content must survive.
+			if strings.ReplaceAll(got, "\n", "") != strings.ReplaceAll(text, "\n", "") {
+				t.Fatal("live scrollback lost recorded delta content")
 			}
 		}
-		if strings.Contains(body, "earlier") {
-			t.Fatalf("agent block under the byte cap shows a drop hint:\n%s", body)
+		if !strings.Contains(body, shared.LiveCursor) {
+			t.Fatal("live output lost its typing cursor")
 		}
-	})
-	t.Run("agent over byte cap keeps a rune-safe tail", func(t *testing.T) {
-		m := newLiveModel(t, liveEntries(1))
-		m = sendDelta(m, "a", strings.Repeat("héllo wörld\n", chatTextCollapseBytes/10)+"final ünïcode line")
-		m = flushFrame(m)
-		body := m.chatBody()
-		if !strings.Contains(ansi.Strip(body), "final ünïcode line"+shared.LiveCursor) || !strings.Contains(ansi.Strip(body), "earlier") {
-			t.Fatalf("agent byte clamp lost the tail or the hint:\n%s", ansi.Strip(body))
-		}
-		if strings.ContainsRune(body, '\uFFFD') {
-			t.Fatal("byte clamp split a multibyte rune")
-		}
-	})
+	}
 }
 
 // liveTargets captures every item-level surface the live block must not join.

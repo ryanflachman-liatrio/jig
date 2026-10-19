@@ -2,7 +2,6 @@ package monitor
 
 import (
 	"github.com/ryanflachman-liatrio/jig/internal/datastore"
-	"strings"
 	"time"
 
 	keybind "charm.land/bubbles/v2/key"
@@ -16,11 +15,11 @@ import (
 	"github.com/ryanflachman-liatrio/jig/internal/helpchat"
 	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
 	"github.com/ryanflachman-liatrio/jig/internal/step"
+	"github.com/ryanflachman-liatrio/jig/internal/toolcall"
 	"github.com/ryanflachman-liatrio/jig/internal/transcript"
 	questionpanel "github.com/ryanflachman-liatrio/jig/internal/tui/question"
 	reviewworkspace "github.com/ryanflachman-liatrio/jig/internal/tui/review"
 	"github.com/ryanflachman-liatrio/jig/internal/tui/shared"
-	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
 // focusRegion is which of the monitor's three regions currently holds keyboard
@@ -141,15 +140,23 @@ func (r visibleRow) isFileRow() bool {
 // updated as engine events arrive. The user can press esc to return to the
 // runs list.
 type Model struct {
-	RunID      string
-	RunDir     datastore.Run
-	workflow   string
-	keys       monitorKeys
-	steps      []monitorStep
-	index      map[string]int // stepID → steps position
-	done       bool
-	failed     bool
-	historical bool
+	sourceStates     map[sourceOwner]sourcePresentation
+	sourceDiffs      map[*toolcall.Diff]recordedDiffCache
+	sourceWindows    map[sourceWindowKey]*sourceWindowCache
+	sourceHighlight  func(string, string) (string, error)
+	sourcePicker     *sourcePickerState
+	locationInstance uint64
+	locationPickerID uint64
+	locationPicker   *locationPickerState
+	RunID            string
+	RunDir           datastore.Run
+	workflow         string
+	keys             monitorKeys
+	steps            []monitorStep
+	index            map[string]int // stepID → steps position
+	done             bool
+	failed           bool
+	historical       bool
 	// interrupted is set for historical journals whose last durable worker
 	// status is running/validating (Spec 20 crash reopen).
 	interrupted bool
@@ -222,11 +229,12 @@ type Model struct {
 
 	// fileRenderer removes document framing for output files. insetRenderer uses
 	// the same flush layout at the narrower width left inside a tool block's bar.
-	fileRenderer  *glamour.TermRenderer
-	insetRenderer *glamour.TermRenderer
+	fileRenderer       *glamour.TermRenderer
+	insetRenderer      *glamour.TermRenderer
+	groupInsetRenderer *glamour.TermRenderer
 
-	// msgCount tracks the latest transcript entry seq observed per step (via
-	// StepMessage liveness events), used as a message count in the list.
+	// msgCount tracks the latest finalized transcript sequence per step. Live
+	// notifications trigger a file refresh, or supply the count without storage.
 	msgCount map[string]int
 
 	expanded  map[string]bool
@@ -283,15 +291,17 @@ type Model struct {
 	// populated by SecurityFinding ctrl events. Content is read from
 	// findings.jsonl (file is truth) rather than from the event fields, so
 	// the Detail field (redacted-secret preview) is always present.
-	secFindings []sentinel.Finding
+	secFindings        []sentinel.Finding
+	securityOpen       bool
+	securityLoading    bool
+	securityLoadFailed bool
+	securityDetail     bool
+	securityCursor     int
+	securityOffset     int
 
-	// stepOutput is the live output buffer per step, shown in the Transcript
-	// until finalized.
-	stepOutput map[string]*strings.Builder
-	// commandSteps marks workflow steps of type command, so the Transcript
-	// live block can pick the tool-output clamp. Nil when the host did not
-	// supply the workflow; every step then uses the agent clamp.
-	commandSteps map[string]bool
+	// Unfinalized live transcript preview per step.
+	stepOutput     map[string]*liveTranscriptBuffer
+	chatPausedLive *liveTranscriptBuffer
 
 	vp     viewport.Model // Steps panel scroll
 	chatVP viewport.Model // Transcript panel scroll — independent scroll position
@@ -424,10 +434,6 @@ const (
 )
 
 const (
-	// chatExpandMax bounds an expanded block so a 256 KiB write-capped result
-	// never lays out in full; beyond it the middle is elided head+tail.
-	chatExpandMax = 4096
-
 	// chatWindowMax bounds how many trailing entries modeChat renders, so a long
 	// run with thousands of messages stays responsive. Earlier entries are
 	// available through fixed-size pages.
@@ -543,6 +549,7 @@ type transcriptCursorTarget struct {
 // formatted for the conversation body and a diff rendered under one
 // expansion state cannot be served under another.
 type transcriptRenderKey struct {
+	source   sourcePresentation
 	itemKey  transcriptItemKey
 	surface  transcriptRenderSurface
 	width    int
@@ -594,8 +601,7 @@ func (f transcriptFilters) active() bool {
 type monitorStep struct {
 	id        string
 	status    step.Status
-	start     time.Time
-	end       time.Time
+	timing    step.Timing
 	err       string   // failure reason when status == StatusFailed
 	subtype   string   // SDK result subtype for agent policy-limit failures
 	cost      *float64 // TotalCostUSD from step.Result; nil when not yet known
@@ -630,9 +636,10 @@ type lifecycleActions struct {
 func New(runID string) Model {
 	return Model{
 		RunID:                runID,
+		locationInstance:     nextLocationInstance.Add(1),
 		keys:                 defaultMonitorKeys(),
 		index:                make(map[string]int),
-		stepOutput:           make(map[string]*strings.Builder),
+		stepOutput:           make(map[string]*liveTranscriptBuffer),
 		msgCount:             make(map[string]int),
 		chatRendered:         make(map[blockKey]string),
 		chatThinkingRendered: make(map[blockKey]string),
@@ -657,21 +664,6 @@ func (m Model) WithTUIConfig(cfg config.TUIConfig) Model {
 	m.simpleMode = cfg.SimpleModeOrDefault()
 	m.compactToolGroups = cfg.CompactToolGroupsOrDefault()
 	m.bellEnabled = cfg.BellOrDefault()
-	return m
-}
-
-// WithWorkflow records which steps run shell commands, so live command output
-// in the Transcript is clamped like tool output rather than agent prose.
-func (m Model) WithWorkflow(wf *workflow.Workflow) Model {
-	if wf == nil {
-		return m
-	}
-	m.commandSteps = make(map[string]bool)
-	for _, st := range wf.Steps {
-		if st.Type == workflow.StepCommand {
-			m.commandSteps[st.ID] = true
-		}
-	}
 	return m
 }
 
@@ -720,7 +712,7 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 	m.steps = make([]monitorStep, len(snap.Steps))
 	m.index = make(map[string]int, len(snap.Steps))
 	if m.stepOutput == nil {
-		m.stepOutput = make(map[string]*strings.Builder)
+		m.stepOutput = make(map[string]*liveTranscriptBuffer)
 	}
 	if m.msgCount == nil {
 		m.msgCount = make(map[string]int)
@@ -760,6 +752,9 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 		ms := monitorStep{
 			id:          st.ID,
 			status:      st.Status,
+			timing:      st.Timing,
+			iteration:   st.Iteration,
+			attempt:     st.Attempt,
 			parentID:    st.ParentID,
 			fanOutIndex: st.FanOutIndex,
 			fanOutTotal: st.FanOutTotal,
@@ -788,11 +783,13 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 	for _, st := range snap.Steps {
 		if m.RunDir.Enabled() {
 			m.stepFiles[st.ID] = stepOutputFiles(m.RunDir, st.ID, "")
+			m.refreshTranscriptCount(st.ID)
 		}
 	}
 	if nRows := len(m.visibleRows()); m.cursor >= nRows && nRows > 0 {
 		m.cursor = nRows - 1
 	}
+	m.reloadTranscript()
 	return m
 }
 
@@ -812,8 +809,18 @@ func (m Model) WithSnapshot(snap engine.RunSnapshot) Model {
 func (m Model) WithJournal(evs []engine.Event) Model {
 	m.historical = true
 	m.interrupted = engine.ClassifyUnfinished(evs) == engine.UnfinishedInterrupted
+	var lastStatusAt time.Time
 	for _, e := range evs {
+		if status, ok := e.(engine.StepStatus); ok && status.At.After(lastStatusAt) {
+			lastStatusAt = status.At
+		}
 		m, _ = m.handleEngineEvent(e)
+	}
+	for i := range m.steps {
+		m.steps[i].timing.Pause(lastStatusAt)
+	}
+	for _, st := range m.steps {
+		m.refreshTranscriptCount(st.id)
 	}
 	m.reloadTranscript()
 	return m
@@ -881,6 +888,21 @@ func (m Model) PaletteSections() []shared.HelpSection {
 }
 
 func (m Model) helpSections(simple bool) []shared.HelpSection {
+	if m.securityOpen {
+		return []shared.HelpSection{{Title: "Security inspector", Bindings: []keybind.Binding{
+			keybind.NewBinding(keybind.WithKeys("up", "down"), keybind.WithHelp("↑/↓", "select or scroll")),
+			keybind.NewBinding(keybind.WithKeys("enter"), keybind.WithHelp("enter", "details")),
+			keybind.NewBinding(keybind.WithKeys("pgup", "pgdown"), keybind.WithHelp("pgup/pgdown", "scroll details")),
+			keybind.NewBinding(keybind.WithKeys("y"), keybind.WithHelp("y", "copy security details")),
+			keybind.NewBinding(keybind.WithKeys("esc"), keybind.WithHelp("esc", "back / close")),
+		}}}
+	}
+	if m.sourcePicker != nil {
+		return m.sourcePickerHelp()
+	}
+	if m.locationPicker != nil {
+		return m.pickerHelp()
+	}
 	var sections []shared.HelpSection
 
 	switch {
@@ -916,12 +938,24 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 			copyItem.SetEnabled(len(m.chatVisibleItems) > 0)
 			copyAll := m.keys.CopyAll
 			copyAll = shared.Relabel(copyAll, "copy transcript")
+			sourceMode := m.keys.SourceMode
+			_, _, sourceAvailable := m.selectedSource()
+			sourceKeys := []keybind.Binding{m.keys.SourceNext, m.keys.SourcePrevious, m.keys.SourceFirst, m.keys.SourceLast}
+			for i := range sourceKeys {
+				sourceKeys[i].SetEnabled(sourceAvailable && !m.CapturesText() && !m.filterOpen)
+			}
+			sourceMode.SetEnabled(m.sourceEligible() && !m.CapturesText() && !m.filterOpen)
+			openLocation := m.keys.OpenLocation
+			if len(m.selectedLocationTargets()) == 0 {
+				openLocation = shared.Relabel(openLocation, "open file: no recorded target")
+			}
+			openLocation.SetEnabled(!m.CapturesText() && !m.filterOpen)
 			if simple {
 				// Keep scroll / follow / expand / leave; hide paging, filters,
 				// search, expand-all, and block-nav from footer/help.
 				bindings = []keybind.Binding{
 					m.keys.Scroll, m.keys.Follow, m.keys.Toggle, m.keys.ScrollFast,
-					m.keys.GotoTop, copyItem, copyAll,
+					m.keys.GotoTop, copyItem, copyAll, openLocation, sourceMode,
 					m.keys.TransToSteps, m.keys.TransLeave,
 				}
 			} else {
@@ -929,10 +963,11 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 					m.keys.Scroll, m.keys.Follow, blockNav, m.keys.Toggle, m.keys.ScrollFast,
 					m.keys.GotoTop, pageOlder, pageNewer,
 					m.keys.Search, m.keys.Filters, clearView, compactTools, m.keys.ExpandAll,
-					copyItem, copyAll,
+					copyItem, copyAll, openLocation, sourceMode,
 					m.keys.TransToSteps, m.keys.TransLeave,
 				}
 			}
+			bindings = append(bindings, sourceKeys...)
 		}
 		bindings = append(bindings, m.bellBinding())
 		if m.gateContext != nil {
@@ -988,6 +1023,9 @@ func (m Model) helpSections(simple bool) []shared.HelpSection {
 		Bindings: []keybind.Binding{toggleSimple},
 	})
 
+	security := m.keys.SecurityInspector
+	security.SetEnabled(!m.CapturesText())
+	sections = append(sections, shared.HelpSection{Title: "Security", Bindings: []keybind.Binding{security}})
 	notifDiag := m.keys.NotificationDiagnostics
 	notifDiag.SetEnabled(!m.CapturesText())
 	sections = append(sections, shared.HelpSection{

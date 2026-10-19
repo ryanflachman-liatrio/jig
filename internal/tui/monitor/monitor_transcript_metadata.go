@@ -30,23 +30,23 @@ import (
 // cumulative cost and tokens; interior turn rows pass false because
 // StepStatus.Cost/Tokens accrue across attempts, not per-turn.
 //
-// stepEnded selects between the step-end wall time (monitorStep.end)
+// stepEnded selects between the step-end wall time (monitorStep.timing.EndedAt)
 // and the turn's own last transcript timestamp for the row's leading
-// time slot. Callers wire it from monitorStep.end.IsZero() == false.
+// time slot. Callers wire it from monitorStep.timing.EndedAt.IsZero() == false.
 func (m *Model) renderTurnMetadataRow(coord toolCorrelationKey, includeStepTotals, stepEnded bool) string {
 	turnStart, turnEnd, tsOK := turnTimestamps(m.chatEntries, coord)
 
 	var fields []string
 
 	// Time-of-day slot. For interior turns this is the last entry's
-	// local time; for the step-end row it is monitorStep.end (which
-	// matches the moment the terminal StepStatus arrived, i.e. what
-	// the operator actually saw). We fall through to turnEnd when
+	// local time; for the step-end row it is monitorStep.timing.EndedAt (which
+	// records the engine's terminal transition, preserved on replay).
+	// We fall through to turnEnd when
 	// step-end is unavailable so a live-follow of a running step
 	// still carries a per-turn timestamp.
 	if includeStepTotals && stepEnded {
 		if i, ok := m.index[m.chatStep]; ok {
-			if end := m.steps[i].end; !end.IsZero() {
+			if end := m.steps[i].timing.EndedAt; !end.IsZero() {
 				fields = append(fields, formatMetaTime(end))
 			}
 		}

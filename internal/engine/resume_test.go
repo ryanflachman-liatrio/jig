@@ -100,12 +100,17 @@ depends_on = ["a"]
 	exec := &crashRecordingExec{}
 	s := newScheduler(wf, "r", make(chan schedMsg, 1), nil, exec, cancel, w, datastore.Run{}, "", "", func(RunSnapshot) {})
 	s.states["a"].Status = step.StatusRunning
+	s.states["a"].Timing.Apply(step.StatusRunning, time.Now().Add(-time.Second))
+	priorTiming := s.states["a"].Timing
 
 	if s.transition("a", step.StatusRunning, step.StatusSucceeded) {
 		t.Fatal("transition succeeded with a closed journal")
 	}
 	if got := s.states["a"].Status; got != step.StatusRunning {
 		t.Fatalf("state advanced after journal failure: got %s, want running", got)
+	}
+	if s.states["a"].Timing != priorTiming {
+		t.Fatal("timing advanced despite failed journal write")
 	}
 	if s.fatalJournalErr == nil {
 		t.Fatal("journal failure did not latch a fatal scheduler error")

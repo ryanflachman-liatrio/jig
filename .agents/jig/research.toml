@@ -1,46 +1,173 @@
+# Run through the TUI: go run ./cmd/jig, then select research.
+# Validate: go run ./cmd/jig validate .agents/jig/research.toml
+# Agent attempts have deadlines; human review waits do not.
+# Editorial and research revisions revisit edit -> review (at most five times).
+# The editor investigates targeted evidence gaps; original specialists stay intact.
+# Approved Markdown is published to research-output/<run-id>/ (requires Python 3).
 [workflow]
 name = "research"
 version = "1"
-description = "A producer (structured output) + downstream branching example."
+description = "Question-driven specialist research, evidence-audited recommendations and proposed plan, bounded human revision, and durable Markdown publication."
 
 [defaults]
 agent = "@research-default"
+max_parallel = 5
+max_read_only = 5
+resource_limits = { research = 5 }
 
-# Producer: schema-enforced structured output via an inline [step.schema].
 [[step]]
-id            = "research"
-type          = "agent"
-skill         = "../skills/research_backend"
-inputs        = [
-  "templates/context-assess.md",
-  { from = "user", label = "Any additional context or focus areas for the review?", as = "user_context" },
-]
-agent         = { extends = "@research-default", tools = ["Read", "Grep", "Glob", "WebSearch"] }
+id = "brief"
+type = "agent"
+skill = "../skills/research-brief"
+depends_on = []
+ask_user = true
+isolation = "none"
+timeout = "20m"
+  [step.context]
+  purpose = "Turn the request into prioritized, answerable questions with evidence standards and specialist deliverables."
+  [[step.inputs]]
+  from = "user"
+  label = "What should we research, and what decision or understanding should it support? Include sources, constraints, known assumptions or preferences, and desired depth if available."
+  as = "request"
+  once = true
 
+[[step]]
+id = "research_codebase"
+type = "agent"
+agent = "@research-codebase"
+skill = "../skills/research-specialist"
+depends_on = ["brief"]
+inputs = ["@brief"]
+isolation = "none"
+resource_class = "research"
+timeout = "30m"
+  [step.context]
+  purpose = "Explain current mechanisms, ownership, constraints, and consequences for the assigned questions."
+
+[[step]]
+id = "research_ecosystem"
+type = "agent"
+agent = "@research-ecosystem"
+skill = "../skills/research-specialist"
+depends_on = ["brief"]
+inputs = ["@brief"]
+isolation = "none"
+resource_class = "research"
+timeout = "30m"
+  [step.context]
+  purpose = "Compare viable approaches against shared criteria and challenge the preferred recommendation."
+
+[[step]]
+id = "research_contracts"
+type = "agent"
+agent = "@research-contracts"
+skill = "../skills/research-specialist"
+depends_on = ["brief"]
+inputs = ["@brief"]
+isolation = "none"
+resource_class = "research"
+timeout = "30m"
+  [step.context]
+  purpose = "Make information boundaries and invariants concrete through worked normal and failure cases."
+
+[[step]]
+id = "research_risks"
+type = "agent"
+agent = "@research-risks"
+skill = "../skills/research-specialist"
+depends_on = ["brief"]
+inputs = ["@brief"]
+isolation = "none"
+resource_class = "research"
+timeout = "30m"
+  [step.context]
+  purpose = "Prioritize evidenced causal risk scenarios, controls, verification, and residual uncertainty."
+
+[[step]]
+id = "research_validation"
+type = "agent"
+agent = "@research-validation"
+skill = "../skills/research-specialist"
+depends_on = ["brief"]
+inputs = ["@brief"]
+isolation = "none"
+resource_class = "research"
+timeout = "30m"
+  [step.context]
+  purpose = "Test consequential assumptions and design reproducible checks that could falsify the main options."
+
+# One editor owns all reviewable documents, including specialist revisions.
+# Text fields support separate annotated documents without repository writes.
+[[step]]
+id = "edit"
+type = "agent"
+skill = "../skills/research-editor"
+depends_on = ["brief", "research_codebase", "research_ecosystem", "research_contracts", "research_risks", "research_validation"]
+inputs = ["@brief", "@research_codebase", "@research_ecosystem", "@research_contracts", "@research_risks", "@research_validation"]
+ask_user = true
+isolation = "none"
+timeout = "30m"
+  [step.context]
+  purpose = "Audit question coverage and evidence, resolve conflicts, and produce recommendations and a proposed plan."
+  notes = "Classify feedback as editorial or research revision and investigate targeted gaps. Use this run's immutable reviewed documents as the revision baseline; original reports remain provenance."
   [step.schema]
-  state      = { enum = ["complete", "partial", "blocked"] }
-  certainty  = "number"
-  findings   = { list = "text" }
-  sources    = { list = { url = "text", relevance = "number" } }
+  synthesis = "text"
+  plan = "text"
+  codebase = "text"
+  ecosystem = "text"
+  contracts = "text"
+  risks = "text"
+  validation = "text"
+  responses = "text"
 
-# Downstream producer pulls one field in and guards on another.
 [[step]]
-id            = "report"
-type          = "agent"
-depends_on    = ["research"]
-skill         = "../skills/research_frontend"
-inputs        = ["@research.summary", { ref = "@research.findings", inline = true }]
-when          = "research.state == 'complete'"
-output        = ".jig/artifacts/report.md"
-agent         = { extends = "@research-default", tools = ["Read"] }
+id = "review"
+type = "review"
+depends_on = ["edit"]
+output_type = { enum = ["approve", "revise"] }
+  [[step.review]]
+  source = "@edit.synthesis"
+  label = "Research synthesis"
 
-# If research couldn't finish, escalate to a human instead of reporting.
+  [[step.review]]
+  source = "@edit.plan"
+  label = "Proposed implementation plan"
+
+  [[step.review]]
+  source = "@edit.codebase"
+  label = "Codebase and architecture"
+
+  [[step.review]]
+  source = "@edit.ecosystem"
+  label = "Ecosystem and alternatives"
+
+  [[step.review]]
+  source = "@edit.contracts"
+  label = "Interfaces and data"
+
+  [[step.review]]
+  source = "@edit.risks"
+  label = "Security and operations"
+
+  [[step.review]]
+  source = "@edit.validation"
+  label = "Testing and feasibility"
+
+  [[step.review]]
+  source = "@edit.responses"
+  label = "Review responses and open questions"
+
+[[step.route]]
+when = "review == 'revise'"
+goto = "edit"
+max_iterations = 5
+feedback = "@review"
+
+# Copy only the exact approved snapshots; no further model call or rewriting.
 [[step]]
-id          = "escalate"
-type        = "review"
-depends_on  = ["research"]
-when        = "research.state == 'blocked'"
-output_type = { enum = ["retry", "abandon"] }
-[[step.review]]
-source      = "@research.summary"
-label       = "Research summary"
+id = "publish"
+type = "command"
+depends_on = ["review"]
+when = "review == 'approve'"
+run = 'python3 "$JIG_PROJECT_DIR/scripts/publish_research.py" --run-dir "$JIG_RUN_DIR" --destination "$JIG_PROJECT_DIR/research-output"'
+timeout = "1m"

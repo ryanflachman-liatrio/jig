@@ -202,8 +202,7 @@ func TestChatItemLineRangesStableAcrossAnchorMode(t *testing.T) {
 
 // TestTruncationAnchorGallery captures the three anchor scenes in one
 // deterministic file: a settled head-anchored exchange, a running tail-
-// anchored exchange, and a Steps-panel streaming buffer with the drop
-// indicator. Opt-in via JIG_UI_SNAPSHOT_DIR.
+// anchored exchange, and a Transcript-panel live response. Opt-in via JIG_UI_SNAPSHOT_DIR.
 func TestTruncationAnchorGallery(t *testing.T) {
 	dir := os.Getenv("JIG_UI_SNAPSHOT_DIR")
 	if dir == "" {
@@ -231,18 +230,21 @@ func TestTruncationAnchorGallery(t *testing.T) {
 		return stripANSI(m.itemTranscriptBody())
 	}()
 
-	livePlain := func() string {
+	streamPlain := func() string {
 		m := newMonitorWithSteps(t)
 		m.transcriptInnerW = 80
 		m.steps[m.index["a"]].status = step.StatusRunning
 		m.chatStep = "a"
-		m.commandSteps = map[string]bool{"a": true}
 		var buf strings.Builder
-		for i := 0; i < transcriptDetailRows+5; i++ {
+		total := 15
+		for i := 0; i < total; i++ {
 			fmt.Fprintf(&buf, "streaming line %02d\n", i+1)
 		}
-		m.stepOutput["a"] = &buf
-		return stripANSI(m.liveBlock())
+		m.stepOutput["a"] = &liveTranscriptBuffer{}
+		m.stepOutput["a"].append(buf.String())
+		m.chatStep = "a"
+		m.transcriptInnerW = 80
+		return stripANSI(m.chatBody())
 	}()
 
 	var b strings.Builder
@@ -255,8 +257,8 @@ func TestTruncationAnchorGallery(t *testing.T) {
 	fmt.Fprintln(&b, settledPlain)
 	fmt.Fprintln(&b, "== (b) Running tool exchange (toolDisplayRunning) -> tail anchor + prepended \"earlier lines\" ==")
 	fmt.Fprintln(&b, runningPlain)
-	fmt.Fprintln(&b, "== (c) Transcript live block for a command step (tail clamp + prepended \"earlier lines\") ==")
-	fmt.Fprintln(&b, livePlain)
+	fmt.Fprintln(&b, "== (c) Transcript-panel live streaming output ==")
+	fmt.Fprintln(&b, streamPlain)
 
 	out := filepath.Join(dir, "25-task-3-anchor-gallery.txt")
 	if err := os.WriteFile(out, []byte(b.String()), 0o644); err != nil {
@@ -267,8 +269,8 @@ func TestTruncationAnchorGallery(t *testing.T) {
 		"Command: JIG_UI_SNAPSHOT_DIR=<dir> go test ./internal/tui/monitor -run TestTruncationAnchorGallery -count=1\n" +
 		"Scenes: (a) toolDisplaySuccess (head+tail with appended MoreItems marker),\n" +
 		"        (b) toolDisplayRunning (tail-only with prepended EarlierItems marker),\n" +
-		"        (c) Transcript live block for a running command step dropping leading rows (EarlierItems w/o expand hint).\n" +
-		"Style token for (c): shared.Theme.Chat.Hint.\n"
+		"        (c) Transcript-panel live response before finalization.\n" +
+		"Scene (c) uses literal wrapped text while streaming.\n"
 	if err := os.WriteFile(filepath.Join(dir, "25-task-3-anchor-gallery.notes.txt"), []byte(notes), 0o644); err != nil {
 		t.Fatalf("write notes: %v", err)
 	}

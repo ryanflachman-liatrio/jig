@@ -159,9 +159,8 @@ func TestTranscriptSearchFindsFilteredLoadedBlocks(t *testing.T) {
 
 	// Explicitly enabling the reasoning filter opts back into settled
 	// reasoning, surfacing the thinking block search missed above.
-	m.filters.reasoning = true
-	m.rebuildTranscriptItemState(m.selectedTranscriptItemKey())
-	m.rerunSearch()
+	m.filterCursor = 2
+	m.toggleCurrentFilter()
 	if len(m.searchHits) != 1 || m.searchHits[0].key.block != 1 {
 		t.Fatalf("reasoning-filtered hits = %+v", m.searchHits)
 	}

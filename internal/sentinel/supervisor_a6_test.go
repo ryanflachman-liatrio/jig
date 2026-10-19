@@ -328,3 +328,52 @@ func TestSupervisorRedactsReturnedDetailBeforePersistence(t *testing.T) {
 		t.Fatalf("persisted detail = %+v", findings)
 	}
 }
+
+func TestMonitorFailureDetailRetainsSafeContext(t *testing.T) {
+	failure := NewMonitorFailure(MonitorFailure{Backend: "codex", Model: "fixture", Stage: "session_open", Reason: "authentication", Attempts: 1, Summary: "Authentication failed", NextStep: "Sign in and restart jig."}, errors.New("private vendor payload"))
+	detail := monitorFailureDetail(failure)
+	for _, want := range []string{"backend=codex", "model=fixture", "stage=session_open", "reason=authentication", "Sign in"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("missing %q in %q", want, detail)
+		}
+	}
+	if strings.Contains(detail, "private vendor") {
+		t.Fatal("raw provider error leaked")
+	}
+}
+
+func TestMonitorFailurePersistenceKeepsSafeReasonAcrossRuns(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "findings.jsonl")
+	writer, err := NewWriter(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure := NewMonitorFailure(MonitorFailure{Backend: "codex", Model: "fixture", Stage: "session_open", Reason: "authentication", Attempts: 1, Summary: "Authentication failed", NextStep: "Sign in and restart jig."}, errors.New("private provider output"))
+	supervisor := NewSupervisor("run", nil, writer, nil, nil, nil, SupervisorOptions{})
+	supervisor.healthFindingWithFailure("step", "monitor-unavailable/check", monitorFailureDetail(failure), failure)
+	supervisor.healthFindingWithFailure("step", "monitor-unavailable/check", monitorFailureDetail(failure), failure)
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	records, err := ReadAll(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 || records[0].Failure == nil || records[0].Failure.Reason != "authentication" {
+		t.Fatalf("persisted records: %+v", records)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "private provider") {
+		t.Fatal("raw error persisted")
+	}
+	circuit := &MonitorCircuit{}
+	circuit.failure.Store(failure)
+	circuit.disable()
+	if !circuit.isDisabled() || circuit.failure.Load().Reason != "authentication" {
+		t.Fatal("circuit lost original failure")
+	}
+}

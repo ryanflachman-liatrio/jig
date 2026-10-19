@@ -346,7 +346,7 @@ func TestCaptureStream_StructuredToolResultTruncated(t *testing.T) {
 	}
 }
 
-// TestCaptureStream_Artifact verifies the engine writes raw_result.md from the
+// TestCaptureStream_Artifact verifies the engine writes output.md from the
 // agent's last text turn (no agent Write tool required), that OutputPath points
 // to it, and that an explicit Step.Output path receives the same content.
 func TestCaptureStream_Artifact(t *testing.T) {
@@ -379,17 +379,20 @@ func TestCaptureStream_Artifact(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// OutputPath points to engine-written raw_result.md.
-	wantRaw := filepath.Join(dir, "raw_result.md")
-	if res.OutputPath != wantRaw {
-		t.Errorf("OutputPath = %q, want %q", res.OutputPath, wantRaw)
+	// OutputPath points to the full deliverable.
+	wantOutput := filepath.Join(dir, "output.md")
+	if res.OutputPath != wantOutput {
+		t.Errorf("OutputPath = %q, want %q", res.OutputPath, wantOutput)
 	}
-	got, err := os.ReadFile(wantRaw)
+	got, err := os.ReadFile(wantOutput)
 	if err != nil {
-		t.Fatalf("raw_result.md not written: %v", err)
+		t.Fatalf("output.md not written: %v", err)
 	}
 	if string(got) != proseText {
-		t.Errorf("raw_result.md = %q, want %q", string(got), proseText)
+		t.Errorf("output.md = %q, want %q", string(got), proseText)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "raw_result.md")); !os.IsNotExist(err) {
+		t.Errorf("obsolete raw_result.md exists: %v", err)
 	}
 
 	// output.json contains the structured envelope.
@@ -397,14 +400,14 @@ func TestCaptureStream_Artifact(t *testing.T) {
 		t.Errorf("output.json not written: %v", err)
 	}
 
-	// output.md is rendered from structured metadata fields.
-	outMD, err := os.ReadFile(filepath.Join(dir, "output.md"))
+	// metadata.md is rendered from base status fields.
+	outMD, err := os.ReadFile(filepath.Join(dir, "metadata.md"))
 	if err != nil {
-		t.Fatalf("output.md not written: %v", err)
+		t.Fatalf("metadata.md not written: %v", err)
 	}
 	for _, want := range []string{"## Status", "succeeded", "## Summary"} {
 		if !strings.Contains(string(outMD), want) {
-			t.Errorf("output.md missing %q", want)
+			t.Errorf("metadata.md missing %q", want)
 		}
 	}
 
@@ -486,22 +489,27 @@ func TestAgentExecutor_UsesRepoRootWhenPersistenceHasNoExecutionView(t *testing.
 // file is written and no liveness Message signals fire (persistence off path).
 func TestCaptureStream_NoTranscript(t *testing.T) {
 	dir := t.TempDir()
+	t.Chdir(dir)
 	events := []harness.Event{
 		{Type: harness.EventText, Text: "hi"},
 		{Type: harness.EventAssistantEnd},
-		{Type: harness.EventResult},
+		{Type: harness.EventResult, Structured: json.RawMessage(`{"status":"succeeded","summary":"done"}`)},
 	}
 	rep := &captureReporter{}
-	req := engine.StepRequest{Step: &workflow.Step{}} // TranscriptPath == ""
+	req := engine.StepRequest{Step: &workflow.Step{Output: "declared.md"}} // TranscriptPath == ""
 
-	if _, err := captureStream(scriptChan(events...), req, rep, time.Now(), ""); err != nil {
+	res, err := captureStream(scriptChan(events...), req, rep, time.Now(), "")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if res.OutputPath != "" {
+		t.Errorf("persistence-off OutputPath = %q", res.OutputPath)
 	}
 	if len(rep.messages) != 0 {
 		t.Errorf("want no Message signals with persistence off, got %d", len(rep.messages))
 	}
-	if entries, _ := filepath.Glob(filepath.Join(dir, "*.jsonl")); len(entries) != 0 {
-		t.Errorf("no transcript file should be written; found %v", entries)
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+		t.Errorf("persistence-off wrote files: %v, %v", entries, err)
 	}
 }
 

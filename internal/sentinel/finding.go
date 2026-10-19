@@ -57,7 +57,8 @@ type Finding struct {
 	Severity Severity `json:"severity"`
 	Action   Action   `json:"action"`
 	// Detail is a human-readable description, safe for commit (no raw secrets).
-	Detail string `json:"detail"`
+	Detail  string          `json:"detail"`
+	Failure *MonitorFailure `json:"failure,omitempty"`
 	// Evidence is an optional locator (transcript seq / block index / tool name)
 	// that points a reviewer to the raw context on disk.
 	Evidence string `json:"evidence,omitempty"`

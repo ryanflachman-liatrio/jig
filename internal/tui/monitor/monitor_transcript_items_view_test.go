@@ -512,7 +512,7 @@ func TestStructuredEditShowsNewCodeInDefaultOpenCard(t *testing.T) {
 	if !strings.Contains(body, "\"old") {
 		t.Fatalf("default-open diff card missing delete row content (fragment %q):\n%s", "\"old", body)
 	}
-	if strings.Contains(body, "New code · internal/greeting.go") {
+	if strings.Contains(body, "Recorded new source · internal/greeting.go") {
 		t.Fatalf("expected slice-07 Diff label, not the resulting-source fallback:\n%s", body)
 	}
 	if !strings.Contains(body, "+3/-1") {
