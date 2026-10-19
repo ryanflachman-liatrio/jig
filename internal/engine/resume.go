@@ -163,17 +163,13 @@ func notificationPolicyDigest(policy workflow.NotificationPolicy) (string, error
 // Resume restores every durable unfinished park under one scheduler. Workers
 // interrupted mid-flight are moved to recovery; parks that already existed
 // before process death are rehydrated in place.
-func (m *Manager) Resume(runID string) (*Run, error) {
+func (m *Manager) Resume(runID string) (_ *Run, err error) {
 	if runID == "" || filepath.Base(runID) != runID || strings.ContainsAny(runID, `/\\`) {
 		return nil, fmt.Errorf("engine: invalid run id %q", runID)
 	}
-	m.mu.Lock()
-	if _, exists := m.runs[runID]; exists {
-		m.mu.Unlock()
+	if m.hasRun(runID) {
 		return nil, fmt.Errorf("run %s: %w", runID, ErrRunLocked)
 	}
-	m.mu.Unlock()
-
 	runDir, err := m.store.Resolve(runID)
 	if err != nil {
 		return nil, fmt.Errorf("engine: resolve run: %w", err)
@@ -182,48 +178,65 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	if err != nil {
 		return nil, err
 	}
-	fail := func(err error) (*Run, error) {
+
+	// Each stage below records what it acquired; on failure this undoes them
+	// in reverse.
+	var (
+		cancel     context.CancelFunc
+		registered bool
+		w          *manifest.Writer
+		s          *scheduler
+		dropRunWT  bool // remove a run worktree restoreRunBranch created
+	)
+	defer func() {
+		if err == nil {
+			return
+		}
+		if dropRunWT && s != nil && s.branch.worktree != "" {
+			_ = removeWorktree(s.repoRoot, s.branch.worktree)
+			s.branch.worktree = ""
+		}
+		if w != nil {
+			_ = w.Close()
+		}
+		if registered {
+			m.mu.Lock()
+			delete(m.runs, runID)
+			m.mu.Unlock()
+		}
+		if cancel != nil {
+			cancel()
+		}
 		_ = lock.Close()
-		return nil, err
-	}
+	}()
 
 	seq, events, err := readJournalStrict(runDir)
 	if err != nil {
-		return fail(err)
+		return nil, err
 	}
 	wf, err := loadWorkflowSnapshot(runDir)
 	if err != nil {
-		return fail(fmt.Errorf("resume workflow: %w", err))
+		return nil, fmt.Errorf("resume workflow: %w", err)
 	}
 	checkpoint, err := restoreUnfinishedCheckpoint(runDir, wf, events)
 	if err != nil {
-		return fail(err)
+		return nil, err
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// The run outlives this call, so its context is rooted in Background.
+	ctx, runCancel := context.WithCancel(context.Background())
+	cancel = runCancel
 	inbox := make(chan schedMsg, 64)
-	run := &Run{ID: runID, cancel: cancel, inbox: inbox, done: make(chan struct{}), runLock: lock}
-
-	m.mu.Lock()
-	if _, exists := m.runs[runID]; exists {
-		m.mu.Unlock()
-		cancel()
-		return fail(fmt.Errorf("run %s: %w", runID, ErrRunLocked))
+	run := &Run{ID: runID, cancel: runCancel, inbox: inbox, done: make(chan struct{}), runLock: lock}
+	subs, secrets, ok := m.register(run)
+	if !ok {
+		return nil, fmt.Errorf("run %s: %w", runID, ErrRunLocked)
 	}
-	subs := append([]sub(nil), m.subs...)
-	secrets := m.secrets
-	m.runs[runID] = run
-	m.mu.Unlock()
+	registered = true
 
-	w, err := manifest.NewWriter(runDir)
-	if err != nil {
-		m.mu.Lock()
-		delete(m.runs, runID)
-		m.mu.Unlock()
-		cancel()
-		return fail(err)
+	if w, err = manifest.NewWriter(runDir); err != nil {
+		return nil, err
 	}
-	repoRoot := filepath.Dir(filepath.Clean(m.store.Root()))
 	var security *runSecurity
 	onDone := func(snap RunSnapshot) {
 		run.finalSnap = snap
@@ -232,59 +245,25 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 		run.runLock = nil
 		close(run.done)
 	}
-	s := newScheduler(schedulerDeps{wf: wf, runID: runID, inbox: inbox, subs: subs, exec: m.exec, cancel: cancel, writer: w, runDir: runDir, jigRoot: m.store.Root(), repoRoot: repoRoot, onDone: onDone})
+	s = newScheduler(schedulerDeps{
+		wf: wf, runID: runID, inbox: inbox, subs: subs, exec: m.exec, cancel: runCancel,
+		writer: w, runDir: runDir, jigRoot: m.store.Root(),
+		repoRoot: filepath.Dir(filepath.Clean(m.store.Root())), onDone: onDone,
+	})
 	s.resolver = m.resolver
 	s.secretResolver = secrets
 	s.getCauseHint = run.causeSnapshot
 	s.seq = seq
-	s.states = checkpoint.states
-	s.reviewSessions = checkpoint.reviewSessions
-	s.restoredHold = checkpoint.hasParks()
-	for stepID := range checkpoint.recoverySkipped {
-		s.rt(stepID).skippedByOperator = true
-	}
-	for i := range wf.Steps {
-		if checkpoint.states[wf.Steps[i].ID].Status == step.StatusSkipped && wf.Steps[i].When != "" {
-			s.rt(wf.Steps[i].ID).skippedByGuard = true
-		}
-	}
-	// Rebuild runtime fan-out registries from the FanOutExpanded manifests
-	// folded during restoreUnfinishedCheckpoint — the manifest is the
-	// authoritative creation record, never a fresh producer read (see
-	// rebuildFanOutFamily). These must be non-nil maps (dispatchForEach writes
-	// into them directly) even when the run has no foreach family at all.
-	s.foreach = checkpoint.fanOut
-	// A family left Running settles by ordinary child transitions during live
-	// execution (transitionRecovery's trySettleFamilyIfChild hook), which is
-	// edge-triggered on a child reaching a terminal status. If every child was
-	// already terminal before the crash, no such transition will ever occur
-	// again — catch that up once here so the barrier still closes and its
-	// aggregate still gets written. This is a no-op for a family with any
-	// non-terminal child (trySettleFamily itself guards on that) and for a
-	// family that already settled before the crash (guarded by fam.Settled /
-	// state.Status != Running).
-	for _, familyID := range s.foreach.order {
-		s.trySettleFamily(familyID)
-	}
+	s.applyCheckpoint(checkpoint)
 	if err := s.restoreRunBranch(len(checkpoint.integrations) > 0); err != nil {
-		m.mu.Lock()
-		delete(m.runs, runID)
-		m.mu.Unlock()
-		_ = w.Close()
-		cancel()
-		return fail(fmt.Errorf("restore run branch: %w", err))
+		return nil, fmt.Errorf("restore run branch: %w", err)
 	}
 	// Journal the entire recovery transaction before runLoop so a crash during
 	// reopen cannot lose the decision surface (Spec 20 D18). The events are
 	// fanned out only after the batch is durable.
 	reopenEvents, err := s.rehydrateParks(checkpoint)
 	if err != nil {
-		m.mu.Lock()
-		delete(m.runs, runID)
-		m.mu.Unlock()
-		_ = w.Close()
-		cancel()
-		return fail(err)
+		return nil, err
 	}
 	s.observers = &m.observers
 
@@ -302,16 +281,10 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	})
 
 	if err := s.emitBatch(reopenEvents); err != nil {
-		m.mu.Lock()
-		delete(m.runs, runID)
-		m.mu.Unlock()
-		if s.branch.worktree != "" && len(checkpoint.integrations) == 0 {
-			_ = removeWorktree(s.repoRoot, s.branch.worktree)
-			s.branch.worktree = ""
-		}
-		_ = w.Close()
-		cancel()
-		return fail(fmt.Errorf("journal reopened parks: %w", err))
+		// An integration park keeps its conflicted run worktree for the
+		// operator; otherwise the worktree restoreRunBranch made is discarded.
+		dropRunWT = len(checkpoint.integrations) == 0
+		return nil, fmt.Errorf("journal reopened parks: %w", err)
 	}
 	security = startRunSecurity(ctx, wf, runID, runDir, m.monitors, subs, inbox, true)
 	if security != nil {
@@ -322,6 +295,53 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 		s.runLoop(ctx)
 	}()
 	return run, nil
+}
+
+// hasRun reports whether runID already has a scheduler in this process.
+func (m *Manager) hasRun(runID string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, exists := m.runs[runID]
+	return exists
+}
+
+// register adds run to the registry unless another scheduler claimed its id
+// first, returning the subscribers and secret resolver to wire into it.
+func (m *Manager) register(run *Run) ([]sub, SecretResolver, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.runs[run.ID]; exists {
+		return nil, nil, false
+	}
+	m.runs[run.ID] = run
+	return append([]sub(nil), m.subs...), m.secrets, true
+}
+
+// applyCheckpoint loads a restored checkpoint into a fresh scheduler.
+func (s *scheduler) applyCheckpoint(checkpoint *unfinishedCheckpoint) {
+	s.states = checkpoint.states
+	s.reviewSessions = checkpoint.reviewSessions
+	s.restoredHold = checkpoint.hasParks()
+	for stepID := range checkpoint.recoverySkipped {
+		s.rt(stepID).skippedByOperator = true
+	}
+	for i := range s.wf.Steps {
+		if checkpoint.states[s.wf.Steps[i].ID].Status == step.StatusSkipped && s.wf.Steps[i].When != "" {
+			s.rt(s.wf.Steps[i].ID).skippedByGuard = true
+		}
+	}
+	// The fan-out registry comes from the FanOutExpanded manifests folded by
+	// restoreUnfinishedCheckpoint: the manifest is the authoritative creation
+	// record, never a fresh producer read (see rebuildFanOutFamily).
+	s.foreach = checkpoint.fanOut
+	// A family left Running settles through child transitions, which are
+	// edge-triggered on a child reaching a terminal status. If every child was
+	// already terminal before the crash, no such transition will happen again,
+	// so catch up once here. trySettleFamily is a no-op for a family with a
+	// non-terminal child or one that already settled.
+	for _, familyID := range s.foreach.order {
+		s.trySettleFamily(familyID)
+	}
 }
 
 // processInterruptedErr is the durable sentinel written when Resume parks a
