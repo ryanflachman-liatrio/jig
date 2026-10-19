@@ -3,8 +3,8 @@ package engine
 import (
 	"context"
 	"encoding/json"
-	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 	"github.com/ryanflachman-liatrio/jig/internal/interaction"
 	"github.com/ryanflachman-liatrio/jig/internal/sentinel"
 	"github.com/ryanflachman-liatrio/jig/internal/step"

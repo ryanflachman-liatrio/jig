@@ -103,6 +103,8 @@ func (s *scheduler) executionViewBranchName(stepID string) string {
 
 func (s *scheduler) releaseExecutionView(stepID string, workspace executionWorkspace) {
 	if workspace.Dir != "" && s.repoRoot != "" {
+		// Best-effort: a leftover read-only view is reclaimed by the stale
+		// worktree retry in createWorktreeAt and never feeds integration.
 		_ = removeWorktree(s.repoRoot, workspace.Dir)
 		_, _ = gitCmd(s.repoRoot, "branch", "-D", s.executionViewBranchName(stepID))
 	}

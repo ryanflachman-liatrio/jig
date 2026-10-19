@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"syscall"
@@ -18,18 +19,23 @@ type RunLease struct {
 
 // AcquireRunLease acquires the same non-blocking ownership lease used by
 // Start and Resume. It creates an absent coordination file but never truncates
-// an existing one.
+// an existing one. A held lease yields an error wrapping ErrRunLocked. With
+// persistence off it returns a nil lease and nil error; (*RunLease).Close is
+// safe on nil, so callers need not branch.
 func AcquireRunLease(runDir datastore.Run) (*RunLease, error) {
 	if !runDir.Enabled() {
 		return nil, nil
 	}
 	f, err := os.OpenFile(runDir.SchedulerLock(), os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open scheduler lock: %w", err)
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("run already has a live scheduler")
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return nil, ErrRunLocked
+		}
+		return nil, fmt.Errorf("acquire scheduler lock: %w", err)
 	}
 	info, err := f.Stat()
 	if err != nil {
@@ -41,7 +47,7 @@ func AcquireRunLease(runDir datastore.Run) (*RunLease, error) {
 	if !ok {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 		_ = f.Close()
-		return nil, fmt.Errorf("inspect scheduler lock identity")
+		return nil, errors.New("inspect scheduler lock identity")
 	}
 	return &RunLease{file: f, dev: uint64(stat.Dev), ino: stat.Ino}, nil
 }
@@ -91,7 +97,7 @@ func RunLockState(runDir datastore.Run) (bool, error) {
 	}
 	defer f.Close()
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		if err == syscall.EWOULDBLOCK || err == syscall.EAGAIN {
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
 			return true, nil
 		}
 		return false, fmt.Errorf("engine: probe scheduler lock: %w", err)

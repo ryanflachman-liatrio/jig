@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -170,7 +171,7 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	m.mu.Lock()
 	if _, exists := m.runs[runID]; exists {
 		m.mu.Unlock()
-		return nil, fmt.Errorf("run %s already has a scheduler", runID)
+		return nil, fmt.Errorf("run %s: %w", runID, ErrRunLocked)
 	}
 	m.mu.Unlock()
 
@@ -187,7 +188,7 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 		return nil, err
 	}
 
-	seq, events, err := readJournal(runDir)
+	seq, events, err := readJournalStrict(runDir)
 	if err != nil {
 		return fail(err)
 	}
@@ -208,7 +209,7 @@ func (m *Manager) Resume(runID string) (*Run, error) {
 	if _, exists := m.runs[runID]; exists {
 		m.mu.Unlock()
 		cancel()
-		return fail(fmt.Errorf("run %s already has a scheduler", runID))
+		return fail(fmt.Errorf("run %s: %w", runID, ErrRunLocked))
 	}
 	subs := append([]sub(nil), m.subs...)
 	secrets := m.secrets
@@ -433,7 +434,7 @@ func (c *unfinishedCheckpoint) hasOutstandingWork() bool {
 
 func restoreUnfinishedCheckpoint(runDir datastore.Run, wf *workflow.Workflow, events []Event) (*unfinishedCheckpoint, error) {
 	if wf == nil {
-		return nil, fmt.Errorf("resume: workflow is unavailable")
+		return nil, errors.New("resume: workflow is unavailable")
 	}
 	states := make(map[string]*step.State, len(wf.Steps))
 	for i := range wf.Steps {
@@ -457,10 +458,10 @@ func restoreUnfinishedCheckpoint(runDir datastore.Run, wf *workflow.Workflow, ev
 	for _, event := range events {
 		switch event := event.(type) {
 		case RunStarted:
-			copy := event
-			started = &copy
+			startedEvent := event
+			started = &startedEvent
 		case RunFinished:
-			return nil, fmt.Errorf("resume: run is already finished")
+			return nil, fmt.Errorf("resume: %w", ErrRunFinished)
 		case FanOutExpanded:
 			// FanOutExpanded is the authoritative creation record for runtime
 			// children (docs/plans/a8-dynamic-foreach-fan-out.md, "Durability,
@@ -550,7 +551,7 @@ func restoreUnfinishedCheckpoint(runDir datastore.Run, wf *workflow.Workflow, ev
 		}
 	}
 	if started == nil || started.Workflow != wf.Meta.Name || len(started.Steps) != len(wf.Steps) {
-		return nil, fmt.Errorf("resume: workflow does not match the historical run")
+		return nil, errors.New("resume: workflow does not match the historical run")
 	}
 	// The process was absent after its last durable observation. Do not turn
 	// that unobserved interval into execution time when recovery parks workers.
@@ -664,7 +665,7 @@ func restoreUnfinishedCheckpoint(runDir datastore.Run, wf *workflow.Workflow, ev
 		}
 	}
 	if !checkpoint.hasOutstandingWork() && len(recoverySkipped) == 0 {
-		return nil, fmt.Errorf("resume: run has no reopenable park")
+		return nil, errors.New("resume: run has no reopenable park")
 	}
 	return checkpoint, nil
 }

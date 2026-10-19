@@ -220,12 +220,13 @@ func (m resolveIntegrationMsg) execute(s *scheduler) { s.handleResolveIntegratio
 func (m resolveIntegrationWithAgentMsg) execute(s *scheduler) {
 	s.handleResolveIntegrationWithAgent(m)
 }
-func (m finalMergeMsg) execute(s *scheduler)      { s.handleFinalMerge(m) }
-func (m stopMsg) execute(s *scheduler)            { s.handleStop(m) }
-func (m resumeMsg) execute(s *scheduler)          { s.handleResume(m) }
-func (m resetMsg) execute(s *scheduler)           { s.handleReset(m) }
-func (m securityFindingMsg) execute(s *scheduler) { s.handleSecurityFinding(m.sf) }
-func (m retryWakeMsg) execute(s *scheduler)       { delete(s.retryNotBefore, m.stepID) }
+func (m integrationResolvedMsg) execute(s *scheduler) { s.handleIntegrationResolved(m) }
+func (m finalMergeMsg) execute(s *scheduler)          { s.handleFinalMerge(m) }
+func (m stopMsg) execute(s *scheduler)                { s.handleStop(m) }
+func (m resumeMsg) execute(s *scheduler)              { s.handleResume(m) }
+func (m resetMsg) execute(s *scheduler)               { s.handleReset(m) }
+func (m securityFindingMsg) execute(s *scheduler)     { s.handleSecurityFinding(m.sf) }
+func (m retryWakeMsg) execute(s *scheduler)           { delete(s.retryNotBefore, m.stepID) }
 func (m networkRequestMsg) execute(s *scheduler) {
 	s.networkRequests++
 	cap := s.wf.Defaults.MaxNetworkRequests

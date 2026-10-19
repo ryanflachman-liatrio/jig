@@ -77,8 +77,12 @@ type failurePolicyStrategy interface {
 // the human recovery gate rather than failing the run outright.
 type retryFailureStrategy struct{}
 
+// defaultMaxRetries applies when a step uses on_failure = "retry" without
+// setting max_retries.
+const defaultMaxRetries = 1
+
 func (retryFailureStrategy) apply(s *scheduler, stepID string, wfStep *workflow.Step, from step.Status) {
-	maxRetries := 1
+	maxRetries := defaultMaxRetries
 	if wfStep != nil && wfStep.MaxRetries > 0 {
 		maxRetries = wfStep.MaxRetries
 	}

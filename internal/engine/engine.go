@@ -6,10 +6,10 @@ package engine
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -192,19 +192,32 @@ func (m *Manager) Start(wf *workflow.Workflow) (*Run, error) {
 	if m.store.Enabled() {
 		if rd, err := m.store.Create(runID); err == nil {
 			runDir = rd
-			_ = persistWorkflowSnapshot(runDir, wf)
-			if lock, lockErr := AcquireRunLease(runDir); lockErr == nil {
-				run.runLock = lock
-			} else {
+			// Once the run directory exists, the snapshot and journal are
+			// required: without them the run can neither be reopened nor
+			// audited, so a failure aborts Start instead of running unrecorded.
+			fail := func(err error) (*Run, error) {
+				if run.runLock != nil {
+					_ = run.runLock.Close()
+				}
 				m.mu.Lock()
 				delete(m.runs, runID)
 				m.mu.Unlock()
 				cancel()
-				return nil, fmt.Errorf("engine: lock run: %w", lockErr)
+				return nil, err
 			}
-			if mw, err := manifest.NewWriter(runDir); err == nil {
-				w = mw
+			lock, lockErr := AcquireRunLease(runDir)
+			if lockErr != nil {
+				return fail(fmt.Errorf("engine: lock run: %w", lockErr))
 			}
+			run.runLock = lock
+			if err := persistWorkflowSnapshot(runDir, wf); err != nil {
+				return fail(fmt.Errorf("engine: persist workflow snapshot: %w", err))
+			}
+			mw, err := manifest.NewWriter(runDir)
+			if err != nil {
+				return fail(fmt.Errorf("engine: open journal: %w", err))
+			}
+			w = mw
 		}
 	}
 
@@ -526,12 +539,11 @@ func (r *Run) Snapshot() RunSnapshot {
 }
 
 func newRunID() string {
-	const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
-	b := make([]byte, 8)
-	for i := range b {
-		b[i] = chars[rand.Intn(len(chars))]
-	}
-	return time.Now().UTC().Format("20060102-150405") + "-" + string(b)
+	// The suffix keeps run directories distinct within one second. rand.Text
+	// draws from crypto/rand; its base32 alphabet is lowered to keep ids
+	// lowercase alphanumeric.
+	b := strings.ToLower(rand.Text())[:8]
+	return time.Now().UTC().Format("20060102-150405") + "-" + b
 }
 
 // ── scheduler messages ────────────────────────────────────────────────────────
@@ -615,6 +627,16 @@ type resolveIntegrationMsg struct {
 
 type resolveIntegrationWithAgentMsg struct{ stepID string }
 
+// integrationResolvedMsg delivers the agent conflict resolver's outcome back to
+// the scheduler goroutine. seq ties it to the request that started it.
+type integrationResolvedMsg struct {
+	stepID string
+	seq    uint64
+	paths  []string
+	result *step.Result
+	err    error
+}
+
 // finalMergeMsg carries the operator's decision for the final-merge gate (spec
 // 06 A3): approve lands the run branch onto the base, discard leaves it.
 type finalMergeMsg struct {
@@ -666,6 +688,7 @@ func (agentQuestionAbandonMsg) isSchedMsg()        {}
 func (recoverMsg) isSchedMsg()                     {}
 func (resolveIntegrationMsg) isSchedMsg()          {}
 func (resolveIntegrationWithAgentMsg) isSchedMsg() {}
+func (integrationResolvedMsg) isSchedMsg()         {}
 func (finalMergeMsg) isSchedMsg()                  {}
 func (stopMsg) isSchedMsg()                        {}
 func (resumeMsg) isSchedMsg()                      {}
@@ -736,18 +759,27 @@ type pendingQuestion struct {
 // ── scheduler ────────────────────────────────────────────────────────────────
 
 type scheduler struct {
-	wf           *workflow.Workflow
-	runID        string
-	states       map[string]*step.State
-	inbox        chan schedMsg
-	subs         []sub
-	exec         Executor
-	resolver     IntegrationResolver
-	cancel       context.CancelFunc        // cancels the run context; used by abort policy
-	writer       *manifest.Writer          // nil when persistence is disabled (root = "")
-	runDir       datastore.Run             // .jig/runs/<runID>/; "" when persistence is disabled
-	structured   map[string]map[string]any // cached JSON decode of step Result.Structured
-	stepFeedback map[string]string         // gotoStepID → feedback for route replay
+	wf       *workflow.Workflow
+	runID    string
+	states   map[string]*step.State
+	inbox    chan schedMsg
+	subs     []sub
+	exec     Executor
+	resolver IntegrationResolver
+	// runCtx is the run's context, captured by runLoop so asynchronous work
+	// started from a command (the agent conflict resolver) observes stop and
+	// cancel. It is read only on the scheduler goroutine.
+	runCtx context.Context
+	// resolvingIntegration maps a step to the sequence number of its in-flight
+	// agent conflict resolution. A result whose sequence no longer matches was
+	// superseded (reset, abort, cancel) and is dropped.
+	resolvingIntegration map[string]uint64
+	integrationSeq       uint64
+	cancel               context.CancelFunc        // cancels the run context; used by abort policy
+	writer               *manifest.Writer          // nil when persistence is disabled (root = "")
+	runDir               datastore.Run             // .jig/runs/<runID>/; "" when persistence is disabled
+	structured           map[string]map[string]any // cached JSON decode of step Result.Structured
+	stepFeedback         map[string]string         // gotoStepID → feedback for route replay
 	// rerunSource maps a route's goto target → the firing source step id. When a
 	// coalesced rewind has several contributors it names the first in
 	// declaration order. It lets buildStepContext name why a step is re-running.
@@ -963,6 +995,7 @@ func newScheduler(
 		restoredQuestionResponses: make(map[string][]interaction.QuestionResponse),
 		stepCancels:               make(map[string]context.CancelFunc),
 		stopping:                  make(map[string]bool),
+		resolvingIntegration:      make(map[string]uint64),
 		postExecChain: []postExecHandler{
 			phCaptureWorktreeDiff,
 			phValidateMutationPaths,
@@ -1007,6 +1040,7 @@ func (s *scheduler) run(ctx context.Context) {
 }
 
 func (s *scheduler) runLoop(ctx context.Context) {
+	s.runCtx = ctx
 	maxPar := s.wf.Defaults.MaxParallel
 	if maxPar <= 0 {
 		maxPar = 4
@@ -1427,6 +1461,9 @@ func (s *scheduler) cleanupWorktrees() {
 	if s.repoRoot == "" {
 		return
 	}
+	// Best-effort: this also runs as the deferred safety net after RunFinished,
+	// when no further event may be journaled. Leftovers are reclaimed by the
+	// stale worktree retry in createWorktreeAt.
 	for stepID, path := range s.worktrees {
 		_ = removeWorktree(s.repoRoot, path)
 		_, _ = gitCmd(s.repoRoot, "branch", "-D", s.stepBranchName(stepID))
@@ -1467,9 +1504,18 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 		s.dispatchForEach(ctx, st)
 		return
 	}
-	if strat, ok := stepDispatchStrategies[st.Type]; ok {
-		strat.dispatch(s, ctx, st)
+	strat, ok := stepDispatchStrategies[st.Type]
+	if !ok {
+		// Validation rejects unknown types, so this is a programming error; fail
+		// the step rather than leaving it dispatched with no worker.
+		s.states[st.ID].Result = &step.Result{
+			Status: step.StatusFailed,
+			Err:    fmt.Sprintf("step %q: unsupported step type %q", st.ID, st.Type),
+		}
+		s.enterRecovery(st.ID)
+		return
 	}
+	strat.dispatch(s, ctx, st)
 }
 
 // dispatchWorker starts an agent or command step's worker goroutine. It is
@@ -1959,7 +2005,7 @@ func (s *scheduler) enterRecovery(stepID string) {
 	if !s.transition(stepID, state.Status, step.StatusAwaitingRecovery) {
 		return
 	}
-	_ = s.emit(RecoveryRequest{
+	s.emit(RecoveryRequest{
 		RunID:     s.runID,
 		StepID:    stepID,
 		Err:       state.Result.Err,
@@ -1970,8 +2016,9 @@ func (s *scheduler) enterRecovery(stepID string) {
 // writeStepSecurityMarkdown refreshes steps/<stepID>/security.md from the
 // run's findings.jsonl (the source of truth) so the step's on-disk artifacts
 // carry a human-readable security report alongside input.md/output.md,
-// visible in the same file list. Best-effort: persistence-off runs and read
-// errors are silently skipped since findings.jsonl is authoritative.
+// visible in the same file list. Best-effort: persistence-off runs and
+// findings read errors are skipped since findings.jsonl is authoritative; a
+// failed write is reported as a RunError so a stale report is not silent.
 func (s *scheduler) writeStepSecurityMarkdown(stepID string) {
 	if !s.runDir.Enabled() || stepID == "" {
 		return
@@ -1987,9 +2034,13 @@ func (s *scheduler) writeStepSecurityMarkdown(stepID string) {
 		}
 	}
 	if err := s.runDir.Step(stepID).Ensure(); err != nil {
+		s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("write security report for %q: %v", stepID, err)})
 		return
 	}
-	_ = os.WriteFile(s.runDir.Step(stepID).Security(), []byte(sentinel.RenderMarkdown(stepID, stepFindings)), 0o644)
+	path := s.runDir.Step(stepID).Security()
+	if err := os.WriteFile(path, []byte(sentinel.RenderMarkdown(stepID, stepFindings)), 0o644); err != nil {
+		s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("write security report %s: %v", path, err)})
+	}
 }
 
 // handleSecurityFinding escalates critical security findings to the recovery
@@ -2221,8 +2272,12 @@ func (s *scheduler) handleReset(m resetMsg) {
 		// the (now-rewound) run branch HEAD. Leaving a stale worktree would cause
 		// squash-merge to diverge from the reset state.
 		if path, ok := s.worktrees[id]; ok {
-			_ = removeWorktree(s.repoRoot, path)
-			_, _ = gitCmd(s.repoRoot, "branch", "-D", s.stepBranchName(id))
+			if err := removeWorktree(s.repoRoot, path); err != nil {
+				s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("reset %q: remove worktree %s: %v", id, path, err)})
+			}
+			if out, err := gitCmd(s.repoRoot, "branch", "-D", s.stepBranchName(id)); err != nil {
+				s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("reset %q: delete branch %s: %v — %s", id, s.stepBranchName(id), err, strings.TrimSpace(out))})
+			}
 			delete(s.worktrees, id)
 			delete(s.wtBaseSHAs, id)
 		}
@@ -2241,6 +2296,7 @@ func (s *scheduler) handleReset(m resetMsg) {
 		delete(s.collectedUserInputs, id)
 		delete(s.preResolvedInputs, id)
 		delete(s.stopping, id)
+		delete(s.resolvingIntegration, id)
 	}
 	// Remove the current expansion from runtime scheduling for every family in
 	// the (static) closure — a fresh FanOutExpanded/manifest is written the
@@ -2376,12 +2432,21 @@ func (s *scheduler) handleResolveIntegration(m resolveIntegrationMsg) {
 	if state == nil || state.Status != step.StatusAwaitingIntegration {
 		return // stale or duplicate
 	}
+	if _, busy := s.resolvingIntegration[m.stepID]; busy {
+		s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("step %q: agent conflict resolution in progress; wait for it before resolving or aborting", m.stepID)})
+		return
+	}
 	s.restoredHold = false
 
 	if m.abort {
 		// Discard the conflicted/staged squash so the run worktree is clean, then
 		// fail the step through the normal failure policy (→ recovery gate).
-		_, _ = gitCmd(s.runWorktree, "reset", "--hard")
+		if out, err := gitCmd(s.runWorktree, "reset", "--hard"); err != nil {
+			// The run worktree still holds the conflicted squash; failing the step
+			// now would let the next integration build on it. Stay parked.
+			s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("abort integration for %q: reset run worktree: %v — %s", m.stepID, err, strings.TrimSpace(out))})
+			return
+		}
 		res := s.states[m.stepID].Result
 		if res == nil {
 			res = &step.Result{}
@@ -2429,10 +2494,19 @@ func (s *scheduler) handleResolveIntegration(m resolveIntegrationMsg) {
 	}
 }
 
+// handleResolveIntegrationWithAgent starts the agent conflict resolver for a
+// step parked on an integration conflict. The resolver runs an agent, so it
+// executes off the scheduler goroutine under the run context; its outcome
+// returns as an integrationResolvedMsg. The step stays AwaitingIntegration
+// throughout, so a crash mid-resolution reopens on the same gate.
 func (s *scheduler) handleResolveIntegrationWithAgent(m resolveIntegrationWithAgentMsg) {
 	state := s.states[m.stepID]
 	st := s.stepByID(m.stepID)
 	if state == nil || state.Status != step.StatusAwaitingIntegration || s.resolver == nil || st == nil || st.Type != workflow.StepAgent {
+		return
+	}
+	if _, busy := s.resolvingIntegration[m.stepID]; busy {
+		s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("step %q: agent conflict resolution already in progress", m.stepID)})
 		return
 	}
 	s.restoredHold = false
@@ -2441,15 +2515,39 @@ func (s *scheduler) handleResolveIntegrationWithAgent(m resolveIntegrationWithAg
 		s.emit(RunError{RunID: s.runID, Err: fmt.Sprintf("step %q: no unresolved integration conflict remains", m.stepID)})
 		return
 	}
-	result, err := s.resolver.ResolveIntegration(context.Background(), IntegrationResolutionRequest{
-		RunID: s.runID, Step: st, Worktree: s.runWorktree, Conflicts: paths,
-	}, conflictReporter{})
-	if err != nil || result == nil || result.Status == step.StatusFailed {
+	s.integrationSeq++
+	seq := s.integrationSeq
+	s.resolvingIntegration[m.stepID] = seq
+	ctx, resolver, inbox := s.runCtx, s.resolver, s.inbox
+	req := IntegrationResolutionRequest{RunID: s.runID, Step: st, Worktree: s.runWorktree, Conflicts: paths}
+	go func() {
+		result, err := resolver.ResolveIntegration(ctx, req, conflictReporter{})
+		select {
+		case inbox <- integrationResolvedMsg{stepID: req.Step.ID, seq: seq, paths: paths, result: result, err: err}:
+		case <-ctx.Done():
+		}
+	}()
+}
+
+// handleIntegrationResolved applies the agent conflict resolver's outcome. A
+// result for a superseded request (reset or abort while the agent ran) is
+// dropped.
+func (s *scheduler) handleIntegrationResolved(m integrationResolvedMsg) {
+	if seq, ok := s.resolvingIntegration[m.stepID]; !ok || seq != m.seq {
+		return
+	}
+	delete(s.resolvingIntegration, m.stepID)
+	state := s.states[m.stepID]
+	st := s.stepByID(m.stepID)
+	if state == nil || state.Status != step.StatusAwaitingIntegration || st == nil {
+		return
+	}
+	if m.err != nil || m.result == nil || m.result.Status == step.StatusFailed {
 		detail := "agent conflict resolver failed"
-		if err != nil {
-			detail += ": " + err.Error()
-		} else if result != nil && result.Err != "" {
-			detail += ": " + result.Err
+		if m.err != nil {
+			detail += ": " + m.err.Error()
+		} else if m.result != nil && m.result.Err != "" {
+			detail += ": " + m.result.Err
 		}
 		s.emit(RunError{RunID: s.runID, Err: detail})
 		return
@@ -2467,7 +2565,7 @@ func (s *scheduler) handleResolveIntegrationWithAgent(m resolveIntegrationWithAg
 			}
 		}
 	}
-	s.emit(s.integrationConflictRequest(m.stepID, paths, "agent proposal staged; review the diff, then finalize"))
+	s.emit(s.integrationConflictRequest(m.stepID, m.paths, "agent proposal staged; review the diff, then finalize"))
 }
 
 func gitOutput(dir string, args ...string) string {

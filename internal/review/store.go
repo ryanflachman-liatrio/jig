@@ -72,6 +72,12 @@ func WriteSubmission(path string, sub Submission) error {
 	}
 	return atomicWrite(path, data)
 }
+
+// WriteLatestSubmission overwrites path with sub. Unlike WriteSubmission, which
+// guards an immutable per-round record, it maintains a step's latest-result
+// mirror, which each new review round replaces.
+func WriteLatestSubmission(path string, sub Submission) error { return writeJSON(path, sub) }
+
 func WriteFeedback(path, content string) error {
 	if path == "" {
 		return nil

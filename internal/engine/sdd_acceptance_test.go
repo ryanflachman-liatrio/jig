@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ryanflachman-liatrio/jig/internal/review"
 	"github.com/ryanflachman-liatrio/jig/internal/step"
 	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
@@ -195,6 +196,18 @@ finished:
 	}
 	if !containsRoute(events, "implementation__checkpoint", "implementation__implement_code") {
 		t.Error("missing redo route to the already-selected task")
+	}
+
+	// The step-level output.json mirrors the latest review round, which resume
+	// reads back as the step's structured result.
+	var latest review.Submission
+	if data, err := os.ReadFile(mgr.RunDir(run.ID).Step("implementation__checkpoint").OutputJSON()); err != nil {
+		t.Fatalf("read checkpoint output.json: %v", err)
+	} else if err := json.Unmarshal(data, &latest); err != nil {
+		t.Fatal(err)
+	}
+	if latest.Verdict != "continue" {
+		t.Errorf("checkpoint output.json verdict = %q, want the latest round's %q", latest.Verdict, "continue")
 	}
 
 	evidenceDir := filepath.Join(mgr.RunDir(run.ID).Step("implementation__quality").Dir(), "evidence")

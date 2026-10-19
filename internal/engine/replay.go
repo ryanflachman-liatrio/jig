@@ -19,6 +19,7 @@ import (
 type JournalRecord struct {
 	Seq       int
 	Timestamp time.Time
+	Kind      string
 	Event     Event
 }
 
@@ -147,6 +148,24 @@ func readJournal(runDir datastore.Run) (int, []Event, error) {
 	return seq, events, err
 }
 
+// readJournalStrict is readJournal for resume. Display readers skip unknown
+// kinds so a newer journal still renders, but resuming would silently drop the
+// state those records carry, so here an unknown kind is an error.
+func readJournalStrict(runDir datastore.Run) (int, []Event, error) {
+	seq, records, err := readJournalRecords(runDir)
+	if err != nil {
+		return seq, nil, err
+	}
+	events := make([]Event, 0, len(records))
+	for _, record := range records {
+		if record.Event == nil {
+			return seq, nil, fmt.Errorf("journal seq %d: %w %q", record.Seq, ErrUnknownJournalKind, record.Kind)
+		}
+		events = append(events, record.Event)
+	}
+	return seq, events, nil
+}
+
 func readJournalRecords(runDir datastore.Run) (int, []JournalRecord, error) {
 	if !runDir.Enabled() {
 		return 0, nil, nil
@@ -186,7 +205,7 @@ func readJournalRecords(runDir datastore.Run) (int, []JournalRecord, error) {
 				status.At = env.Ts
 				e = status
 			}
-			records = append(records, JournalRecord{Seq: env.Seq, Timestamp: env.Ts, Event: e})
+			records = append(records, JournalRecord{Seq: env.Seq, Timestamp: env.Ts, Kind: env.Kind, Event: e})
 		}
 		if readErr != nil {
 			if readErr != io.EOF {
@@ -212,8 +231,8 @@ func reconcileInterruptedRun(runDir datastore.Run, events []Event, forceOrphan b
 	for _, event := range events {
 		switch event := event.(type) {
 		case RunStarted:
-			copy := event
-			started = &copy
+			startedEvent := event
+			started = &startedEvent
 		case StepStatus:
 			states[event.StepID] = event.To
 			lastStatus[event.StepID] = event

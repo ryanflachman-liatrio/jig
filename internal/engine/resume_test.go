@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1035,7 +1036,7 @@ run = "true"
 		RunFinished{RunID: "finished", Failed: false},
 	})
 	mgr := NewManager(&testExec{}, root)
-	if _, err := mgr.Resume("finished"); err == nil || !strings.Contains(err.Error(), "already finished") {
+	if _, err := mgr.Resume("finished"); !errors.Is(err, ErrRunFinished) {
 		t.Fatalf("Resume error = %v", err)
 	}
 }
@@ -1679,4 +1680,50 @@ run = "true"
 		}
 	}
 	t.Fatalf("snapshot did not retain original expansion: %+v", loaded.Steps)
+}
+
+// TestResumeRejectsUnknownJournalKind proves resume refuses a journal holding a
+// record this version cannot decode, rather than silently dropping its state.
+// Display replay of the same journal keeps tolerating it.
+func TestResumeRejectsUnknownJournalKind(t *testing.T) {
+	wf, err := workflow.Decode(`
+[workflow]
+name = "worker"
+version = "1"
+[[step]]
+id = "agent"
+type = "agent"
+skill = "agent"
+`, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), ".jig")
+	runDir, err := datastore.Open(root).Create("future")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := persistWorkflowSnapshot(runDir, wf); err != nil {
+		t.Fatal(err)
+	}
+	writeJournal(t, runDir, []Event{
+		RunStarted{RunID: "future", Workflow: "worker", Steps: []string{"agent"}},
+	})
+	f, err := os.OpenFile(runDir.Journal(), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"seq":2,"ts":"2026-01-01T00:00:00Z","kind":"not_a_kind","data":{}}` + "\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := NewManager(&testExec{}, root).Resume("future"); !errors.Is(err, ErrUnknownJournalKind) {
+		t.Fatalf("Resume error = %v, want ErrUnknownJournalKind", err)
+	}
+	if _, err := ReplayJournal(runDir); err != nil {
+		t.Fatalf("display replay should tolerate unknown kinds: %v", err)
+	}
 }

@@ -42,7 +42,7 @@ func PreflightControl(root, runID string) (ControlPreflight, error) {
 	case StateSucceeded, StateFailed:
 		return ControlPreflight{}, fmt.Errorf("run %q is already settled", runID)
 	case StateActive:
-		return ControlPreflight{}, fmt.Errorf("run %q already has a live scheduler", runID)
+		return ControlPreflight{}, fmt.Errorf("run %q: %w", runID, engine.ErrRunLocked)
 	case StateOrphaned, StateCorrupt:
 		return ControlPreflight{}, fmt.Errorf("run %q is %s", runID, report.State)
 	}

@@ -284,7 +284,11 @@ func squashMergeStep(repoRoot, runWorktree, stepWorktree, stepBranch, stepID str
 func finalMerge(repoRoot, base, runBranch string) (conflict bool, err error) {
 	if out, cerr := gitCmd(repoRoot, "merge", "--no-edit", runBranch); cerr != nil {
 		if len(mergeConflictPaths(repoRoot)) > 0 {
-			_, _ = gitCmd(repoRoot, "merge", "--abort")
+			// The merge ran in the operator's checkout; a failed abort leaves it
+			// mid-merge, which must not be reported as a clean conflict.
+			if aout, aerr := gitCmd(repoRoot, "merge", "--abort"); aerr != nil {
+				return true, fmt.Errorf("git merge --abort in %s after conflict: %w — %s", repoRoot, aerr, strings.TrimSpace(aout))
+			}
 			return true, nil
 		}
 		return false, fmt.Errorf("git merge %s onto %s: %w — %s", runBranch, base, cerr, strings.TrimSpace(out))

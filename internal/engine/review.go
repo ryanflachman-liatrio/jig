@@ -242,8 +242,16 @@ func (s *scheduler) finalizeReview(id string, sub review.Submission) {
 			s.emit(RunError{RunID: s.runID, Err: err.Error()})
 			return
 		}
-		_ = review.WriteSubmission(s.runDir.Step(id).OutputJSON(), sub)
-		_ = review.WriteFeedback(s.runDir.Step(id).Output(), feedback)
+		// The step-level copies are what downstream context and Result.OutputPath
+		// read, so a failed write is surfaced like the round-level ones.
+		if err := review.WriteLatestSubmission(s.runDir.Step(id).OutputJSON(), sub); err != nil {
+			s.emit(RunError{RunID: s.runID, Err: err.Error()})
+			return
+		}
+		if err := review.WriteFeedback(s.runDir.Step(id).Output(), feedback); err != nil {
+			s.emit(RunError{RunID: s.runID, Err: err.Error()})
+			return
+		}
 	}
 	state := s.states[id]
 	state.Result = &step.Result{Status: step.StatusSucceeded, Verdict: sub.Verdict, OutputPath: s.runDir.Step(id).Output()}

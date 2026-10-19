@@ -58,8 +58,11 @@ func Export(ctx context.Context, options Options) (Result, error) {
 		return Result{}, err
 	}
 	lease, err := engine.AcquireRunLease(request.runDir)
-	if err != nil {
+	if errors.Is(err, engine.ErrRunLocked) {
 		return Result{}, fmt.Errorf("%w: run has a live scheduler", ErrOperational)
+	}
+	if err != nil {
+		return Result{}, fmt.Errorf("%w: lock run: %v", ErrOperational, err)
 	}
 	defer lease.Close()
 	if err := ctx.Err(); err != nil {

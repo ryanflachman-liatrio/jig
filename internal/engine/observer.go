@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"context"
 	"sync"
 
 	"github.com/ryanflachman-liatrio/jig/internal/workflow"
@@ -182,8 +181,3 @@ func recoverObserver() {
 func (m *Manager) RegisterObserver(o Observer) {
 	m.observers.add(o)
 }
-
-// contextWithoutCancel returns a background context; retained so future
-// observer implementations can cancel their own long-running work without
-// tying it to the run context.
-func contextWithoutCancel() context.Context { return context.Background() }
