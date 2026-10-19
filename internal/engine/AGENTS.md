@@ -39,19 +39,19 @@ Use these rather than adding more `if st.Type == ...` branches:
 
 ## Adding a journaled event
 
-1. Define the struct in `event.go` and give it the `isEvent()` marker.
-2. Add its kind string to `eventKind` **and** add a decoder to `decoders` in
-   `journal.go`. The two must agree. Display replay skips an unknown kind,
-   and resume (`readJournalStrict`) rejects it with `ErrUnknownJournalKind`.
-   So if you miss the decoder, every run that records the event fails to
-   reopen.
+1. Define the struct in `event.go` with the `isEvent()` marker, and add one
+   `entry[T]("kind")` row to `journalEvents` in `journal.go`. Encoding and
+   decoding both come from that table. Never change an existing kind
+   string: kinds are on-disk format, and `journal_kinds_test.go` pins them.
+2. Add the event to `allEventInstances` and `journalKinds`. If you forget,
+   `TestAllEventInstancesCoversEveryEvent` fails.
 3. If the event affects parked, resumable or interrupted state, fold it in
-   `restoreUnfinishedCheckpoint` (`resume.go`). Check `ClassifyUnfinished`
-   (`unfinished.go`) and `reconcileInterruptedRun` (`replay.go`) too, since
-   each of those scans events on its own.
-4. Done when `journal_test.go` round-trips the event and `resume_test.go` or
-   `replay_test.go` covers reopen after a crash in the window the event
-   records.
+   `restoreUnfinishedCheckpoint` (`resume.go`). Also check
+   `ClassifyUnfinished` (`unfinished.go`) and `reconcileInterruptedRun`
+   (`replay.go`), and extend `unfinished_golden_test.go`.
+
+Display replay skips an unknown kind. Resume (`readJournalStrict`) rejects it
+with `ErrUnknownJournalKind`.
 
 ## Adding per-step scheduler state
 

@@ -3,8 +3,10 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/ryanflachman-liatrio/jig/internal/datastore"
+	"reflect"
 	"time"
+
+	"github.com/ryanflachman-liatrio/jig/internal/datastore"
 )
 
 // Envelope wraps a single Event for the JSONL journal. Each line in
@@ -23,56 +25,93 @@ type Envelope struct {
 	Data json.RawMessage `json:"data"`
 }
 
-// eventKind returns the stable journal kind string for an event.
-func eventKind(e Event) string {
-	switch e.(type) {
-	case RunStarted:
-		return "run_started"
-	case RunFinished:
-		return datastore.JournalKindRunFinished
-	case StepStatus:
-		return "step_status"
-	case StepOutput:
-		return "step_output"
-	case StepToolCall:
-		return "step_tool_call"
-	case StepMessage:
-		return "step_message"
-	case GateResult:
-		return "gate_result"
-	case RouteSelected:
-		return "route_selected"
-	case RouteCapExceeded:
-		return "route_cap_exceeded"
-	case StepsReset:
-		return "steps_reset"
-	case ReviewRequest:
-		return "review_request"
-	case ReviewSubmitted:
-		return "review_submitted"
-	case InputRequest:
-		return "input_request"
-	case RunError:
-		return "run_error"
-	case RecoveryRequest:
-		return "recovery_request"
-	case IntegrationConflictRequest:
-		return "integration_conflict_request"
-	case FinalMergeRequest:
-		return "final_merge_request"
-	case PromptRequest:
-		return "prompt_request"
-	case AgentQuestion:
-		return "agent_question"
-	case AgentQuestionResolved:
-		return "agent_question_resolved"
-	case SecurityFinding:
-		return "security_finding"
-	case FanOutExpanded:
-		return "fan_out_expanded"
-	default:
-		return "unknown"
+// journalEvents registers every journaled event with its on-disk kind. It is
+// the single source for both directions: eventKind (encode) and decoders
+// (decode) are built from it, so they cannot disagree. Kind strings are a
+// persisted format; journal_kinds_test.go pins them.
+var journalEvents = []eventEntry{
+	entry[RunStarted]("run_started"),
+	entry[RunFinished](datastore.JournalKindRunFinished),
+	entry[StepStatus]("step_status"),
+	entry[StepOutput]("step_output"),
+	entry[StepToolCall]("step_tool_call"),
+	entry[StepMessage]("step_message"),
+	entry[GateResult]("gate_result"),
+	entry[RouteSelected]("route_selected"),
+	entry[RouteCapExceeded]("route_cap_exceeded"),
+	entry[StepsReset]("steps_reset"),
+	entry[ReviewRequest]("review_request"),
+	entry[ReviewSubmitted]("review_submitted"),
+	entry[InputRequest]("input_request"),
+	entry[RunError]("run_error"),
+	entry[RecoveryRequest]("recovery_request"),
+	entry[IntegrationConflictRequest]("integration_conflict_request"),
+	entry[FinalMergeRequest]("final_merge_request"),
+	entry[PromptRequest]("prompt_request"),
+	entry[AgentQuestion]("agent_question"),
+	entry[AgentQuestionResolved]("agent_question_resolved"),
+	entry[SecurityFinding]("security_finding"),
+	{kind: "fan_out_expanded", typ: reflect.TypeFor[FanOutExpanded](), decode: decodeFanOutExpanded},
+}
+
+type eventEntry struct {
+	kind   string
+	typ    reflect.Type
+	decode func([]byte) (Event, error)
+}
+
+// entry registers T under kind with a plain JSON decoder. Decoding into the
+// concrete type avoids the json.Unmarshal-into-interface pitfall.
+func entry[T Event](kind string) eventEntry {
+	return eventEntry{kind: kind, typ: reflect.TypeFor[T](), decode: func(b []byte) (Event, error) {
+		var e T
+		if err := json.Unmarshal(b, &e); err != nil {
+			return nil, err
+		}
+		return e, nil
+	}}
+}
+
+// decodeFanOutExpanded validates schema_version at decode time (unlike every
+// other kind, which has no version field): it is the authoritative creation
+// record for runtime children, so a journal from a newer, incompatible jig
+// must fail closed on Resume rather than misread the instance list.
+func decodeFanOutExpanded(b []byte) (Event, error) {
+	var e FanOutExpanded
+	if err := json.Unmarshal(b, &e); err != nil {
+		return nil, err
 	}
+	if e.SchemaVersion != FanOutExpandedVersion {
+		return nil, fmt.Errorf("fan_out_expanded: unsupported schema_version %d (want %d)", e.SchemaVersion, FanOutExpandedVersion)
+	}
+	return e, nil
+}
+
+var (
+	kindByType = make(map[reflect.Type]string, len(journalEvents))
+	decoders   = make(map[string]func([]byte) (Event, error), len(journalEvents))
+)
+
+func init() {
+	for _, ev := range journalEvents {
+		if _, dup := decoders[ev.kind]; dup {
+			panic("engine: duplicate journal kind " + ev.kind)
+		}
+		if _, dup := kindByType[ev.typ]; dup {
+			panic("engine: event type registered twice: " + ev.typ.Name())
+		}
+		kindByType[ev.typ] = ev.kind
+		decoders[ev.kind] = ev.decode
+	}
+}
+
+// eventKind returns the stable journal kind string for an event, or
+// "unknown" for a type missing from journalEvents.
+func eventKind(e Event) string {
+	if kind, ok := kindByType[reflect.TypeOf(e)]; ok {
+		return kind
+	}
+	return "unknown"
 }
 
 // MarshalEnvelope encodes an Event into a JSONL-ready Envelope byte slice.
@@ -88,110 +127,6 @@ func MarshalEnvelope(seq int, e Event) ([]byte, error) {
 		Data: data,
 	}
 	return json.Marshal(env)
-}
-
-// decoders maps kind strings to functions that decode the event's Data field.
-// Using concrete-typed decoders avoids the json.Unmarshal-into-interface pitfall.
-var decoders = map[string]func([]byte) (Event, error){
-	"run_started": func(b []byte) (Event, error) {
-		var e RunStarted
-		return e, json.Unmarshal(b, &e)
-	},
-	datastore.JournalKindRunFinished: func(b []byte) (Event, error) {
-		var e RunFinished
-		return e, json.Unmarshal(b, &e)
-	},
-	"step_status": func(b []byte) (Event, error) {
-		var e StepStatus
-		return e, json.Unmarshal(b, &e)
-	},
-	"step_output": func(b []byte) (Event, error) {
-		var e StepOutput
-		return e, json.Unmarshal(b, &e)
-	},
-	"step_tool_call": func(b []byte) (Event, error) {
-		var e StepToolCall
-		return e, json.Unmarshal(b, &e)
-	},
-	"step_message": func(b []byte) (Event, error) {
-		var e StepMessage
-		return e, json.Unmarshal(b, &e)
-	},
-	"gate_result": func(b []byte) (Event, error) {
-		var e GateResult
-		return e, json.Unmarshal(b, &e)
-	},
-	"route_selected": func(b []byte) (Event, error) {
-		var e RouteSelected
-		return e, json.Unmarshal(b, &e)
-	},
-	"route_cap_exceeded": func(b []byte) (Event, error) {
-		var e RouteCapExceeded
-		return e, json.Unmarshal(b, &e)
-	},
-	"steps_reset": func(b []byte) (Event, error) {
-		var e StepsReset
-		return e, json.Unmarshal(b, &e)
-	},
-	"review_request": func(b []byte) (Event, error) {
-		var e ReviewRequest
-		return e, json.Unmarshal(b, &e)
-	},
-	"review_submitted": func(b []byte) (Event, error) {
-		var e ReviewSubmitted
-		return e, json.Unmarshal(b, &e)
-	},
-	"run_error": func(b []byte) (Event, error) {
-		var e RunError
-		return e, json.Unmarshal(b, &e)
-	},
-	"recovery_request": func(b []byte) (Event, error) {
-		var e RecoveryRequest
-		return e, json.Unmarshal(b, &e)
-	},
-	"integration_conflict_request": func(b []byte) (Event, error) {
-		var e IntegrationConflictRequest
-		return e, json.Unmarshal(b, &e)
-	},
-	"final_merge_request": func(b []byte) (Event, error) {
-		var e FinalMergeRequest
-		return e, json.Unmarshal(b, &e)
-	},
-	"input_request": func(b []byte) (Event, error) {
-		var e InputRequest
-		return e, json.Unmarshal(b, &e)
-	},
-	"prompt_request": func(b []byte) (Event, error) {
-		var e PromptRequest
-		return e, json.Unmarshal(b, &e)
-	},
-	"agent_question": func(b []byte) (Event, error) {
-		var e AgentQuestion
-		return e, json.Unmarshal(b, &e)
-	},
-	"agent_question_resolved": func(b []byte) (Event, error) {
-		var e AgentQuestionResolved
-		return e, json.Unmarshal(b, &e)
-	},
-	"security_finding": func(b []byte) (Event, error) {
-		var e SecurityFinding
-		return e, json.Unmarshal(b, &e)
-	},
-	// fan_out_expanded validates its schema_version at decode time (unlike
-	// every other event kind, which has no version field): it is the
-	// authoritative creation record for runtime children, so a journal
-	// written by a newer, incompatible jig version must fail closed on
-	// Resume rather than silently misinterpreting the instance list.
-	"fan_out_expanded": func(b []byte) (Event, error) {
-		var e FanOutExpanded
-		if err := json.Unmarshal(b, &e); err != nil {
-			return nil, err
-		}
-		if e.SchemaVersion != FanOutExpandedVersion {
-			return nil, fmt.Errorf("fan_out_expanded: unsupported schema_version %d (want %d)", e.SchemaVersion, FanOutExpandedVersion)
-		}
-		return e, nil
-	},
 }
 
 // UnmarshalEnvelope decodes one JSONL line into its Envelope and Event.
