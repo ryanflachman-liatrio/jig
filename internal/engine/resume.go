@@ -825,10 +825,10 @@ func (s *scheduler) rehydrateParks(checkpoint *unfinishedCheckpoint) ([]Event, e
 				return nil
 			}
 			if pending := checkpoint.questions[stepID]; len(pending) > 0 {
-				s.pendingQuestions[stepID] = make(map[string]pendingQuestion, len(pending))
+				s.rt(stepID).questions = make(map[string]pendingQuestion, len(pending))
 				for _, question := range pending {
 					question.RunID = s.runID
-					s.pendingQuestions[stepID][question.Request.ID] = pendingQuestion{request: question.Request, restored: true}
+					s.rt(stepID).questions[question.Request.ID] = pendingQuestion{request: question.Request, restored: true}
 					events = append(events, question)
 				}
 			} else {

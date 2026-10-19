@@ -2031,7 +2031,7 @@ inputs = ["testdata/request.md"]
 
 func TestScheduler_ResolveAllInputsUsesExecutionDir(t *testing.T) {
 	executionDir := t.TempDir()
-	s := &scheduler{preResolvedInputs: map[string][]ResolvedInput{}}
+	s := &scheduler{}
 	st := &workflow.Step{
 		ID:     "reader",
 		Inputs: []workflow.Input{{Path: "request.md"}},
@@ -2040,7 +2040,7 @@ func TestScheduler_ResolveAllInputsUsesExecutionDir(t *testing.T) {
 	if err := s.resolveAllInputs(st, executionDir); err != nil {
 		t.Fatal(err)
 	}
-	inputs := s.preResolvedInputs[st.ID]
+	inputs := s.rt(st.ID).preResolvedInputs
 	if len(inputs) != 1 {
 		t.Fatalf("inputs = %+v, want one resolved input", inputs)
 	}
@@ -2061,7 +2061,7 @@ func TestScheduler_ResolveAllInputsUsesExecutionDir(t *testing.T) {
 	}, ""); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.preResolvedInputs["persistence-off"][0].Value; got != "request.md" {
+	if got := s.rt("persistence-off").preResolvedInputs[0].Value; got != "request.md" {
 		t.Errorf("persistence-off input path = %q, want authored path", got)
 	}
 }

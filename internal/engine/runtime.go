@@ -1,6 +1,11 @@
 package engine
 
-import "time"
+import (
+	"time"
+
+	"github.com/ryanflachman-liatrio/jig/internal/interaction"
+	"github.com/ryanflachman-liatrio/jig/internal/workflow"
+)
 
 // stepRuntime is the scheduler's in-memory execution state for one step. It
 // is owned by the scheduler goroutine like every other scheduler field.
@@ -47,6 +52,29 @@ type stepRuntime struct {
 	// resolution, or 0. A result whose sequence no longer matches was
 	// superseded and is dropped.
 	resolvingSeq uint64
+
+	// feedback is route feedback injected into the step's next run.
+	feedback string
+	// rerunSource names the route source that rewound this step (the first
+	// contributor in declaration order when rewinds coalesce) and rerunMax its
+	// iteration cap, so buildStepContext can say why the step is re-running.
+	// In-memory only, like feedback.
+	rerunSource string
+	rerunMax    int
+
+	// from="user" input collection gathers inputs one at a time before
+	// dispatch. preResolvedInputs guards against re-intercepting once all are
+	// collected and the step returns to StatusPending.
+	pendingInputs     []workflow.Input // remaining prompts
+	collectedInputs   []ResolvedInput  // answers so far
+	preResolvedInputs []ResolvedInput  // fully collected, ready to inject
+	stickyInputs      []ResolvedInput  // once=true answers, kept across rewinds and resets
+
+	// questions are the agent's open questions, keyed by request id.
+	questions map[string]pendingQuestion
+	// restoredResponses accumulates answers to questions whose worker died.
+	// Once the last arrives, the durable session resumes with all of them.
+	restoredResponses []interaction.QuestionResponse
 }
 
 // rt returns stepID's runtime state, creating it on first use.
@@ -64,5 +92,5 @@ func (s *scheduler) rt(stepID string) *stepRuntime {
 
 // afterReset returns the state a reset step starts its new generation with.
 func (r *stepRuntime) afterReset() *stepRuntime {
-	return &stepRuntime{}
+	return &stepRuntime{stickyInputs: r.stickyInputs}
 }

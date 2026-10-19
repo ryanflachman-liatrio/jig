@@ -19,19 +19,17 @@ import (
 // surviving a reset; they are resolved when per-step state moves into one
 // struct (docs/plans/engine-quality-refactor.md, 3.1), not here.
 var retainedOnReset = map[string]string{
-	"states":           "the step's State is reset in place, not removed",
-	"runtime":          "replaced by afterReset; its fields are checked by runtimeRetainedOnReset",
-	"stickyUserInputs": "once=true answers are retained across rewinds by design",
-	"stepCancels":      "removed when the worker's stepDoneMsg is handled; reset requires no in-flight work",
-	"executionViews":   "released when the read-only dispatch finishes; reset requires no in-flight work",
-
-	"pendingQuestions":          "SUSPECT: questions from the pre-reset execution survive",
-	"restoredQuestionResponses": "SUSPECT: answers for the pre-reset execution survive",
+	"states":         "the step's State is reset in place, not removed",
+	"runtime":        "replaced by afterReset; its fields are checked by runtimeRetainedOnReset",
+	"stepCancels":    "removed when the worker's stepDoneMsg is handled; reset requires no in-flight work",
+	"executionViews": "released when the read-only dispatch finishes; reset requires no in-flight work",
 }
 
 // runtimeRetainedOnReset lists stepRuntime fields afterReset carries into the
 // new generation. Every other field must be zero after a reset.
-var runtimeRetainedOnReset = map[string]string{}
+var runtimeRetainedOnReset = map[string]string{
+	"stickyInputs": "once=true answers are retained across rewinds by design",
+}
 
 // notStepKeyed lists map[string]X scheduler fields whose keys are not step ids,
 // so the reset contract does not apply to them.

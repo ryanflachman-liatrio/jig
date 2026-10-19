@@ -40,10 +40,10 @@ func (s *scheduler) buildStepContext(st *workflow.Step) step.StepContext {
 	// first run (no entry) leaves all three zero, so Render omits the iteration
 	// clause and the State line. Scoped to loop re-runs: a block_on resume
 	// continues the existing SDK conversation and never re-runs buildAgentPrompt.
-	if src, ok := s.rerunSource[st.ID]; ok {
+	if src := s.rt(st.ID).rerunSource; src != "" {
 		if srcStep := s.stepByID(src); srcStep != nil {
 			ctx.Iteration = s.states[st.ID].Iteration
-			ctx.MaxIterations = s.rerunMax[st.ID]
+			ctx.MaxIterations = s.rt(st.ID).rerunMax
 			ctx.RerunReason = rerunReason(src, srcStep.Type)
 		}
 	}

@@ -46,7 +46,7 @@ func (m stepDoneMsg) execute(s *scheduler) {
 			fam.InFlight--
 		}
 	}
-	delete(s.pendingQuestions, m.stepID)
+	s.rt(m.stepID).questions = nil
 	// Accrue this attempt's cost/tokens once, before any early-return branch
 	// (stopped, recovery-parked, failed) — every executor invocation was paid
 	// for, so retries, loop re-runs, and resumed sessions all add to the step's
@@ -163,17 +163,17 @@ func (m stepDoneMsg) execute(s *scheduler) {
 // fires the next queued prompt or promotes the step back to pending once every
 // prompt has been answered.
 func (m userInputMsg) execute(s *scheduler) {
-	s.collectedUserInputs[m.stepID] = append(
-		s.collectedUserInputs[m.stepID],
+	s.rt(m.stepID).collectedInputs = append(
+		s.rt(m.stepID).collectedInputs,
 		ResolvedInput{
 			Ref:   workflow.Input{Inline: true, As: m.as},
 			Value: m.text,
 		},
 	)
 	// If more prompts are queued, fire the next one.
-	if len(s.pendingUserInputs[m.stepID]) > 0 {
-		next := s.pendingUserInputs[m.stepID][0]
-		s.pendingUserInputs[m.stepID] = s.pendingUserInputs[m.stepID][1:]
+	if len(s.rt(m.stepID).pendingInputs) > 0 {
+		next := s.rt(m.stepID).pendingInputs[0]
+		s.rt(m.stepID).pendingInputs = s.rt(m.stepID).pendingInputs[1:]
 		s.emit(PromptRequest{
 			RunID:  s.runID,
 			StepID: m.stepID,
@@ -184,21 +184,21 @@ func (m userInputMsg) execute(s *scheduler) {
 	}
 	// All inputs collected — promote to preResolved and reset to pending
 	// so nextReady picks it up for normal dispatch.
-	s.preResolvedInputs[m.stepID] = s.collectedUserInputs[m.stepID]
+	s.rt(m.stepID).preResolvedInputs = s.rt(m.stepID).collectedInputs
 	if wfStep := s.stepByID(m.stepID); wfStep != nil {
 		for _, input := range wfStep.Inputs {
 			if !input.Once {
 				continue
 			}
-			for _, resolved := range s.collectedUserInputs[m.stepID] {
+			for _, resolved := range s.rt(m.stepID).collectedInputs {
 				if resolved.Ref.As == input.As {
-					s.stickyUserInputs[m.stepID] = append(s.stickyUserInputs[m.stepID], resolved)
+					s.rt(m.stepID).stickyInputs = append(s.rt(m.stepID).stickyInputs, resolved)
 				}
 			}
 		}
 	}
-	delete(s.collectedUserInputs, m.stepID)
-	delete(s.pendingUserInputs, m.stepID)
+	s.rt(m.stepID).collectedInputs = nil
+	s.rt(m.stepID).pendingInputs = nil
 	s.transition(m.stepID, step.StatusAwaitingReview, step.StatusPending)
 }
 
@@ -314,10 +314,10 @@ func (m agentQuestionRequestMsg) execute(s *scheduler) {
 		m.reply <- interaction.QuestionResponse{RequestID: m.request.ID, Action: interaction.ActionCancel}
 		return
 	}
-	pending := s.pendingQuestions[m.stepID]
+	pending := s.rt(m.stepID).questions
 	if pending == nil {
 		pending = make(map[string]pendingQuestion)
-		s.pendingQuestions[m.stepID] = pending
+		s.rt(m.stepID).questions = pending
 	}
 	if _, exists := pending[m.request.ID]; exists {
 		m.reply <- interaction.QuestionResponse{RequestID: m.request.ID, Action: interaction.ActionCancel}
@@ -331,7 +331,7 @@ func (m agentQuestionRequestMsg) execute(s *scheduler) {
 }
 
 func (m agentQuestionAnswerMsg) execute(s *scheduler) {
-	pending := s.pendingQuestions[m.stepID]
+	pending := s.rt(m.stepID).questions
 	item, ok := pending[m.response.RequestID]
 	if !ok {
 		return
@@ -345,7 +345,7 @@ func (m agentQuestionAnswerMsg) execute(s *scheduler) {
 	}
 	delete(pending, m.response.RequestID)
 	if len(pending) == 0 {
-		delete(s.pendingQuestions, m.stepID)
+		s.rt(m.stepID).questions = nil
 	}
 	s.emit(AgentQuestionResolved{
 		RunID:     s.runID,
@@ -356,20 +356,20 @@ func (m agentQuestionAnswerMsg) execute(s *scheduler) {
 	state := s.states[m.stepID]
 	if state != nil && state.Status == step.StatusNeedsInput && len(pending) == 0 {
 		if item.restored {
-			s.restoredQuestionResponses[m.stepID] = append(s.restoredQuestionResponses[m.stepID], m.response)
+			s.rt(m.stepID).restoredResponses = append(s.rt(m.stepID).restoredResponses, m.response)
 			if state.Result == nil || !s.stepCanResume(m.stepID, state.Result.SessionID) {
 				return
 			}
 			s.rt(m.stepID).resumeSession = state.Result.SessionID
-			s.rt(m.stepID).message = restoredQuestionMessage(s.restoredQuestionResponses[m.stepID])
-			delete(s.restoredQuestionResponses, m.stepID)
+			s.rt(m.stepID).message = restoredQuestionMessage(s.rt(m.stepID).restoredResponses)
+			s.rt(m.stepID).restoredResponses = nil
 			s.restoredHold = false
 			s.transition(m.stepID, step.StatusNeedsInput, step.StatusPending)
 		} else {
 			s.transition(m.stepID, step.StatusNeedsInput, step.StatusRunning)
 		}
 	} else if item.restored {
-		s.restoredQuestionResponses[m.stepID] = append(s.restoredQuestionResponses[m.stepID], m.response)
+		s.rt(m.stepID).restoredResponses = append(s.rt(m.stepID).restoredResponses, m.response)
 	}
 	if item.reply != nil {
 		select {
@@ -380,13 +380,13 @@ func (m agentQuestionAnswerMsg) execute(s *scheduler) {
 }
 
 func (m agentQuestionAbandonMsg) execute(s *scheduler) {
-	pending := s.pendingQuestions[m.stepID]
+	pending := s.rt(m.stepID).questions
 	if _, ok := pending[m.requestID]; !ok {
 		return
 	}
 	delete(pending, m.requestID)
 	if len(pending) == 0 {
-		delete(s.pendingQuestions, m.stepID)
+		s.rt(m.stepID).questions = nil
 	}
 	s.emit(AgentQuestionResolved{
 		RunID:     s.runID,

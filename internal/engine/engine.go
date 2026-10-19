@@ -776,13 +776,6 @@ type scheduler struct {
 	cancel         context.CancelFunc // cancels the run context; used by abort policy
 	writer         *manifest.Writer   // nil when persistence is disabled (root = "")
 	runDir         datastore.Run      // .jig/runs/<runID>/; "" when persistence is disabled
-	stepFeedback   map[string]string  // gotoStepID → feedback for route replay
-	// rerunSource maps a route's goto target → the firing source step id. When a
-	// coalesced rewind has several contributors it names the first in
-	// declaration order. It lets buildStepContext name why a step is re-running.
-	// In-memory only, never persisted — it mirrors stepFeedback.
-	rerunSource map[string]string
-	rerunMax    map[string]int
 
 	// pendingLoops coalesces route back-edges that target the same goto step
 	// within one execution wave. A finishing step records its intent here
@@ -835,14 +828,6 @@ type scheduler struct {
 	awaitingFinalMerge bool
 	terminated         bool
 
-	// from="user" input collection: inputs are gathered one at a time before
-	// the step is dispatched. preResolvedInputs guards against re-intercepting
-	// after all inputs are collected and the step resets to StatusPending.
-	pendingUserInputs   map[string][]workflow.Input // stepID → remaining prompts
-	collectedUserInputs map[string][]ResolvedInput  // stepID → answers so far
-	preResolvedInputs   map[string][]ResolvedInput  // stepID → fully collected, ready to inject
-	stickyUserInputs    map[string][]ResolvedInput  // once=true answers retained across loop rewinds
-
 	// review-gate messaging: a human can send free-text to the reviewed agent
 	// step, which resumes the agent's SDK session and re-runs it before a
 	reviewSessions map[string]review.Session
@@ -859,12 +844,6 @@ type scheduler struct {
 	// Fingerprint. A fingerprint that already triggered enterRecovery must not
 	// trigger it again for the same step.
 	seenEscalations map[string]bool
-
-	pendingQuestions map[string]map[string]pendingQuestion
-	// restoredQuestionResponses accumulates answers to questions whose original
-	// worker died. Once the last answer arrives, the scheduler resumes the
-	// durable agent session with the complete response set as a new turn.
-	restoredQuestionResponses map[string][]interaction.QuestionResponse
 
 	// Per-step cancellation (spec 07 B1). Each dispatched worker gets its own
 	// child context derived from the run context, its CancelFunc stored here keyed
@@ -922,36 +901,27 @@ func newScheduler(
 		states[s.ID] = &step.State{ID: s.ID, Status: step.StatusPending}
 	}
 	return &scheduler{
-		wf:                        wf,
-		runID:                     runID,
-		states:                    states,
-		inbox:                     inbox,
-		subs:                      subs,
-		exec:                      exec,
-		cancel:                    cancel,
-		writer:                    writer,
-		runDir:                    runDir,
-		stepFeedback:              make(map[string]string),
-		rerunSource:               make(map[string]string),
-		rerunMax:                  make(map[string]int),
-		pendingLoops:              make(map[string]*loopIntent),
-		classInFlight:             make(map[string]int),
-		jigRoot:                   jigRoot,
-		repoRoot:                  repoRoot,
-		worktrees:                 make(map[string]string),
-		wtBaseSHAs:                make(map[string]string),
-		executionViews:            make(map[string]executionWorkspace),
-		stepCommits:               make(map[string]string),
-		pendingUserInputs:         make(map[string][]workflow.Input),
-		collectedUserInputs:       make(map[string][]ResolvedInput),
-		preResolvedInputs:         make(map[string][]ResolvedInput),
-		stickyUserInputs:          make(map[string][]ResolvedInput),
-		reviewSessions:            make(map[string]review.Session),
-		seenEscalations:           make(map[string]bool),
-		pendingQuestions:          make(map[string]map[string]pendingQuestion),
-		restoredQuestionResponses: make(map[string][]interaction.QuestionResponse),
-		stepCancels:               make(map[string]context.CancelFunc),
-		runtime:                   make(map[string]*stepRuntime),
+		wf:              wf,
+		runID:           runID,
+		states:          states,
+		inbox:           inbox,
+		subs:            subs,
+		exec:            exec,
+		cancel:          cancel,
+		writer:          writer,
+		runDir:          runDir,
+		pendingLoops:    make(map[string]*loopIntent),
+		classInFlight:   make(map[string]int),
+		jigRoot:         jigRoot,
+		repoRoot:        repoRoot,
+		worktrees:       make(map[string]string),
+		wtBaseSHAs:      make(map[string]string),
+		executionViews:  make(map[string]executionWorkspace),
+		stepCommits:     make(map[string]string),
+		reviewSessions:  make(map[string]review.Session),
+		seenEscalations: make(map[string]bool),
+		stepCancels:     make(map[string]context.CancelFunc),
+		runtime:         make(map[string]*stepRuntime),
 		postExecChain: []postExecHandler{
 			phCaptureWorktreeDiff,
 			phValidateMutationPaths,
@@ -1154,9 +1124,9 @@ func (s *scheduler) nextReady(ctx context.Context) (*workflow.Step, bool) {
 		// park it on a prompt and keep scanning for other runnable steps.
 		// The preResolvedInputs check prevents re-intercepting after all inputs
 		// are collected and the step resets back to StatusPending.
-		if hasUserInputs(st) && len(s.preResolvedInputs[st.ID]) == 0 {
-			if sticky := s.stickyUserInputs[st.ID]; len(sticky) > 0 {
-				s.preResolvedInputs[st.ID] = append([]ResolvedInput(nil), sticky...)
+		if hasUserInputs(st) && len(s.rt(st.ID).preResolvedInputs) == 0 {
+			if sticky := s.rt(st.ID).stickyInputs; len(sticky) > 0 {
+				s.rt(st.ID).preResolvedInputs = append([]ResolvedInput(nil), sticky...)
 				return st, true
 			}
 			s.dispatchUserPrompt(st)
@@ -1636,7 +1606,7 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 		s.applyFailurePolicy(st.ID, st)
 		return
 	}
-	if err := s.snapshotInputs(st.ID, s.preResolvedInputs[st.ID]); err != nil {
+	if err := s.snapshotInputs(st.ID, s.rt(st.ID).preResolvedInputs); err != nil {
 		releaseReaderView()
 		s.inFlight--
 		if st.Isolation == workflow.IsolationWorktree {
@@ -1659,7 +1629,7 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 		default:
 		}
 	}
-	delete(s.preResolvedInputs, st.ID)
+	s.rt(st.ID).preResolvedInputs = nil
 	if sess := s.rt(st.ID).resumeSession; sess != "" {
 		req.ResumeSessionID = sess
 		req.Message = s.rt(st.ID).message
@@ -1772,7 +1742,7 @@ func (s *scheduler) resolveSecrets(st *workflow.Step) (map[string]string, error)
 }
 
 // resolveAllInputs appends ResolvedInput entries for every non-user input
-// into s.preResolvedInputs[st.ID]. User inputs are already present from the
+// into s.rt(st.ID).preResolvedInputs. User inputs are already present from the
 // prompt-collection flow (handle(userInputMsg)); this fills the remaining refs.
 // Literal paths are anchored to the dispatch snapshot before snapshotInputs
 // copies them, so the worker receives the same immutable bytes the scheduler
@@ -1826,7 +1796,7 @@ func (s *scheduler) resolveAllInputs(st *workflow.Step, executionDir string) err
 			}
 		}
 
-		s.preResolvedInputs[st.ID] = append(s.preResolvedInputs[st.ID], ResolvedInput{
+		s.rt(st.ID).preResolvedInputs = append(s.rt(st.ID).preResolvedInputs, ResolvedInput{
 			Ref:   inp,
 			Value: value,
 		})
@@ -1897,8 +1867,8 @@ func (s *scheduler) buildRequest(
 	req := StepRequest{
 		RunID:           runID,
 		Step:            st,
-		Inputs:          s.preResolvedInputs[st.ID],
-		Feedback:        s.stepFeedback[st.ID],
+		Inputs:          s.rt(st.ID).preResolvedInputs,
+		Feedback:        s.rt(st.ID).feedback,
 		WorkflowContext: workflowContext,
 		ArtifactDir:     artifactDir,
 		Worktree:        worktreePath,
@@ -2240,13 +2210,7 @@ func (s *scheduler) handleReset(m resetMsg) {
 
 		delete(s.stepCommits, id)
 		s.runtime[id] = s.rt(id).afterReset()
-		delete(s.stepFeedback, id)
-		delete(s.rerunSource, id)
-		delete(s.rerunMax, id)
 		delete(s.reviewSessions, id)
-		delete(s.pendingUserInputs, id)
-		delete(s.collectedUserInputs, id)
-		delete(s.preResolvedInputs, id)
 	}
 	// Remove the current expansion from runtime scheduling for every family in
 	// the (static) closure — a fresh FanOutExpanded/manifest is written the
@@ -2968,8 +2932,8 @@ func (s *scheduler) dispatchUserPrompt(st *workflow.Step) {
 			userInputs = append(userInputs, inp)
 		}
 	}
-	s.pendingUserInputs[st.ID] = userInputs[1:]
-	s.collectedUserInputs[st.ID] = nil
+	s.rt(st.ID).pendingInputs = userInputs[1:]
+	s.rt(st.ID).collectedInputs = nil
 	s.transition(st.ID, s.states[st.ID].Status, step.StatusAwaitingReview)
 	s.emit(PromptRequest{
 		RunID:  s.runID,
@@ -3303,7 +3267,7 @@ func (s *scheduler) fireCoalescedLoop(intent *loopIntent) {
 	case 0:
 		// no feedback wired by any contributor — leave stepFeedback untouched
 	case 1:
-		s.stepFeedback[intent.gotoID] = feedbacks[0].feedback
+		s.rt(intent.gotoID).feedback = feedbacks[0].feedback
 	default:
 		var b strings.Builder
 		for i, c := range feedbacks {
@@ -3312,12 +3276,12 @@ func (s *scheduler) fireCoalescedLoop(intent *loopIntent) {
 			}
 			fmt.Fprintf(&b, "From `%s`:\n%s", c.source, c.feedback)
 		}
-		s.stepFeedback[intent.gotoID] = b.String()
+		s.rt(intent.gotoID).feedback = b.String()
 	}
 
 	// Name the re-run reason from the first contributor (declaration order).
-	s.rerunSource[intent.gotoID] = intent.contribs[0].source
-	s.rerunMax[intent.gotoID] = intent.contribs[0].max
+	s.rt(intent.gotoID).rerunSource = intent.contribs[0].source
+	s.rt(intent.gotoID).rerunMax = intent.contribs[0].max
 
 	// Reset every step in the body to pending with the new iteration count.
 	for _, id := range s.bodyUnion(intent) {

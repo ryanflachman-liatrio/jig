@@ -440,8 +440,8 @@ func TestWorkflowContextGateRerun(t *testing.T) {
 
 	fireLoopNow(s, "qa")
 
-	if s.rerunSource["build"] != "qa" {
-		t.Fatalf("rerunSource[build] = %q, want qa (recorded without a feedback ref)", s.rerunSource["build"])
+	if s.rt("build").rerunSource != "qa" {
+		t.Fatalf("rerunSource[build] = %q, want qa (recorded without a feedback ref)", s.rt("build").rerunSource)
 	}
 	got := s.buildStepContext(s.stepByID("build")).Render()
 	if !strings.Contains(got, "State: re-running because the `qa` gate reported a failure. Address the feedback in your inputs.") {
@@ -485,8 +485,8 @@ func TestWorkflowContextMultipleLoops(t *testing.T) {
 	// qa1 (declared first) must still drive the reason.
 	fireLoopNow(s, "qa2", "qa1")
 
-	if s.rerunSource["build"] != "qa1" {
-		t.Fatalf("rerunSource[build] = %q, want qa1 (first in declaration order, not fastest)", s.rerunSource["build"])
+	if s.rt("build").rerunSource != "qa1" {
+		t.Fatalf("rerunSource[build] = %q, want qa1 (first in declaration order, not fastest)", s.rt("build").rerunSource)
 	}
 	got := s.buildStepContext(s.stepByID("build")).Render()
 	if !strings.Contains(got, "State: re-running because `qa1` requested revisions") {
