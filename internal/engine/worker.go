@@ -23,11 +23,16 @@ func hasUserInputs(st *workflow.Step) bool {
 	return false
 }
 
-// dispatch launches a worker goroutine for one step. The worker sends a
-// stepDoneMsg to the inbox when it finishes; only the scheduler reads state.
-// dispatch looks up st's dispatch strategy by step type and invokes it — the
-// Strategy pattern's single dispatch site (see strategies.go), replacing what
-// was an inline branch per step type.
+// failDispatch fails a step before it took any capacity and parks it for a
+// recovery decision.
+func (s *scheduler) failDispatch(stepID, format string, args ...any) {
+	s.states[stepID].Result = &step.Result{Status: step.StatusFailed, Err: fmt.Sprintf(format, args...)}
+	s.enterRecovery(stepID)
+}
+
+// dispatch starts one ready step through its stepKinds entry: worker-backed
+// kinds launch a goroutine that reports back with a stepDoneMsg, and a human
+// gate parks on operator input.
 func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 	// A foreach family template never executes directly — dispatching it
 	// expands its bounded list into runtime children instead (see fanout.go).
@@ -41,11 +46,7 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 	if !ok {
 		// Validation rejects unknown types, so this is a programming error; fail
 		// the step rather than leaving it dispatched with no worker.
-		s.states[st.ID].Result = &step.Result{
-			Status: step.StatusFailed,
-			Err:    fmt.Sprintf("step %q: unsupported step type %q", st.ID, st.Type),
-		}
-		s.enterRecovery(st.ID)
+		s.failDispatch(st.ID, "step %q: unsupported step type %q", st.ID, st.Type)
 		return
 	}
 	kind.dispatch(s, ctx, st)
@@ -59,11 +60,7 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 		// A reader view is the persisted execution contract. Falling back to the
 		// caller's checkout here would let a failed snapshot silently read a
 		// different repository state.
-		s.states[st.ID].Result = &step.Result{
-			Status: step.StatusFailed,
-			Err:    fmt.Sprintf("acquire execution workspace for step %q: %v", st.ID, err),
-		}
-		s.enterRecovery(st.ID)
+		s.failDispatch(st.ID, "acquire execution workspace for step %q: %v", st.ID, err)
 		return
 	}
 	worktreePath := ""
@@ -83,11 +80,7 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	if s.runDir.Enabled() {
 		if err := s.runDir.Step(st.ID).Ensure(); err != nil {
 			releaseReaderView()
-			s.states[st.ID].Result = &step.Result{
-				Status: step.StatusFailed,
-				Err:    fmt.Sprintf("create step dir for %q: %v", st.ID, err),
-			}
-			s.enterRecovery(st.ID)
+			s.failDispatch(st.ID, "create step dir for %q: %v", st.ID, err)
 			return
 		}
 	}
@@ -96,11 +89,7 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	if hasAgentSession(st) && s.rt(st.ID).resumeSession == "" {
 		if err := s.runDir.Step(st.ID).ClearSession(); err != nil {
 			releaseReaderView()
-			s.states[st.ID].Result = &step.Result{
-				Status: step.StatusFailed,
-				Err:    fmt.Sprintf("clear stale session for step %q: %v", st.ID, err),
-			}
-			s.enterRecovery(st.ID)
+			s.failDispatch(st.ID, "clear stale session for step %q: %v", st.ID, err)
 			return
 		}
 	}
@@ -166,26 +155,25 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 		artifactDir = s.runDir.Artifacts()
 		transcriptPath = s.runDir.Step(st.ID).Transcript()
 	}
-	secrets, err := s.resolveSecrets(st)
-	if err != nil {
+	// failAcquired fails a step whose slots are already charged but whose
+	// worker never started.
+	failAcquired := func(err error) {
 		releaseReaderView()
 		s.releaseSlots(st)
 		s.states[st.ID].Result = &step.Result{Status: step.StatusFailed, Err: err.Error()}
 		s.applyFailurePolicy(st.ID, st)
+	}
+	secrets, err := s.resolveSecrets(st)
+	if err != nil {
+		failAcquired(err)
 		return
 	}
 	if err := s.resolveAllInputs(st, workspace.Dir); err != nil {
-		releaseReaderView()
-		s.releaseSlots(st)
-		s.states[st.ID].Result = &step.Result{Status: step.StatusFailed, Err: err.Error()}
-		s.applyFailurePolicy(st.ID, st)
+		failAcquired(err)
 		return
 	}
 	if err := s.snapshotInputs(st.ID, s.rt(st.ID).preResolvedInputs); err != nil {
-		releaseReaderView()
-		s.releaseSlots(st)
-		s.states[st.ID].Result = &step.Result{Status: step.StatusFailed, Err: err.Error()}
-		s.applyFailurePolicy(st.ID, st)
+		failAcquired(err)
 		return
 	}
 	req := s.buildRequest(st, runID, worktreePath, workspace.Dir, artifactDir, transcriptPath)

@@ -10,12 +10,10 @@ import (
 	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
-// command is the Command pattern's contract: every schedMsg knows how to
-// apply itself to the scheduler. scheduler.handle() no longer needs to know
-// the concrete message types — it just type-asserts to command and delegates.
-// This replaces a single ~200-line type-switch with one execute() method per
-// message type, so adding a new schedMsg no longer means editing a shared
-// switch statement.
+// command is a schedMsg that applies itself to the scheduler.
+// scheduler.handle type-asserts each inbox message to command and calls
+// execute, so a new message type adds a method rather than editing a shared
+// switch.
 type command interface {
 	schedMsg
 	execute(s *scheduler)
