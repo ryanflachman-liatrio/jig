@@ -99,10 +99,23 @@ Reopen needs one explicit case in each of `checkpointFold.classifyPark` and
 
 ## Files
 
-`engine.go` is oversized. When you add code, put it in a file named after the
-concern it belongs to (such as fan-out, worktree or security) rather than
-making `engine.go` longer. Moving existing code out of it is welcome as a
-separate, behavior-preserving change.
+Each file owns one concern. Put new code in the file for its concern, and
+start a new file rather than growing `engine.go`.
+
+| File | Owns |
+|---|---|
+| `engine.go` | `scheduler`, `newScheduler`, the run loop, `nextReady` |
+| `manager.go`, `run.go` | `Manager` (start, subscribe, registry) and the `Run` handle API |
+| `commands.go` | Inbox message types and their `execute` methods |
+| `runtime.go`, `capacity.go`, `graph.go` | Per-step state, slot accounting, DAG walks |
+| `ready.go`, `conditions.go` | Readiness checks, liveness, guard evaluation, gates |
+| `worker.go`, `handlers.go`, `strategies.go` | Dispatch, the post-exec chain, step kinds, failure policy |
+| `reset.go`, `loop.go` | Operator reset and recovery; route intents and coalesced loops |
+| `integration.go`, `worktree.go`, `execution.go` | Run branch, conflicts, final merge, workspaces |
+| `review.go`, `interaction.go`, `security.go` | Review gates; questions, input, stop and resume; security findings |
+| `publish.go`, `event.go`, `journal.go` | Transitions, journaling, event fan-out, and the event registry |
+| `resume.go`, `checkpoint_fold.go`, `parks.go`, `replay.go`, `fold.go`, `unfinished.go` | Reopen, crash recovery, and journal readers |
+| `fanout.go`, `workflow_snapshot.go` | `foreach` families; the persisted workflow snapshot |
 
 ## Tests
 
