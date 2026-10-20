@@ -1044,6 +1044,7 @@ func (s *scheduler) runLoop(ctx context.Context) {
 // (they park on human input via dispatchReview). Both cases continue scanning
 // for the next dispatchable step.
 func (s *scheduler) nextReady(ctx context.Context) (*workflow.Step, bool) {
+scan:
 	for i := range s.wf.Steps {
 		if s.fatalJournalErr != nil {
 			return nil, false
@@ -1063,77 +1064,19 @@ func (s *scheduler) nextReady(ctx context.Context) (*workflow.Step, bool) {
 			}
 			continue
 		}
-
 		if state.Status != step.StatusPending {
 			continue
 		}
-		if blocked, reason := s.budgetExhausted(); blocked {
-			state.Result = &step.Result{Status: step.StatusFailed, Err: reason}
-			if !s.transition(st.ID, step.StatusPending, step.StatusFailed) {
+		for _, check := range readinessChecks {
+			switch check(s, ctx, st) {
+			case readinessSkip:
+				continue scan
+			case readinessDispatch:
+				return st, true
+			case readinessHalt:
 				return nil, false
 			}
-			continue
 		}
-		if until := s.rt(st.ID).retryNotBefore; !until.IsZero() && time.Now().Before(until) {
-			continue
-		}
-		if !s.resourceAvailable(st) {
-			continue
-		}
-		if !s.depsReady(st) {
-			continue
-		}
-		if s.deferredByAutomaticCheckRoute(st) {
-			continue
-		}
-
-		// Evaluate the when guard. The condition was validated at load time so
-		// ParseCondition will not return an error here.
-		if st.When != "" {
-			cond, _ := workflow.ParseCondition(st.When)
-			if !s.evalGuard(cond) {
-				if !s.transition(st.ID, state.Status, step.StatusSkipped) {
-					return nil, false
-				}
-				s.rt(st.ID).skippedByGuard = true
-				s.cascadeSkip(st.ID)
-				continue
-			}
-		}
-
-		// A non-applicable deterministic gate is successful evidence with a
-		// typed skip verdict, not a missing command or a failed dependency.
-		if st.Type == workflow.StepCheck && st.AppliesWhen != "" {
-			cond, _ := workflow.ParseCondition(st.AppliesWhen)
-			if !s.evalGuard(cond) {
-				state.Result = &step.Result{Status: step.StatusSucceeded, Verdict: "skip"}
-				if !s.transition(st.ID, state.Status, step.StatusSucceeded) {
-					return nil, false
-				}
-				continue
-			}
-		}
-
-		// If the step has from="user" inputs that haven't been collected yet,
-		// park it on a prompt and keep scanning for other runnable steps.
-		// The preResolvedInputs check prevents re-intercepting after all inputs
-		// are collected and the step resets back to StatusPending.
-		if hasUserInputs(st) && len(s.rt(st.ID).preResolvedInputs) == 0 {
-			if sticky := s.rt(st.ID).stickyInputs; len(sticky) > 0 {
-				s.rt(st.ID).preResolvedInputs = append([]ResolvedInput(nil), sticky...)
-				return st, true
-			}
-			s.dispatchUserPrompt(st)
-			continue
-		}
-
-		// A human gate never goes to a worker: park it on operator input and
-		// keep scanning for other runnable steps this iteration.
-		if stepKinds[st.Type].humanGate {
-			s.dispatch(ctx, st)
-			continue
-		}
-
 		return st, true
 	}
 	return nil, false
@@ -2985,8 +2928,7 @@ func (s *scheduler) recordRoutes(stepID string, wfStep *workflow.Step, submitted
 	}
 	for i, route := range wfStep.Routes {
 		if !route.Fallback {
-			cond, _ := workflow.ParseCondition(route.When)
-			if !s.evalGuard(cond) {
+			if !s.guardHolds(route.When) {
 				continue
 			}
 		}
