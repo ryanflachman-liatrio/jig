@@ -84,63 +84,99 @@ func (s *scheduler) prepareReview(st *workflow.Step) (review.Session, error) {
 	return review.Session{StepID: st.ID, RoundID: roundID, Documents: docs}, nil
 }
 
+// reviewTargetClass is where a review document's content comes from.
+type reviewTargetClass int
+
+const (
+	reviewFromFile       reviewTargetClass = iota // file = "@step.field" naming a run-worktree file
+	reviewFromDiff                                // source = "diff": the dependencies' worktree diffs
+	reviewFromStepOutput                          // source = "@step[.field]": a step's output or a text field
+	reviewFromPath                                // source = a path on disk
+)
+
+func classifyReviewTarget(target workflow.ReviewTarget) reviewTargetClass {
+	switch {
+	case target.Kind() == workflow.ReviewTargetFile:
+		return reviewFromFile
+	case target.Source == "diff":
+		return reviewFromDiff
+	case strings.HasPrefix(target.Source, "@"):
+		return reviewFromStepOutput
+	default:
+		return reviewFromPath
+	}
+}
+
+// reviewContent returns a review target's text and, for file-backed targets,
+// the path it was read from.
 func (s *scheduler) reviewContent(stepID string, target workflow.ReviewTarget) (string, string, error) {
-	if target.Kind() == workflow.ReviewTargetFile {
-		value, err := s.reviewField(target.File)
-		if err != nil {
-			return "", "", err
-		}
-		path, err := workflow.ExecutionPath(s.branch.worktree, value)
-		if err != nil {
-			return "", "", fmt.Errorf("file target %q: %w", target.File, err)
-		}
-		info, err := os.Stat(path)
-		if err != nil {
-			return "", "", fmt.Errorf("file target %q: read %q: %w", target.File, value, err)
-		}
-		if !info.Mode().IsRegular() {
-			return "", "", fmt.Errorf("file target %q: %q is not a regular file", target.File, value)
+	switch classifyReviewTarget(target) {
+	case reviewFromFile:
+		return s.reviewFileContent(target)
+	case reviewFromDiff:
+		return s.collectDepDiffs(stepID), "", nil
+	case reviewFromStepOutput:
+		text, err := s.reviewStepOutput(target.Source)
+		return text, "", err
+	default:
+		path := target.ResolvedPath()
+		if path == "" {
+			path = target.Source
 		}
 		data, err := os.ReadFile(path)
-		if err != nil {
-			return "", "", fmt.Errorf("file target %q: read %q: %w", target.File, value, err)
-		}
-		return string(data), path, nil
+		return string(data), path, err
 	}
+}
 
-	source := target.Source
-	if source == "diff" {
-		return s.collectDepDiffs(stepID), "", nil
+// reviewFileContent reads the run-worktree file a file target names. The
+// path must stay inside the run worktree and be a regular file.
+func (s *scheduler) reviewFileContent(target workflow.ReviewTarget) (string, string, error) {
+	value, err := s.reviewField(target.File)
+	if err != nil {
+		return "", "", err
 	}
-	if strings.HasPrefix(source, "@") {
-		stepID, fields := parseReviewRef(source)
-		state := s.states[stepID]
-		if state == nil || state.Result == nil {
-			return "", "", fmt.Errorf("source %q has no result", source)
-		}
-		if len(fields) == 0 {
-			if state.Result.OutputPath == "" {
-				return "", "", fmt.Errorf("source %q has no output", source)
-			}
-			data, err := os.ReadFile(state.Result.OutputPath)
-			return string(data), "", err
-		}
-		value, err := s.structuredField(stepID, fields)
-		if err != nil {
-			return "", "", fmt.Errorf("source %q: %w", source, err)
-		}
-		text, ok := value.(string)
-		if !ok {
-			return "", "", fmt.Errorf("source %q is not text", source)
-		}
-		return text, "", nil
+	path, err := workflow.ExecutionPath(s.branch.worktree, value)
+	if err != nil {
+		return "", "", fmt.Errorf("file target %q: %w", target.File, err)
 	}
-	path := target.ResolvedPath()
-	if path == "" {
-		path = source
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", "", fmt.Errorf("file target %q: read %q: %w", target.File, value, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", "", fmt.Errorf("file target %q: %q is not a regular file", target.File, value)
 	}
 	data, err := os.ReadFile(path)
-	return string(data), path, err
+	if err != nil {
+		return "", "", fmt.Errorf("file target %q: read %q: %w", target.File, value, err)
+	}
+	return string(data), path, nil
+}
+
+// reviewStepOutput resolves "@step" to the step's output file and
+// "@step.field" to a text field of its structured output.
+func (s *scheduler) reviewStepOutput(source string) (string, error) {
+	stepID, fields := parseReviewRef(source)
+	state := s.states[stepID]
+	if state == nil || state.Result == nil {
+		return "", fmt.Errorf("source %q has no result", source)
+	}
+	if len(fields) == 0 {
+		if state.Result.OutputPath == "" {
+			return "", fmt.Errorf("source %q has no output", source)
+		}
+		data, err := os.ReadFile(state.Result.OutputPath)
+		return string(data), err
+	}
+	value, err := s.structuredField(stepID, fields)
+	if err != nil {
+		return "", fmt.Errorf("source %q: %w", source, err)
+	}
+	text, ok := value.(string)
+	if !ok {
+		return "", fmt.Errorf("source %q is not text", source)
+	}
+	return text, nil
 }
 
 func (s *scheduler) reviewField(reference string) (string, error) {
@@ -157,7 +193,7 @@ func (s *scheduler) reviewField(reference string) (string, error) {
 }
 
 func (s *scheduler) reviewSource(target workflow.ReviewTarget, path string) string {
-	if target.Kind() != workflow.ReviewTargetFile || path == "" {
+	if classifyReviewTarget(target) != reviewFromFile || path == "" {
 		return target.Reference()
 	}
 	if s.branch.worktree != "" {
@@ -169,7 +205,8 @@ func (s *scheduler) reviewSource(target workflow.ReviewTarget, path string) stri
 }
 
 func reviewFormat(target workflow.ReviewTarget, path string) string {
-	if target.Kind() == workflow.ReviewTargetSource && target.Source == "diff" {
+	class := classifyReviewTarget(target)
+	if class == reviewFromDiff {
 		return "diff"
 	}
 	ext := strings.ToLower(filepath.Ext(path))
@@ -179,7 +216,7 @@ func reviewFormat(target workflow.ReviewTarget, path string) string {
 	case ".diff", ".patch":
 		return "diff"
 	}
-	if target.Kind() == workflow.ReviewTargetSource && strings.HasPrefix(target.Source, "@") {
+	if class == reviewFromStepOutput {
 		return "markdown"
 	}
 	return "text"
