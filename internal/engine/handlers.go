@@ -177,7 +177,7 @@ func (s *scheduler) integrationConflictRequest(stepID string, paths []string, re
 	st := s.stepByID(stepID)
 	return IntegrationConflictRequest{
 		RunID: s.runID, StepID: stepID, Paths: paths, Worktree: s.branch.worktree,
-		CanAgentResolve: s.resolver != nil && st != nil && st.Type == workflow.StepAgent,
+		CanAgentResolve: s.resolver != nil && hasAgentSession(st),
 		Resolution:      resolution,
 	}
 }

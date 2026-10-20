@@ -7,58 +7,48 @@ import (
 	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
 
-// stepDispatchStrategy is the Strategy pattern's contract for starting a step
-// nextReady() has already confirmed is dependency-ready and guard-passed.
-// Step types dispatch differently — agent/command steps start a worker
-// goroutine and occupy an inFlight slot, while review steps park on human
-// input and never touch a worker — so this replaces what was an inline
-// `if wfStep.Type == workflow.StepReview` branch with a lookup table any new
-// step type registers into instead of editing.
-type stepDispatchStrategy interface {
-	dispatch(s *scheduler, ctx context.Context, st *workflow.Step)
+// stepKind is how the scheduler treats one executable workflow step type.
+// Branch on its capabilities rather than comparing st.Type, so a new step type
+// is one stepKinds entry plus its runner. Subworkflow steps are expanded away
+// at load time and never reach the engine.
+type stepKind struct {
+	// dispatch starts a step nextReady has confirmed is dependency-ready and
+	// guard-passed.
+	dispatch func(s *scheduler, ctx context.Context, st *workflow.Step)
+	// agentSession: the step runs a backend agent session. That makes it
+	// resumable, Tier-2 security monitored, eligible for injected workflow
+	// context, and resolvable by the agent conflict resolver.
+	agentSession bool
+	// humanGate: the step parks on an operator verdict and never starts a
+	// worker.
+	humanGate bool
 }
 
-// agentDispatchStrategy and commandDispatchStrategy currently share identical
-// scheduler-level behavior: the type-specific work (agent SDK call vs. shell
-// exec) happens inside the registered engine.Executor (see runner.Mux), not
-// here. They are still distinct strategy values — not one shared value for
-// both map keys — so a future scheduler-level difference between the two
-// (e.g. agent-only worktree handling) has an obvious extension point.
-type agentDispatchStrategy struct{}
-
-func (agentDispatchStrategy) dispatch(s *scheduler, ctx context.Context, st *workflow.Step) {
+func dispatchToWorker(s *scheduler, ctx context.Context, st *workflow.Step) {
 	s.dispatchWorker(ctx, st)
 }
 
-type commandDispatchStrategy struct{}
+// stepKinds registers every executable step type. Agent, command and check
+// steps share scheduler behavior; the type-specific work happens inside the
+// Executor (see runner.Mux). It is filled in init because dispatch reaches
+// code that reads it back.
+var stepKinds map[workflow.StepType]stepKind
 
-func (commandDispatchStrategy) dispatch(s *scheduler, ctx context.Context, st *workflow.Step) {
-	s.dispatchWorker(ctx, st)
+func init() {
+	stepKinds = map[workflow.StepType]stepKind{
+		workflow.StepAgent:   {dispatch: dispatchToWorker, agentSession: true},
+		workflow.StepCommand: {dispatch: dispatchToWorker},
+		workflow.StepCheck:   {dispatch: dispatchToWorker},
+		workflow.StepReview: {
+			dispatch:  func(s *scheduler, _ context.Context, st *workflow.Step) { s.dispatchReview(st) },
+			humanGate: true,
+		},
+	}
 }
 
-type checkDispatchStrategy struct{}
-
-func (checkDispatchStrategy) dispatch(s *scheduler, ctx context.Context, st *workflow.Step) {
-	s.dispatchWorker(ctx, st)
-}
-
-// reviewDispatchStrategy wraps the existing dispatchReview rather than
-// duplicating it; it ignores ctx because a review step never starts a
-// cancellable worker goroutine.
-type reviewDispatchStrategy struct{}
-
-func (reviewDispatchStrategy) dispatch(s *scheduler, _ context.Context, st *workflow.Step) {
-	s.dispatchReview(st)
-}
-
-// stepDispatchStrategies is the extension point that replaced the inline
-// per-type branch: adding a new workflow.StepType means registering a new
-// entry here, not editing dispatch().
-var stepDispatchStrategies = map[workflow.StepType]stepDispatchStrategy{
-	workflow.StepAgent:   agentDispatchStrategy{},
-	workflow.StepCommand: commandDispatchStrategy{},
-	workflow.StepCheck:   checkDispatchStrategy{},
-	workflow.StepReview:  reviewDispatchStrategy{},
+// hasAgentSession reports whether st runs a backend agent session.
+func hasAgentSession(st *workflow.Step) bool {
+	return st != nil && stepKinds[st.Type].agentSession
 }
 
 // failurePolicyStrategy is the Strategy pattern's contract for what happens

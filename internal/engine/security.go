@@ -29,7 +29,7 @@ func tier2Eligible(st *workflow.Step, runDir datastore.Run, monitors []sentinel.
 }
 
 func stepTier2Enabled(st *workflow.Step, runDir datastore.Run) bool {
-	if st == nil || st.Type != workflow.StepAgent || !runDir.Enabled() {
+	if !hasAgentSession(st) || !runDir.Enabled() {
 		return false
 	}
 	securityOn := st.Security.Enabled == nil || *st.Security.Enabled

@@ -830,7 +830,7 @@ func (s *scheduler) stepCanResume(stepID, sessionID string) bool {
 		return false
 	}
 	st := s.stepByID(stepID)
-	if st == nil || st.Type != workflow.StepAgent {
+	if !hasAgentSession(st) {
 		return false
 	}
 	support, ok := s.exec.(SessionResumeSupport)

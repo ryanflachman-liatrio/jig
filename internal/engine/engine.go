@@ -1127,11 +1127,9 @@ func (s *scheduler) nextReady(ctx context.Context) (*workflow.Step, bool) {
 			continue
 		}
 
-		// Review steps never go to a worker: park them on human input and keep
-		// scanning for other runnable steps this iteration. Routed through the
-		// same strategy-based dispatch() as agent/command steps (see
-		// strategies.go) rather than calling dispatchReview directly.
-		if st.Type == workflow.StepReview {
+		// A human gate never goes to a worker: park it on operator input and
+		// keep scanning for other runnable steps this iteration.
+		if stepKinds[st.Type].humanGate {
 			s.dispatch(ctx, st)
 			continue
 		}
@@ -1405,7 +1403,7 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 		s.dispatchForEach(ctx, st)
 		return
 	}
-	strat, ok := stepDispatchStrategies[st.Type]
+	kind, ok := stepKinds[st.Type]
 	if !ok {
 		// Validation rejects unknown types, so this is a programming error; fail
 		// the step rather than leaving it dispatched with no worker.
@@ -1416,12 +1414,11 @@ func (s *scheduler) dispatch(ctx context.Context, st *workflow.Step) {
 		s.enterRecovery(st.ID)
 		return
 	}
-	strat.dispatch(s, ctx, st)
+	kind.dispatch(s, ctx, st)
 }
 
 // dispatchWorker starts an agent or command step's worker goroutine. It is
-// the shared implementation behind agentDispatchStrategy and
-// commandDispatchStrategy in strategies.go.
+// the dispatch for every worker-backed step kind (see stepKinds).
 func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	workspace, err := s.acquireExecutionWorkspace(st)
 	if err != nil {
@@ -1462,7 +1459,7 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 	}
 	// Clear a stale session before the durable running transition. If the process
 	// dies after that transition, session.json can only belong to this dispatch.
-	if st.Type == workflow.StepAgent && s.rt(st.ID).resumeSession == "" {
+	if hasAgentSession(st) && s.rt(st.ID).resumeSession == "" {
 		if err := s.runDir.Step(st.ID).ClearSession(); err != nil {
 			releaseReaderView()
 			s.states[st.ID].Result = &step.Result{
@@ -1786,7 +1783,7 @@ func (s *scheduler) buildRequest(
 	// with inject_context off (explicitly, or inherited from [defaults]) also
 	// opts out, dispatching with a byte-identical no-context prompt.
 	var workflowContext string
-	if st.Type == workflow.StepAgent && st.InjectContextEnabled() {
+	if hasAgentSession(st) && st.InjectContextEnabled() {
 		workflowContext = s.buildStepContext(st).Render()
 	}
 	// Activate the Tier-1 guard for agent steps unless explicitly disabled.
@@ -2354,7 +2351,7 @@ func (s *scheduler) handleResolveIntegration(m resolveIntegrationMsg) {
 func (s *scheduler) handleResolveIntegrationWithAgent(m resolveIntegrationWithAgentMsg) {
 	state := s.states[m.stepID]
 	st := s.stepByID(m.stepID)
-	if state == nil || state.Status != step.StatusAwaitingIntegration || s.resolver == nil || st == nil || st.Type != workflow.StepAgent {
+	if state == nil || state.Status != step.StatusAwaitingIntegration || s.resolver == nil || !hasAgentSession(st) {
 		return
 	}
 	if s.rt(m.stepID).resolvingSeq != 0 {
