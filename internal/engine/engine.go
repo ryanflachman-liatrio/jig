@@ -759,6 +759,8 @@ type pendingQuestion struct {
 // ── scheduler ────────────────────────────────────────────────────────────────
 
 type scheduler struct {
+	// graph is wf's static dependency DAG; see stepGraph.
+	graph stepGraph
 	// runtime holds per-step execution state; see stepRuntime.
 	runtime  map[string]*stepRuntime
 	wf       *workflow.Workflow
@@ -918,6 +920,7 @@ func newScheduler(d schedulerDeps) *scheduler {
 		seenEscalations: make(map[string]bool),
 		stepCancels:     make(map[string]context.CancelFunc),
 		runtime:         make(map[string]*stepRuntime),
+		graph:           newStepGraph(wf),
 		postExecChain: []postExecHandler{
 			phCaptureWorktreeDiff,
 			phValidateMutationPaths,
@@ -1178,45 +1181,28 @@ func (s *scheduler) anyPendingRunnable() bool {
 	// Seed the permanently-blocked set with abort-failed and skipped steps.
 	// A step that failed with "continue" is NOT in this set — its failure is
 	// known but it doesn't block dependents.
-	blocked := make(map[string]bool, len(s.states))
+	var seeds []string
 	for id, st := range s.states {
-		if st.Status == step.StatusSkipped {
+		switch st.Status {
+		case step.StatusSkipped:
 			// Guard-skipped steps are transparent optional branches — dependents
 			// should not be considered blocked just because the guard didn't fire.
 			if !s.rt(id).skippedByGuard {
-				blocked[id] = true
+				seeds = append(seeds, id)
 			}
-		}
-		if st.Status == step.StatusFailed {
+		case step.StatusFailed:
 			// An operator-skipped step (RecoverSkip) is transparent like a
 			// continue-failed one — it must not seed the blocked set.
 			if s.rt(id).skippedByOperator {
 				continue
 			}
-			wfStep := s.stepByID(id)
-			if wfStep == nil || wfStep.OnFailure != workflow.FailContinue {
-				blocked[id] = true
+			if wfStep := s.stepByID(id); wfStep == nil || wfStep.OnFailure != workflow.FailContinue {
+				seeds = append(seeds, id)
 			}
 		}
 	}
-	// Propagate through the DAG (terminates because there are no cycles).
-	for changed := true; changed; {
-		changed = false
-		for i := range s.wf.Steps {
-			st := &s.wf.Steps[i]
-			if blocked[st.ID] {
-				continue
-			}
-			for _, dep := range st.DependsOn {
-				// Only propagate from hard-blocked nodes, not from continue-failed ones.
-				if blocked[dep] {
-					blocked[st.ID] = true
-					changed = true
-					break
-				}
-			}
-		}
-	}
+	// Everything downstream of a hard-blocked step is blocked too.
+	blocked := s.graph.descendants(nil, seeds...)
 	for id, st := range s.states {
 		if st.Status == step.StatusPending && !blocked[id] {
 			return true
@@ -2752,35 +2738,21 @@ func compareOrderedNumber(actual, want float64, op workflow.CondOp) bool {
 // skipID (and whose dep chain doesn't pass through a on_failure=continue step).
 // A skipped dep means the dependent's @ref inputs can never resolve.
 func (s *scheduler) cascadeSkip(skipID string) {
-	toSkip := map[string]bool{skipID: true}
-	for changed := true; changed; {
-		changed = false
-		for i := range s.wf.Steps {
-			st := &s.wf.Steps[i]
-			if s.states[st.ID].Status != step.StatusPending || toSkip[st.ID] {
-				continue
-			}
-			for _, dep := range st.DependsOn {
-				if !toSkip[dep] {
-					continue
-				}
-				// Guard-skipped deps are transparent when the dependent only uses
-				// them for sequencing (no @ref input). If the dependent references
-				// output data from the guard-skipped step it must still be skipped.
-				if s.rt(dep).skippedByGuard && !stepRefsDep(st, dep) {
-					continue
-				}
-				// A skipped dep cascades unless the dep opted into "continue".
-				depStep := s.stepByID(dep)
-				if depStep == nil || depStep.OnFailure != workflow.FailContinue {
-					toSkip[st.ID] = true
-					changed = true
-					break
-				}
-			}
+	toSkip := s.graph.descendants(func(dep, dependent string) bool {
+		if s.states[dependent].Status != step.StatusPending {
+			return false
 		}
-	}
-	for id := range toSkip {
+		// Guard-skipped deps are transparent when the dependent only uses
+		// them for sequencing (no @ref input). If the dependent references
+		// output data from the guard-skipped step it must still be skipped.
+		if s.rt(dep).skippedByGuard && !stepRefsDep(s.stepByID(dependent), dep) {
+			return false
+		}
+		// A skipped dep cascades unless the dep opted into "continue".
+		depStep := s.stepByID(dep)
+		return depStep == nil || depStep.OnFailure != workflow.FailContinue
+	}, skipID)
+	for _, id := range s.graph.inOrder(toSkip) {
 		if id == skipID {
 			continue // already transitioned by nextReady
 		}
@@ -3174,51 +3146,18 @@ func (s *scheduler) fireCoalescedLoop(intent *loopIntent) {
 }
 
 // loopBody returns the IDs of all steps on any path from gotoID to loopID
-// (inclusive) in the DAG. These are the steps to reset when the loop fires.
+// (inclusive) in the DAG, in declaration order. These are the steps to reset
+// when the loop fires.
 func (s *scheduler) loopBody(gotoID, loopID string) []string {
-	// Forward set: all steps reachable from gotoID by following dependents.
-	fwd := map[string]bool{gotoID: true}
-	for changed := true; changed; {
-		changed = false
-		for i := range s.wf.Steps {
-			st := &s.wf.Steps[i]
-			if fwd[st.ID] {
-				continue
-			}
-			for _, dep := range st.DependsOn {
-				if fwd[dep] {
-					fwd[st.ID] = true
-					changed = true
-					break
-				}
-			}
-		}
-	}
-	// Backward set: all steps from which loopID is reachable (ancestors).
-	bwd := map[string]bool{loopID: true}
-	for changed := true; changed; {
-		changed = false
-		for i := range s.wf.Steps {
-			st := &s.wf.Steps[i]
-			if !bwd[st.ID] {
-				continue
-			}
-			for _, dep := range st.DependsOn {
-				if !bwd[dep] {
-					bwd[dep] = true
-					changed = true
-				}
-			}
-		}
-	}
-	// Intersection = the loop body.
-	var body []string
+	fwd := s.graph.descendants(nil, gotoID)
+	bwd := s.graph.ancestors(loopID)
+	body := make(map[string]bool)
 	for id := range fwd {
 		if bwd[id] {
-			body = append(body, id)
+			body[id] = true
 		}
 	}
-	return body
+	return s.graph.inOrder(body)
 }
 
 // closureOf returns the reset set for targetID: the target itself plus every
@@ -3226,7 +3165,10 @@ func (s *scheduler) loopBody(gotoID, loopID string) []string {
 // Independent parallel branches (steps with no transitive dependency on
 // targetID) are excluded — they are survivors in a subsequent rewindPlan call.
 func (s *scheduler) closureOf(targetID string) []string {
-	return ResetClosure(s.wf, targetID)
+	if s.stepByID(targetID) == nil {
+		return nil
+	}
+	return s.graph.inOrder(s.graph.descendants(nil, targetID))
 }
 
 // ResetClosure returns target plus every transitive dependent in workflow
@@ -3245,34 +3187,8 @@ func ResetClosure(wf *workflow.Workflow, targetID string) []string {
 	if !found {
 		return nil
 	}
-	// Forward reachability: start with the target, then add every step whose
-	// depends_on chain passes through the accumulating set. Same algorithm as
-	// loopBody's fwd set, but without the backward intersection.
-	fwd := map[string]bool{targetID: true}
-	for changed := true; changed; {
-		changed = false
-		for i := range wf.Steps {
-			st := &wf.Steps[i]
-			if fwd[st.ID] {
-				continue
-			}
-			for _, dep := range st.DependsOn {
-				if fwd[dep] {
-					fwd[st.ID] = true
-					changed = true
-					break
-				}
-			}
-		}
-	}
-	// Return in declaration order so the caller has a stable, deterministic list.
-	var out []string
-	for i := range wf.Steps {
-		if fwd[wf.Steps[i].ID] {
-			out = append(out, wf.Steps[i].ID)
-		}
-	}
-	return out
+	g := newStepGraph(wf)
+	return g.inOrder(g.descendants(nil, targetID))
 }
 
 // expandFanOutClosure returns closure with every foreach family member
