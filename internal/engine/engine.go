@@ -1057,7 +1057,7 @@ func (s *scheduler) nextReady(ctx context.Context) (*workflow.Step, bool) {
 		// children never appear in wf.Steps. If nothing in this family is
 		// ready right now (all done, or its family-local cap is full), fall
 		// through to the rest of the static graph rather than blocking on it.
-		if st.ForEach != nil && state.Status == step.StatusRunning {
+		if isOpenFamilyBarrier(st, state.Status) {
 			if child, ok := s.nextReadyChild(st.ID); ok {
 				return child, true
 			}

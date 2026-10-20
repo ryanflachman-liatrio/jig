@@ -496,7 +496,7 @@ func restoreUnfinishedCheckpoint(runDir datastore.Run, wf *workflow.Workflow, ev
 		// never a worker that was mid-flight — it must not be misclassified as
 		// interrupted. Its children (folded in below, independently) carry
 		// their own real statuses and reopen normally.
-		if wf.Steps[i].ForEach != nil && states[id].Status == step.StatusRunning {
+		if isOpenFamilyBarrier(&wf.Steps[i], states[id].Status) {
 			continue
 		}
 		if err := f.classifyPark(checkpoint, id); err != nil {
@@ -708,7 +708,7 @@ func (s *scheduler) rehydrateParks(checkpoint *unfinishedCheckpoint) ([]Event, e
 		// A foreach family left Running is a barrier, not a worker — see the
 		// matching special case in restoreUnfinishedCheckpoint. Its children
 		// are reopened independently below.
-		if s.wf.Steps[i].ForEach != nil && s.states[stepID].Status == step.StatusRunning {
+		if isOpenFamilyBarrier(&s.wf.Steps[i], s.states[stepID].Status) {
 			// Resume the barrier's clock after the process-absence interval. Like
 			// restored gates, this projection is published in the recovery batch.
 			events = append(events, s.transitionEvent(stepID, step.StatusRunning, step.StatusRunning, ""))

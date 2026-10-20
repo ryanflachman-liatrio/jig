@@ -235,6 +235,13 @@ func (s *scheduler) dispatchForEach(_ context.Context, st *workflow.Step) {
 	s.trySettleFamily(familyID)
 }
 
+// isOpenFamilyBarrier reports a foreach family still waiting on its children.
+// It stays Running without a worker, so it must never be dispatched again or
+// read as an interrupted worker on reopen.
+func isOpenFamilyBarrier(st *workflow.Step, status step.Status) bool {
+	return st.ForEach != nil && status == step.StatusRunning
+}
+
 // fanOutRegistry holds a run's runtime fan-out state, rebuilt on reopen from
 // FanOutExpanded events. The maps are always non-nil, because dispatchForEach
 // writes into them even for a run with no foreach family.
