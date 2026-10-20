@@ -32,10 +32,15 @@ Use these rather than adding more `if st.Type == ...` branches:
 | Concern | Where |
 |---|---|
 | Inbox message handling | `command` implementations in `commands.go` |
+| What a step type can do, and how it dispatches | `stepKinds` (`strategies.go`): `dispatch`, `agentSession`, `humanGate`. `foreach` steps are handled earlier, in `dispatch` |
+| Whether a pending step may start | `readinessChecks` (`ready.go`), run in order |
 | What happens after a step finishes | `postExecHandler` chain (`handlers.go`), assembled in `newScheduler` |
-| How a step kind is dispatched | `stepDispatchStrategies` (`strategies.go`). `foreach` steps are handled earlier, in `dispatch`, before the strategy lookup |
 | How a failure is handled | `failurePolicyStrategies` (`strategies.go`) |
+| Dependency-graph walks | `stepGraph` (`graph.go`). Walk the precomputed dependents index; don't rescan until nothing changes |
 | Out-of-process consumers | `Observer` (`observer.go`). Observers must not block |
+
+A new step type needs a `workflow.StepType`, a `stepKinds` entry
+(`TestStepKindsCoverExecutableTypes` checks this) and a runner.
 
 ## Adding a journaled event
 
