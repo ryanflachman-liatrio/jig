@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/ryanflachman-liatrio/jig/internal/agentcfg"
@@ -399,46 +398,6 @@ func (s *scheduler) cancelCause(ctx context.Context) CompletionCause {
 		return CauseTimeout
 	}
 	return CauseCancelled
-}
-
-// collectDepDiffs walks the dependency graph of stepID and concatenates any
-// captured diffs from mutating steps that ran in worktrees.
-func (s *scheduler) collectDepDiffs(stepID string) string {
-	visited := make(map[string]bool)
-	var parts []string
-	var walk func(id string)
-	walk = func(id string) {
-		if visited[id] {
-			return
-		}
-		visited[id] = true
-		if d := s.rt(id).diff; d != "" {
-			parts = append(parts, d)
-		}
-		if wfStep := s.stepByID(id); wfStep != nil {
-			for _, dep := range wfStep.DependsOn {
-				walk(dep)
-			}
-		}
-	}
-	if wfStep := s.stepByID(stepID); wfStep != nil {
-		for _, dep := range wfStep.DependsOn {
-			walk(dep)
-		}
-	}
-	return strings.Join(parts, "\n")
-}
-
-// reviewChoices returns the ordered set of verdicts the human can select.
-func reviewChoices(st *workflow.Step) []string {
-	switch st.OutputType.Kind {
-	case workflow.OutputBool:
-		return []string{"true", "false"}
-	case workflow.OutputEnum:
-		return append([]string(nil), st.OutputType.Enum...)
-	default:
-		return []string{"approve"}
-	}
 }
 
 func (s *scheduler) transition(stepID string, from, to step.Status) bool {

@@ -297,3 +297,43 @@ func (s *scheduler) finalizeReview(id string, sub review.Submission) {
 	delete(s.reviewSessions, id)
 	s.recordRoutes(id, st, feedback)
 }
+
+// collectDepDiffs walks the dependency graph of stepID and concatenates any
+// captured diffs from mutating steps that ran in worktrees.
+func (s *scheduler) collectDepDiffs(stepID string) string {
+	visited := make(map[string]bool)
+	var parts []string
+	var walk func(id string)
+	walk = func(id string) {
+		if visited[id] {
+			return
+		}
+		visited[id] = true
+		if d := s.rt(id).diff; d != "" {
+			parts = append(parts, d)
+		}
+		if wfStep := s.stepByID(id); wfStep != nil {
+			for _, dep := range wfStep.DependsOn {
+				walk(dep)
+			}
+		}
+	}
+	if wfStep := s.stepByID(stepID); wfStep != nil {
+		for _, dep := range wfStep.DependsOn {
+			walk(dep)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+// reviewChoices returns the ordered set of verdicts the human can select.
+func reviewChoices(st *workflow.Step) []string {
+	switch st.OutputType.Kind {
+	case workflow.OutputBool:
+		return []string{"true", "false"}
+	case workflow.OutputEnum:
+		return append([]string(nil), st.OutputType.Enum...)
+	default:
+		return []string{"approve"}
+	}
+}
