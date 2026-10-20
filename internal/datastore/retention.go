@@ -56,6 +56,9 @@ func Prune(root string, policy RetentionPolicy, now time.Time) ([]string, error)
 	}
 	var pruned []string
 	for _, r := range victims {
+		if err := checkContainerRetention(r.dir); err != nil {
+			continue
+		}
 		if err := os.RemoveAll(r.dir); err != nil {
 			return pruned, fmt.Errorf("datastore: remove run %q: %w", r.id, err)
 		}
@@ -106,6 +109,9 @@ func selectPrunable(root string, policy RetentionPolicy, now time.Time) ([]runIn
 			continue
 		}
 		dir := filepath.Join(runsDir, ent.Name())
+		if err := checkContainerRetention(dir); err != nil {
+			continue
+		}
 		ts, ok := runFinishedAt(dir)
 		if !ok {
 			continue // not terminal — leave it alone

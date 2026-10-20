@@ -46,6 +46,9 @@ func cloneSandboxStep(st *workflow.Step) *workflow.Step {
 		owned.Sandbox = &ref
 	}
 	owned.Secrets = append([]string(nil), st.Secrets...)
+	if st.WorkspaceRequirements != nil {
+		owned.WorkspaceRequirements = append([]string{}, st.WorkspaceRequirements...)
+	}
 	return &owned
 }
 

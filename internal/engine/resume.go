@@ -263,6 +263,9 @@ func (m *Manager) ResumeWithGuard(runID string, guard func(policyBlocked bool) e
 	if err != nil {
 		return fail(err)
 	}
+	if err := checkContainerReopen(events); err != nil {
+		return fail(err)
+	}
 	for _, event := range events {
 		if failure, ok := event.(RunError); ok && failure.CaptureReason != "" {
 			return fail(fmt.Errorf("run has a fatal authoring capture failure; start a new run: %w", failure.CaptureReason))
@@ -320,6 +323,12 @@ func (m *Manager) ResumeWithGuard(runID string, guard func(policyBlocked bool) e
 		close(run.done)
 	}
 	s := newScheduler(wf, runID, inbox, subs, m.exec, cancel, w, runDir, m.root, repoRoot, onDone)
+	s.containerPhases = make(step.ContainerLedger)
+	for _, event := range events {
+		if e, ok := event.(ContainerLifecycle); ok {
+			s.containerPhases[e.Ownership.Key()] = e.Ownership
+		}
+	}
 	s.authoring = authority
 	s.resolver = m.resolver
 	s.secretResolver = secrets

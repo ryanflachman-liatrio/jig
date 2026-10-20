@@ -325,6 +325,9 @@ type Defaults struct {
 // they apply to; validate() enforces that only the right fields are set for a
 // given Type.
 type Step struct {
+	// WorkspaceRequirements declares source features the execution environment
+	// must provide. It does not change host workspace guarantees.
+	WorkspaceRequirements                []string        `toml:"workspace_requirements" json:"workspace_requirements"`
 	Sandbox                              *string         `toml:"sandbox" json:"sandbox,omitempty"`
 	SnapshotSandbox                      *SandboxRequest `toml:"-" json:"snapshot_sandbox,omitempty"`
 	assets                               []AssetBinding

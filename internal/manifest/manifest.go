@@ -44,6 +44,15 @@ type Writer struct {
 	journal *os.File
 }
 
+// Sync makes acknowledged external-resource ownership durable before the
+// engine grants permission for a runtime side effect.
+func (w *Writer) Sync() error {
+	if err := w.journal.Sync(); err != nil {
+		return fmt.Errorf("manifest: sync journal: %w", err)
+	}
+	return nil
+}
+
 // NewWriter opens (or creates) journal.jsonl inside runDir and returns a Writer
 // ready to receive events.  The caller is responsible for calling Close when
 // the run finishes.

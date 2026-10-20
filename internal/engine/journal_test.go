@@ -188,6 +188,7 @@ func TestStepsResetRoundTrip(t *testing.T) {
 // ADD NEW EVENT TYPES HERE — the test will fail if eventKind returns "unknown"
 // or if no decoder exists for the kind.
 var allEventInstances = []Event{
+	ContainerLifecycle{Ownership: step.ContainerPhase{RunID: "r", StepID: "s", State: step.ContainerIntent}},
 	RunStarted{RunID: "r", Workflow: "w", Steps: []string{"a"}},
 	RunFinished{RunID: "r", Failed: false},
 	StepStatus{RunID: "r", StepID: "s", From: step.StatusPending, To: step.StatusRunning},

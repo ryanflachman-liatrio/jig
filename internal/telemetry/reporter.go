@@ -280,6 +280,30 @@ func (m *MetricMux) SupportsSessionResume(backend string) bool {
 	return sr.SupportsSessionResume(backend)
 }
 
+// NewAttempt retains telemetry around the worker-owned executor, including its
+// validation and finalization capabilities.
+func (m *MetricMux) NewAttempt(req engine.StepRequest) (engine.Executor, error) {
+	inner, err := engine.BindAttempt(m.inner, req)
+	if err != nil || inner == nil {
+		return inner, err
+	}
+	bound := *m
+	bound.inner = inner
+	if finalizer, ok := inner.(engine.AttemptFinalizer); ok {
+		return &metricAttempt{MetricMux: &bound, finalizer: finalizer}, nil
+	}
+	return &bound, nil
+}
+
+type metricAttempt struct {
+	*MetricMux
+	finalizer engine.AttemptFinalizer
+}
+
+func (m *metricAttempt) Finalize(ctx, shutdown context.Context, req engine.StepRequest, rep engine.Reporter, result *step.Result, publish bool) (*step.Result, error) {
+	return m.finalizer.Finalize(ctx, shutdown, req, rep, result, publish)
+}
+
 // Validate preserves the runner's worker-lifecycle capability through the
 // telemetry decorator used by the CLI and TUI.
 func (m *MetricMux) Validate(ctx context.Context, req engine.StepRequest, rep engine.Reporter) (bool, string, error) {

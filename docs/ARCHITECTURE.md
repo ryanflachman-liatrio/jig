@@ -76,6 +76,48 @@ and reports through messages. External callers use `Run` operations and
 snapshots. The manager registry has its own synchronization; single ownership
 of run state is not a claim that the entire process uses no mutexes.
 
+Executors may bind a fresh worker-owned handle through `AttemptFactory`.
+Construction has no external effects; preparation occurs in `Execute`.
+The same handle receives acknowledged validation and optional finalization.
+Finalization runs after main/validation failure as well as success, before
+capacity release and dependent dispatch. Publication uses the original attempt
+deadline; cleanup receives a separate 30-second shutdown context. This seam
+does not itself enable Docker.
+
+Container phase observations use a reliable dispatch-bound callback. The engine
+fixes execution coordinates and a fresh nonce; intent and created identity must
+be journaled and synced before their acknowledgements permit create and start.
+The bounded phase ledger rejects identity changes and stale/duplicate reports.
+Validation and publication require confirmed quiescence, including attempts
+without validators. Unresolved ownership fences completion and workspace
+cleanup; strict reopen and retention also preserve confirmed-stop cleanup debt.
+Removed/absent records remain tombstones (at most 4096 phases per run). Docker
+runtime execution, active qualification and operator inspection remain pending.
+
+The Docker workspace preparer reads blobs from the engine-selected
+`SourceCommit` in `ExecutionDir`, not from the live checkout. It bounds source
+enumeration and copying, verifies blob identities, excludes private paths,
+validates contained symlinks, and creates independent synthetic Git history.
+Frozen command/schema captures and source/exclusion metadata live separately
+from the writable workspace. Declared inputs require accepted run-owned file snapshots with SHA-256, size
+and delivery-mode metadata. Docker input resolution records bounded metadata
+on the scheduler; the worker verifies and copies the binary before create,
+using confined reads beneath the run artifact directory. Missing metadata and
+persistence-off file inputs fail closed pending explicit ownership support. The preparer copies bounded binary bytes into a separate input directory
+and exposes only `/inputs/<ordinal>` environment bindings; runtime wiring must
+mount that directory read-only. Missing source identity or input snapshots fail
+explicitly. This preparer is tested independently; it is not yet
+wired into an enabled Docker executor.
+
+The contained-output collector is likewise an independent primitive awaiting
+runtime finalizer wiring. It requires a stopped, validated workspace, rejects
+symlinks and multiply linked files, and streams at most 128 MiB into private
+artifact storage. A directory rename publishes the bytes and SHA-256/size/mode
+metadata together under the execution nonce. Failed collection returns no
+accepted reference; a failed post-rename sync retains unaccepted evidence.
+Binary existence predicates use the binary size bound; text/JSON predicates
+retain the 8 MiB bound. These primitives do not grant execution authority.
+
 ## Durable truth and live observation
 
 For orchestration events, `scheduler.emit` encodes and writes the journal
@@ -190,3 +232,23 @@ The scheduler alone owns the run-level policy block. Block/grant events use
 the reliable journal-before-publication path. Recheck I/O runs outside the
 scheduler, with cancellation and stale block-epoch rejection. Consumers render
 the block and send Run commands; they do not implement authorization.
+
+A private execution control transport is implemented separately from doctor
+inspection, but is not wired to public runtime admission. Each SDK client can
+send one exact container control operation, preceded by a bounded daemon-ID
+and platform check. It pins the inspected API/socket and suppresses ambient
+proxy/auth/version selection. Lost replies consume the permission; callers
+must reconcile with a separately authorized inspect. This transport does not
+validate create configuration or provide engine acknowledgement authority.
+Image locks, constrained create configuration, streams and lifecycle wiring
+remain required before execution can be enabled.
+
+A pure container-create builder now translates matching frozen authorization,
+verified image metadata, private staging paths and phase identity into SDK
+configuration. It requests non-root execution, offline networking, a read-only
+root, dropped capabilities, no-new-privileges, exact effective compute limits
+and fixed private mounts. It clears inherited image environment for the shell
+through an absolute `env -i` entrypoint. Image volumes and incompatible requests
+are rejected. Staging ownership/UID mapping, daemon-default seccomp and actual
+resource enforcement still require runtime checks and platform qualification;
+configuration construction alone is not execution authority.

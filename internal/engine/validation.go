@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -33,8 +34,14 @@ func (s *scheduler) matchesExecution(id string, execution uint64) bool {
 func acknowledgeValidation(ctx context.Context, inbox chan<- schedMsg, id string, execution uint64, result *step.Result) error {
 	// Ownership transfers only the copy; the runner may edit its result after
 	// the acknowledgement without racing snapshots of the main result.
-	copyResult := *result
-	copyResult.Structured = append(copyResult.Structured[:0:0], result.Structured...)
+	data, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("copy main result before validation: %w", err)
+	}
+	var copyResult step.Result
+	if err := json.Unmarshal(data, &copyResult); err != nil {
+		return fmt.Errorf("copy main result before validation: %w", err)
+	}
 	reply := make(chan error, 1)
 	select {
 	case inbox <- validationStartMsg{stepID: id, execution: execution, result: &copyResult, reply: reply}:
@@ -50,6 +57,10 @@ func acknowledgeValidation(ctx context.Context, inbox chan<- schedMsg, id string
 }
 
 func (m validationStartMsg) execute(s *scheduler) {
+	if s.containerUncertain(m.stepID) {
+		m.reply <- &ExecutionUncertainError{}
+		return
+	}
 	state := s.states[m.stepID]
 	if !s.matchesExecution(m.stepID, m.execution) || state == nil || state.Status != step.StatusRunning || s.stopping[m.stepID] || s.fatalCaptureErr != nil {
 		m.reply <- fmt.Errorf("validation acknowledgement rejected")

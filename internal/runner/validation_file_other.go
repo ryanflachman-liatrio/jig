@@ -17,3 +17,9 @@ func openValidationOutput(path string) (*os.File, error) {
 	}
 	return os.Open(path)
 }
+
+func openContainerInput(root *os.Root, name string) (*os.File, error) {
+	return nil, fmt.Errorf("container file inputs unsupported on this platform")
+}
+
+func singleLinkFile(info os.FileInfo) bool { return false }

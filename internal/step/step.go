@@ -77,9 +77,10 @@ type State struct {
 type Result struct {
 	// ExecutionUncertain fences acceptance and workspace replacement when the
 	// owned main/validator workload could not be confirmed terminated.
-	ExecutionUncertain bool   `json:"execution_uncertain,omitempty"`
-	Status             Status `json:"status"`
-	OutputPath         string `json:"output_path,omitempty"`
+	ExecutionUncertain bool         `json:"execution_uncertain,omitempty"`
+	Status             Status       `json:"status"`
+	OutputPath         string       `json:"output_path,omitempty"`
+	OutputFile         FileArtifact `json:"output_file,omitzero"`
 	// Artifacts maps a declared export name to its immutable, engine-owned
 	// snapshot path. It is empty when persistence is disabled.
 	Artifacts    map[string]string `json:"artifacts,omitempty"`

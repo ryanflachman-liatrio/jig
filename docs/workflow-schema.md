@@ -115,6 +115,23 @@ with `[defaults].sandbox` or `step.sandbox` on any of the five step kinds.
 agent backend and Git isolation are independent. With no selection, steps use
 host. See [the inspection-only example](../examples/sandbox-inspect.toml).
 
+Executable steps may declare `workspace_requirements = ["source_history",
+"submodules", "lfs"]` with any subset of those values. Omission and an empty
+array request no additional source features; unknown or duplicate values are
+invalid. Requirements survive module expansion and locked snapshots. They do
+not grant new host workspace guarantees. Docker execution remains unsupported,
+including requests for these source features.
+
+The [D05 build fixture](../examples/docker-build-jig.toml) reserves named whole
+command-output inputs using `inputs = [{ ref = "@build_jig", as = "binary" }]`.
+Docker command inputs require a producer with one declared file output and an
+explicit `depends_on` edge. Inline, structured, literal-path and check-artifact
+inputs are outside this execution slice. Aliases must be nonempty and at most
+128 bytes; aliases colliding after uppercase/non-alphanumeric-to-underscore
+normalization are invalid. The intended container binding is `JIG_INPUT_BINARY`.
+These static checks do not enable execution or file delivery. Host input
+behavior is unchanged. See the [image recipe](../testdata/docker/d05/README.md).
+
 `jig validate` checks this syntax offline, including unused declarations and
 steps guarded out of execution. It does not load sandbox policy or Docker
 configuration, resolve credentials, contact a daemon or execute workflow code.

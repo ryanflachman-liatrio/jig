@@ -185,16 +185,7 @@ func (e *CommandExecutor) Execute(ctx context.Context, req engine.StepRequest, r
 // environment always builds names the same way no matter which of the three
 // produced them.
 func normalizeEnvName(name string) string {
-	var b strings.Builder
-	for _, r := range strings.ToUpper(name) {
-		switch {
-		case r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('_')
-		}
-	}
-	return b.String()
+	return workflow.InputEnvironmentName(name)
 }
 
 func commandSecretEnv(secrets map[string]string) []string {

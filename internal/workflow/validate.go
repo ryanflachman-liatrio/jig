@@ -185,6 +185,8 @@ func (v *validator) checkStep(s *Step) {
 	}
 
 	v.checkInputs(s)
+	v.checkWorkspaceRequirements(s)
+	v.checkContainerFileInputs(s)
 	v.checkOutputType(s)
 	v.checkSchema(s)
 	v.checkTuning(s)

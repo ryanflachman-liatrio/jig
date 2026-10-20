@@ -29,6 +29,18 @@ func (m *Mux) Register(t workflow.StepType, e engine.Executor) {
 	m.executors[t] = e
 }
 
+// NewAttempt selects the concrete executor once for the complete worker lifetime.
+func (m *Mux) NewAttempt(req engine.StepRequest) (engine.Executor, error) {
+	if err := authorizeRequest(req); err != nil {
+		return nil, err
+	}
+	e, ok := m.executors[req.Step.Type]
+	if !ok {
+		return nil, fmt.Errorf("no executor registered for step type %q", req.Step.Type)
+	}
+	return engine.BindAttempt(e, req)
+}
+
 // Execute dispatches to the registered executor for req.Step.Type.  It returns
 // a failed result (not an error) when no executor is registered, so the engine
 // can apply the step's failure policy rather than crashing.

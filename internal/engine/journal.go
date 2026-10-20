@@ -25,6 +25,8 @@ type Envelope struct {
 // eventKind returns the stable journal kind string for an event.
 func eventKind(e Event) string {
 	switch e.(type) {
+	case ContainerLifecycle:
+		return "container_lifecycle"
 	case SandboxPolicyBlocked:
 		return "sandbox_policy_blocked"
 	case SandboxPolicyCleared:
@@ -96,6 +98,10 @@ func MarshalEnvelope(seq int, e Event) ([]byte, error) {
 // decoders maps kind strings to functions that decode the event's Data field.
 // Using concrete-typed decoders avoids the json.Unmarshal-into-interface pitfall.
 var decoders = map[string]func([]byte) (Event, error){
+	"container_lifecycle": func(b []byte) (Event, error) {
+		var e ContainerLifecycle
+		return e, json.Unmarshal(b, &e)
+	},
 	"run_started": func(b []byte) (Event, error) {
 		var e RunStarted
 		return e, json.Unmarshal(b, &e)

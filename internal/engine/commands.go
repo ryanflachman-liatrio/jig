@@ -31,12 +31,23 @@ func (m stepDoneMsg) execute(s *scheduler) {
 	if !s.matchesExecution(m.stepID, m.execution) {
 		return
 	}
+	if s.containerUncertain(m.stepID) {
+		if m.result == nil {
+			m.result = &step.Result{}
+		}
+		m.result.ExecutionUncertain = true
+		m.result.Status = step.StatusFailed
+		m.result.Err = "managed execution termination uncertain"
+		m.result.OutputPath = ""
+		m.result.Artifacts = nil
+	}
 	if m.result != nil && m.result.ExecutionUncertain {
 		s.states[m.stepID].Result = m.result
 		s.enterRecovery(m.stepID)
 		return
 	}
 	delete(s.activeExecutions, m.stepID)
+	delete(s.executionNonces, m.stepID)
 	delete(s.workerExits, m.stepID)
 	// Validation runs on the dispatch snapshot too, so defer release until every
 	// post-execution handler has consumed it. A retry always acquires a fresh

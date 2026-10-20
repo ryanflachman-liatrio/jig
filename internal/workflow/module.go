@@ -612,7 +612,7 @@ func validateSubworkflowStep(s *Step) error {
 	if s.Module == "" {
 		return fmt.Errorf("subworkflow requires `module`")
 	}
-	if s.Run != "" || s.Script != "" || s.Skill != "" || s.AgentFile != "" || len(s.Review) > 0 || len(s.Inputs) > 0 || s.Findings != nil {
+	if s.Run != "" || s.Script != "" || s.Skill != "" || s.AgentFile != "" || len(s.Review) > 0 || len(s.Inputs) > 0 || s.Findings != nil || s.WorkspaceRequirements != nil {
 		return fmt.Errorf("subworkflow sets fields belonging to an executable step")
 	}
 	return nil
@@ -803,6 +803,9 @@ func cloneSteps(in []Step) []Step {
 
 func cloneStep(in Step) Step {
 	out := in
+	if in.WorkspaceRequirements != nil {
+		out.WorkspaceRequirements = append([]string{}, in.WorkspaceRequirements...)
+	}
 	out.Sandbox = clonePointer(in.Sandbox)
 	if in.SnapshotSandbox != nil {
 		r := in.SnapshotSandbox.Clone()

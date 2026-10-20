@@ -79,6 +79,11 @@ attempt deadline continues through validation and final candidate collection.
 Collect the diff after the validator, then check the combined mutation allowlist
 before integration. Reported managed termination uncertainty retains capacity
 and storage and fences acceptance/replacement, with abort still available.
+Container ownership additionally requires acknowledged intent before create,
+and acknowledged exact identity before start. These records are synced before
+acknowledgement. Main and validation phases share immutable attempt, daemon,
+endpoint and image identity. Neither an executor success result nor a missing
+validator bypasses the confirmed-quiescence gate for final publication.
 Preserve global, read-only/mutating, class, and family capacity accounting;
 release capacity on success, failure, cancellation, stop, and recovery paths.
 

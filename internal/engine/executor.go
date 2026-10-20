@@ -16,6 +16,32 @@ type Executor interface {
 	Execute(ctx context.Context, req StepRequest, report Reporter) (*step.Result, error)
 }
 
+// AttemptFactory binds a fresh executor to one admitted worker. Construction
+// must have no external effects; preparation belongs in Execute so partial
+// preparation is always followed by Finalize. Never cache handles by step ID.
+type AttemptFactory interface {
+	NewAttempt(StepRequest) (Executor, error)
+}
+
+// AttemptFinalizer completes publication and cleanup before the engine releases
+// capacity or dispatches consumers. publish is true only after successful main
+// execution and any acknowledged validator. ctx retains the attempt deadline;
+// shutdown is independent and bounded, for cleanup after cancellation. Unknown
+// termination must retain owned resources and report ExecutionUncertain.
+// Finalize is called exactly once after Execute, including on execution errors.
+type AttemptFinalizer interface {
+	Finalize(ctx, shutdown context.Context, req StepRequest, report Reporter, result *step.Result, publish bool) (*step.Result, error)
+}
+
+// BindAttempt preserves stateless executors while selecting per-worker state
+// for executors that own resources across main, validation and finalization.
+func BindAttempt(exec Executor, req StepRequest) (Executor, error) {
+	if factory, ok := exec.(AttemptFactory); ok {
+		return factory.NewAttempt(req)
+	}
+	return exec, nil
+}
+
 // Validator executes the complete success gate in the admitted worker. The
 // engine acknowledges validating durably before invoking it; no scheduler
 // goroutine runs validator subprocesses. Executors with declared validators
@@ -48,6 +74,11 @@ type IntegrationResolutionRequest struct {
 // StepRequest is the data a worker needs to execute one step.
 // @ref inputs are resolved to paths / inlined values before dispatch.
 type StepRequest struct {
+	// ExecutionNonce and ContainerLifecycle bind runtime observations to this
+	// dispatch. Acknowledged intent permits create; acknowledged created identity
+	// permits start. Missing callbacks never authorize container operations.
+	ExecutionNonce     string
+	ContainerLifecycle func(context.Context, step.ContainerPhase) error
 	// SandboxAuthorizer is frozen operator policy, never workflow-supplied.
 	SandboxAuthorizer SandboxAuthorizer
 	// Assets is immutable run-owned authoring content; AssetOwner names the static template.
@@ -71,6 +102,9 @@ type StepRequest struct {
 	// It is empty when persistence is off, in which case executors use their
 	// configured working-directory fallback.
 	ExecutionDir string
+	// SourceCommit is the immutable Git commit selected with ExecutionDir.
+	// Container staging must not substitute ambient HEAD or checkout contents.
+	SourceCommit string
 	// RepoRoot is the execution project's root (the parent of .jig), or empty
 	// for persistence-off. Authoring content is supplied independently by Assets.
 	RepoRoot    string
@@ -144,9 +178,10 @@ type FanOutItem struct {
 // ResolvedInput pairs an original workflow.Input with its resolved value.
 type ResolvedInput struct {
 	Ref          workflow.Input
-	Value        string // resolved path, or inlined content when Ref.Inline is true
-	SnapshotPath string // engine-owned immutable copy when persistence is enabled
-	SHA256       string // digest of the exact snapshotted value
+	Value        string            // resolved path, or inlined content when Ref.Inline is true
+	SnapshotPath string            // engine-owned immutable copy when persistence is enabled
+	SHA256       string            // digest of the exact snapshotted value
+	File         step.FileArtifact // accepted binary metadata; zero for legacy text inputs
 }
 
 // Reporter carries live signals out of an in-flight execution back to the

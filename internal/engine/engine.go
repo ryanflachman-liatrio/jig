@@ -799,6 +799,8 @@ type scheduler struct {
 	policyRestore     func() error
 	nextExecution     uint64
 	activeExecutions  map[string]uint64
+	executionNonces   map[string]string
+	containerPhases   step.ContainerLedger
 	workerExits       map[string]*workerExit
 	authoring         *runAuthoring
 	fatalCaptureErr   error
@@ -1516,6 +1518,11 @@ func (s *scheduler) setupRunBranch() error {
 // subprocesses finish before the caller's goroutine signals completion.
 func (s *scheduler) cleanupWorktrees() {
 	s.confirmWorkersBeforeCleanup()
+	for _, p := range s.containerPhases {
+		if !p.Quiescent() {
+			return
+		}
+	}
 	// Unknown live managed work retains all run-owned storage. Deleting or
 	// rebuilding its roots would turn uncertainty into unsafe acceptance.
 	for _, state := range s.states {
@@ -1758,6 +1765,14 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 		return
 	}
 	req := s.buildRequest(st, runID, worktreePath, workspace.Dir, artifactDir, transcriptPath)
+	req.SourceCommit = workspace.BaseSHA
+	if err := bindContainerLifecycle(&req, inbox, execution); err != nil {
+		releaseReaderView()
+		s.releaseWorkerCapacity(st.ID)
+		s.states[st.ID].Result = &step.Result{Status: step.StatusFailed, Err: err.Error()}
+		s.applyFailurePolicy(st.ID, st)
+		return
+	}
 	req.Secrets = secrets
 	req.NetworkRequest = func() {
 		select {
@@ -1793,8 +1808,11 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 		s.activeExecutions = make(map[string]uint64)
 	}
 	s.activeExecutions[stepID] = execution
+	if s.executionNonces == nil {
+		s.executionNonces = make(map[string]string)
+	}
+	s.executionNonces[stepID] = req.ExecutionNonce
 	rep.execution = execution
-	validator, hasValidator := s.exec.(Validator)
 	baseSHA := workspace.BaseSHA
 
 	exit := &workerExit{done: make(chan struct{})}
@@ -1806,14 +1824,23 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 		defer close(exit.done)
 		var result *step.Result
 		err := stepCtx.Err()
+		var attempt Executor
+		executed := false
 		if err == nil {
-			result, err = s.exec.Execute(stepCtx, req, rep)
+			attempt, err = BindAttempt(s.exec, req)
+			if err == nil && attempt == nil {
+				err = fmt.Errorf("executor returned no attempt")
+			}
+		}
+		if err == nil {
+			executed = true
+			result, err = attempt.Execute(stepCtx, req, rep)
 		}
 		passed, detail := false, ""
 		if err == nil && result != nil && result.Status == step.StatusSucceeded && !result.ExecutionUncertain && req.Step.Validate != nil && stepCtx.Err() == nil {
 			err = acknowledgeValidation(stepCtx, inbox, stepID, execution, result)
 			if err == nil {
-				if hasValidator {
+				if validator, ok := attempt.(Validator); ok {
 					passed, detail, err = validator.Validate(stepCtx, req, rep)
 				} else {
 					detail = "executor does not support validation"
@@ -1827,6 +1854,39 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 		var uncertain *ExecutionUncertainError
 		if errors.As(err, &uncertain) && result != nil {
 			result.ExecutionUncertain = true
+		}
+		if finalizer, ok := attempt.(AttemptFinalizer); ok && executed {
+			publish := err == nil && stepCtx.Err() == nil && result != nil && result.Status == step.StatusSucceeded && !result.ExecutionUncertain
+			if publish {
+				err = acknowledgeContainerQuiescence(stepCtx, inbox, stepID, execution)
+				publish = err == nil
+			}
+			wasUncertain := errors.As(err, &uncertain) || result != nil && result.ExecutionUncertain
+			priorDetail := ""
+			if result != nil {
+				priorDetail = result.Err
+			}
+			shutdown, cancel := context.WithTimeout(context.WithoutCancel(stepCtx), 30*time.Second)
+			finalized, finalizeErr := finalizer.Finalize(stepCtx, shutdown, req, rep, result, publish)
+			cancel()
+			err = errors.Join(err, finalizeErr)
+			if finalized == nil {
+				err = errors.Join(err, fmt.Errorf("attempt finalizer returned no result"))
+			} else {
+				result = finalized
+			}
+			if result == nil {
+				result = &step.Result{Status: step.StatusFailed}
+			}
+			result.ExecutionUncertain = result.ExecutionUncertain || wasUncertain || errors.As(finalizeErr, &uncertain)
+			if !publish || err != nil || result.ExecutionUncertain || result.Status != step.StatusSucceeded {
+				result.Status = step.StatusFailed
+				if priorDetail != "" {
+					result.Err = priorDetail
+				}
+				result.OutputPath = ""
+				result.Artifacts = nil
+			}
 		}
 		var diff string
 		collected := false
@@ -1863,12 +1923,16 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 }
 
 type inputSnapshot struct {
-	Label  string `json:"label"`
-	SHA256 string `json:"sha256"`
-	Path   string `json:"path,omitempty"`
+	Label  string            `json:"label"`
+	SHA256 string            `json:"sha256"`
+	Path   string            `json:"path,omitempty"`
+	File   step.FileArtifact `json:"file,omitzero"`
 }
 
 func (s *scheduler) snapshotInputs(stepID string, inputs []ResolvedInput) error {
+	if st := s.stepByID(stepID); st != nil && st.ResolvedSandbox().Profile != nil {
+		return s.snapshotContainerInputs(stepID, inputs)
+	}
 	if s.runDir == "" {
 		return nil
 	}
@@ -1938,6 +2002,9 @@ func (s *scheduler) resolveSecrets(st *workflow.Step) (map[string]string, error)
 // copies them, so the worker receives the same immutable bytes the scheduler
 // observed rather than a path resolved later from an unrelated checkout.
 func (s *scheduler) resolveAllInputs(st *workflow.Step, executionDir string) error {
+	if st.ResolvedSandbox().Profile != nil {
+		return s.resolveContainerInputs(st)
+	}
 	for _, inp := range st.Inputs {
 		if inp.From == "user" {
 			continue // already collected via prompt flow
@@ -3733,6 +3800,12 @@ func (s *scheduler) emit(e Event) error {
 		if err := s.writer.AppendLine(line, s.terminalManifest(e)); err != nil {
 			s.failJournal(err)
 			return err
+		}
+		if _, ok := e.(ContainerLifecycle); ok {
+			if err := s.writer.Sync(); err != nil {
+				s.failJournal(err)
+				return err
+			}
 		}
 	}
 	s.seq = nextSeq

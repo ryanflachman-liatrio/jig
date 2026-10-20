@@ -1,0 +1,51 @@
+[workflow]
+name = "docker-build-jig"
+version = "1"
+
+[defaults]
+sandbox = "go_build"
+
+[[sandbox]]
+name = "go_build"
+runtime = "docker"
+image = "jig-d05-go:local"
+pull = "never"
+network = "none"
+env = { GOTOOLCHAIN = "local", GOPROXY = "off", GOSUMDB = "off", GOCACHE = "/scratch/go-build", GOTMPDIR = "/scratch/go-tmp" }
+
+[[step]]
+id = "build_jig"
+type = "command"
+isolation = "none"
+timeout = "10m"
+run = """
+set -eu
+printf 'D05_BUILD_STARTED\n'
+go version
+mkdir -p out /scratch/go-tmp
+go build -o out/jig ./cmd/jig
+sha256sum out/jig
+printf 'D05_BUILD_SUCCEEDED\n'
+"""
+output = "out/jig"
+
+[step.validate]
+command = "test -s out/jig && test -x out/jig"
+
+[[step]]
+id = "verify_returned_binary"
+type = "command"
+isolation = "none"
+depends_on = ["build_jig"]
+inputs = [{ ref = "@build_jig", as = "binary" }]
+timeout = "1m"
+run = """
+set -eu
+test -s "$JIG_INPUT_BINARY"
+sha256sum "$JIG_INPUT_BINARY" > verified.txt
+cat verified.txt
+"""
+output = "verified.txt"
+
+[step.validate]
+output_exists = true
