@@ -34,13 +34,22 @@ type postExecHandler func(s *scheduler, m stepDoneMsg, wfStep *workflow.Step) po
 // phCaptureWorktreeDiff snapshots the worktree diff after every execution
 // so downstream review steps always see the most-recent state.
 func phCaptureWorktreeDiff(s *scheduler, m stepDoneMsg, _ *workflow.Step) postExecDecision {
-	if wt, ok := s.worktrees[m.stepID]; ok {
-		s.rt(m.stepID).diff = captureDiff(wt.path, wt.base)
+	if wt, ok := s.captureStepDiff(m.stepID); ok {
 		if result := s.states[m.stepID].Result; result != nil {
 			result.ChangedFiles = changedFiles(wt.path, wt.base)
 		}
 	}
 	return decisionContinue
+}
+
+// captureStepDiff refreshes stepID's latest worktree diff, reporting the
+// worktree when the step has one.
+func (s *scheduler) captureStepDiff(stepID string) (stepWorktree, bool) {
+	wt, ok := s.worktrees[stepID]
+	if ok {
+		s.rt(stepID).diff = captureDiff(wt.path, wt.base)
+	}
+	return wt, ok
 }
 
 // phValidateMutationPaths blocks integration before git add/merge when a

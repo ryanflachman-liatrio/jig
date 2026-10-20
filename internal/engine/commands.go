@@ -20,16 +20,38 @@ type command interface {
 	execute(s *scheduler)
 }
 
-// execute processes a worker's completion: it records cost/token accrual,
-// releases the worker's context, and then routes the result through the
-// early-exit paths (parked for recovery, deliberately stopped) or the normal
-// post-exec chain / failure-policy path.
+// execute processes a worker's completion in four phases: release what the
+// worker held, take an early exit if the step was parked or stopped while the
+// worker ran, record the result, then route it through retry and failure
+// policy or the post-exec chain.
 func (m stepDoneMsg) execute(s *scheduler) {
 	// Validation runs on the dispatch snapshot too, so defer release until every
 	// post-execution handler has consumed it. A retry always acquires a fresh
 	// view of the current run branch.
 	defer s.releaseExecutionViewForStep(m.stepID)
 
+	if !s.releaseWorker(m) {
+		return
+	}
+	if s.exitParkedOrStopped(m) {
+		return
+	}
+	wfStep := s.stepByID(m.stepID)
+	if s.recordResult(m) {
+		if s.scheduleAutomaticRetry(m.stepID, wfStep, m) {
+			return
+		}
+		s.applyFailurePolicy(m.stepID, wfStep)
+		return
+	}
+	s.runPostExecChain(m, wfStep)
+}
+
+// releaseWorker returns what the finished worker held: its capacity slots,
+// its accrued spend, its open questions, and its cancel func. It reports
+// false for a worker reaped by a security escalation, whose completion must
+// not be processed further.
+func (s *scheduler) releaseWorker(m stepDoneMsg) bool {
 	if wfStep := s.stepByID(m.stepID); wfStep != nil {
 		s.releaseSlots(wfStep)
 	} else {
@@ -57,101 +79,88 @@ func (m stepDoneMsg) execute(s *scheduler) {
 		if st := s.states[m.stepID]; st != nil && st.Status == step.StatusAwaitingRecovery && m.result != nil {
 			st.Result = m.result
 		}
-		return
+		return false
 	}
 	s.rt(m.stepID).questions = nil
-
-	// Release the worker's child context and drop it from the registry — the
-	// worker has exited, so its CancelFunc has no further use.
+	// The worker has exited, so its CancelFunc has no further use.
 	if cancel, ok := s.stepCancels[m.stepID]; ok {
 		cancel()
 		delete(s.stepCancels, m.stepID)
 	}
+	return true
+}
 
-	// A step escalated to StatusAwaitingRecovery by a critical security finding
-	// while it was still running: keep it parked regardless of the worker's final
-	// result. Record the result (preserving SessionID for potential resume) but
-	// do not re-process through the post-exec chain or failure policy.
-	if s.states[m.stepID] != nil && s.states[m.stepID].Status == step.StatusAwaitingRecovery {
+// exitParkedOrStopped handles a completion for a step that left Running while
+// its worker ran, reporting whether it did. Such a step skips the failure
+// policy and the post-exec chain.
+func (s *scheduler) exitParkedOrStopped(m stepDoneMsg) bool {
+	state := s.states[m.stepID]
+	// Escalated to recovery by a critical security finding: keep it parked
+	// whatever the worker returned, recording the result so SessionID survives
+	// for a resume.
+	if state != nil && state.Status == step.StatusAwaitingRecovery {
 		if m.result != nil {
-			s.states[m.stepID].Result = m.result
+			state.Result = m.result
 		}
-		return
+		return true
 	}
-
-	// A deliberately-stopped worker (Run.Stop cancelled its context) is not a
-	// failure and not end-of-run (spec 07 B1). Record whatever result it
-	// returned so a resume keeps its captured session id, preserve its partial
-	// worktree diff on disk, and park it at StatusStopped — the run stays alive
-	// and becomes quiescent. Skip the failure policy and the post-exec chain.
-	if s.rt(m.stepID).stopping {
-		s.rt(m.stepID).stopping = false
+	// A deliberately stopped worker (Run.Stop cancelled its context) is not a
+	// failure and not end-of-run (spec 07 B1). Record its result so a resume
+	// keeps the session id, keep its partial diff, and park it at
+	// StatusStopped; the run stays alive and quiescent.
+	if rt := s.rt(m.stepID); rt.stopping {
+		rt.stopping = false
 		if m.result != nil {
-			s.states[m.stepID].Result = m.result
+			state.Result = m.result
 		}
-		// Capture the partial diff now: on the normal path phCaptureWorktreeDiff
-		// does this, but a stopped worker never reaches the post-exec chain.
-		if wt, ok := s.worktrees[m.stepID]; ok {
-			s.rt(m.stepID).diff = captureDiff(wt.path, wt.base)
-		}
-		from := s.states[m.stepID].Status
-		s.transition(m.stepID, from, step.StatusStopped)
-		return
+		s.captureStepDiff(m.stepID)
+		s.transition(m.stepID, state.Status, step.StatusStopped)
+		return true
 	}
+	return false
+}
 
-	// Record result and synthesize an error result when the executor
-	// returned a Go error rather than a failed Result.
+// recordResult stores the worker's result, synthesizing a failed result for a
+// timeout or a Go error, and reports whether execution failed.
+func (s *scheduler) recordResult(m stepDoneMsg) (failed bool) {
+	state := s.states[m.stepID]
 	if m.result != nil {
-		s.states[m.stepID].Result = m.result
+		state.Result = m.result
 	}
-	wfStep := s.stepByID(m.stepID)
 	if m.timedOut {
-		res := s.states[m.stepID].Result
-		if res == nil {
-			res = &step.Result{}
-			s.states[m.stepID].Result = res
+		if state.Result == nil {
+			state.Result = &step.Result{}
 		}
-		res.Status = step.StatusFailed
-		res.Err = "step timeout exceeded"
+		state.Result.Status = step.StatusFailed
+		state.Result.Err = "step timeout exceeded"
 	}
 	if m.err != nil {
-		res := s.states[m.stepID].Result
-		if res == nil {
-			res = &step.Result{Status: step.StatusFailed}
-			s.states[m.stepID].Result = res
+		if state.Result == nil {
+			state.Result = &step.Result{Status: step.StatusFailed}
 		}
-		if res.Err == "" {
-			res.Err = m.err.Error()
+		if state.Result.Err == "" {
+			state.Result.Err = m.err.Error()
 		}
 	}
+	return m.err != nil || m.timedOut || (m.result != nil && m.result.Status == step.StatusFailed)
+}
 
-	// Raw execution failure short-circuits the chain.
-	execFailed := m.err != nil || m.timedOut || (m.result != nil && m.result.Status == step.StatusFailed)
-
-	if execFailed {
-		if s.scheduleAutomaticRetry(m.stepID, wfStep, m) {
-			return
-		}
-		s.applyFailurePolicy(m.stepID, wfStep)
-		return
-	}
-
-	// Run the post-execution handler chain.
+// runPostExecChain walks the post-execution handlers for a successful
+// execution and applies their verdict.
+func (s *scheduler) runPostExecChain(m stepDoneMsg, wfStep *workflow.Step) {
 	decision := decisionContinue
 	for _, h := range s.postExecChain {
 		if decision = h(s, m, wfStep); decision != decisionContinue {
 			break
 		}
 	}
-
 	switch decision {
 	case decisionFailed:
 		s.applyFailurePolicy(m.stepID, wfStep)
 	case decisionNeedsInput:
 		// handler already transitioned the step; nothing more to do
 	default: // decisionContinue — all handlers passed → step succeeded
-		curFrom := s.states[m.stepID].Status
-		if !s.transition(m.stepID, curFrom, step.StatusSucceeded) {
+		if !s.transition(m.stepID, s.states[m.stepID].Status, step.StatusSucceeded) {
 			return
 		}
 		if wfStep != nil {
