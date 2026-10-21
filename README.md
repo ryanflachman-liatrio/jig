@@ -64,7 +64,7 @@ agent = { permission_mode = "acceptEdits" }         # the Claude agent every ste
 [[step]]
 id    = "fix"
 type  = "agent"
-skill = "../skills/implement"                       # relative to .agents/jig/
+skill = "skills/implement"                          # relative to .agents/jig/
 agent = { permission_mode = "acceptEdits", tools = ["Read", "Edit", "Write", "Bash"] }  # mutating -> runs in a git worktree
 
   [step.validate]

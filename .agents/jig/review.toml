@@ -20,7 +20,7 @@ description = "Security review driven by a Claude agent file."
 [[step]]
 id                   = "review"
 type                 = "agent"
-skill                = "../skills/research_backend"
+skill                = "skills/research_backend"
 ask_user             = true
 isolation            = "none"
 inputs               = [

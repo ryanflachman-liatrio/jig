@@ -25,7 +25,7 @@ ref = "@find_next_task.task_title"
 [[step]]
 id = "find_next_task"
 type = "agent"
-skill = "../../skills/sdd-find-next-task"
+skill = "../skills/sdd-find-next-task"
 inputs = [
   "@module.spec_name",
   "@module.task_path",
@@ -44,7 +44,7 @@ id = "implement_code"
 type = "agent"
 depends_on = ["find_next_task"]
 when = "find_next_task.progress == 'continue'"
-skill = "../../skills/sdd-implement-code"
+skill = "../skills/sdd-implement-code"
 inputs = ["@module.task_path", "@module.spec_name", "@find_next_task.task_title", "@find_next_task.parent_task_num"]
 isolation = "worktree"
 resource_class = "mutation"
@@ -117,7 +117,7 @@ id = "proof"
 type = "agent"
 depends_on = ["test", "lint", "coverage", "find_next_task"]
 when = "find_next_task.progress == 'continue'"
-skill = "../../skills/sdd-create-proofs"
+skill = "../skills/sdd-create-proofs"
 inputs = ["@module.task_path", "@module.spec_name", "@find_next_task.parent_task_num", "@find_next_task.task_title", "@test", "@lint", "@coverage"]
 isolation = "worktree"
 resource_class = "mutation"
@@ -152,7 +152,7 @@ id = "complete"
 type = "agent"
 depends_on = ["find_next_task", "task_checkpoint"]
 when = "find_next_task.progress == 'done'"
-skill = "../../skills/sdd-find-next-task"
+skill = "../skills/sdd-find-next-task"
 inputs = ["@find_next_task.completion_summary"]
 agent = "@sdd-codex-reader"
 isolation = "none"

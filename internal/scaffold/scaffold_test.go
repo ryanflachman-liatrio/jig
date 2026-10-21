@@ -263,7 +263,7 @@ func TestStarterSkillPathAndPrompt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
-	wantSkillPath := filepath.Join(target, ".agents", "skills", "draft", "SKILL.md")
+	wantSkillPath := filepath.Join(target, ".agents", "jig", "skills", "draft", "SKILL.md")
 	if got := plannedPaths(plan.Files); !containsPath(got, wantSkillPath) {
 		t.Fatalf("planned paths = %v, want skill path %s", got, wantSkillPath)
 	}

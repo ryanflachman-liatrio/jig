@@ -30,7 +30,8 @@ not committed. Only the durable reference docs in the table are tracked.
 
 Use workflow skills when the task calls for them; changing code does not by
 itself require running the SDD pipeline. `.agents/jig` contains executable
-workflows; `.agents/skills` and `.claude/skills` contain agent instructions.
+workflows and, under `.agents/jig/skills`, the skills only jig steps use;
+`.agents/skills` and `.claude/skills` contain skills every agent discovers.
 Keep skill input/output contracts aligned with their invoking TOML when edited.
 
 ## Non-negotiable design constraints

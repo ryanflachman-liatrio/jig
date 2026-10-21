@@ -34,7 +34,7 @@ artifacts_dir   = ".jig/artifacts"
 [[step]]
 id            = "intake"
 type          = "agent"
-skill         = "../skills/intake"
+skill         = "skills/intake"
 ask_user      = true
 inputs        = [
   { from = "user", label = "Describe the feature you want to build:", as = "feature_request" },
@@ -56,7 +56,7 @@ id            = "research_backend"
 type          = "agent"
 depends_on    = ["intake"]
 when          = "intake.status == 'succeeded'"
-skill         = "../skills/research_backend"
+skill         = "skills/research_backend"
 inputs        = ["@intake.summary", "@intake.areas"]
 agent         = { extends = "@feature-default", tools = ["Read", "Grep", "Glob", "WebSearch"] }
 block_on      = "research_backend.status == 'blocked'"
@@ -70,7 +70,7 @@ id            = "research_frontend"
 type          = "agent"
 depends_on    = ["intake"]
 when          = "intake.status == 'succeeded'"
-skill         = "../skills/research_frontend"
+skill         = "skills/research_frontend"
 inputs        = ["@intake.summary", "@intake.areas"]
 agent         = { extends = "@feature-default", tools = ["Read", "Grep", "Glob", "WebSearch"] }
 block_on      = "research_frontend.status == 'blocked'"
@@ -87,7 +87,7 @@ block_on      = "research_frontend.status == 'blocked'"
 id            = "plan"
 type          = "agent"
 depends_on    = ["intake", "research_backend", "research_frontend"]
-skill         = "../skills/plan"
+skill         = "skills/plan"
 inputs        = ["@intake.summary", "@research_backend.summary", "@research_frontend.summary"]
 agent         = "@feature-reader"
 
@@ -127,7 +127,7 @@ id            = "implement"
 type          = "agent"
 depends_on    = ["plan_review", "plan"]     # plan_review orders it; @plan.* refs require plan too
 when          = "plan_review == 'approve'"
-skill         = "../skills/implement"
+skill         = "skills/implement"
 inputs        = ["@plan.tasks", { ref = "@plan.approach", inline = true }]
 isolation     = "worktree"
 agent         = { extends = "@feature-default", tools = ["Read", "Grep", "Glob", "Edit", "Write", "Bash"] }
@@ -210,7 +210,7 @@ with       = { quality_report = "@quality_snapshot.quality_report" }
 id            = "qa"
 type          = "agent"
 depends_on    = ["typecheck", "unit_test"]
-skill         = "../skills/qa"
+skill         = "skills/qa"
 inputs        = ["@unit_test"]
 agent         = "@feature-reader"
 
@@ -238,7 +238,7 @@ feedback       = "@qa"
 id            = "triage_findings"
 type          = "agent"
 depends_on    = ["qa"]
-skill         = "../skills/triage_finding"
+skill         = "skills/triage_finding"
 agent         = "@feature-reader"
 
   [step.foreach]

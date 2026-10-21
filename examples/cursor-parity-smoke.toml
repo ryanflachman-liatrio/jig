@@ -12,7 +12,7 @@ cwd = "."
 [[step]]
 id = "ask"
 type = "agent"
-skill = "../.agents/skills/intake"
+skill = "../.agents/jig/skills/intake"
 ask_user = true
 agent = { backend = "cursor", mode = "ask" }
 
@@ -20,7 +20,7 @@ agent = { backend = "cursor", mode = "ask" }
 id = "checkpoint"
 type = "agent"
 depends_on = ["ask"]
-skill = "../.agents/skills/intake"
+skill = "../.agents/jig/skills/intake"
 block_on = "checkpoint.needs_input == true"
 isolation = "none"
   [step.schema]

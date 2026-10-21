@@ -16,7 +16,7 @@ jig init --dry-run
 `minimal` template writes `.agents/jig/<name>.toml` and, when needed, a single
 `.jig/` entry in the target's `.gitignore`. It contains only command and review
 steps, so it requires no agent credential and spends no tokens. The `starter`
-template additionally writes `.agents/skills/draft/SKILL.md`, which satisfies
+template additionally writes `.agents/jig/skills/draft/SKILL.md`, which satisfies
 its agent step's skill reference.
 
 `--template NAME` selects `minimal` (the default) or `starter`; use
@@ -31,6 +31,31 @@ over `--force`.
 On success, stdout lists every created or overwritten path followed by `jig
 validate`, `jig run`, and `jig doctor` next steps. The emitted workflow is
 loaded through the normal validator before `init` reports success.
+
+## Keep jig skills private
+
+Coding agents auto-discover every skill in `.agents/skills`, so skills that
+only jig workflow steps use belong in `.agents/jig/skills`, which jig reads
+solely through explicit `skill =` references.
+
+```sh
+jig skills migrate                     # preview
+jig skills migrate --apply examples    # also rewrite workflows under examples/
+jig skills migrate --apply --keep plan,qa
+```
+
+`skills migrate` scans every `*.toml` under `.agents/jig` (plus any extra
+files or directories given as arguments) for `skill =` references that resolve
+to a direct child of `.agents/skills`. It moves each such skill to
+`.agents/jig/skills/<name>` and rewrites every reference in place, preserving
+comments and layout. Skills no workflow references are never moved, and
+`--keep NAME,...` leaves named skills shared. It previews by default; `--apply`
+performs the change. It fails without changes when a destination already
+exists or a referenced skill has no `SKILL.md`. Workflows outside the scanned
+paths that reference a moved skill must be updated by hand.
+
+`jig validate` warns on stderr for each step whose skill still lives in
+`.agents/skills`; the warning does not change its exit status.
 
 ## Inspect runs
 

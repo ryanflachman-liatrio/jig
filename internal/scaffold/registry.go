@@ -29,7 +29,7 @@ var registry = []Template{
 		Name:        "starter",
 		Description: "An agent draft workflow with a bounded review loop.",
 		AssetDir:    "templates/starter",
-		SkillRefs:   []string{"../skills/draft"},
+		SkillRefs:   []string{"skills/draft"},
 	},
 }
 

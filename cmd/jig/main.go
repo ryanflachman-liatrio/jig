@@ -50,6 +50,8 @@ func main() {
 			os.Exit(runValidate(os.Args[2:]))
 		case "prune":
 			os.Exit(runPrune(os.Args[2:]))
+		case "skills":
+			os.Exit(runSkills(os.Args[2:]))
 		case "run":
 			os.Exit(runRun(os.Args[2:]))
 		case "status":
@@ -73,7 +75,7 @@ func main() {
 			return
 		default:
 			fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
-			fmt.Fprintln(os.Stderr, "usage: jig <init|validate|run|status|logs|doctor|resume|reset|prune|export|notifications|config>")
+			fmt.Fprintln(os.Stderr, "usage: jig <init|validate|run|status|logs|doctor|resume|reset|prune|export|skills|notifications|config>")
 			os.Exit(2)
 		}
 	}
@@ -138,6 +140,9 @@ func runValidate(args []string) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
+	}
+	for _, warning := range sharedSkillWarnings(args[0], wf) {
+		fmt.Fprintln(os.Stderr, warning)
 	}
 	fmt.Printf("ok: %q v%s — %d step(s)\n", wf.Meta.Name, wf.Meta.Version, len(wf.Steps))
 	return 0

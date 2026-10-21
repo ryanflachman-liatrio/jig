@@ -20,7 +20,7 @@ ref = "@draft.changelog_entry"
 [[step]]
 id = "draft"
 type = "agent"
-skill = "../../skills/sdd-gen-changelog"
+skill = "../skills/sdd-gen-changelog"
 inputs = ["@module.spec_name", "@module.validation_report", "@module.compliance_report"]
 isolation = "worktree"
 resource_class = "mutation"

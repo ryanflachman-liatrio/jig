@@ -23,7 +23,7 @@ description = "Ask the user what to build, implement it like a normal session, t
 [[step]]
 id            = "implement"
 type          = "agent"
-skill         = "../skills/implement-review-implement"
+skill         = "skills/implement-review-implement"
 ask_user      = true
 agent         = { permission_mode = "acceptEdits", max_turns = 40, tools = ["Read", "Grep", "Glob", "Edit", "Write", "Bash"] }
 

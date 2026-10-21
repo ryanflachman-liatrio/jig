@@ -22,7 +22,7 @@ id = "scope_exception"
 type = "agent"
 depends_on = ["spec"]
 when = "spec.scope_decision != 'proceed'"
-skill = "../skills/sdd-write-epic"
+skill = "skills/sdd-write-epic"
 inputs = ["@spec.spec_name"]
 ask_user = true
 isolation = "worktree"
@@ -71,7 +71,7 @@ id = "capture_remediation_scope"
 type = "agent"
 depends_on = ["implementation_review"]
 when = "implementation_review == 'redo'"
-skill = "../skills/sdd-clarify"
+skill = "skills/sdd-clarify"
 inputs = ["@implementation_review", "@implement_task.completion_summary"]
 agent = { extends = "@sdd-default", mode = "read-only" }
 ask_user = true
@@ -101,7 +101,7 @@ id = "validation_exception"
 type = "agent"
 depends_on = ["validate"]
 when = "validate.status == 'fail'"
-skill = "../skills/sdd-clarify"
+skill = "skills/sdd-clarify"
 inputs = ["@validate.report"]
 agent = { extends = "@sdd-default", mode = "read-only" }
 ask_user = true
@@ -126,7 +126,7 @@ id = "compliance_exception"
 type = "agent"
 depends_on = ["compliance"]
 when = "compliance.status != 'pass'"
-skill = "../skills/sdd-clarify"
+skill = "skills/sdd-clarify"
 inputs = ["@compliance.report"]
 agent = { extends = "@sdd-default", mode = "read-only" }
 ask_user = true

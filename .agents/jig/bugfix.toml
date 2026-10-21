@@ -8,7 +8,7 @@ agent = "@bugfix-default"
 [[step]]
 id            = "triage"
 type          = "agent"
-skill         = "../skills/intake"
+skill         = "skills/intake"
 inputs        = ["templates/context-assess.md"]
 output        = ".jig/artifacts/triage.md"
 agent         = { extends = "@bugfix-default", tools = ["Read", "Grep", "Glob"] }
@@ -17,7 +17,7 @@ agent         = { extends = "@bugfix-default", tools = ["Read", "Grep", "Glob"] 
 id            = "fix"
 type          = "agent"
 depends_on    = ["triage"]
-skill         = "../skills/implement"
+skill         = "skills/implement"
 inputs        = ["@triage"]
 agent         = { extends = "@bugfix-default", tools = ["Read", "Edit", "Write", "Bash"] }
 
