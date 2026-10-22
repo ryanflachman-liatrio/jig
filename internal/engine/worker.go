@@ -211,6 +211,7 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 		stepCtx, stepCancel = context.WithTimeout(ctx, st.Timeout.Duration)
 	}
 	s.stepCancels[st.ID] = stepCancel
+	deadline, _ := stepCtx.Deadline()
 
 	go func() {
 		result, err := s.exec.Execute(stepCtx, req, rep)
@@ -223,7 +224,7 @@ func (s *scheduler) dispatchWorker(ctx context.Context, st *workflow.Step) {
 		// stepCtx while the run keeps draining — still delivers its stepDoneMsg
 		// and transitions the step to StatusStopped.
 		select {
-		case s.inbox <- stepDoneMsg{stepID: stepID, result: result, err: err, timedOut: timedOut}:
+		case s.inbox <- stepDoneMsg{stepID: stepID, result: result, err: err, timedOut: timedOut, deadline: deadline}:
 		case <-ctx.Done():
 		}
 	}()

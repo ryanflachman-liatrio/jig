@@ -27,7 +27,11 @@ func (m stepDoneMsg) execute(s *scheduler) {
 	// Validation runs on the dispatch snapshot too, so defer release until every
 	// post-execution handler has consumed it. A retry always acquires a fresh
 	// view of the current run branch.
-	defer s.releaseExecutionViewForStep(m.stepID)
+	defer func() {
+		if s.rt(m.stepID).validation == nil {
+			s.releaseExecutionViewForStep(m.stepID)
+		}
+	}()
 
 	if !s.releaseWorker(m) {
 		return
@@ -147,9 +151,18 @@ func (s *scheduler) recordResult(m stepDoneMsg) (failed bool) {
 // runPostExecChain walks the post-execution handlers for a successful
 // execution and applies their verdict.
 func (s *scheduler) runPostExecChain(m stepDoneMsg, wfStep *workflow.Step) {
+	s.continuePostExecChain(m, wfStep, 0)
+}
+
+func (s *scheduler) continuePostExecChain(m stepDoneMsg, wfStep *workflow.Step, start int) {
 	decision := decisionContinue
-	for _, h := range s.postExecChain {
+	for i := start; i < len(s.postExecChain); i++ {
+		h := s.postExecChain[i]
 		if decision = h(s, m, wfStep); decision != decisionContinue {
+			if decision == decisionAsync {
+				s.rt(m.stepID).validation.nextHandler = i + 1
+				return
+			}
 			break
 		}
 	}
@@ -419,6 +432,7 @@ type stepDoneMsg struct {
 	result   *step.Result
 	err      error
 	timedOut bool
+	deadline time.Time // original per-attempt deadline, also bounds validation
 }
 
 type reviewSubmissionMsg struct {

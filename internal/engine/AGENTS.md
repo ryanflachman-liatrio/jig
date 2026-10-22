@@ -110,6 +110,7 @@ start a new file rather than growing `engine.go`.
 | `runtime.go`, `capacity.go`, `graph.go` | Per-step state, slot accounting, DAG walks |
 | `ready.go`, `conditions.go` | Readiness checks, liveness, guard evaluation, gates |
 | `worker.go`, `handlers.go`, `strategies.go` | Dispatch, the post-exec chain, step kinds, failure policy |
+| `validation.go`, `validation_process_*.go` | Async gate ownership, continuation, bounded diagnostics, subprocess cancellation |
 | `reset.go`, `loop.go` | Operator reset and recovery; route intents and coalesced loops |
 | `integration.go`, `worktree.go`, `execution.go` | Run branch, conflicts, final merge, workspaces |
 | `review.go`, `interaction.go`, `security.go` | Review gates; questions, input, stop and resume; security findings |
