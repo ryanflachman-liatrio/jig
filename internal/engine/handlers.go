@@ -12,8 +12,8 @@ import (
 // postExecDecision is the Chain of Responsibility pattern's contract between
 // links in scheduler.postExecChain (built in newScheduler, engine.go): each
 // handler either passes the message to the next link (decisionContinue) or
-// short-circuits the chain with a final verdict (decisionFailed,
-// decisionNeedsInput). A handler that short-circuits is responsible for
+// short-circuits the chain with a verdict (decisionFailed, decisionNeedsInput)
+// or a worker-owned continuation (decisionAsync). A handler that stops it is responsible for
 // performing whatever state transition that verdict implies — the chain
 // runner in (stepDoneMsg).execute (commands.go) only decides whether to keep
 // walking or stop.
@@ -23,6 +23,7 @@ const (
 	decisionContinue   postExecDecision = iota // pass to next handler
 	decisionFailed                             // step failed — apply failure policy
 	decisionNeedsInput                         // step paused for human input (handler handled transition)
+	decisionAsync                              // gate worker owns continuation and execution workspace
 )
 
 // postExecHandler is one link in the Chain of Responsibility: a stage of the
@@ -90,9 +91,8 @@ func mutationPathAllowed(changed string, allowed []string) bool {
 	return false
 }
 
-// phRunValidateGate runs [step.validate] synchronously when present.
-// It transitions the step to StatusValidating, emits GateResult, and
-// records the gate detail as the failure reason when the gate rejects.
+// phRunValidateGate journals entry to validation, then hands the gate to a
+// worker. Only validationDoneMsg may resume the remaining post-exec handlers.
 func phRunValidateGate(s *scheduler, m stepDoneMsg, wfStep *workflow.Step) postExecDecision {
 	if wfStep == nil || wfStep.Validate == nil {
 		return decisionContinue
@@ -116,21 +116,8 @@ func phRunValidateGate(s *scheduler, m stepDoneMsg, wfStep *workflow.Step) postE
 	if !s.transition(m.stepID, from, step.StatusValidating) {
 		return decisionNeedsInput
 	}
-	passed, detail := s.runGate(wfStep, s.executionDirForStep(m.stepID))
-	s.emit(GateResult{RunID: s.runID, StepID: m.stepID, Passed: passed, Detail: detail})
-	if !passed {
-		res := s.states[m.stepID].Result
-		if res == nil {
-			res = &step.Result{}
-			s.states[m.stepID].Result = res
-		}
-		res.Status = step.StatusFailed
-		if res.Err == "" {
-			res.Err = detail
-		}
-		return decisionFailed
-	}
-	return decisionContinue
+	s.startValidation(m, wfStep)
+	return decisionAsync
 }
 
 // phSquashMergeIntegration squash-merges a successfully-completed mutating step's

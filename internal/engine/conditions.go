@@ -1,12 +1,14 @@
 package engine
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ryanflachman-liatrio/jig/internal/workflow"
 )
@@ -44,22 +46,26 @@ func (s *scheduler) structuredField(stepID string, fields []string) (any, error)
 	return value, nil
 }
 
-// runGate evaluates the [step.validate] block for wfStep synchronously.
+// runGate evaluates [step.validate] on a worker without reading scheduler state.
 // Returns (true, detail) on pass, (false, detail) on failure.
 // executionDir, when non-empty, is the dispatch snapshot used by gate commands
 // and relative output checks. It is a mutation worktree for writers and a
 // read-only execution view for readers.
-func (s *scheduler) runGate(wfStep *workflow.Step, executionDir string) (bool, string) {
+func runGate(ctx context.Context, wfStep *workflow.Step, executionDir string) (bool, string) {
 	v := wfStep.Validate
 
 	// Command gate: run via sh -c, check exit code 0.
 	if v.Command != "" {
-		cmd := exec.Command("sh", "-c", v.Command)
+		cmd := exec.CommandContext(ctx, "sh", "-c", v.Command)
+		configureValidationProcess(cmd)
+		cmd.WaitDelay = 2 * time.Second
 		if executionDir != "" {
 			cmd.Dir = executionDir
 		}
-		out, err := cmd.CombinedOutput()
-		outStr := strings.TrimSpace(string(out))
+		out := &gateOutput{}
+		cmd.Stdout, cmd.Stderr = out, out
+		err := cmd.Run()
+		outStr := strings.TrimSpace(out.String())
 		if err != nil {
 			return false, fmt.Sprintf("gate command failed: %v — %s", err, outStr)
 		}

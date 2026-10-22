@@ -66,6 +66,9 @@ func (s *scheduler) setupRunBranch() error {
 // Callers must invoke this BEFORE emitting RunFinished so that the git
 // subprocesses finish before the caller's goroutine signals completion.
 func (s *scheduler) cleanupWorktrees() {
+	// A canceled gate may still be reading its dispatch snapshot. Wait for its
+	// subprocess to exit before removing any execution workspace.
+	s.stopValidations()
 	s.releaseExecutionWorkspaces()
 	if s.repoRoot == "" {
 		return

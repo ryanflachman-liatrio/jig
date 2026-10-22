@@ -14,6 +14,9 @@ import (
 // afterReset carries it over. Add new per-step state here rather than as
 // another map on scheduler, so reset cannot miss it.
 type stepRuntime struct {
+	// validation owns an asynchronous post-execution gate until its completion
+	// is handled. Its pointer is also the completion's identity token.
+	validation *validationWork
 	// resumeSession and message continue a backend session on the next
 	// dispatch: recovery resume, agent input, or a restored question.
 	resumeSession string

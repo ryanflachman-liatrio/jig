@@ -2071,19 +2071,18 @@ func TestScheduler_RunGateUsesExecutionDirForOutputChecks(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(executionDir, "result.md"), []byte("expected content"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	s := &scheduler{}
 
 	for _, validate := range []*workflow.Validate{
 		{OutputExists: true},
 		{OutputContains: "expected"},
 	} {
-		passed, detail := s.runGate(&workflow.Step{Output: "result.md", Validate: validate}, executionDir)
+		passed, detail := runGate(context.Background(), &workflow.Step{Output: "result.md", Validate: validate}, executionDir)
 		if !passed {
 			t.Errorf("runGate(%+v) = false, %q; want execution-directory output check to pass", validate, detail)
 		}
 	}
 
-	passed, detail := s.runGate(&workflow.Step{
+	passed, detail := runGate(context.Background(), &workflow.Step{
 		Output:   "../outside.md",
 		Validate: &workflow.Validate{OutputExists: true},
 	}, executionDir)
@@ -2205,7 +2204,7 @@ run = "true"
 // ── Post-execution handler unit tests ────────────────────────────────────────
 
 // TestPostExecHandler_ValidateGate tests phRunValidateGate in isolation:
-// passing gate → decisionContinue, failing gate → decisionFailed.
+// gates run asynchronously, then their completion succeeds or fails the step.
 func TestPostExecHandler_ValidateGate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -2229,13 +2228,24 @@ command = "true"
 			t.Fatal(err)
 		}
 		s := newScheduler(schedulerDeps{wf: wf, runID: "test", inbox: make(chan schedMsg, 4), cancel: cancel, onDone: func(RunSnapshot) {}})
+		s.runCtx = ctx
 		s.states["check"].Status = step.StatusRunning
 		s.states["check"].Result = &step.Result{Status: step.StatusSucceeded}
 
 		m := stepDoneMsg{stepID: "check", result: s.states["check"].Result}
 		decision := phRunValidateGate(s, m, s.stepByID("check"))
-		if decision != decisionContinue {
-			t.Errorf("passing gate: want decisionContinue, got %v", decision)
+		if decision != decisionAsync {
+			t.Fatalf("passing gate: want decisionAsync, got %v", decision)
+		}
+		s.rt("check").validation.nextHandler = len(s.postExecChain)
+		select {
+		case msg := <-s.inbox:
+			s.handle(msg)
+		case <-time.After(5 * time.Second):
+			t.Fatal("validation did not complete")
+		}
+		if got := s.states["check"].Status; got != step.StatusSucceeded {
+			t.Errorf("passing gate status = %s, want succeeded", got)
 		}
 	})
 
@@ -2258,13 +2268,23 @@ command = "false"
 			t.Fatal(err)
 		}
 		s := newScheduler(schedulerDeps{wf: wf, runID: "test", inbox: make(chan schedMsg, 4), cancel: cancel, onDone: func(RunSnapshot) {}})
+		s.runCtx = ctx
 		s.states["check"].Status = step.StatusRunning
 		s.states["check"].Result = &step.Result{Status: step.StatusSucceeded}
 
 		m := stepDoneMsg{stepID: "check", result: s.states["check"].Result}
 		decision := phRunValidateGate(s, m, s.stepByID("check"))
-		if decision != decisionFailed {
-			t.Errorf("failing gate: want decisionFailed, got %v", decision)
+		if decision != decisionAsync {
+			t.Fatalf("failing gate: want decisionAsync, got %v", decision)
+		}
+		select {
+		case msg := <-s.inbox:
+			s.handle(msg)
+		case <-time.After(5 * time.Second):
+			t.Fatal("validation did not complete")
+		}
+		if got := s.states["check"].Status; got != step.StatusAwaitingRecovery {
+			t.Errorf("failing gate status = %s, want awaiting_recovery", got)
 		}
 		if s.states["check"].Result.Err == "" {
 			t.Error("failing gate must record error detail in Result.Err")
@@ -2302,6 +2322,7 @@ command = "true"
 			t.Fatal(err)
 		}
 		s := newScheduler(schedulerDeps{wf: wf, runID: "test", inbox: make(chan schedMsg, 4), cancel: cancel, runDir: runDir, onDone: func(RunSnapshot) {}})
+		s.runCtx = ctx
 		s.states["check"].Status = step.StatusRunning
 		s.states["check"].Result = &step.Result{Status: step.StatusSucceeded, SessionID: "sess"}
 

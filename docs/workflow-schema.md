@@ -897,7 +897,7 @@ exposing its private mutation worktree.
 
 `isolation = "worktree"` gives a mutating step its own `ExecutionDir`; read-only
 steps receive ephemeral execution-view worktrees at the same run-branch commit.
-Views are distinct per dispatch and removed when their worker completes, so
+Views are distinct per dispatch and retained through post-execution validation, so
 concurrent readers neither observe later integration nor modify the central run
 checkout. With persistence disabled, `ExecutionDir` is empty and the process
 working directory remains the fallback.
@@ -1270,6 +1270,17 @@ output_type = { enum = ["approve", "revise"] }
 ## Validation (the deterministic gate)
 
 Any step may declare `[step.validate]`. Dependents wait until it passes.
+
+Validation runs in a worker while the step is `validating`; it retains the
+step's concurrency/resource slots and execution snapshot until the gate ends.
+The scheduler remains available for snapshots, other worker completions, and
+operator commands. `Stop` cancels the gate and parks the step as `stopped`;
+run cancellation terminates the gate before removing its execution workspace.
+On Unix, cancellation kills the validation shell's process group, including
+ordinary pipelines and background children. Other platforms cancel the direct
+process. A configured step `timeout` covers execution and validation together;
+validation receives the attempt's remaining time, not a fresh timeout.
+Command diagnostics retain at most 64 KiB, with an explicit truncation marker.
 
 ```toml
 [step.validate]
