@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -39,15 +40,15 @@ type validationFixture struct {
 	exec         *testExec
 }
 
-func newHeldValidation(t *testing.T, configure func(*workflow.Workflow)) validationFixture {
+func newHeldValidation(t *testing.T, configure func(*workflow.Workflow, *testExec)) validationFixture {
 	t.Helper()
 	entered := make(chan struct{})
 	disconnected := make(chan struct{})
 	release := make(chan struct{})
-	var enteredOnce, releaseOnce sync.Once
+	var enteredOnce, releaseOnce, disconnectedOnce sync.Once
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer close(disconnected)
+		defer disconnectedOnce.Do(func() { close(disconnected) })
 		enteredOnce.Do(func() { close(entered) })
 		select {
 		case <-release:
@@ -81,10 +82,10 @@ command = %q
 	if err != nil {
 		t.Fatal(err)
 	}
-	if configure != nil {
-		configure(wf)
-	}
 	executor := &testExec{outcomes: map[string]testOutcome{"work": {}}}
+	if configure != nil {
+		configure(wf, executor)
+	}
 	manager := NewManager(executor, "")
 	_, events := manager.Subscribe()
 	run, err := manager.Start(wf)
@@ -178,7 +179,7 @@ func TestScheduler_CancelDuringValidation(t *testing.T) {
 }
 
 func TestScheduler_ValidationRetainsCapacity(t *testing.T) {
-	fixture := newHeldValidation(t, func(wf *workflow.Workflow) {
+	fixture := newHeldValidation(t, func(wf *workflow.Workflow, _ *testExec) {
 		wf.Defaults.MaxParallel = 1
 		wf.Steps = append(wf.Steps, workflow.Step{ID: "later", Type: workflow.StepCommand, Run: "true"})
 	})
@@ -203,7 +204,7 @@ func TestScheduler_ValidationRetainsCapacity(t *testing.T) {
 }
 
 func TestScheduler_ValidationUsesAttemptDeadline(t *testing.T) {
-	fixture := newHeldValidation(t, func(wf *workflow.Workflow) {
+	fixture := newHeldValidation(t, func(wf *workflow.Workflow, _ *testExec) {
 		wf.Steps[0].Timeout = workflow.Duration{Duration: 2 * time.Second}
 	})
 	recovery := waitRecoveryRequest(t, fixture.events, 5*time.Second)
@@ -214,5 +215,62 @@ func TestScheduler_ValidationUsesAttemptDeadline(t *testing.T) {
 	case <-fixture.disconnected:
 	case <-time.After(5 * time.Second):
 		t.Fatal("validation subprocess survived the attempt deadline")
+	}
+}
+
+func TestScheduler_SiblingCompletesDuringValidation(t *testing.T) {
+	finishSibling := make(chan struct{})
+	fixture := newHeldValidation(t, func(wf *workflow.Workflow, executor *testExec) {
+		wf.Defaults.MaxParallel = 2
+		wf.Steps = append(wf.Steps, workflow.Step{ID: "sibling", Type: workflow.StepCommand, Run: "true"})
+		executor.respond = func(ctx context.Context, req StepRequest, _ int) (*step.Result, error) {
+			if req.Step.ID == "sibling" {
+				select {
+				case <-finishSibling:
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				}
+			}
+			return &step.Result{Status: step.StatusSucceeded}, nil
+		}
+	})
+	// The validation subprocess is confirmed blocked before the sibling is
+	// permitted to finish. Neither order depends on process startup timing.
+	close(finishSibling)
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case event := <-fixture.events:
+			status, ok := event.(StepStatus)
+			if !ok || status.StepID != "sibling" || status.To != step.StatusSucceeded {
+				continue
+			}
+			if got := snapshotStep(fixture.run.Snapshot(), "work").Status; got != step.StatusValidating {
+				t.Fatalf("held step status = %s, want validating", got)
+			}
+			return
+		case <-deadline:
+			t.Fatal("sibling completion was blocked by validation")
+		}
+	}
+}
+
+func TestScheduler_ValidationTimeoutHonorsRetryPolicy(t *testing.T) {
+	fixture := newHeldValidation(t, func(wf *workflow.Workflow, _ *testExec) {
+		wf.Steps[0].Timeout = workflow.Duration{Duration: time.Second}
+		idempotent := true
+		wf.Steps[0].Idempotent = &idempotent
+		wf.Steps[0].Retry = &workflow.RetryPolicy{
+			MaxAttempts: 2,
+			Backoff:     workflow.RetryBackoffNone,
+			RetryOn:     []string{workflow.RetryTimeout},
+		}
+	})
+	recovery := waitRecoveryRequest(t, fixture.events, 5*time.Second)
+	if recovery.StepID != "work" || !strings.Contains(recovery.Err, "timeout") {
+		t.Fatalf("recovery = %+v, want validation timeout", recovery)
+	}
+	if got := fixture.exec.callCount("work"); got != 2 {
+		t.Fatalf("validation timeout dispatched %d attempts, want 2", got)
 	}
 }

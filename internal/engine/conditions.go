@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
@@ -52,12 +53,15 @@ func (s *scheduler) structuredField(stepID string, fields []string) (any, error)
 // and relative output checks. It is a mutation worktree for writers and a
 // read-only execution view for readers.
 func runGate(ctx context.Context, wfStep *workflow.Step, executionDir string) (bool, string) {
+	if err := ctx.Err(); err != nil {
+		return false, fmt.Sprintf("gate canceled: %v", err)
+	}
 	v := wfStep.Validate
 
 	// Command gate: run via sh -c, check exit code 0.
 	if v.Command != "" {
 		cmd := exec.CommandContext(ctx, "sh", "-c", v.Command)
-		configureValidationProcess(cmd)
+		cleanup := configureValidationProcess(cmd)
 		cmd.WaitDelay = 2 * time.Second
 		if executionDir != "" {
 			cmd.Dir = executionDir
@@ -65,6 +69,9 @@ func runGate(ctx context.Context, wfStep *workflow.Step, executionDir string) (b
 		out := &gateOutput{}
 		cmd.Stdout, cmd.Stderr = out, out
 		err := cmd.Run()
+		if cleanupErr := cleanup(); cleanupErr != nil {
+			return false, fmt.Sprintf("gate command cleanup failed: %v", cleanupErr)
+		}
 		outStr := strings.TrimSpace(out.String())
 		if err != nil {
 			return false, fmt.Sprintf("gate command failed: %v — %s", err, outStr)
@@ -96,7 +103,19 @@ func runGate(ctx context.Context, wfStep *workflow.Step, executionDir string) (b
 		if outputPath == "" {
 			return false, "output_contains gate: step has no output field"
 		}
-		data, err := os.ReadFile(outputPath)
+		file, err := openValidationOutput(outputPath)
+		if err != nil {
+			return false, fmt.Sprintf("output_contains gate: read file: %v", err)
+		}
+		defer file.Close()
+		info, err := file.Stat()
+		if err != nil {
+			return false, fmt.Sprintf("output_contains gate: stat file: %v", err)
+		}
+		if !info.Mode().IsRegular() {
+			return false, "output_contains gate: output must be a regular file"
+		}
+		data, err := io.ReadAll(gateReader{ctx: ctx, Reader: file})
 		if err != nil {
 			return false, fmt.Sprintf("output_contains gate: read file: %v", err)
 		}

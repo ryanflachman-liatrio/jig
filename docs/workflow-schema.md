@@ -1281,6 +1281,8 @@ ordinary pipelines and background children. Other platforms cancel the direct
 process. A configured step `timeout` covers execution and validation together;
 validation receives the attempt's remaining time, not a fresh timeout.
 Command diagnostics retain at most 64 KiB, with an explicit truncation marker.
+`output_contains` accepts regular files; named pipes and devices are rejected
+so file-content validation cannot wait indefinitely for an external writer.
 
 ```toml
 [step.validate]

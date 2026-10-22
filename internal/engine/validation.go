@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"io"
 	"strings"
 
 	"github.com/ryanflachman-liatrio/jig/internal/step"
@@ -86,6 +87,9 @@ func (m validationDoneMsg) execute(s *scheduler) {
 		if result.Err == "" {
 			result.Err = m.detail
 		}
+		if m.timedOut && s.scheduleAutomaticRetry(m.stepID, wfStep, stepDoneMsg{result: result, timedOut: true}) {
+			return
+		}
 		s.applyFailurePolicy(m.stepID, wfStep)
 		return
 	}
@@ -126,4 +130,18 @@ func (w *gateOutput) String() string {
 		return w.text.String() + "\n[validation output truncated]"
 	}
 	return w.text.String()
+}
+
+// gateReader checks cancellation between regular-file reads. Special files are
+// rejected before reading so a FIFO cannot strand shutdown waiting for a writer.
+type gateReader struct {
+	ctx context.Context
+	io.Reader
+}
+
+func (r gateReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return r.Reader.Read(p)
 }
